@@ -1857,14 +1857,9 @@
             // Check days >= 16
             if (!job.daysPast || job.daysPast < 16) return false;
 
-            // Check if category is Travel Nursing
+            // Exclude Perm Placement only
             const program = String(job.program || '').toLowerCase();
-            const isTravelNursing = program.includes('travel') && CONSTANTS.NURSING_KEYWORDS.some(k => program.includes(k));
-            if (!isTravelNursing) return false;
-
-            // Count levers that are done
-            const leversDone = Object.values(job.levers || {}).filter(lever => lever && lever.done).length;
-            if (leversDone > 1) return false;
+            if (program.includes('perm')) return false;
 
             return true;
           });
