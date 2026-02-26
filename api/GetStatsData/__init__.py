@@ -96,26 +96,26 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             print(f"Error loading B4 upcoming: {e}")
         
         # ============================================================
-        # VNDLY - Active Assignments (from Work Orders in STAGING_VNDLY_JOBS)
+        # VNDLY - Active Assignments (from Work Orders)
         # ============================================================
         try:
             cursor.execute('''
-                SELECT 
+                SELECT
                     'VNDLY' AS source_system,
-                    [Job Id] AS position_id,
-                    [Contractor Name] AS candidate_name,
-                    [Vendor Company Name] AS agency,
-                    [Facility] AS facility,
+                    CAST([Work Order Id] AS NVARCHAR(50)) AS position_id,
+                    CONCAT([Contractor First Name], ' ', [Contractor Last Name]) AS candidate_name,
+                    [Vendor Name] AS agency,
+                    [Default Work Site Name] AS facility,
                     [Health System] AS system,
                     [Job Title] AS specialty,
-                    [Work Order Start Date] AS startDate,
-                    [Work Order End Date] AS endDate,
-                    [Work Order Current Status] AS status
-                FROM dbo.STAGING_VNDLY_JOBS
-                WHERE [Work Order Current Status] = 'Active'
-                    AND [Work Order Start Date] IS NOT NULL
-                    AND [Work Order Start Date] <= GETDATE()
-                    AND ([Work Order End Date] IS NULL OR [Work Order End Date] >= GETDATE())
+                    [Start Date] AS startDate,
+                    [End Date] AS endDate,
+                    [Current Status] AS status
+                FROM dbo.STAGING_VNDLY_WORKORDERS
+                WHERE [Current Status] = 'Active'
+                    AND [Start Date] IS NOT NULL
+                    AND [Start Date] <= GETDATE()
+                    AND ([End Date] IS NULL OR [End Date] >= GETDATE())
             ''')
             
             columns = [column[0] for column in cursor.description]
@@ -130,26 +130,26 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             print(f"Error loading VNDLY active assignments: {e}")
         
         # ============================================================
-        # VNDLY - Upcoming Starts (Verification In Progress = confirmed but not yet started)
+        # VNDLY - Upcoming Starts (confirmed but not yet started)
         # ============================================================
         try:
             cursor.execute('''
-                SELECT 
+                SELECT
                     'VNDLY' AS source_system,
-                    [Job Id] AS position_id,
-                    [Contractor Name] AS candidate_name,
-                    [Vendor Company Name] AS agency,
-                    [Facility] AS facility,
+                    CAST([Work Order Id] AS NVARCHAR(50)) AS position_id,
+                    CONCAT([Contractor First Name], ' ', [Contractor Last Name]) AS candidate_name,
+                    [Vendor Name] AS agency,
+                    [Default Work Site Name] AS facility,
                     [Health System] AS system,
                     [Job Title] AS specialty,
-                    [Work Order Start Date] AS startDate,
-                    [Work Order End Date] AS endDate,
-                    [Work Order Current Status] AS status
-                FROM dbo.STAGING_VNDLY_JOBS
-                WHERE [Work Order Current Status] IN ('Verification In Progress', 'Applied')
-                    AND [Work Order Start Date] IS NOT NULL
-                    AND [Work Order Start Date] > GETDATE()
-                    AND [Work Order Start Date] <= DATEADD(day, 30, GETDATE())
+                    [Start Date] AS startDate,
+                    [End Date] AS endDate,
+                    [Current Status] AS status
+                FROM dbo.STAGING_VNDLY_WORKORDERS
+                WHERE [Current Status] IN ('Verification In Progress', 'Ready to Onboard', 'Offer Released')
+                    AND [Start Date] IS NOT NULL
+                    AND [Start Date] > GETDATE()
+                    AND [Start Date] <= DATEADD(day, 30, GETDATE())
             ''')
             
             columns = [column[0] for column in cursor.description]
