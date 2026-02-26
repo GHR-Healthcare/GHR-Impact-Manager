@@ -47,8 +47,10 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                     AND Start_Date IS NOT NULL
                     AND Start_Date <= GETDATE()
                     AND (End_Date IS NULL OR End_Date >= GETDATE())
+                    AND Health_System NOT LIKE '%Richmond University%'
+                    AND Health_System NOT LIKE '%Redeemer%'
             ''')
-            
+
             columns = [column[0] for column in cursor.description]
             for row in cursor.fetchall():
                 row_dict = dict(zip(columns, row))
@@ -82,6 +84,8 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                     AND Start_Date IS NOT NULL
                     AND Start_Date > GETDATE()
                     AND Start_Date <= DATEADD(day, 30, GETDATE())
+                    AND Health_System NOT LIKE '%Richmond University%'
+                    AND Health_System NOT LIKE '%Redeemer%'
             ''')
             
             columns = [column[0] for column in cursor.description]
