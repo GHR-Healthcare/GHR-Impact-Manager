@@ -1952,114 +1952,155 @@
         const pdf = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
         const pageWidth = pdf.internal.pageSize.getWidth();
         const pageHeight = pdf.internal.pageSize.getHeight();
-        const margin = 8;
-        const contentWidth = pageWidth - (margin * 2);
+        const margin = 5;
+        const usableWidth = pageWidth - (margin * 2);
+        const usableHeight = pageHeight - (margin * 2);
 
-        // Helper: capture a DOM element to canvas and add to PDF
-        const addElementToPDF = async (element, addPage = true) => {
-          if (addPage) pdf.addPage('a4', 'landscape');
-          const canvas = await html2canvas(element, {
+        // Helper: capture a DOM element and add as full-page image
+        const captureSection = async (element, isFirstPage = false) => {
+          if (!isFirstPage) pdf.addPage('a4', 'landscape');
+
+          // Clone into offscreen container for clean render
+          const wrapper = document.createElement('div');
+          wrapper.style.cssText = 'position:absolute;left:-9999px;top:0;width:1600px;background:#ffffff;padding:16px;';
+          const clone = element.cloneNode(true);
+          // Remove any buttons from the clone
+          clone.querySelectorAll('button').forEach(b => b.remove());
+          wrapper.appendChild(clone);
+          document.body.appendChild(wrapper);
+
+          const canvas = await html2canvas(wrapper, {
             scale: 2,
             useCORS: true,
             backgroundColor: '#ffffff',
             logging: false
           });
+
+          document.body.removeChild(wrapper);
+
           const imgData = canvas.toDataURL('image/png');
-          const imgWidth = contentWidth;
+          const imgWidth = usableWidth;
           const imgHeight = (canvas.height / canvas.width) * imgWidth;
 
-          // If image is taller than page, scale down to fit
-          if (imgHeight > pageHeight - (margin * 2)) {
-            const scale = (pageHeight - (margin * 2)) / imgHeight;
-            pdf.addImage(imgData, 'PNG', margin, margin, imgWidth * scale, imgHeight * scale);
+          if (imgHeight <= usableHeight) {
+            // Center vertically on page
+            const yOffset = margin + (usableHeight - imgHeight) / 2;
+            pdf.addImage(imgData, 'PNG', margin, yOffset, imgWidth, imgHeight);
           } else {
-            pdf.addImage(imgData, 'PNG', margin, margin, imgWidth, imgHeight);
+            // Scale down to fit page height
+            const scale = usableHeight / imgHeight;
+            const scaledW = imgWidth * scale;
+            const scaledH = usableHeight;
+            const xOffset = margin + (usableWidth - scaledW) / 2;
+            pdf.addImage(imgData, 'PNG', xOffset, margin, scaledW, scaledH);
           }
         };
 
-        // Get all the sections in the financials content
-        const sections = container.querySelectorAll(':scope > div');
-        const sectionArray = Array.from(sections);
-
-        // Page 1: Header + KPI cards + Billings tables
-        // Create a temporary container with just the header, KPIs, and billings
-        const page1 = document.createElement('div');
-        page1.style.cssText = 'position:absolute;left:-9999px;top:0;width:1400px;background:#f8fafc;padding:16px;';
-        // Title
-        const title = document.createElement('div');
-        title.innerHTML = `<h2 style="font-size:20px;font-weight:bold;color:#1e293b;margin-bottom:8px;">GHR Healthcare - MSP Financial Report</h2>
-          <p style="font-size:12px;color:#64748b;margin-bottom:16px;">Generated ${new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}</p>`;
-        page1.appendChild(title);
-
-        // Clone KPI cards and billings section
-        sectionArray.forEach((section, i) => {
-          // Skip the header row (first flex div), chart sections
-          if (i <= 2) { // KPIs grid (0=header, 1=KPI cards, 2=billings section)
-            const clone = section.cloneNode(true);
-            // Remove export buttons from clone
-            clone.querySelectorAll('button').forEach(b => b.remove());
-            page1.appendChild(clone);
-          }
-        });
-        document.body.appendChild(page1);
-        await addElementToPDF(page1, false); // First page, no addPage
-        document.body.removeChild(page1);
-
-        // Page 2: Fill Rates section
-        const fillRateSection = sectionArray[3]; // Fill rates section
-        if (fillRateSection) {
-          const page2 = document.createElement('div');
-          page2.style.cssText = 'position:absolute;left:-9999px;top:0;width:1400px;background:#f8fafc;padding:16px;';
-          const frTitle = document.createElement('div');
-          frTitle.innerHTML = `<h2 style="font-size:20px;font-weight:bold;color:#1e293b;margin-bottom:16px;">GHR Healthcare - Fill Rates</h2>`;
-          page2.appendChild(frTitle);
-          page2.appendChild(fillRateSection.cloneNode(true));
-          document.body.appendChild(page2);
-          await addElementToPDF(page2);
-          document.body.removeChild(page2);
-        }
-
-        // Page 3: Headcounts section
-        const headcountSection = sectionArray[4]; // Headcounts section
-        if (headcountSection) {
-          const page3 = document.createElement('div');
-          page3.style.cssText = 'position:absolute;left:-9999px;top:0;width:1400px;background:#f8fafc;padding:16px;';
-          const hcTitle = document.createElement('div');
-          hcTitle.innerHTML = `<h2 style="font-size:20px;font-weight:bold;color:#1e293b;margin-bottom:16px;">GHR Healthcare - MSP Headcounts</h2>`;
-          page3.appendChild(hcTitle);
-          page3.appendChild(headcountSection.cloneNode(true));
-          document.body.appendChild(page3);
-          await addElementToPDF(page3);
-          document.body.removeChild(page3);
-        }
-
-        // Page 4: Billings Trend Chart
-        const chartCanvas = document.getElementById('billingsTrendChart');
-        if (chartCanvas) {
-          pdf.addPage('a4', 'landscape');
-          const chartTitle = 'MSP Billings Trend';
-          pdf.setFontSize(16);
+        // Helper: add a chart canvas to PDF at a given Y position, returns new Y
+        const addChartToPDF = (chartCanvas, title, yStart) => {
+          if (!chartCanvas) return yStart;
+          pdf.setFontSize(13);
           pdf.setTextColor(30, 41, 59);
-          pdf.text(chartTitle, margin, margin + 8);
+          pdf.text(title, margin, yStart + 5);
           const chartImg = chartCanvas.toDataURL('image/png', 1.0);
           const chartAspect = chartCanvas.height / chartCanvas.width;
-          const chartW = contentWidth;
-          const chartH = chartW * chartAspect;
-          pdf.addImage(chartImg, 'PNG', margin, margin + 14, chartW, Math.min(chartH, pageHeight - margin * 2 - 14));
+          const chartW = usableWidth;
+          const maxChartH = (usableHeight - (yStart - margin) - 10) / 1; // available space
+          const chartH = Math.min(chartW * chartAspect, maxChartH);
+          pdf.addImage(chartImg, 'PNG', margin, yStart + 8, chartW, chartH);
+          return yStart + 8 + chartH + 4;
+        };
+
+        // ---- PAGE 1: MSP Billings Tables ----
+        const billingsSection = document.getElementById('pdfBillingsSection');
+        if (billingsSection) {
+          await captureSection(billingsSection, true);
         }
 
-        // Page 5: Fill Rate Trend Chart
-        const frChartCanvas = document.getElementById('fillRateTrendChart');
-        if (frChartCanvas) {
+        // ---- PAGE 2: Headcounts Tables ----
+        const headcountSection = document.getElementById('pdfHeadcountSection');
+        if (headcountSection) {
+          await captureSection(headcountSection);
+        }
+
+        // ---- PAGE 3: Fill Rates (bar chart + heatmap, no trend chart) ----
+        const fillRateSection = document.getElementById('pdfFillRateSection');
+        if (fillRateSection) {
+          // Clone fill rate section but remove the trend chart canvas container
+          // so it only shows the bar chart + heatmap table
+          const frWrapper = document.createElement('div');
+          frWrapper.style.cssText = 'position:absolute;left:-9999px;top:0;width:1600px;background:#ffffff;padding:16px;';
+          const frClone = fillRateSection.cloneNode(true);
+          frClone.querySelectorAll('button').forEach(b => b.remove());
+
+          // Find the grid that contains bar chart + trend chart, restructure to full width bar + remove trend
+          const gridDiv = frClone.querySelector('.grid.grid-cols-1.lg\\:grid-cols-2');
+          if (gridDiv) {
+            // Remove the trend chart column (second child)
+            const cols = gridDiv.children;
+            if (cols.length >= 2) {
+              cols[1].remove();
+            }
+            // Make bar chart full width
+            gridDiv.className = 'mb-4';
+          }
+
+          frWrapper.appendChild(frClone);
+          document.body.appendChild(frWrapper);
+
           pdf.addPage('a4', 'landscape');
-          pdf.setFontSize(16);
-          pdf.setTextColor(30, 41, 59);
-          pdf.text('Fill Rate Trend', margin, margin + 8);
-          const frImg = frChartCanvas.toDataURL('image/png', 1.0);
-          const frAspect = frChartCanvas.height / frChartCanvas.width;
-          const frW = contentWidth;
-          const frH = frW * frAspect;
-          pdf.addImage(frImg, 'PNG', margin, margin + 14, frW, Math.min(frH, pageHeight - margin * 2 - 14));
+          const frCanvas = await html2canvas(frWrapper, {
+            scale: 2,
+            useCORS: true,
+            backgroundColor: '#ffffff',
+            logging: false
+          });
+          document.body.removeChild(frWrapper);
+
+          const frImgData = frCanvas.toDataURL('image/png');
+          const frImgW = usableWidth;
+          const frImgH = (frCanvas.height / frCanvas.width) * frImgW;
+
+          if (frImgH <= usableHeight) {
+            const yOff = margin + (usableHeight - frImgH) / 2;
+            pdf.addImage(frImgData, 'PNG', margin, yOff, frImgW, frImgH);
+          } else {
+            const scale = usableHeight / frImgH;
+            const sw = frImgW * scale;
+            const xOff = margin + (usableWidth - sw) / 2;
+            pdf.addImage(frImgData, 'PNG', xOff, margin, sw, usableHeight);
+          }
+        }
+
+        // ---- PAGE 4: Both Trend Charts (Billings Trend + Fill Rate Trend) ----
+        const billingsTrendCanvas = document.getElementById('billingsTrendChart');
+        const fillRateTrendCanvas = document.getElementById('fillRateTrendChart');
+        if (billingsTrendCanvas || fillRateTrendCanvas) {
+          pdf.addPage('a4', 'landscape');
+          const halfHeight = (usableHeight - 10) / 2;
+
+          if (billingsTrendCanvas) {
+            pdf.setFontSize(13);
+            pdf.setTextColor(30, 41, 59);
+            pdf.text('MSP Billings Trend', margin, margin + 5);
+            const bImg = billingsTrendCanvas.toDataURL('image/png', 1.0);
+            const bAspect = billingsTrendCanvas.height / billingsTrendCanvas.width;
+            const bW = usableWidth;
+            const bH = Math.min(bW * bAspect, halfHeight - 10);
+            pdf.addImage(bImg, 'PNG', margin, margin + 8, bW, bH);
+          }
+
+          if (fillRateTrendCanvas) {
+            const yStart = margin + halfHeight + 5;
+            pdf.setFontSize(13);
+            pdf.setTextColor(30, 41, 59);
+            pdf.text('Fill Rate Trend', margin, yStart + 5);
+            const frImg = fillRateTrendCanvas.toDataURL('image/png', 1.0);
+            const frAspect = fillRateTrendCanvas.height / fillRateTrendCanvas.width;
+            const frW = usableWidth;
+            const frH = Math.min(frW * frAspect, halfHeight - 10);
+            pdf.addImage(frImg, 'PNG', margin, yStart + 8, frW, frH);
+          }
         }
 
         const timestamp = new Date().toISOString().split('T')[0];
@@ -3725,7 +3766,7 @@
           </div>`;
 
         // ====== MSP BILLINGS SECTION ======
-        html += `<div class="bg-white p-4 rounded-lg shadow-sm border border-slate-200 mb-6">
+        html += `<div id="pdfBillingsSection" class="bg-white p-4 rounded-lg shadow-sm border border-slate-200 mb-6">
           <h4 class="font-bold text-slate-800 mb-3 text-base">MSP Billings <span class="text-xs font-normal text-slate-400">(in dollars)</span></h4>`;
 
         // GHR Billings table
@@ -3766,13 +3807,28 @@
           return { sys, pct: (d.ghrBilling / (d.ghrBilling + d.affBilling)) * 100 };
         }).sort((a, b) => b.pct - a.pct);
 
-        html += `<div class="bg-white p-4 rounded-lg shadow-sm border border-slate-200 mb-6">
+        // Calculate overall fill rate for latest month
+        let overallGhr = 0, overallTotal = 0;
+        activeSystems.forEach(sys => {
+          const d = monthMap[latestMonth]?.[sys];
+          if (d) { overallGhr += d.ghrBilling; overallTotal += d.ghrBilling + d.affBilling; }
+        });
+        const overallPct = overallTotal > 0 ? (overallGhr / overallTotal) * 100 : 0;
+
+        html += `<div id="pdfFillRateSection" class="bg-white p-4 rounded-lg shadow-sm border border-slate-200 mb-6">
           <h4 class="font-bold text-slate-800 mb-3 text-base">GHR Fill Rates <span class="text-xs font-normal text-slate-400">(% of Total Billings)</span></h4>
 
           <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
             <div>
               <h5 class="font-bold text-sm text-slate-600 mb-3">Current Fill Rate by System <span class="text-xs font-normal text-slate-400">(${monthLabel(latestMonth)})</span></h5>
               <div class="space-y-1.5">
+                <div class="flex items-center gap-2 pb-1.5 mb-1 border-b-2 border-slate-300">
+                  <div class="w-24 text-xs font-bold text-slate-800 truncate flex-shrink-0">Overall</div>
+                  <div class="flex-1 bg-slate-100 rounded-full h-5 relative overflow-hidden">
+                    <div class="h-full rounded-full transition-all" style="width: ${Math.min(overallPct, 100)}%; background-color: #0F172A;"></div>
+                    <span class="absolute inset-0 flex items-center justify-center text-[10px] font-bold ${overallPct > 50 ? 'text-white' : 'text-slate-700'}">${overallPct.toFixed(1)}%</span>
+                  </div>
+                </div>
                 ${fillRateData.map(({ sys, pct }) => `
                   <div class="flex items-center gap-2">
                     <div class="w-24 text-xs font-medium text-slate-600 truncate flex-shrink-0" title="${sys}">${sys}</div>
@@ -3833,7 +3889,7 @@
         </div>`;
 
         // ====== MSP HEADCOUNTS SECTION ======
-        html += `<div class="bg-white p-4 rounded-lg shadow-sm border border-slate-200 mb-6">
+        html += `<div id="pdfHeadcountSection" class="bg-white p-4 rounded-lg shadow-sm border border-slate-200 mb-6">
           <h4 class="font-bold text-slate-800 mb-3 text-base">MSP Headcounts <span class="text-xs font-normal text-slate-400">(# of Temps Worked)</span></h4>`;
 
         // GHR Temps Worked table
@@ -3848,7 +3904,7 @@
 
         // ====== MSP BILLINGS TREND CHART ======
         html += `
-          <div class="bg-white p-4 rounded-lg shadow-sm border border-slate-200 mb-6">
+          <div id="pdfBillingsTrendSection" class="bg-white p-4 rounded-lg shadow-sm border border-slate-200 mb-6">
             <h4 class="font-bold text-slate-700 mb-4">MSP Billings Trend</h4>
             <div class="h-96"><canvas id="billingsTrendChart"></canvas></div>
           </div>`;
