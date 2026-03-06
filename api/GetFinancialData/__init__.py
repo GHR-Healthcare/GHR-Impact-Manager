@@ -45,6 +45,19 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
         # ============================================================
         try:
             cursor.execute('''
+                WITH DeduplicatedSpend AS (
+                    SELECT DISTINCT
+                        [Contractor First Name],
+                        [Contractor Last Name],
+                        [Item Date],
+                        [Health System],
+                        [Vendor Company Name],
+                        [Total Client Amount]
+                    FROM dbo.STAGING_VNDLY_SPEND
+                    WHERE [Item Date] >= DATEADD(MONTH, -13, DATEFROMPARTS(YEAR(GETDATE()), MONTH(GETDATE()), 1))
+                        AND [Item Date] < DATEFROMPARTS(YEAR(GETDATE()), MONTH(GETDATE()), 1)
+                        AND [Health System] IS NOT NULL
+                )
                 SELECT
                     'VNDLY' AS source_system,
                     FORMAT(DATEFROMPARTS(YEAR([Item Date]), MONTH([Item Date]), 1), 'yyyy-MM') AS month,
@@ -55,10 +68,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                     END AS vendor_type,
                     COUNT(DISTINCT CONCAT([Contractor First Name], ' ', [Contractor Last Name])) AS headcount,
                     SUM(ISNULL(TRY_CAST([Total Client Amount] AS DECIMAL(18,2)), 0)) AS estimated_billing
-                FROM dbo.STAGING_VNDLY_SPEND
-                WHERE [Item Date] >= DATEADD(MONTH, -13, DATEFROMPARTS(YEAR(GETDATE()), MONTH(GETDATE()), 1))
-                    AND [Item Date] < DATEFROMPARTS(YEAR(GETDATE()), MONTH(GETDATE()), 1)
-                    AND [Health System] IS NOT NULL
+                FROM DeduplicatedSpend
                 GROUP BY
                     FORMAT(DATEFROMPARTS(YEAR([Item Date]), MONTH([Item Date]), 1), 'yyyy-MM'),
                     [Health System],
@@ -85,6 +95,18 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
         # ============================================================
         try:
             cursor.execute('''
+                WITH DeduplicatedESR AS (
+                    SELECT DISTINCT
+                        [Employee],
+                        [Work Date],
+                        [Health System],
+                        [Agency Name],
+                        [Bill Total]
+                    FROM dhc.B4HealthESR
+                    WHERE [Work Date] >= DATEADD(MONTH, -13, DATEFROMPARTS(YEAR(GETDATE()), MONTH(GETDATE()), 1))
+                        AND [Work Date] < DATEFROMPARTS(YEAR(GETDATE()), MONTH(GETDATE()), 1)
+                        AND [Health System] IS NOT NULL
+                )
                 SELECT
                     'B4' AS source_system,
                     FORMAT(DATEFROMPARTS(YEAR([Work Date]), MONTH([Work Date]), 1), 'yyyy-MM') AS month,
@@ -95,10 +117,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                     END AS vendor_type,
                     COUNT(DISTINCT [Employee]) AS headcount,
                     SUM(ISNULL(TRY_CAST([Bill Total] AS DECIMAL(18,2)), 0)) AS estimated_billing
-                FROM dhc.B4HealthESR
-                WHERE [Work Date] >= DATEADD(MONTH, -13, DATEFROMPARTS(YEAR(GETDATE()), MONTH(GETDATE()), 1))
-                    AND [Work Date] < DATEFROMPARTS(YEAR(GETDATE()), MONTH(GETDATE()), 1)
-                    AND [Health System] IS NOT NULL
+                FROM DeduplicatedESR
                 GROUP BY
                     FORMAT(DATEFROMPARTS(YEAR([Work Date]), MONTH([Work Date]), 1), 'yyyy-MM'),
                     [Health System],
