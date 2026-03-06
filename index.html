@@ -375,6 +375,10 @@
         </button>
         <button onclick="store.dispatch('SET_VIEW','stats')" id="btnViewStats"
                 class="px-4 py-1.5 text-xs font-bold rounded-md transition-colors text-slate-500 hover:text-slate-700">Stats</button>
+        <button onclick="store.dispatch('SET_VIEW','financials')" id="btnViewFinancials"
+                class="px-4 py-1.5 text-xs font-bold rounded-md transition-colors text-slate-500 hover:text-slate-700 flex items-center gap-1">
+          <i data-lucide="dollar-sign" class="w-3 h-3 text-emerald-500"></i> Financials
+        </button>
       </div>
       <button onclick="exportTravelAgingReport()" id="btnTravelAgingReport"
               class="px-4 py-1.5 text-xs font-bold rounded-lg transition-colors bg-purple-600 hover:bg-purple-700 text-white shadow-sm flex items-center gap-1.5">
@@ -435,6 +439,12 @@
     <div id="statsViewWrapper" class="hidden flex flex-col h-full overflow-hidden bg-white shadow-lg rounded-lg border border-slate-200">
       <div class="flex-1 overflow-y-auto scroller p-6">
         <div id="statsContent" class="space-y-6"></div>
+      </div>
+    </div>
+
+    <div id="financialsViewWrapper" class="hidden flex flex-col h-full overflow-hidden bg-white shadow-lg rounded-lg border border-slate-200">
+      <div class="flex-1 overflow-y-auto scroller p-6">
+        <div id="financialsContent" class="space-y-6"></div>
       </div>
     </div>
   </div>
@@ -1146,6 +1156,22 @@
             } catch (statsError) {
                 console.warn('Error loading stats data:', statsError);
                 window.store.state.statsData = { onAssignment: [], upcoming: [] };
+            }
+
+            // Load financial data for the Financials tab
+            try {
+                const finResponse = await fetch(`${API_BASE_URL}/financial-data`);
+                if (finResponse.ok) {
+                    const finData = await finResponse.json();
+                    window.store.state.financialData = finData.monthlyData || [];
+                    console.log(`Loaded ${window.store.state.financialData.length} financial data rows`);
+                } else {
+                    console.warn('Could not load financial data');
+                    window.store.state.financialData = [];
+                }
+            } catch (finError) {
+                console.warn('Error loading financial data:', finError);
+                window.store.state.financialData = [];
             }
 
             return true;
@@ -1910,6 +1936,101 @@
       }, 50);
     };
 
+    window.exportFinancialData = () => {
+      const rawData = window.store.state.financialData || [];
+      if (rawData.length === 0) { window.showToast("No financial data to export", 'error'); return; }
+
+      Utils.setLoading(true, "Exporting financials...");
+      setTimeout(() => {
+        try {
+          // Aggregate data
+          const monthMap = {};
+          const systemSet = new Set();
+          const monthSet = new Set();
+
+          rawData.forEach(r => {
+            const m = r.month;
+            const sys = Utils.getHealthSystem(null, r.health_system) || r.health_system || 'Unknown';
+            monthSet.add(m); systemSet.add(sys);
+            if (!monthMap[m]) monthMap[m] = {};
+            if (!monthMap[m][sys]) monthMap[m][sys] = { ghrBilling: 0, affBilling: 0, ghrHeadcount: 0, affHeadcount: 0 };
+            if (r.vendor_type === 'GHR') {
+              monthMap[m][sys].ghrBilling += r.estimated_billing || 0;
+              monthMap[m][sys].ghrHeadcount += r.headcount || 0;
+            } else {
+              monthMap[m][sys].affBilling += r.estimated_billing || 0;
+              monthMap[m][sys].affHeadcount += r.headcount || 0;
+            }
+          });
+
+          const months = [...monthSet].sort();
+          const systems = [...systemSet].sort();
+          const monthLabel = (m) => {
+            const [y, mo] = m.split('-');
+            const names = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+            return names[parseInt(mo) - 1] + '-' + y.slice(2);
+          };
+
+          // Sheet 1: Billings
+          const billRows = [];
+          systems.forEach(sys => {
+            const ghrRow = { 'Health System': sys, 'Type': 'GHR' };
+            const affRow = { 'Health System': sys, 'Type': 'Affiliate' };
+            const totalRow = { 'Health System': sys, 'Type': 'Total' };
+            months.forEach(m => {
+              const d = monthMap[m]?.[sys] || { ghrBilling: 0, affBilling: 0 };
+              ghrRow[monthLabel(m)] = Math.round(d.ghrBilling);
+              affRow[monthLabel(m)] = Math.round(d.affBilling);
+              totalRow[monthLabel(m)] = Math.round(d.ghrBilling + d.affBilling);
+            });
+            billRows.push(ghrRow, affRow, totalRow);
+          });
+
+          // Sheet 2: Fill Rates
+          const fillRows = [];
+          systems.forEach(sys => {
+            const row = { 'Health System': sys };
+            months.forEach(m => {
+              const d = monthMap[m]?.[sys];
+              if (d && (d.ghrBilling + d.affBilling > 0)) {
+                row[monthLabel(m)] = ((d.ghrBilling / (d.ghrBilling + d.affBilling)) * 100).toFixed(1) + '%';
+              } else {
+                row[monthLabel(m)] = '-';
+              }
+            });
+            fillRows.push(row);
+          });
+
+          // Sheet 3: Headcounts
+          const hcRows = [];
+          systems.forEach(sys => {
+            const ghrRow = { 'Health System': sys, 'Type': 'GHR' };
+            const totalRow = { 'Health System': sys, 'Type': 'Total' };
+            months.forEach(m => {
+              const d = monthMap[m]?.[sys] || { ghrHeadcount: 0, affHeadcount: 0 };
+              ghrRow[monthLabel(m)] = d.ghrHeadcount;
+              totalRow[monthLabel(m)] = d.ghrHeadcount + d.affHeadcount;
+            });
+            hcRows.push(ghrRow, totalRow);
+          });
+
+          const wb = XLSX.utils.book_new();
+          XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(billRows), 'Billings');
+          XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(fillRows), 'Fill Rates');
+          XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(hcRows), 'Headcounts');
+
+          const timestamp = new Date().toISOString().split('T')[0];
+          XLSX.writeFile(wb, `MSP_Financial_Report_${timestamp}.xlsx`);
+          window.showToast("Financial report exported!", "success");
+        } catch (e) {
+          console.error(e);
+          window.showToast("Export failed. Check console.", "error");
+        } finally {
+          Utils.setLoading(false);
+        }
+      }, 50);
+    };
+
     // 4. DATA PROCESSING
     const DataProcessor = {
       // Normalize header names so "Position ID" and "PositionID" and "position id" match
@@ -2498,26 +2619,29 @@
         $('listViewWrapper')?.classList.toggle('hidden', view !== 'list');
         $('hotJobsViewWrapper')?.classList.toggle('hidden', view !== 'hotjobs');
         $('statsViewWrapper')?.classList.toggle('hidden', view !== 'stats');
-        
+        $('financialsViewWrapper')?.classList.toggle('hidden', view !== 'financials');
+
         // Use visibility to hide KPI and legend on other tabs (preserves layout)
         const kpiEl = $('kpiContainer');
         const legendEl = $('legendContainer');
         if (kpiEl) kpiEl.style.visibility = view === 'list' ? 'visible' : 'hidden';
-        if (legendEl) legendEl.style.visibility = view === 'stats' ? 'hidden' : 'visible';
+        if (legendEl) legendEl.style.visibility = (view === 'stats' || view === 'financials') ? 'hidden' : 'visible';
 
         const btnList = $('btnViewList');
         const btnHot = $('btnViewHot');
         const btnStats = $('btnViewStats');
+        const btnFinancials = $('btnViewFinancials');
 
         const activeClass = "px-4 py-1.5 text-xs font-bold rounded-md transition-colors bg-blue-50 text-blue-700 shadow-sm border border-blue-100";
         const inactiveClass = "px-4 py-1.5 text-xs font-bold rounded-md transition-colors text-slate-500 hover:text-slate-700";
-        // Hot Jobs button needs flex for the flame icon
-        const activeHotClass = "px-4 py-1.5 text-xs font-bold rounded-md transition-colors bg-blue-50 text-blue-700 shadow-sm border border-blue-100 flex items-center gap-1";
-        const inactiveHotClass = "px-4 py-1.5 text-xs font-bold rounded-md transition-colors text-slate-500 hover:text-slate-700 flex items-center gap-1";
+        // Buttons with icons need flex
+        const activeIconClass = "px-4 py-1.5 text-xs font-bold rounded-md transition-colors bg-blue-50 text-blue-700 shadow-sm border border-blue-100 flex items-center gap-1";
+        const inactiveIconClass = "px-4 py-1.5 text-xs font-bold rounded-md transition-colors text-slate-500 hover:text-slate-700 flex items-center gap-1";
 
         if (btnList) btnList.className = view === 'list' ? activeClass : inactiveClass;
-        if (btnHot) btnHot.className = view === 'hotjobs' ? activeHotClass : inactiveHotClass;
+        if (btnHot) btnHot.className = view === 'hotjobs' ? activeIconClass : inactiveIconClass;
         if (btnStats) btnStats.className = view === 'stats' ? activeClass : inactiveClass;
+        if (btnFinancials) btnFinancials.className = view === 'financials' ? activeIconClass : inactiveIconClass;
       },
 
       main() {
@@ -2525,6 +2649,7 @@
         if (v === 'list') this.list();
         else if (v === 'hotjobs') this.hotJobs();
         else if (v === 'stats') this.stats();
+        else if (v === 'financials') this.financials();
         lucide.createIcons();
       },
 
@@ -3256,6 +3381,311 @@
         });
 
         lucide.createIcons();
+      },
+
+      financials() {
+        const container = $('financialsContent');
+        if (!container) return;
+
+        const rawData = window.store.state.financialData || [];
+        if (rawData.length === 0) {
+          container.innerHTML = `<div class="p-6 text-slate-500 bg-slate-50 border border-slate-200 rounded">No financial data available. Data is loaded from the database automatically.</div>`;
+          return;
+        }
+
+        // Aggregate data: { month: { system: { ghrBilling, affBilling, ghrHeadcount, affHeadcount } } }
+        const monthMap = {};
+        const systemSet = new Set();
+        const monthSet = new Set();
+
+        rawData.forEach(r => {
+          const m = r.month;
+          const sys = Utils.getHealthSystem(null, r.health_system) || r.health_system || 'Unknown';
+          monthSet.add(m);
+          systemSet.add(sys);
+          if (!monthMap[m]) monthMap[m] = {};
+          if (!monthMap[m][sys]) monthMap[m][sys] = { ghrBilling: 0, affBilling: 0, ghrHeadcount: 0, affHeadcount: 0 };
+
+          if (r.vendor_type === 'GHR') {
+            monthMap[m][sys].ghrBilling += r.estimated_billing || 0;
+            monthMap[m][sys].ghrHeadcount += r.headcount || 0;
+          } else {
+            monthMap[m][sys].affBilling += r.estimated_billing || 0;
+            monthMap[m][sys].affHeadcount += r.headcount || 0;
+          }
+        });
+
+        const months = [...monthSet].sort();
+        const systems = [...systemSet].sort();
+
+        // Format currency
+        const fmt = (n) => {
+          if (n >= 1000000) return '$' + (n / 1000000).toFixed(1) + 'M';
+          if (n >= 1000) return '$' + Math.round(n / 1000) + 'K';
+          return '$' + Math.round(n);
+        };
+        const fmtFull = (n) => '$' + Math.round(n).toLocaleString();
+        const monthLabel = (m) => {
+          const [y, mo] = m.split('-');
+          const monthNames = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+          return monthNames[parseInt(mo) - 1] + '-' + y.slice(2);
+        };
+
+        // ====== SECTION 1: KPI SUMMARY CARDS ======
+        const latestMonth = months[months.length - 1];
+        const prevMonth = months.length > 1 ? months[months.length - 2] : null;
+
+        let totalGhrBilling = 0, totalAffBilling = 0, totalGhrHC = 0, totalAffHC = 0;
+        let prevTotalBilling = 0;
+        systems.forEach(sys => {
+          const d = monthMap[latestMonth]?.[sys];
+          if (d) {
+            totalGhrBilling += d.ghrBilling;
+            totalAffBilling += d.affBilling;
+            totalGhrHC += d.ghrHeadcount;
+            totalAffHC += d.affHeadcount;
+          }
+          if (prevMonth) {
+            const pd = monthMap[prevMonth]?.[sys];
+            if (pd) prevTotalBilling += pd.ghrBilling + pd.affBilling;
+          }
+        });
+
+        const totalBilling = totalGhrBilling + totalAffBilling;
+        const fillRate = totalBilling > 0 ? ((totalGhrBilling / totalBilling) * 100).toFixed(1) : '0.0';
+        const totalHC = totalGhrHC + totalAffHC;
+        const billingChange = prevTotalBilling > 0 ? (((totalBilling - prevTotalBilling) / prevTotalBilling) * 100).toFixed(1) : null;
+        const changeIcon = billingChange !== null ? (parseFloat(billingChange) >= 0 ? 'trending-up' : 'trending-down') : '';
+        const changeColor = billingChange !== null ? (parseFloat(billingChange) >= 0 ? 'text-emerald-600' : 'text-red-600') : '';
+
+        let html = `
+          <div class="flex justify-between items-center mb-4">
+            <h3 class="text-lg font-bold text-slate-800">MSP Financial Summary</h3>
+            <button onclick="window.exportFinancialData()" class="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg text-sm font-bold flex items-center gap-2 shadow-sm">
+              <i data-lucide="download" class="w-4 h-4"></i> Export Financials
+            </button>
+          </div>
+
+          <div class="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
+            <div class="bg-white p-4 rounded-lg border border-slate-200 shadow-sm text-center">
+              <div class="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">Total Billings (${monthLabel(latestMonth)})</div>
+              <div class="text-2xl font-bold text-slate-800">${fmt(totalBilling)}</div>
+              ${billingChange !== null ? `<div class="text-xs ${changeColor} font-medium flex items-center justify-center gap-1 mt-1"><i data-lucide="${changeIcon}" class="w-3 h-3"></i> ${billingChange}% vs prior</div>` : ''}
+            </div>
+            <div class="bg-white p-4 rounded-lg border border-slate-200 shadow-sm text-center">
+              <div class="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">GHR Billings</div>
+              <div class="text-2xl font-bold text-blue-700">${fmt(totalGhrBilling)}</div>
+            </div>
+            <div class="bg-white p-4 rounded-lg border border-slate-200 shadow-sm text-center">
+              <div class="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">Affiliate Billings</div>
+              <div class="text-2xl font-bold text-purple-700">${fmt(totalAffBilling)}</div>
+            </div>
+            <div class="bg-white p-4 rounded-lg border border-slate-200 shadow-sm text-center">
+              <div class="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">GHR Fill Rate</div>
+              <div class="text-2xl font-bold text-emerald-700">${fillRate}%</div>
+            </div>
+            <div class="bg-white p-4 rounded-lg border border-slate-200 shadow-sm text-center">
+              <div class="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">Total Headcount</div>
+              <div class="text-2xl font-bold text-slate-800">${totalHC.toLocaleString()}</div>
+              <div class="text-xs text-slate-500 mt-1">GHR: ${totalGhrHC} | Affiliate: ${totalAffHC}</div>
+            </div>
+          </div>`;
+
+        // ====== SECTION 2: FILL RATE HEATMAP TABLE ======
+        const fillRateColor = (pct) => {
+          if (pct === null || pct === undefined) return 'bg-slate-100 text-slate-400';
+          if (pct >= 80) return 'bg-emerald-100 text-emerald-800';
+          if (pct >= 60) return 'bg-blue-100 text-blue-800';
+          if (pct >= 40) return 'bg-amber-100 text-amber-800';
+          if (pct > 0) return 'bg-red-100 text-red-800';
+          return 'bg-slate-100 text-slate-400';
+        };
+
+        // Filter systems that have meaningful data (at least some billing)
+        const activeSystems = systems.filter(sys =>
+          months.some(m => {
+            const d = monthMap[m]?.[sys];
+            return d && (d.ghrBilling + d.affBilling > 0);
+          })
+        );
+
+        html += `
+          <div class="bg-white p-4 rounded-lg shadow-sm border border-slate-200 mb-6">
+            <h4 class="font-bold text-slate-700 mb-4">GHR Clinical Fill Rate by System</h4>
+            <div class="overflow-x-auto">
+              <table class="w-full text-xs">
+                <thead>
+                  <tr class="border-b border-slate-200">
+                    <th class="text-left py-2 px-2 font-bold text-slate-600 sticky left-0 bg-white min-w-[120px]">Health System</th>
+                    ${months.map(m => `<th class="text-center py-2 px-1 font-bold text-slate-500 min-w-[60px]">${monthLabel(m)}</th>`).join('')}
+                  </tr>
+                </thead>
+                <tbody>
+                  ${activeSystems.map(sys => {
+                    return `<tr class="border-b border-slate-100 hover:bg-slate-50">
+                      <td class="py-1.5 px-2 font-medium text-slate-700 sticky left-0 bg-white">${sys}</td>
+                      ${months.map(m => {
+                        const d = monthMap[m]?.[sys];
+                        if (!d || (d.ghrBilling + d.affBilling) === 0) {
+                          return `<td class="py-1.5 px-1 text-center"><span class="inline-block w-full py-0.5 rounded text-[10px] bg-slate-100 text-slate-400">-</span></td>`;
+                        }
+                        const pct = ((d.ghrBilling / (d.ghrBilling + d.affBilling)) * 100);
+                        return `<td class="py-1.5 px-1 text-center"><span class="inline-block w-full py-0.5 rounded text-[10px] font-bold ${fillRateColor(pct)}">${pct.toFixed(0)}%</span></td>`;
+                      }).join('')}
+                    </tr>`;
+                  }).join('')}
+                  <tr class="border-t-2 border-slate-300 font-bold">
+                    <td class="py-1.5 px-2 text-slate-800 sticky left-0 bg-white">Total</td>
+                    ${months.map(m => {
+                      let mGhr = 0, mTotal = 0;
+                      systems.forEach(sys => {
+                        const d = monthMap[m]?.[sys];
+                        if (d) { mGhr += d.ghrBilling; mTotal += d.ghrBilling + d.affBilling; }
+                      });
+                      const pct = mTotal > 0 ? ((mGhr / mTotal) * 100) : 0;
+                      return `<td class="py-1.5 px-1 text-center"><span class="inline-block w-full py-0.5 rounded text-[10px] font-bold ${fillRateColor(pct)}">${pct.toFixed(0)}%</span></td>`;
+                    }).join('')}
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>`;
+
+        // ====== SECTION 3: MSP BILLINGS TREND (STACKED BAR CHART) ======
+        html += `
+          <div class="bg-white p-4 rounded-lg shadow-sm border border-slate-200 mb-6">
+            <h4 class="font-bold text-slate-700 mb-4">MSP Billings Trend</h4>
+            <div class="h-96"><canvas id="billingsTrendChart"></canvas></div>
+          </div>`;
+
+        // ====== SECTION 4: BILLING DATA TABLE ======
+        html += `
+          <div class="bg-white p-4 rounded-lg shadow-sm border border-slate-200">
+            <h4 class="font-bold text-slate-700 mb-4">Monthly Billings by Health System</h4>
+            <div class="overflow-x-auto">
+              <table class="w-full text-xs">
+                <thead>
+                  <tr class="border-b border-slate-200">
+                    <th class="text-left py-2 px-2 font-bold text-slate-600 sticky left-0 bg-white min-w-[120px]">Health System</th>
+                    ${months.map(m => `<th class="text-right py-2 px-2 font-bold text-slate-500 min-w-[80px]">${monthLabel(m)}</th>`).join('')}
+                  </tr>
+                </thead>
+                <tbody>
+                  ${activeSystems.map(sys => {
+                    return `
+                      <tr class="border-b border-slate-100 bg-blue-50/30">
+                        <td class="py-1 px-2 font-medium text-blue-700 sticky left-0 bg-blue-50/30">${sys} (GHR)</td>
+                        ${months.map(m => {
+                          const d = monthMap[m]?.[sys];
+                          return `<td class="py-1 px-2 text-right text-blue-700">${d ? fmtFull(d.ghrBilling) : '-'}</td>`;
+                        }).join('')}
+                      </tr>
+                      <tr class="border-b border-slate-100">
+                        <td class="py-1 px-2 font-medium text-purple-700 sticky left-0 bg-white">${sys} (Affiliate)</td>
+                        ${months.map(m => {
+                          const d = monthMap[m]?.[sys];
+                          return `<td class="py-1 px-2 text-right text-purple-700">${d ? fmtFull(d.affBilling) : '-'}</td>`;
+                        }).join('')}
+                      </tr>`;
+                  }).join('')}
+                  <tr class="border-t-2 border-slate-300 font-bold">
+                    <td class="py-2 px-2 text-slate-800 sticky left-0 bg-white">Grand Total</td>
+                    ${months.map(m => {
+                      let total = 0;
+                      systems.forEach(sys => {
+                        const d = monthMap[m]?.[sys];
+                        if (d) total += d.ghrBilling + d.affBilling;
+                      });
+                      return `<td class="py-2 px-2 text-right text-slate-800">${fmtFull(total)}</td>`;
+                    }).join('')}
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>`;
+
+        container.innerHTML = html;
+
+        // Render the stacked bar chart
+        const ctx = $('billingsTrendChart')?.getContext?.('2d');
+        if (!ctx) return;
+
+        if (window.__billingsTrendChart) {
+          try { window.__billingsTrendChart.destroy(); } catch {}
+          window.__billingsTrendChart = null;
+        }
+
+        // Build stacked bar datasets - each system gets GHR + Affiliate segments
+        const systemColors = {
+          'Cooper': { ghr: '#DC2626', aff: '#FCA5A5' },
+          'Penn': { ghr: '#1D4ED8', aff: '#93C5FD' },
+          'Capital': { ghr: '#059669', aff: '#6EE7B7' },
+          'Inspira': { ghr: '#0891B2', aff: '#67E8F9' },
+          'St. Luke\'s': { ghr: '#7C3AED', aff: '#C4B5FD' },
+          'Hunterdon': { ghr: '#D97706', aff: '#FCD34D' },
+          'Richmond': { ghr: '#BE185D', aff: '#F9A8D4' },
+          'Holy Redeemer': { ghr: '#4338CA', aff: '#A5B4FC' },
+          'Sunrise': { ghr: '#65A30D', aff: '#BEF264' },
+          'Jefferson': { ghr: '#0D9488', aff: '#99F6E4' },
+        };
+        const defaultColors = ['#475569','#64748B','#94A3B8','#CBD5E1','#334155','#1E293B','#78716C','#A8A29E'];
+
+        const datasets = [];
+        let colorIdx = 0;
+        activeSystems.forEach(sys => {
+          const colors = systemColors[sys] || {
+            ghr: defaultColors[colorIdx % defaultColors.length],
+            aff: defaultColors[(colorIdx + 1) % defaultColors.length]
+          };
+          colorIdx += 2;
+
+          datasets.push({
+            label: `${sys} - GHR`,
+            data: months.map(m => Math.round((monthMap[m]?.[sys]?.ghrBilling || 0) / 1000)),
+            backgroundColor: colors.ghr,
+            stack: 'billing'
+          });
+          datasets.push({
+            label: `${sys} - Affiliate`,
+            data: months.map(m => Math.round((monthMap[m]?.[sys]?.affBilling || 0) / 1000)),
+            backgroundColor: colors.aff,
+            stack: 'billing'
+          });
+        });
+
+        window.__billingsTrendChart = new Chart(ctx, {
+          type: 'bar',
+          data: {
+            labels: months.map(m => monthLabel(m)),
+            datasets: datasets
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+              legend: {
+                position: 'bottom',
+                labels: { font: { size: 10 }, boxWidth: 12, padding: 8 }
+              },
+              tooltip: {
+                callbacks: {
+                  label: (ctx) => `${ctx.dataset.label}: $${ctx.parsed.y.toLocaleString()}K`
+                }
+              }
+            },
+            scales: {
+              x: { stacked: true },
+              y: {
+                stacked: true,
+                ticks: {
+                  callback: (val) => '$' + (val >= 1000 ? (val / 1000).toFixed(0) + 'M' : val + 'K')
+                }
+              }
+            }
+          }
+        });
+
+        lucide.createIcons();
       }
     };
 
@@ -3264,6 +3694,7 @@
       state: {
         jobs: [],
         statsData: { onAssignment: [], upcoming: [] },
+        financialData: [],
         filters: { systems: new Set(), facilities: new Set(), categories: new Set(), specialties: new Set(), ageMin: null, ageMax: null, searchId: '' },
         filterSelection: { systems: new Set(), facilities: new Set(), categories: new Set(), specialties: new Set() },
         searchQuery: '',
