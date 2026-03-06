@@ -50,19 +50,19 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                         [Item ID],
                         [Contractor First Name],
                         [Contractor Last Name],
-                        [Invoiced Date],
+                        [Item Date],
                         [Health System],
                         [Vendor Company Name],
                         [Client Amount],
-                        ROW_NUMBER() OVER (PARTITION BY [Item ID] ORDER BY [Invoiced Date]) AS rn
+                        ROW_NUMBER() OVER (PARTITION BY [Item ID] ORDER BY [Item Date]) AS rn
                     FROM dbo.STAGING_VNDLY_SPEND
-                    WHERE [Invoiced Date] >= DATEADD(MONTH, -13, DATEFROMPARTS(YEAR(GETDATE()), MONTH(GETDATE()), 1))
-                        AND [Invoiced Date] < DATEFROMPARTS(YEAR(GETDATE()), MONTH(GETDATE()), 1)
+                    WHERE [Item Date] >= DATEADD(MONTH, -13, DATEFROMPARTS(YEAR(GETDATE()), MONTH(GETDATE()), 1))
+                        AND [Item Date] < DATEFROMPARTS(YEAR(GETDATE()), MONTH(GETDATE()), 1)
                         AND [Health System] IS NOT NULL
                 )
                 SELECT
                     'VNDLY' AS source_system,
-                    FORMAT(DATEFROMPARTS(YEAR([Invoiced Date]), MONTH([Invoiced Date]), 1), 'yyyy-MM') AS month,
+                    FORMAT(DATEFROMPARTS(YEAR([Item Date]), MONTH([Item Date]), 1), 'yyyy-MM') AS month,
                     [Health System] AS health_system,
                     CASE
                         WHEN [Vendor Company Name] LIKE '%GHR%' OR [Vendor Company Name] LIKE '%Planet Healthcare%'
@@ -73,13 +73,13 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                 FROM DeduplicatedSpend
                 WHERE rn = 1
                 GROUP BY
-                    FORMAT(DATEFROMPARTS(YEAR([Invoiced Date]), MONTH([Invoiced Date]), 1), 'yyyy-MM'),
+                    FORMAT(DATEFROMPARTS(YEAR([Item Date]), MONTH([Item Date]), 1), 'yyyy-MM'),
                     [Health System],
                     CASE
                         WHEN [Vendor Company Name] LIKE '%GHR%' OR [Vendor Company Name] LIKE '%Planet Healthcare%'
                         THEN 'GHR' ELSE 'Affiliate'
                     END
-                ORDER BY FORMAT(DATEFROMPARTS(YEAR([Invoiced Date]), MONTH([Invoiced Date]), 1), 'yyyy-MM'), [Health System]
+                ORDER BY FORMAT(DATEFROMPARTS(YEAR([Item Date]), MONTH([Item Date]), 1), 'yyyy-MM'), [Health System]
             ''')
 
             columns = [column[0] for column in cursor.description]
@@ -101,18 +101,18 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                 WITH DeduplicatedESR AS (
                     SELECT DISTINCT
                         [Employee],
-                        [Date Invoiced],
+                        [Work Date],
                         [Health System],
                         [Agency Name],
                         [Bill Total]
                     FROM dhc.B4HealthESR
-                    WHERE [Date Invoiced] >= DATEADD(MONTH, -13, DATEFROMPARTS(YEAR(GETDATE()), MONTH(GETDATE()), 1))
-                        AND [Date Invoiced] < DATEFROMPARTS(YEAR(GETDATE()), MONTH(GETDATE()), 1)
+                    WHERE [Work Date] >= DATEADD(MONTH, -13, DATEFROMPARTS(YEAR(GETDATE()), MONTH(GETDATE()), 1))
+                        AND [Work Date] < DATEFROMPARTS(YEAR(GETDATE()), MONTH(GETDATE()), 1)
                         AND [Health System] IS NOT NULL
                 )
                 SELECT
                     'B4' AS source_system,
-                    FORMAT(DATEFROMPARTS(YEAR([Date Invoiced]), MONTH([Date Invoiced]), 1), 'yyyy-MM') AS month,
+                    FORMAT(DATEFROMPARTS(YEAR([Work Date]), MONTH([Work Date]), 1), 'yyyy-MM') AS month,
                     [Health System] AS health_system,
                     CASE
                         WHEN [Agency Name] LIKE 'GHR%' OR [Agency Name] LIKE '%Planet Healthcare%'
@@ -122,13 +122,13 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                     SUM(ISNULL(TRY_CAST([Bill Total] AS DECIMAL(18,2)), 0)) AS estimated_billing
                 FROM DeduplicatedESR
                 GROUP BY
-                    FORMAT(DATEFROMPARTS(YEAR([Date Invoiced]), MONTH([Date Invoiced]), 1), 'yyyy-MM'),
+                    FORMAT(DATEFROMPARTS(YEAR([Work Date]), MONTH([Work Date]), 1), 'yyyy-MM'),
                     [Health System],
                     CASE
                         WHEN [Agency Name] LIKE 'GHR%' OR [Agency Name] LIKE '%Planet Healthcare%'
                         THEN 'GHR' ELSE 'Affiliate'
                     END
-                ORDER BY FORMAT(DATEFROMPARTS(YEAR([Date Invoiced]), MONTH([Date Invoiced]), 1), 'yyyy-MM'), [Health System]
+                ORDER BY FORMAT(DATEFROMPARTS(YEAR([Work Date]), MONTH([Work Date]), 1), 'yyyy-MM'), [Health System]
             ''')
 
             columns = [column[0] for column in cursor.description]
