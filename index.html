@@ -3831,6 +3831,20 @@
 
         html += `</div>`;
 
+        // ====== MSP HEADCOUNTS SECTION ======
+        html += `<div id="pdfHeadcountSection" class="bg-white p-4 rounded-lg shadow-sm border border-slate-200 mb-6">
+          <h4 class="font-bold text-slate-800 mb-3 text-base">MSP Headcounts <span class="text-xs font-normal text-slate-400">(# of Temps Worked)</span></h4>`;
+
+        // GHR Temps Worked table
+        html += buildTable('GHR Temps Worked', 'text-blue-800', 'bg-white',
+          d => d.ghrHeadcount, fmtNum);
+
+        // Total Temps Worked table
+        html += buildTable('Total Temps Worked', 'text-slate-800', 'bg-white',
+          d => d.ghrHeadcount + d.affHeadcount, fmtNum);
+
+        html += `</div>`;
+
         // ====== GHR FILL RATES SECTION ======
         const fillRateColor = (pct) => {
           if (pct === null || pct === undefined) return 'bg-slate-100 text-slate-400';
@@ -3935,20 +3949,6 @@
             </div>
           </div>
         </div>`;
-
-        // ====== MSP HEADCOUNTS SECTION ======
-        html += `<div id="pdfHeadcountSection" class="bg-white p-4 rounded-lg shadow-sm border border-slate-200 mb-6">
-          <h4 class="font-bold text-slate-800 mb-3 text-base">MSP Headcounts <span class="text-xs font-normal text-slate-400">(# of Temps Worked)</span></h4>`;
-
-        // GHR Temps Worked table
-        html += buildTable('GHR Temps Worked', 'text-blue-800', 'bg-white',
-          d => d.ghrHeadcount, fmtNum);
-
-        // Total Temps Worked table
-        html += buildTable('Total Temps Worked', 'text-slate-800', 'bg-white',
-          d => d.ghrHeadcount + d.affHeadcount, fmtNum);
-
-        html += `</div>`;
 
         // ====== MSP BILLINGS TREND CHART ======
         html += `
