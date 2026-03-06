@@ -3823,7 +3823,7 @@
               <h5 class="font-bold text-sm text-slate-600 mb-3">Current Fill Rate by System <span class="text-xs font-normal text-slate-400">(${monthLabel(latestMonth)})</span></h5>
               <div class="space-y-1.5">
                 <div class="flex items-center gap-2 pb-1.5 mb-1 border-b-2 border-slate-300">
-                  <div class="w-24 text-xs font-bold text-slate-800 truncate flex-shrink-0">Overall</div>
+                  <div class="w-40 text-xs font-bold text-slate-800 truncate flex-shrink-0">Overall</div>
                   <div class="flex-1 bg-slate-100 rounded-full h-5 relative overflow-hidden">
                     <div class="h-full rounded-full transition-all" style="width: ${Math.min(overallPct, 100)}%; background-color: #0F172A;"></div>
                     <span class="absolute inset-0 flex items-center justify-center text-[10px] font-bold ${overallPct > 50 ? 'text-white' : 'text-slate-700'}">${overallPct.toFixed(1)}%</span>
@@ -3831,7 +3831,7 @@
                 </div>
                 ${fillRateData.map(({ sys, pct }) => `
                   <div class="flex items-center gap-2">
-                    <div class="w-24 text-xs font-medium text-slate-600 truncate flex-shrink-0" title="${sys}">${sys}</div>
+                    <div class="w-40 text-xs font-medium text-slate-600 truncate flex-shrink-0" title="${sys}">${sys}</div>
                     <div class="flex-1 bg-slate-100 rounded-full h-5 relative overflow-hidden">
                       <div class="h-full rounded-full transition-all" style="width: ${Math.min(pct, 100)}%; background-color: ${fillRateBarColor(pct)};"></div>
                       <span class="absolute inset-0 flex items-center justify-center text-[10px] font-bold ${pct > 50 ? 'text-white' : 'text-slate-700'}">${pct.toFixed(1)}%</span>
