@@ -3648,11 +3648,20 @@
           }
         });
 
-        const allMonths = [...monthSet].sort();
-        const storedFrom = window.store.state.financialFromMonth || allMonths[0];
-        const storedTo = window.store.state.financialToMonth || allMonths[allMonths.length - 1];
-        // Filter months to selected range
-        const months = allMonths.filter(m => m >= storedFrom && m <= storedTo);
+        // Generate picker months: last 36 months up to current month
+        const pickerMonths = [];
+        const now = new Date();
+        for (let i = 36; i >= 0; i--) {
+          const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+          pickerMonths.push(d.toISOString().slice(0, 7));
+        }
+
+        // Data months from API response
+        const months = [...monthSet].sort();
+
+        // Default from/to: use stored values or fall back to data range
+        const storedFrom = window.store.state.financialFromMonth || months[0];
+        const storedTo = window.store.state.financialToMonth || months[months.length - 1];
         const systems = [...systemSet].sort();
 
         const fmtDollar = (n) => {
@@ -3763,11 +3772,11 @@
               <div class="flex items-center gap-2 text-sm">
                 <label class="font-medium text-slate-600">From:</label>
                 <select id="finFromMonth" onchange="window.updateFinancialDateRange()" class="border border-slate-300 rounded-md px-2 py-1.5 text-sm bg-white text-slate-700">
-                  ${allMonths.map(m => `<option value="${m}" ${m === storedFrom ? 'selected' : ''}>${monthLabel(m)}</option>`).join('')}
+                  ${pickerMonths.map(m => `<option value="${m}" ${m === storedFrom ? 'selected' : ''}>${monthLabel(m)}</option>`).join('')}
                 </select>
                 <label class="font-medium text-slate-600">To:</label>
                 <select id="finToMonth" onchange="window.updateFinancialDateRange()" class="border border-slate-300 rounded-md px-2 py-1.5 text-sm bg-white text-slate-700">
-                  ${allMonths.map(m => `<option value="${m}" ${m === storedTo ? 'selected' : ''}>${monthLabel(m)}</option>`).join('')}
+                  ${pickerMonths.map(m => `<option value="${m}" ${m === storedTo ? 'selected' : ''}>${monthLabel(m)}</option>`).join('')}
                 </select>
               </div>
               <button onclick="window.exportFinancialPDF()" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-bold flex items-center gap-2 shadow-sm">
