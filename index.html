@@ -1956,21 +1956,20 @@
         const usableWidth = pageWidth - (margin * 2);
         const usableHeight = pageHeight - (margin * 2);
 
-        // Helper: capture a DOM element and add as full-page image
+        // Helper: capture a DOM element and add as full-page JPEG image
         const captureSection = async (element, isFirstPage = false) => {
           if (!isFirstPage) pdf.addPage('a4', 'landscape');
 
           // Clone into offscreen container for clean render
           const wrapper = document.createElement('div');
-          wrapper.style.cssText = 'position:absolute;left:-9999px;top:0;width:1600px;background:#ffffff;padding:16px;';
+          wrapper.style.cssText = 'position:absolute;left:-9999px;top:0;width:1400px;background:#ffffff;padding:16px;';
           const clone = element.cloneNode(true);
-          // Remove any buttons from the clone
           clone.querySelectorAll('button').forEach(b => b.remove());
           wrapper.appendChild(clone);
           document.body.appendChild(wrapper);
 
           const canvas = await html2canvas(wrapper, {
-            scale: 2,
+            scale: 1.5,
             useCORS: true,
             backgroundColor: '#ffffff',
             logging: false
@@ -1978,21 +1977,19 @@
 
           document.body.removeChild(wrapper);
 
-          const imgData = canvas.toDataURL('image/png');
+          const imgData = canvas.toDataURL('image/jpeg', 0.75);
           const imgWidth = usableWidth;
           const imgHeight = (canvas.height / canvas.width) * imgWidth;
 
           if (imgHeight <= usableHeight) {
-            // Center vertically on page
             const yOffset = margin + (usableHeight - imgHeight) / 2;
-            pdf.addImage(imgData, 'PNG', margin, yOffset, imgWidth, imgHeight);
+            pdf.addImage(imgData, 'JPEG', margin, yOffset, imgWidth, imgHeight);
           } else {
-            // Scale down to fit page height
             const scale = usableHeight / imgHeight;
             const scaledW = imgWidth * scale;
             const scaledH = usableHeight;
             const xOffset = margin + (usableWidth - scaledW) / 2;
-            pdf.addImage(imgData, 'PNG', xOffset, margin, scaledW, scaledH);
+            pdf.addImage(imgData, 'JPEG', xOffset, margin, scaledW, scaledH);
           }
         };
 
@@ -2029,19 +2026,17 @@
           // Clone fill rate section but remove the trend chart canvas container
           // so it only shows the bar chart + heatmap table
           const frWrapper = document.createElement('div');
-          frWrapper.style.cssText = 'position:absolute;left:-9999px;top:0;width:1600px;background:#ffffff;padding:16px;';
+          frWrapper.style.cssText = 'position:absolute;left:-9999px;top:0;width:1400px;background:#ffffff;padding:16px;';
           const frClone = fillRateSection.cloneNode(true);
           frClone.querySelectorAll('button').forEach(b => b.remove());
 
           // Find the grid that contains bar chart + trend chart, restructure to full width bar + remove trend
           const gridDiv = frClone.querySelector('.grid.grid-cols-1.lg\\:grid-cols-2');
           if (gridDiv) {
-            // Remove the trend chart column (second child)
             const cols = gridDiv.children;
             if (cols.length >= 2) {
               cols[1].remove();
             }
-            // Make bar chart full width
             gridDiv.className = 'mb-4';
           }
 
@@ -2050,25 +2045,25 @@
 
           pdf.addPage('a4', 'landscape');
           const frCanvas = await html2canvas(frWrapper, {
-            scale: 2,
+            scale: 1.5,
             useCORS: true,
             backgroundColor: '#ffffff',
             logging: false
           });
           document.body.removeChild(frWrapper);
 
-          const frImgData = frCanvas.toDataURL('image/png');
+          const frImgData = frCanvas.toDataURL('image/jpeg', 0.75);
           const frImgW = usableWidth;
           const frImgH = (frCanvas.height / frCanvas.width) * frImgW;
 
           if (frImgH <= usableHeight) {
             const yOff = margin + (usableHeight - frImgH) / 2;
-            pdf.addImage(frImgData, 'PNG', margin, yOff, frImgW, frImgH);
+            pdf.addImage(frImgData, 'JPEG', margin, yOff, frImgW, frImgH);
           } else {
             const scale = usableHeight / frImgH;
             const sw = frImgW * scale;
             const xOff = margin + (usableWidth - sw) / 2;
-            pdf.addImage(frImgData, 'PNG', xOff, margin, sw, usableHeight);
+            pdf.addImage(frImgData, 'JPEG', xOff, margin, sw, usableHeight);
           }
         }
 
@@ -2083,11 +2078,11 @@
             pdf.setFontSize(13);
             pdf.setTextColor(30, 41, 59);
             pdf.text('MSP Billings Trend', margin, margin + 5);
-            const bImg = billingsTrendCanvas.toDataURL('image/png', 1.0);
+            const bImg = billingsTrendCanvas.toDataURL('image/jpeg', 0.8);
             const bAspect = billingsTrendCanvas.height / billingsTrendCanvas.width;
             const bW = usableWidth;
             const bH = Math.min(bW * bAspect, halfHeight - 10);
-            pdf.addImage(bImg, 'PNG', margin, margin + 8, bW, bH);
+            pdf.addImage(bImg, 'JPEG', margin, margin + 8, bW, bH);
           }
 
           if (fillRateTrendCanvas) {
@@ -2095,11 +2090,11 @@
             pdf.setFontSize(13);
             pdf.setTextColor(30, 41, 59);
             pdf.text('Fill Rate Trend', margin, yStart + 5);
-            const frImg = fillRateTrendCanvas.toDataURL('image/png', 1.0);
+            const frImg = fillRateTrendCanvas.toDataURL('image/jpeg', 0.8);
             const frAspect = fillRateTrendCanvas.height / fillRateTrendCanvas.width;
             const frW = usableWidth;
             const frH = Math.min(frW * frAspect, halfHeight - 10);
-            pdf.addImage(frImg, 'PNG', margin, yStart + 8, frW, frH);
+            pdf.addImage(frImg, 'JPEG', margin, yStart + 8, frW, frH);
           }
         }
 
