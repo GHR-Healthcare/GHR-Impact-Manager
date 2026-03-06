@@ -2,6 +2,7 @@ import azure.functions as func
 import pyodbc
 import os
 import json
+import re
 from datetime import datetime
 
 # Mapping of B4 health system names to VNDLY health system names
@@ -26,6 +27,29 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
     B4 data is used as fallback for months before VNDLY coverage.
     """
     try:
+        # Optional date range params (format: YYYY-MM)
+        from_month = req.params.get('from')  # e.g. '2025-02'
+        to_month = req.params.get('to')      # e.g. '2026-02'
+
+        # Validate date format to prevent injection (strict YYYY-MM)
+        date_pattern = re.compile(r'^\d{4}-\d{2}$')
+        if from_month and not date_pattern.match(from_month):
+            from_month = None
+        if to_month and not date_pattern.match(to_month):
+            to_month = None
+
+        # Default: 13 months ending before current month
+        if from_month:
+            date_from = f"'{from_month}-01'"
+        else:
+            date_from = "DATEADD(MONTH, -13, DATEFROMPARTS(YEAR(GETDATE()), MONTH(GETDATE()), 1))"
+
+        if to_month:
+            # to_month is inclusive, so we go to the first day of the next month
+            date_to = f"DATEADD(MONTH, 1, '{to_month}-01')"
+        else:
+            date_to = "DATEFROMPARTS(YEAR(GETDATE()), MONTH(GETDATE()), 1)"
+
         conn = pyodbc.connect(
             f"DRIVER={{ODBC Driver 17 for SQL Server}};"
             f"SERVER={os.environ['DB_HOST']};"
@@ -44,7 +68,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
         # Uses actual client amounts from STAGING_VNDLY_SPEND
         # ============================================================
         try:
-            cursor.execute('''
+            cursor.execute(f'''
                 WITH DeduplicatedSpend AS (
                     SELECT
                         [Item ID],
@@ -56,8 +80,8 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                         [Client Amount],
                         ROW_NUMBER() OVER (PARTITION BY [Item ID] ORDER BY [Item Date]) AS rn
                     FROM dbo.STAGING_VNDLY_SPEND
-                    WHERE [Item Date] >= DATEADD(MONTH, -13, DATEFROMPARTS(YEAR(GETDATE()), MONTH(GETDATE()), 1))
-                        AND [Item Date] < DATEFROMPARTS(YEAR(GETDATE()), MONTH(GETDATE()), 1)
+                    WHERE [Item Date] >= {date_from}
+                        AND [Item Date] < {date_to}
                         AND [Health System] IS NOT NULL
                 )
                 SELECT
@@ -97,7 +121,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
         # Pull ALL systems - overlap filtering done in Python below
         # ============================================================
         try:
-            cursor.execute('''
+            cursor.execute(f'''
                 WITH DeduplicatedESR AS (
                     SELECT DISTINCT
                         [Employee],
@@ -106,8 +130,8 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                         [Agency Name],
                         [Bill Total]
                     FROM dhc.B4HealthESR
-                    WHERE [Work Date] >= DATEADD(MONTH, -13, DATEFROMPARTS(YEAR(GETDATE()), MONTH(GETDATE()), 1))
-                        AND [Work Date] < DATEFROMPARTS(YEAR(GETDATE()), MONTH(GETDATE()), 1)
+                    WHERE [Work Date] >= {date_from}
+                        AND [Work Date] < {date_to}
                         AND [Health System] IS NOT NULL
                 )
                 SELECT
