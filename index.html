@@ -1167,6 +1167,10 @@
                     const finData = await finResponse.json();
                     window.store.state.financialData = finData.monthlyData || [];
                     console.log(`Loaded ${window.store.state.financialData.length} financial data rows`);
+                    // Refresh UI so financials tab renders if user is already viewing it
+                    if (window.store.state.view === 'financials') {
+                        window.store.dispatch('REFRESH_UI');
+                    }
                 } else {
                     console.warn('Could not load financial data');
                     window.store.state.financialData = [];
@@ -3622,7 +3626,10 @@
 
         const rawData = window.store.state.financialData || [];
         if (rawData.length === 0) {
-          container.innerHTML = `<div class="p-6 text-slate-500 bg-slate-50 border border-slate-200 rounded">No financial data available. Data is loaded from the database automatically.</div>`;
+          container.innerHTML = `<div class="p-6 text-slate-500 bg-slate-50 border border-slate-200 rounded flex items-center gap-3">
+            <svg class="animate-spin h-5 w-5 text-blue-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg>
+            Loading financial data from database...
+          </div>`;
           return;
         }
 
