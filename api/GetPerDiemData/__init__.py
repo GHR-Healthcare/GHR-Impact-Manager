@@ -5,12 +5,6 @@ import json
 import re
 from datetime import datetime
 
-# Mapping of B4 health system names to VNDLY health system names
-# Used to detect overlap and prefer VNDLY data when available
-B4_TO_VNDLY_SYSTEM_MAP = {
-    'Richmond University Medical Center': 'RUMC',
-    'Holy Redeemer Hospital': 'Redeemer Health',
-}
 
 def main(req: func.HttpRequest) -> func.HttpResponse:
     """
@@ -91,12 +85,23 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
 
         # ============================================================
         # B4Health - Shifts Worked by Per Diem Workers
-        # Uses B4HealthESR joined to B4HealthOrder to identify Per Diem workers
-        # (ESR Program field is not reliably tagged as Per Diem for all systems)
+        # Uses CTE to build Per Diem worker list from B4HealthOrder,
+        # then joins to ESR to find shifts. This catches systems like
+        # St Lukes where ESR Program isn't tagged as Per Diem.
         # ============================================================
         try:
             cursor.execute(f'''
-                SELECT
+                WITH PD_Workers AS (
+                    SELECT DISTINCT
+                        CONCAT(Last_Name, ', ', First_Name) AS employee_name,
+                        Health_System
+                    FROM dhc.B4HealthOrder
+                    WHERE Program LIKE '%Per Diem%'
+                        AND Contract_Status = 'Closed And Awarded'
+                        AND Last_Name IS NOT NULL
+                        AND First_Name IS NOT NULL
+                )
+                SELECT DISTINCT
                     'B4' AS source_system,
                     e.[Employee] AS worker_name,
                     e.[Work Date] AS shift_date,
@@ -109,11 +114,9 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                     AND (
                         e.[Program] LIKE '%Per Diem%'
                         OR EXISTS (
-                            SELECT 1 FROM dhc.B4HealthOrder o
-                            WHERE o.Program LIKE '%Per Diem%'
-                                AND o.Contract_Status = 'Closed And Awarded'
-                                AND CONCAT(o.Last_Name, ', ', o.First_Name) = e.[Employee]
-                                AND o.Health_System = e.[Health System]
+                            SELECT 1 FROM PD_Workers w
+                            WHERE w.employee_name = e.[Employee]
+                                AND w.Health_System = e.[Health System]
                         )
                     )
             ''')
