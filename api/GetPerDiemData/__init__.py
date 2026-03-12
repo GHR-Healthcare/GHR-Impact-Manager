@@ -91,21 +91,31 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
 
         # ============================================================
         # B4Health - Shifts Worked by Per Diem Workers
-        # Uses B4HealthESR, filtered by Program directly
+        # Uses B4HealthESR joined to B4HealthOrder to identify Per Diem workers
+        # (ESR Program field is not reliably tagged as Per Diem for all systems)
         # ============================================================
         try:
             cursor.execute(f'''
                 SELECT
                     'B4' AS source_system,
-                    [Employee] AS worker_name,
-                    [Work Date] AS shift_date,
-                    [Health System] AS system,
-                    [Agency Name] AS agency
-                FROM dhc.B4HealthESR
-                WHERE [Health System] IS NOT NULL
-                    AND [Work Date] >= {date_from}
-                    AND [Work Date] < {date_to}
-                    AND [Program] LIKE '%Per Diem%'
+                    e.[Employee] AS worker_name,
+                    e.[Work Date] AS shift_date,
+                    e.[Health System] AS system,
+                    e.[Agency Name] AS agency
+                FROM dhc.B4HealthESR e
+                WHERE e.[Health System] IS NOT NULL
+                    AND e.[Work Date] >= {date_from}
+                    AND e.[Work Date] < {date_to}
+                    AND (
+                        e.[Program] LIKE '%Per Diem%'
+                        OR EXISTS (
+                            SELECT 1 FROM dhc.B4HealthOrder o
+                            WHERE o.Program LIKE '%Per Diem%'
+                                AND o.Contract_Status = 'Closed And Awarded'
+                                AND CONCAT(o.Last_Name, ', ', o.First_Name) = e.[Employee]
+                                AND o.Health_System = e.[Health System]
+                        )
+                    )
             ''')
 
             columns = [column[0] for column in cursor.description]
