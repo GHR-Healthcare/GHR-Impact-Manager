@@ -123,28 +123,23 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
 
         # ============================================================
         # VNDLY - Active Per Diem Assignments (from Work Orders)
-        # Try joining to STAGING_VNDLY_JOBS for category filtering
+        # Filter by Labor Type directly
         # ============================================================
         try:
             cursor.execute('''
                 SELECT DISTINCT
                     'VNDLY' AS source_system,
-                    CAST(w.[Work Order Id] AS NVARCHAR(50)) AS contract_id,
-                    CONCAT(w.[Contractor First Name], ' ', w.[Contractor Last Name]) AS worker_name,
-                    w.[Health System] AS system,
-                    w.[Default Work Site Name] AS facility,
-                    w.[Vendor Name] AS agency,
-                    w.[Start Date] AS startDate,
-                    w.[End Date] AS endDate
-                FROM dbo.STAGING_VNDLY_WORKORDERS w
-                LEFT JOIN dbo.STAGING_VNDLY_JOBS j
-                    ON w.[Job Id] = j.[Job Id]
-                WHERE w.[Current Status] = 'Active'
-                    AND w.[Start Date] IS NOT NULL
-                    AND (
-                        j.[Job Category] LIKE '%Per Diem%'
-                        OR w.[Job Title] LIKE '%Per Diem%'
-                    )
+                    CAST([Work Order Id] AS NVARCHAR(50)) AS contract_id,
+                    CONCAT([Contractor First Name], ' ', [Contractor Last Name]) AS worker_name,
+                    [Health System] AS system,
+                    [Default Work Site Name] AS facility,
+                    [Vendor Name] AS agency,
+                    [Start Date] AS startDate,
+                    [End Date] AS endDate
+                FROM dbo.STAGING_VNDLY_WORKORDERS
+                WHERE [Current Status] = 'Active'
+                    AND [Start Date] IS NOT NULL
+                    AND [Labor Type] LIKE '%Per Diem%'
             ''')
 
             columns = [column[0] for column in cursor.description]
@@ -157,66 +152,24 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                 assignments.append(row_dict)
         except Exception as e:
             print(f"Error loading VNDLY per diem assignments: {e}")
-            # Fallback: try without the join in case Job Id column doesn't exist on workorders
-            try:
-                cursor.execute('''
-                    SELECT DISTINCT
-                        'VNDLY' AS source_system,
-                        CAST(w.[Work Order Id] AS NVARCHAR(50)) AS contract_id,
-                        CONCAT(w.[Contractor First Name], ' ', w.[Contractor Last Name]) AS worker_name,
-                        w.[Health System] AS system,
-                        w.[Default Work Site Name] AS facility,
-                        w.[Vendor Name] AS agency,
-                        w.[Start Date] AS startDate,
-                        w.[End Date] AS endDate
-                    FROM dbo.STAGING_VNDLY_WORKORDERS w
-                    WHERE w.[Current Status] = 'Active'
-                        AND w.[Start Date] IS NOT NULL
-                        AND w.[Job Title] LIKE '%Per Diem%'
-                ''')
-
-                columns = [column[0] for column in cursor.description]
-                for row in cursor.fetchall():
-                    row_dict = dict(zip(columns, row))
-                    if row_dict.get('startDate'):
-                        row_dict['startDate'] = row_dict['startDate'].isoformat() if hasattr(row_dict['startDate'], 'isoformat') else str(row_dict['startDate'])
-                    if row_dict.get('endDate'):
-                        row_dict['endDate'] = row_dict['endDate'].isoformat() if hasattr(row_dict['endDate'], 'isoformat') else str(row_dict['endDate'])
-                    assignments.append(row_dict)
-            except Exception as e2:
-                print(f"Error loading VNDLY per diem assignments (fallback): {e2}")
 
         # ============================================================
         # VNDLY - Shifts Worked by Per Diem Workers
-        # Uses STAGING_VNDLY_SPEND filtered to Per Diem workers
+        # Uses STAGING_VNDLY_SPEND filtered by Labor Type directly
         # ============================================================
         try:
             cursor.execute(f'''
                 SELECT
                     'VNDLY' AS source_system,
-                    CONCAT(s.[Contractor First Name], ' ', s.[Contractor Last Name]) AS worker_name,
-                    s.[Item Date] AS shift_date,
-                    s.[Health System] AS system,
-                    s.[Vendor Company Name] AS agency
-                FROM dbo.STAGING_VNDLY_SPEND s
-                WHERE s.[Health System] IS NOT NULL
-                    AND s.[Item Date] >= {date_from}
-                    AND s.[Item Date] < {date_to}
-                    AND EXISTS (
-                        SELECT 1 FROM dbo.STAGING_VNDLY_WORKORDERS w
-                        WHERE w.[Current Status] = 'Active'
-                            AND CONCAT(w.[Contractor First Name], ' ', w.[Contractor Last Name])
-                                = CONCAT(s.[Contractor First Name], ' ', s.[Contractor Last Name])
-                            AND w.[Health System] = s.[Health System]
-                            AND (
-                                w.[Job Title] LIKE '%Per Diem%'
-                                OR EXISTS (
-                                    SELECT 1 FROM dbo.STAGING_VNDLY_JOBS j
-                                    WHERE j.[Job Id] = w.[Job Id]
-                                        AND j.[Job Category] LIKE '%Per Diem%'
-                                )
-                            )
-                    )
+                    CONCAT([Contractor First Name], ' ', [Contractor Last Name]) AS worker_name,
+                    [Item Date] AS shift_date,
+                    [Health System] AS system,
+                    [Vendor Company Name] AS agency
+                FROM dbo.STAGING_VNDLY_SPEND
+                WHERE [Health System] IS NOT NULL
+                    AND [Item Date] >= {date_from}
+                    AND [Item Date] < {date_to}
+                    AND [Labor Type] LIKE '%Per Diem%'
             ''')
 
             columns = [column[0] for column in cursor.description]
