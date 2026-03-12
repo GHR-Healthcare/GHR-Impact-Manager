@@ -4303,21 +4303,24 @@
         const systems = [...systemSet].sort();
 
         // Compute metrics per system per week
-        // Active HC = distinct workers with an assignment overlapping the week (from work orders/contracts)
+        // Active HC = distinct workers who worked at least 1 shift in a rolling 4-week window (current + prior 3 weeks)
         // Actives Worked = distinct workers who worked that specific week
         const metrics = {}; // { system: [{ week, activeHC, activesWorked, pctWorked, totalShifts, shiftsPerNurse }] }
+        const LOOKBACK_WEEKS = 4; // rolling window size for active headcount
 
         systems.forEach(sys => {
-          const sysAssignments = filteredAssignments.filter(a => a.healthSystem === sys);
           const sysShifts = filteredShifts.filter(sh => sh.healthSystem === sys);
 
           metrics[sys] = weeks.map((w, wi) => {
-            // Active headcount: assignments where startDate <= weekEnd && (!endDate || endDate >= weekStart)
-            const activeWorkers = new Set(
-              sysAssignments.filter(a =>
-                a.startDate && a.startDate <= w.end && (!a.endDate || a.endDate >= w.start)
-              ).map(a => a.worker_name)
+            // Rolling lookback window: from (LOOKBACK_WEEKS - 1) weeks before current week start to current week end
+            const lookbackStart = new Date(w.start);
+            lookbackStart.setDate(lookbackStart.getDate() - (LOOKBACK_WEEKS - 1) * 7);
+
+            // Active headcount: distinct workers who worked at least 1 shift in the rolling window
+            const windowShifts = sysShifts.filter(sh =>
+              sh.shift_date && sh.shift_date >= lookbackStart && sh.shift_date <= w.end
             );
+            const activeWorkers = new Set(windowShifts.map(sh => sh.worker_name));
             const activeHC = activeWorkers.size;
 
             // Shifts in this week — dedupe by worker+date (overtime creates multiple rows)
