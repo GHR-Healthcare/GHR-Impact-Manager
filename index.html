@@ -4257,11 +4257,11 @@
           return;
         }
 
-        // Build weekly buckets (Monday-based weeks, historical only)
-        const getMonday = (d) => {
+        // Build weekly buckets (Sun-Sat weeks, week-ending Saturday)
+        const getSunday = (d) => {
           const dt = new Date(d);
-          const day = dt.getDay();
-          const diff = dt.getDate() - day + (day === 0 ? -6 : 1);
+          const day = dt.getDay(); // 0=Sun
+          const diff = dt.getDate() - day;
           return new Date(dt.getFullYear(), dt.getMonth(), diff);
         };
 
@@ -4269,17 +4269,17 @@
         let minDate = shiftDates.length > 0 ? new Date(Math.min(...shiftDates)) : new Date();
         let maxDate = shiftDates.length > 0 ? new Date(Math.max(...shiftDates)) : new Date();
 
-        const weekStart = getMonday(minDate);
+        const weekStart = getSunday(minDate);
         const now = new Date();
-        const currentWeekEnd = new Date(getMonday(now));
+        const currentWeekEnd = new Date(getSunday(now));
         currentWeekEnd.setDate(currentWeekEnd.getDate() + 6);
 
-        // Generate week boundaries
+        // Generate week boundaries (Sun-Sat)
         const weeks = [];
         let ws = new Date(weekStart);
         while (ws <= maxDate && ws <= currentWeekEnd) {
           const we = new Date(ws);
-          we.setDate(we.getDate() + 6);
+          we.setDate(we.getDate() + 6); // Saturday
           weeks.push({ start: new Date(ws), end: we });
           ws.setDate(ws.getDate() + 7);
         }
@@ -4291,17 +4291,22 @@
         const systems = [...systemSet].sort();
 
         // Compute metrics per system per week
+        // Active HC = distinct workers who worked at least 1 shift in a rolling 4-week window
+        // Actives Worked = distinct workers who worked that specific week
         const metrics = {}; // { system: [{ week, activeHC, activesWorked, pctWorked, totalShifts, shiftsPerNurse }] }
 
         systems.forEach(sys => {
-          const sysAssignments = filteredAssignments.filter(a => a.healthSystem === sys);
           const sysShifts = filteredShifts.filter(sh => sh.healthSystem === sys);
 
-          metrics[sys] = weeks.map(w => {
-            // Active headcount: assignments where startDate <= weekEnd && (!endDate || endDate >= weekStart)
-            const activeHC = sysAssignments.filter(a =>
-              a.startDate && a.startDate <= w.end && (!a.endDate || a.endDate >= w.start)
-            ).length;
+          metrics[sys] = weeks.map((w, wi) => {
+            // Rolling 4-week window for active headcount (current week + 3 prior)
+            const poolStart = new Date(w.start);
+            poolStart.setDate(poolStart.getDate() - 21); // 3 weeks back
+            const poolWorkers = new Set(
+              sysShifts.filter(sh => sh.shift_date && sh.shift_date >= poolStart && sh.shift_date <= w.end)
+                .map(sh => sh.worker_name)
+            );
+            const activeHC = poolWorkers.size;
 
             // Shifts in this week
             const weekShifts = sysShifts.filter(sh =>
@@ -4326,10 +4331,9 @@
 
         const activeWeeks = activeWeekIndices.map(i => weeks[i]);
 
-        // Format week label
+        // Format week label (show week-ending Saturday date)
         const fmtWeek = (w) => {
-          const m = w.start.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-          return m;
+          return w.end.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
         };
 
         // Month picker for date range

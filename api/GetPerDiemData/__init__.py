@@ -37,7 +37,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
         if from_month:
             date_from = f"'{from_month}-01'"
         else:
-            date_from = "DATEADD(MONTH, -6, DATEFROMPARTS(YEAR(GETDATE()), MONTH(GETDATE()), 1))"
+            date_from = "DATEADD(MONTH, -3, DATEFROMPARTS(YEAR(GETDATE()), MONTH(GETDATE()), 1))"
 
         if to_month:
             date_to = f"DATEADD(MONTH, 1, '{to_month}-01')"
