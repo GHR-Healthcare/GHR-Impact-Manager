@@ -2,6 +2,12 @@
 
 ## Version History
 
+**1.4.0** - Per Diem Analytics Tab
+- New Per Diem tab with weekly metrics per health system (headcount, actives worked, % worked, shifts, shifts/nurse avg)
+- Data sourced from B4Health and VNDLY systems
+- Line charts for % of Actives Worked and Shifts/Nurse Average trends
+- Date range picker for custom reporting periods
+
 **1.3.3** - Connection validation & cascading filters
 - Require database connection before allowing interaction
 - Cascading dropdown filters (selecting one filter updates others to show relevant options)
