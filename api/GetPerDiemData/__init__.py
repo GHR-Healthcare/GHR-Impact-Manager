@@ -76,8 +76,6 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                 WHERE Contract_Status = 'Closed And Awarded'
                     AND Program LIKE '%Per Diem%'
                     AND Start_Date IS NOT NULL
-                    AND Health_System NOT LIKE '%Richmond University%'
-                    AND Health_System NOT LIKE '%Redeemer%'
             ''')
 
             columns = [column[0] for column in cursor.description]
@@ -108,8 +106,6 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                     AND [Work Date] >= {date_from}
                     AND [Work Date] < {date_to}
                     AND [Program] LIKE '%Per Diem%'
-                    AND [Health System] NOT LIKE '%Richmond University%'
-                    AND [Health System] NOT LIKE '%Redeemer%'
             ''')
 
             columns = [column[0] for column in cursor.description]
