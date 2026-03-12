@@ -4236,8 +4236,19 @@
           return;
         }
 
+        // Deduplicate assignments by worker_name + system, preferring VNDLY over B4
+        const assignmentMap = new Map();
+        assignments.forEach(a => {
+          const key = (a.worker_name || '') + '|' + (a.healthSystem || a.system || '');
+          const existing = assignmentMap.get(key);
+          if (!existing || (a.source_system === 'VNDLY' && existing.source_system === 'B4')) {
+            assignmentMap.set(key, a);
+          }
+        });
+        const dedupedAssignments = [...assignmentMap.values()];
+
         // Apply global filters
-        const filteredAssignments = assignments.filter(a => {
+        const filteredAssignments = dedupedAssignments.filter(a => {
           const sysMatch = s.filterSelection.systems.size === 0 || s.filterSelection.systems.has(a.healthSystem);
           const facMatch = s.filterSelection.facilities.size === 0 || s.filterSelection.facilities.has(a.facility);
           return sysMatch && facMatch;
@@ -4324,10 +4335,10 @@
           });
         });
 
-        // Filter out weeks where ALL systems have 0% worked (the "0% week" the user doesn't want)
+        // Filter out weeks where ALL systems have zero activity (no shifts and no headcount)
         const activeWeekIndices = [];
         weeks.forEach((w, i) => {
-          const hasActivity = systems.some(sys => metrics[sys][i] && metrics[sys][i].pctWorked > 0);
+          const hasActivity = systems.some(sys => metrics[sys][i] && (metrics[sys][i].totalShifts > 0 || metrics[sys][i].activeHC > 0));
           if (hasActivity) activeWeekIndices.push(i);
         });
 
