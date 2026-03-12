@@ -4236,16 +4236,37 @@
           return;
         }
 
-        // Deduplicate assignments by worker_name + system, preferring VNDLY over B4
-        const assignmentMap = new Map();
-        assignments.forEach(a => {
-          const key = (a.worker_name || '') + '|' + (a.healthSystem || a.system || '');
-          const existing = assignmentMap.get(key);
-          if (!existing || (a.source_system === 'VNDLY' && existing.source_system === 'B4')) {
-            assignmentMap.set(key, a);
+        // B4-to-VNDLY transition: for overlapping systems, find earliest VNDLY shift date
+        // and exclude B4 data from that point forward
+        // Systems that transitioned from B4 to VNDLY (use mapped healthSystem names)
+        const transitionedSystems = new Set(['RUMC', 'Redeemer Health']);
+        const vndlyCutoverBySystem = {}; // healthSystem -> earliest VNDLY shift date
+        shifts.forEach(sh => {
+          if (sh.source_system === 'VNDLY' && sh.healthSystem && sh.shift_date) {
+            if (!vndlyCutoverBySystem[sh.healthSystem] || sh.shift_date < vndlyCutoverBySystem[sh.healthSystem]) {
+              vndlyCutoverBySystem[sh.healthSystem] = sh.shift_date;
+            }
           }
         });
-        const dedupedAssignments = [...assignmentMap.values()];
+
+        // Filter assignments: for transitioned systems, drop B4 assignments
+        // once VNDLY coverage exists for that system
+        const dedupedAssignments = assignments.filter(a => {
+          if (a.source_system === 'B4' && transitionedSystems.has(a.healthSystem)) {
+            // If VNDLY has data for this system, exclude B4 assignments entirely
+            if (vndlyCutoverBySystem[a.healthSystem]) return false;
+          }
+          return true;
+        });
+
+        // Filter shifts: same logic for B4 shifts on transitioned systems
+        const dedupedShifts = shifts.filter(sh => {
+          if (sh.source_system === 'B4' && transitionedSystems.has(sh.healthSystem)) {
+            const cutover = vndlyCutoverBySystem[sh.healthSystem];
+            if (cutover && sh.shift_date && sh.shift_date >= cutover) return false;
+          }
+          return true;
+        });
 
         // Apply global filters
         const filteredAssignments = dedupedAssignments.filter(a => {
@@ -4254,7 +4275,7 @@
           return sysMatch && facMatch;
         });
 
-        const filteredShifts = shifts.filter(sh => {
+        const filteredShifts = dedupedShifts.filter(sh => {
           const sysMatch = s.filterSelection.systems.size === 0 || s.filterSelection.systems.has(sh.healthSystem);
           return sysMatch;
         });
