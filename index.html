@@ -4308,12 +4308,14 @@
             );
             const activeHC = poolWorkers.size;
 
-            // Shifts in this week
+            // Shifts in this week — dedupe by worker+date (overtime creates multiple rows)
             const weekShifts = sysShifts.filter(sh =>
               sh.shift_date && sh.shift_date >= w.start && sh.shift_date <= w.end
             );
 
-            const totalShifts = weekShifts.length;
+            // Count distinct worker+date combos as shifts (1 shift per person per day)
+            const shiftKeys = new Set(weekShifts.map(sh => sh.worker_name + '|' + sh.shift_date.toISOString().slice(0, 10)));
+            const totalShifts = shiftKeys.size;
             const activesWorked = new Set(weekShifts.map(sh => sh.worker_name)).size;
             const pctWorked = activeHC > 0 ? (activesWorked / activeHC * 100) : 0;
             const shiftsPerNurse = activeHC > 0 ? (totalShifts / activeHC) : 0;
