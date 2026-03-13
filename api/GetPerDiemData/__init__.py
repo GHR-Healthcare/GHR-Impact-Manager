@@ -167,8 +167,8 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                     [Vendor Name] AS agency,
                     [Start Date] AS startDate,
                     [End Date] AS endDate,
-                    [Resource Manager] AS account_manager,
-                    [Hiring Manager] AS hiring_manager
+                    NULL AS account_manager,
+                    [Resource Manager] AS hiring_manager
                 FROM dbo.STAGING_VNDLY_WORKORDERS
                 WHERE [Current Status] = 'Active'
                     AND [Start Date] IS NOT NULL
