@@ -4380,6 +4380,11 @@
 
         const activeWeeks = activeWeekIndices.map(i => weeks[i]);
 
+        // Filter groups to only those with at least one week of activity
+        const activeGroups = groups.filter(g =>
+          activeWeekIndices.some(i => metrics[g.key][i] && (metrics[g.key][i].totalShifts > 0 || metrics[g.key][i].activeHC > 0))
+        );
+
         // Format week label (show week-ending Saturday date)
         const fmtWeek = (w) => {
           return w.end.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
@@ -4423,16 +4428,16 @@
         `;
 
         // Summary cards
-        const totalActiveHC = groups.reduce((sum, g) => {
+        const totalActiveHC = activeGroups.reduce((sum, g) => {
           const last = metrics[g.key]?.[activeWeekIndices[activeWeekIndices.length - 1]];
           return sum + (last?.activeHC || 0);
         }, 0);
-        const totalShiftsLastWeek = groups.reduce((sum, g) => {
+        const totalShiftsLastWeek = activeGroups.reduce((sum, g) => {
           const last = metrics[g.key]?.[activeWeekIndices[activeWeekIndices.length - 1]];
           return sum + (last?.totalShifts || 0);
         }, 0);
         // Count distinct health systems (not groups) for the summary card
-        const uniqueSystemCount = new Set(groups.map(g => g.healthSystem)).size;
+        const uniqueSystemCount = new Set(activeGroups.map(g => g.healthSystem)).size;
 
         html += `
           <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
@@ -4456,7 +4461,7 @@
         `;
 
         // Per-system data tables
-        groups.forEach(({ key, label }) => {
+        activeGroups.forEach(({ key, label }) => {
           const sysMetrics = activeWeekIndices.map(i => metrics[key][i]);
 
           html += `
@@ -4530,7 +4535,7 @@
         // % Actives Worked chart
         const pctCtx = document.getElementById('pdPctWorkedChart')?.getContext('2d');
         if (pctCtx) {
-          const pctDatasets = groups.map(({ key, label }, i) => ({
+          const pctDatasets = activeGroups.map(({ key, label }, i) => ({
             label,
             data: activeWeekIndices.map(wi => metrics[key][wi]?.pctWorked || 0),
             borderColor: lineColors[i % lineColors.length],
@@ -4562,7 +4567,7 @@
         // Shifts/Nurse chart
         const snCtx = document.getElementById('pdShiftsPerNurseChart')?.getContext('2d');
         if (snCtx) {
-          const snDatasets = groups.map(({ key, label }, i) => ({
+          const snDatasets = activeGroups.map(({ key, label }, i) => ({
             label,
             data: activeWeekIndices.map(wi => metrics[key][wi]?.shiftsPerNurse || 0),
             borderColor: lineColors[i % lineColors.length],
