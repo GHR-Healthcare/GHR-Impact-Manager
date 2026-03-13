@@ -2112,9 +2112,11 @@
 
       // Build assignment lookup for manager fields
       const assignments = window.store.state.perDiemData?.assignments || [];
+      const normName = n => String(n || '').trim().toLowerCase();
       const assignmentMap = new Map();
       assignments.forEach(a => {
-        const k = `${a.worker_name}|${a.healthSystem}`;
+        const k = normName(a.worker_name);
+        if (!k) return;
         const existing = assignmentMap.get(k);
         if (!existing || (a.startDate && (!existing.startDate || a.startDate > existing.startDate))) {
           assignmentMap.set(k, { account_manager: a.account_manager, hiring_manager: a.hiring_manager });
@@ -2128,7 +2130,7 @@
 
       const tbody = document.getElementById('pdDrilldownBody');
       tbody.innerHTML = rows.map((r, i) => {
-        const mgr = assignmentMap.get(`${r.worker_name}|${r.healthSystem}`) || {};
+        const mgr = assignmentMap.get(normName(r.worker_name)) || {};
         return `
         <tr class="${i % 2 === 0 ? 'bg-white' : 'bg-slate-50'} border-b border-slate-100">
           <td class="py-1.5 px-3 font-medium text-slate-700">${r.worker_name || '-'}</td>
@@ -2152,11 +2154,13 @@
       const fmtDate = d => d ? new Date(d).toISOString().slice(0, 10) : '';
       const escape = v => `"${String(v ?? '').replace(/"/g, '""')}"`;
 
-      // Build lookup: worker_name + healthSystem -> { startDate, endDate }
-      // A worker may have multiple assignments; use the most recent active one
+      // Build lookup: normalized worker_name -> assignment data
+      // Use most recent assignment by startDate; name-only key avoids healthSystem mismatch issues
+      const normName = n => String(n || '').trim().toLowerCase();
       const assignmentMap = new Map();
       assignments.forEach(a => {
-        const k = `${a.worker_name}|${a.healthSystem}`;
+        const k = normName(a.worker_name);
+        if (!k) return;
         const existing = assignmentMap.get(k);
         if (!existing || (a.startDate && (!existing.startDate || a.startDate > existing.startDate))) {
           assignmentMap.set(k, { startDate: a.startDate, endDate: a.endDate, account_manager: a.account_manager, hiring_manager: a.hiring_manager });
@@ -2179,7 +2183,7 @@
         const k = `${sh.worker_name}|${fmtDate(sh.shift_date)}|${sh.healthSystem}`;
         if (seen.has(k)) return;
         seen.add(k);
-        const asgn = assignmentMap.get(`${sh.worker_name}|${sh.healthSystem}`) || {};
+        const asgn = assignmentMap.get(normName(sh.worker_name)) || {};
         csvRows.push([
           escape(sh.worker_name),
           escape(fmtDate(sh.shift_date)),
