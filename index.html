@@ -1200,15 +1200,16 @@
                     // Normalize assignments
                     if (pdData.assignments) {
                         pdData.assignments.forEach(r => {
-                            r.startDate = r.startDate ? new Date(r.startDate) : null;
-                            r.endDate = r.endDate ? new Date(r.endDate) : null;
+                            const parseLocalDate = s => { if (!s) return null; const [y,m,d] = s.split('T')[0].split('-'); return new Date(+y, +m-1, +d); };
+                            r.startDate = parseLocalDate(r.startDate);
+                            r.endDate = parseLocalDate(r.endDate);
                             r.healthSystem = Utils.getHealthSystem(r.facility, r.system);
                         });
                     }
                     // Normalize shifts
                     if (pdData.shifts) {
                         pdData.shifts.forEach(r => {
-                            r.shift_date = r.shift_date ? new Date(r.shift_date) : null;
+                            if (r.shift_date) { const [y,m,d] = r.shift_date.split('T')[0].split('-'); r.shift_date = new Date(+y, +m-1, +d); } else { r.shift_date = null; }
                             r.healthSystem = Utils.getHealthSystem(null, r.system);
                         });
                     }
@@ -2043,14 +2044,15 @@
           const data = await resp.json();
           if (data.assignments) {
             data.assignments.forEach(r => {
-              r.startDate = r.startDate ? new Date(r.startDate) : null;
-              r.endDate = r.endDate ? new Date(r.endDate) : null;
+              const parseLocalDate = s => { if (!s) return null; const [y,m,d] = s.split('T')[0].split('-'); return new Date(+y, +m-1, +d); };
+              r.startDate = parseLocalDate(r.startDate);
+              r.endDate = parseLocalDate(r.endDate);
               r.healthSystem = Utils.getHealthSystem(r.facility, r.system);
             });
           }
           if (data.shifts) {
             data.shifts.forEach(r => {
-              r.shift_date = r.shift_date ? new Date(r.shift_date) : null;
+              if (r.shift_date) { const [y,m,d] = r.shift_date.split('T')[0].split('-'); r.shift_date = new Date(+y, +m-1, +d); } else { r.shift_date = null; }
               r.healthSystem = Utils.getHealthSystem(null, r.system);
             });
           }
