@@ -2069,6 +2069,7 @@
       const key = decodeURIComponent(encodedKey);
       const groups = window.__pdGroups || [];
       const shifts = window.__pdFilteredShifts || [];
+      const assignments = window.__pdFilteredAssignments || [];
       const weeks = window.__pdWeeks || [];
       const w = weeks[weekIndex];
       if (!w) return;
@@ -2081,19 +2082,23 @@
       const lookbackStart = new Date(w.start);
       lookbackStart.setDate(lookbackStart.getDate() - (LOOKBACK_WEEKS - 1) * 7);
 
-      // Filter shifts for this group
+      // Filter shifts and assignments for this group
       const groupShifts = shifts.filter(sh =>
         sh.healthSystem === gSys && (gFac === null || sh.facility === gFac)
+      );
+      const groupAssignments = assignments.filter(a =>
+        a.healthSystem === gSys && (gFac === null || a.facility === gFac)
       );
 
       let rows = [];
       const fmtDate = d => d ? new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '';
 
       if (mode === 'activeHC') {
-        // Distinct workers active in rolling 4-week window
+        // Distinct workers with an active assignment during the rolling window
         const seen = new Map();
-        groupShifts.filter(sh => sh.shift_date && sh.shift_date >= lookbackStart && sh.shift_date <= w.end)
-          .forEach(sh => { if (!seen.has(sh.worker_name)) seen.set(sh.worker_name, sh); });
+        groupAssignments
+          .filter(a => a.startDate && a.startDate <= w.end && (!a.endDate || a.endDate >= lookbackStart))
+          .forEach(a => { if (!seen.has(a.worker_name)) seen.set(a.worker_name, a); });
         rows = [...seen.values()].sort((a, b) => a.worker_name.localeCompare(b.worker_name));
       } else if (mode === 'activesWorked') {
         // Distinct workers who worked in this specific week
@@ -2133,10 +2138,13 @@
       const tbody = document.getElementById('pdDrilldownBody');
       tbody.innerHTML = rows.map((r, i) => {
         const mgr = assignmentMap.get(normName(r.worker_name)) || {};
+        const dateCell = mode === 'activeHC'
+          ? `${fmtDate(r.startDate)} – ${r.endDate ? fmtDate(r.endDate) : 'ongoing'}`
+          : fmtDate(r.shift_date);
         return `
         <tr class="${i % 2 === 0 ? 'bg-white' : 'bg-slate-50'} border-b border-slate-100">
           <td class="py-1.5 px-3 font-medium text-slate-700">${r.worker_name || '-'}</td>
-          <td class="py-1.5 px-3 text-slate-600">${fmtDate(r.shift_date)}</td>
+          <td class="py-1.5 px-3 text-slate-600">${dateCell}</td>
           <td class="py-1.5 px-3 text-slate-600">${r.agency || '-'}</td>
           <td class="py-1.5 px-3 text-slate-500">${mgr.account_manager || '-'}</td>
           <td class="py-1.5 px-3 text-slate-500">${mgr.hiring_manager || '-'}</td>
@@ -4509,8 +4517,8 @@
         });
 
         // Compute metrics per group per week
-        // Active HC = distinct workers who worked at least 1 shift in a rolling 4-week window (current + prior 3 weeks)
-        // Actives Worked = distinct workers who worked that specific week
+        // Active HC = distinct workers with an active assignment overlapping the rolling 4-week window
+        // Actives Worked = distinct workers who actually worked a shift that specific week
         const metrics = {}; // { groupKey: [{ week, activeHC, activesWorked, pctWorked, totalShifts, shiftsPerNurse }] }
         const LOOKBACK_WEEKS = 4; // rolling window size for active headcount
 
@@ -4518,17 +4526,22 @@
           const sysShifts = filteredShifts.filter(sh =>
             sh.healthSystem === sys && (fac === null || sh.facility === fac)
           );
+          const sysAssignments = filteredAssignments.filter(a =>
+            a.healthSystem === sys && (fac === null || a.facility === fac)
+          );
 
           metrics[key] = weeks.map((w, wi) => {
             // Rolling lookback window: from (LOOKBACK_WEEKS - 1) weeks before current week start to current week end
             const lookbackStart = new Date(w.start);
             lookbackStart.setDate(lookbackStart.getDate() - (LOOKBACK_WEEKS - 1) * 7);
 
-            // Active headcount: distinct workers who worked at least 1 shift in the rolling window
-            const windowShifts = sysShifts.filter(sh =>
-              sh.shift_date && sh.shift_date >= lookbackStart && sh.shift_date <= w.end
+            // Active headcount: distinct workers with an assignment active during the rolling window
+            // Assignment is active if it started on or before window end AND ended on or after window start (or has no end date)
+            const activeWorkers = new Set(
+              sysAssignments
+                .filter(a => a.startDate && a.startDate <= w.end && (!a.endDate || a.endDate >= lookbackStart))
+                .map(a => a.worker_name)
             );
-            const activeWorkers = new Set(windowShifts.map(sh => sh.worker_name));
             const activeHC = activeWorkers.size;
 
             // Shifts in this week — dedupe by worker+date (overtime creates multiple rows)
@@ -4586,6 +4599,7 @@
 
         // Store filtered shifts on window so modal + CSV can access them
         window.__pdFilteredShifts = filteredShifts;
+        window.__pdFilteredAssignments = filteredAssignments;
         window.__pdGroups = activeGroups;
         window.__pdMetrics = metrics;
         window.__pdActiveWeeks = activeWeeks;
