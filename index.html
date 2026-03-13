@@ -4437,9 +4437,10 @@
 
         const filteredShifts = dedupedShifts.filter(sh => {
           const sysMatch = s.filterSelection.systems.size === 0 || s.filterSelection.systems.has(sh.healthSystem);
+          const facMatch = s.filterSelection.facilities.size === 0 || s.filterSelection.facilities.has(sh.facility);
           const agencyMatch = !ghrOnly || /ghr/i.test(sh.agency || '');
           const catMatch = matchesPDCategory(sh.agency);
-          return sysMatch && agencyMatch && catMatch;
+          return sysMatch && facMatch && agencyMatch && catMatch;
         });
 
         // Determine date range from shifts
