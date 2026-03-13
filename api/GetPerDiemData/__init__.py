@@ -94,7 +94,8 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                 WITH PD_Workers AS (
                     SELECT DISTINCT
                         CONCAT(Last_Name, ', ', First_Name) AS employee_name,
-                        Health_System
+                        Health_System,
+                        Facility
                     FROM dhc.B4HealthOrder
                     WHERE Program LIKE '%Per Diem%'
                         AND Contract_Status = 'Closed And Awarded'
@@ -106,8 +107,12 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                         e.[Employee] AS worker_name,
                         e.[Work Date] AS shift_date,
                         e.[Health System] AS system,
-                        e.[Agency Name] AS agency
+                        e.[Agency Name] AS agency,
+                        w.Facility AS facility
                     FROM dhc.B4HealthESR e
+                    LEFT JOIN PD_Workers w
+                        ON w.employee_name = e.[Employee]
+                        AND w.Health_System = e.[Health System]
                     WHERE e.[Health System] IS NOT NULL
                         AND e.[Work Date] >= {date_from}
                         AND e.[Work Date] < {date_to}
@@ -118,7 +123,8 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                         e.[Employee] AS worker_name,
                         e.[Work Date] AS shift_date,
                         e.[Health System] AS system,
-                        e.[Agency Name] AS agency
+                        e.[Agency Name] AS agency,
+                        w.Facility AS facility
                     FROM dhc.B4HealthESR e
                     INNER JOIN PD_Workers w
                         ON w.employee_name = e.[Employee]
@@ -126,11 +132,12 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                     WHERE e.[Health System] IS NOT NULL
                         AND e.[Work Date] >= {date_from}
                         AND e.[Work Date] < {date_to}
+                        AND e.[Program] NOT LIKE '%Per Diem%'
                 )
-                SELECT DISTINCT 'B4' AS source_system, worker_name, shift_date, system, agency
+                SELECT DISTINCT 'B4' AS source_system, worker_name, shift_date, system, agency, facility
                 FROM DirectPD
                 UNION
-                SELECT DISTINCT 'B4' AS source_system, worker_name, shift_date, system, agency
+                SELECT DISTINCT 'B4' AS source_system, worker_name, shift_date, system, agency, facility
                 FROM JoinedPD
             ''')
 
@@ -183,15 +190,25 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             cursor.execute(f'''
                 SELECT
                     'VNDLY' AS source_system,
-                    CONCAT([Contractor First Name], ' ', [Contractor Last Name]) AS worker_name,
-                    [Item Date] AS shift_date,
-                    [Health System] AS system,
-                    [Vendor Company Name] AS agency
-                FROM dbo.STAGING_VNDLY_SPEND
-                WHERE [Health System] IS NOT NULL
-                    AND [Item Date] >= {date_from}
-                    AND [Item Date] < {date_to}
-                    AND [Labor Type] LIKE '%Per Diem%'
+                    CONCAT(s.[Contractor First Name], ' ', s.[Contractor Last Name]) AS worker_name,
+                    s.[Item Date] AS shift_date,
+                    s.[Health System] AS system,
+                    s.[Vendor Company Name] AS agency,
+                    wo.[Default Work Site Name] AS facility
+                FROM dbo.STAGING_VNDLY_SPEND s
+                LEFT JOIN (
+                    SELECT DISTINCT
+                        CONCAT([Contractor First Name], ' ', [Contractor Last Name]) AS worker_name,
+                        [Health System],
+                        [Default Work Site Name]
+                    FROM dbo.STAGING_VNDLY_WORKORDERS
+                    WHERE [Labor Type] LIKE '%Per Diem%'
+                ) wo ON wo.worker_name = CONCAT(s.[Contractor First Name], ' ', s.[Contractor Last Name])
+                    AND wo.[Health System] = s.[Health System]
+                WHERE s.[Health System] IS NOT NULL
+                    AND s.[Item Date] >= {date_from}
+                    AND s.[Item Date] < {date_to}
+                    AND s.[Labor Type] LIKE '%Per Diem%'
             ''')
 
             columns = [column[0] for column in cursor.description]

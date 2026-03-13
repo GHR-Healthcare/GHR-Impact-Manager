@@ -4305,22 +4305,45 @@
           ws.setDate(ws.getDate() + 7);
         }
 
+        // Systems that get broken out by facility instead of rolled up
+        const FACILITY_BREAKOUT_SYSTEMS = new Set(['Penn']);
+
         // Get all health systems from data
         const systemSet = new Set();
         filteredAssignments.forEach(a => { if (a.healthSystem) systemSet.add(a.healthSystem); });
         filteredShifts.forEach(sh => { if (sh.healthSystem) systemSet.add(sh.healthSystem); });
-        const systems = [...systemSet].sort();
 
-        // Compute metrics per system per week
+        // Build groups: breakout systems expand to one group per facility, others are one group per system
+        const groups = [];
+        [...systemSet].sort().forEach(sys => {
+          if (FACILITY_BREAKOUT_SYSTEMS.has(sys)) {
+            const facSet = new Set();
+            filteredShifts.filter(sh => sh.healthSystem === sys && sh.facility).forEach(sh => facSet.add(sh.facility));
+            filteredAssignments.filter(a => a.healthSystem === sys && a.facility).forEach(a => facSet.add(a.facility));
+            if (facSet.size > 0) {
+              [...facSet].sort().forEach(fac => {
+                groups.push({ key: `${sys}|${fac}`, label: `${sys} - ${fac}`, healthSystem: sys, facility: fac });
+              });
+            } else {
+              groups.push({ key: sys, label: sys, healthSystem: sys, facility: null });
+            }
+          } else {
+            groups.push({ key: sys, label: sys, healthSystem: sys, facility: null });
+          }
+        });
+
+        // Compute metrics per group per week
         // Active HC = distinct workers who worked at least 1 shift in a rolling 4-week window (current + prior 3 weeks)
         // Actives Worked = distinct workers who worked that specific week
-        const metrics = {}; // { system: [{ week, activeHC, activesWorked, pctWorked, totalShifts, shiftsPerNurse }] }
+        const metrics = {}; // { groupKey: [{ week, activeHC, activesWorked, pctWorked, totalShifts, shiftsPerNurse }] }
         const LOOKBACK_WEEKS = 4; // rolling window size for active headcount
 
-        systems.forEach(sys => {
-          const sysShifts = filteredShifts.filter(sh => sh.healthSystem === sys);
+        groups.forEach(({ key, healthSystem: sys, facility: fac }) => {
+          const sysShifts = filteredShifts.filter(sh =>
+            sh.healthSystem === sys && (fac === null || sh.facility === fac)
+          );
 
-          metrics[sys] = weeks.map((w, wi) => {
+          metrics[key] = weeks.map((w, wi) => {
             // Rolling lookback window: from (LOOKBACK_WEEKS - 1) weeks before current week start to current week end
             const lookbackStart = new Date(w.start);
             lookbackStart.setDate(lookbackStart.getDate() - (LOOKBACK_WEEKS - 1) * 7);
@@ -4351,7 +4374,7 @@
         // Filter out weeks where ALL systems have zero activity (no shifts and no headcount)
         const activeWeekIndices = [];
         weeks.forEach((w, i) => {
-          const hasActivity = systems.some(sys => metrics[sys][i] && (metrics[sys][i].totalShifts > 0 || metrics[sys][i].activeHC > 0));
+          const hasActivity = groups.some(g => metrics[g.key][i] && (metrics[g.key][i].totalShifts > 0 || metrics[g.key][i].activeHC > 0));
           if (hasActivity) activeWeekIndices.push(i);
         });
 
@@ -4400,19 +4423,21 @@
         `;
 
         // Summary cards
-        const totalActiveHC = systems.reduce((sum, sys) => {
-          const last = metrics[sys]?.[activeWeekIndices[activeWeekIndices.length - 1]];
+        const totalActiveHC = groups.reduce((sum, g) => {
+          const last = metrics[g.key]?.[activeWeekIndices[activeWeekIndices.length - 1]];
           return sum + (last?.activeHC || 0);
         }, 0);
-        const totalShiftsLastWeek = systems.reduce((sum, sys) => {
-          const last = metrics[sys]?.[activeWeekIndices[activeWeekIndices.length - 1]];
+        const totalShiftsLastWeek = groups.reduce((sum, g) => {
+          const last = metrics[g.key]?.[activeWeekIndices[activeWeekIndices.length - 1]];
           return sum + (last?.totalShifts || 0);
         }, 0);
+        // Count distinct health systems (not groups) for the summary card
+        const uniqueSystemCount = new Set(groups.map(g => g.healthSystem)).size;
 
         html += `
           <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
             <div class="bg-violet-50 border border-violet-200 rounded-lg p-4">
-              <div class="text-2xl font-bold text-violet-700">${systems.length}</div>
+              <div class="text-2xl font-bold text-violet-700">${uniqueSystemCount}</div>
               <div class="text-xs text-violet-600 font-medium">Health Systems</div>
             </div>
             <div class="bg-blue-50 border border-blue-200 rounded-lg p-4">
@@ -4431,13 +4456,13 @@
         `;
 
         // Per-system data tables
-        systems.forEach(sys => {
-          const sysMetrics = activeWeekIndices.map(i => metrics[sys][i]);
+        groups.forEach(({ key, label }) => {
+          const sysMetrics = activeWeekIndices.map(i => metrics[key][i]);
 
           html += `
             <div class="mb-6 border border-slate-200 rounded-lg overflow-hidden">
               <div class="bg-slate-50 px-4 py-3 border-b border-slate-200">
-                <h3 class="font-bold text-sm text-slate-700">${sys}</h3>
+                <h3 class="font-bold text-sm text-slate-700">${label}</h3>
               </div>
               <div class="overflow-x-auto">
                 <table class="w-full text-xs">
@@ -4505,9 +4530,9 @@
         // % Actives Worked chart
         const pctCtx = document.getElementById('pdPctWorkedChart')?.getContext('2d');
         if (pctCtx) {
-          const pctDatasets = systems.map((sys, i) => ({
-            label: sys,
-            data: activeWeekIndices.map(wi => metrics[sys][wi]?.pctWorked || 0),
+          const pctDatasets = groups.map(({ key, label }, i) => ({
+            label,
+            data: activeWeekIndices.map(wi => metrics[key][wi]?.pctWorked || 0),
             borderColor: lineColors[i % lineColors.length],
             backgroundColor: lineColors[i % lineColors.length] + '20',
             borderWidth: 2,
@@ -4537,9 +4562,9 @@
         // Shifts/Nurse chart
         const snCtx = document.getElementById('pdShiftsPerNurseChart')?.getContext('2d');
         if (snCtx) {
-          const snDatasets = systems.map((sys, i) => ({
-            label: sys,
-            data: activeWeekIndices.map(wi => metrics[sys][wi]?.shiftsPerNurse || 0),
+          const snDatasets = groups.map(({ key, label }, i) => ({
+            label,
+            data: activeWeekIndices.map(wi => metrics[key][wi]?.shiftsPerNurse || 0),
             borderColor: lineColors[i % lineColors.length],
             backgroundColor: lineColors[i % lineColors.length] + '20',
             borderWidth: 2,
