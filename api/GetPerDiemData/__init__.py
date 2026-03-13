@@ -207,7 +207,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             print(f"Error loading VNDLY per diem shifts: {e}")
 
         # ============================================================
-        # B4Health - Open (Unfilled) Orders
+        # B4Health - Open (Unfilled) Orders (individual rows for modal drill-down)
         # ============================================================
         open_orders = []
         try:
@@ -216,21 +216,29 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                     'B4' AS source_system,
                     [Facility Name] AS facility_name,
                     NULL AS health_system,
-                    SUM([Number of Positions]) AS total_positions
+                    [Position ID] AS position_id,
+                    [Specialty Name] AS specialty,
+                    [Number of Positions] AS total_positions,
+                    NULL AS open_positions,
+                    [Start Date] AS start_date,
+                    [Hiring Manager] AS hiring_manager,
+                    NULL AS job_status
                 FROM dhc.B4HEALTHOPENORDER
                 WHERE Program LIKE '%Per Diem%'
                     AND [Start Date] >= {date_from}
                     AND [Start Date] < {date_to}
-                GROUP BY [Facility Name]
             ''')
             columns = [column[0] for column in cursor.description]
             for row in cursor.fetchall():
-                open_orders.append(dict(zip(columns, row)))
+                row_dict = dict(zip(columns, row))
+                if row_dict.get('start_date'):
+                    row_dict['start_date'] = row_dict['start_date'].isoformat() if hasattr(row_dict['start_date'], 'isoformat') else str(row_dict['start_date'])
+                open_orders.append(row_dict)
         except Exception as e:
             print(f"Error loading B4 open orders: {e}")
 
         # ============================================================
-        # VNDLY - Jobs (Total Positions = Open + Filled)
+        # VNDLY - Jobs (Total Positions = Open + Filled, individual rows)
         # ============================================================
         try:
             cursor.execute(f'''
@@ -238,17 +246,24 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                     'VNDLY' AS source_system,
                     [Work Site (Job)] AS facility_name,
                     [Health System] AS health_system,
-                    SUM([Job Quantity]) AS total_positions,
-                    SUM([Open Positions]) AS open_positions
+                    [Job Id] AS position_id,
+                    [Job Title] AS specialty,
+                    [Job Quantity] AS total_positions,
+                    [Open Positions] AS open_positions,
+                    [Start Date] AS start_date,
+                    [Resource Manager (Job)] AS hiring_manager,
+                    [Job Status] AS job_status
                 FROM dbo.STAGING_VNDLY_JOBS
                 WHERE [Job Category] LIKE '%Per Diem%'
                     AND ([Start Date] IS NULL OR [Start Date] < {date_to})
                     AND ([End Date] IS NULL OR [End Date] >= {date_from})
-                GROUP BY [Health System], [Work Site (Job)]
             ''')
             columns = [column[0] for column in cursor.description]
             for row in cursor.fetchall():
-                open_orders.append(dict(zip(columns, row)))
+                row_dict = dict(zip(columns, row))
+                if row_dict.get('start_date'):
+                    row_dict['start_date'] = row_dict['start_date'].isoformat() if hasattr(row_dict['start_date'], 'isoformat') else str(row_dict['start_date'])
+                open_orders.append(row_dict)
         except Exception as e:
             print(f"Error loading VNDLY open orders: {e}")
 
