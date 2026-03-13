@@ -242,7 +242,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                     SUM([Open Positions]) AS open_positions
                 FROM dbo.STAGING_VNDLY_JOBS
                 WHERE [Job Category] LIKE '%Per Diem%'
-                    AND [Start Date] < {date_to}
+                    AND ([Start Date] IS NULL OR [Start Date] < {date_to})
                     AND ([End Date] IS NULL OR [End Date] >= {date_from})
                 GROUP BY [Health System], [Work Site (Job)]
             ''')
