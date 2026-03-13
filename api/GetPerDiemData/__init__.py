@@ -119,7 +119,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                     AND e.[Work Date] >= {date_from}
                     AND e.[Work Date] < {date_to}
                     AND e.[Program] LIKE '%Per Diem%'
-                    AND (e.[WC] IS NULL OR e.[WC] NOT LIKE '%cancel%')
+                    AND (e.[WC] IS NULL OR (e.[WC] NOT LIKE '%cancel%' AND e.[WC] NOT LIKE '%orient%'))
             ''')
 
             columns = [column[0] for column in cursor.description]
