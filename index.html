@@ -2057,6 +2057,116 @@
       lucide?.createIcons?.();
     };
 
+    window.showPDDrilldown = (encodedKey, weekIndex, mode) => {
+      const key = decodeURIComponent(encodedKey);
+      const groups = window.__pdGroups || [];
+      const shifts = window.__pdFilteredShifts || [];
+      const weeks = window.__pdWeeks || [];
+      const w = weeks[weekIndex];
+      if (!w) return;
+
+      const group = groups.find(g => g.key === key);
+      const label = group?.label || key;
+      const { healthSystem: gSys, facility: gFac } = group || {};
+
+      const LOOKBACK_WEEKS = 4;
+      const lookbackStart = new Date(w.start);
+      lookbackStart.setDate(lookbackStart.getDate() - (LOOKBACK_WEEKS - 1) * 7);
+
+      // Filter shifts for this group
+      const groupShifts = shifts.filter(sh =>
+        sh.healthSystem === gSys && (gFac === null || sh.facility === gFac)
+      );
+
+      let rows = [];
+      const fmtDate = d => d ? new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '';
+
+      if (mode === 'activeHC') {
+        // Distinct workers active in rolling 4-week window
+        const seen = new Map();
+        groupShifts.filter(sh => sh.shift_date && sh.shift_date >= lookbackStart && sh.shift_date <= w.end)
+          .forEach(sh => { if (!seen.has(sh.worker_name)) seen.set(sh.worker_name, sh); });
+        rows = [...seen.values()].sort((a, b) => a.worker_name.localeCompare(b.worker_name));
+      } else if (mode === 'activesWorked') {
+        // Distinct workers who worked in this specific week
+        const seen = new Map();
+        groupShifts.filter(sh => sh.shift_date && sh.shift_date >= w.start && sh.shift_date <= w.end)
+          .forEach(sh => { if (!seen.has(sh.worker_name)) seen.set(sh.worker_name, sh); });
+        rows = [...seen.values()].sort((a, b) => a.worker_name.localeCompare(b.worker_name));
+      } else {
+        // All individual shifts (deduped by worker+date) for this week
+        const seen = new Set();
+        groupShifts.filter(sh => sh.shift_date && sh.shift_date >= w.start && sh.shift_date <= w.end)
+          .forEach(sh => {
+            const k = sh.worker_name + '|' + sh.shift_date.toISOString().slice(0, 10);
+            if (!seen.has(k)) { seen.add(k); rows.push(sh); }
+          });
+        rows.sort((a, b) => a.worker_name.localeCompare(b.worker_name) || a.shift_date - b.shift_date);
+      }
+
+      const modeLabels = { activeHC: 'Active Headcount', activesWorked: 'Actives Worked', shifts: 'Shifts Worked' };
+      const weekEnd = w.end.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+      document.getElementById('pdDrilldownTitle').textContent = `${label} — ${modeLabels[mode]} — Week ending ${weekEnd}`;
+      document.getElementById('pdDrilldownCount').textContent = `${rows.length} record${rows.length !== 1 ? 's' : ''}`;
+
+      const tbody = document.getElementById('pdDrilldownBody');
+      tbody.innerHTML = rows.map((r, i) => `
+        <tr class="${i % 2 === 0 ? 'bg-white' : 'bg-slate-50'} border-b border-slate-100">
+          <td class="py-1.5 px-3 font-medium text-slate-700">${r.worker_name || '-'}</td>
+          <td class="py-1.5 px-3 text-slate-600">${fmtDate(r.shift_date)}</td>
+          <td class="py-1.5 px-3 text-slate-600">${r.agency || '-'}</td>
+          <td class="py-1.5 px-3 text-slate-400">${r.source_system || '-'}</td>
+        </tr>
+      `).join('') || '<tr><td colspan="4" class="py-4 text-center text-slate-400">No records found</td></tr>';
+
+      document.getElementById('pdDrilldownModal').classList.remove('hidden');
+      lucide?.createIcons?.();
+    };
+
+    window.exportPerDiemCSV = () => {
+      const shifts = window.__pdFilteredShifts || [];
+      if (shifts.length === 0) { window.showToast('No shift data to export', 'error'); return; }
+
+      const fmtDate = d => d ? new Date(d).toISOString().slice(0, 10) : '';
+      const escape = v => `"${String(v ?? '').replace(/"/g, '""')}"`;
+
+      const headers = ['Worker', 'Shift Date', 'Health System', 'Facility', 'Agency', 'Source'];
+      const csvRows = [headers.join(',')];
+
+      // Sort by health system, worker, date
+      const sorted = [...shifts].sort((a, b) =>
+        (a.healthSystem || '').localeCompare(b.healthSystem || '') ||
+        (a.worker_name || '').localeCompare(b.worker_name || '') ||
+        (a.shift_date || 0) - (b.shift_date || 0)
+      );
+
+      // Dedup by worker+date+system
+      const seen = new Set();
+      sorted.forEach(sh => {
+        const k = `${sh.worker_name}|${fmtDate(sh.shift_date)}|${sh.healthSystem}`;
+        if (seen.has(k)) return;
+        seen.add(k);
+        csvRows.push([
+          escape(sh.worker_name),
+          escape(fmtDate(sh.shift_date)),
+          escape(sh.healthSystem),
+          escape(sh.facility),
+          escape(sh.agency),
+          escape(sh.source_system)
+        ].join(','));
+      });
+
+      const blob = new Blob([csvRows.join('\n')], { type: 'text/csv' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `PerDiem_Shifts_${new Date().toISOString().slice(0, 10)}.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
+      window.showToast(`Exported ${csvRows.length - 1} shift records`, 'success');
+    };
+
+
     window.exportFinancialPDF = async () => {
       const container = document.getElementById('financialsContent');
       if (!container) { window.showToast("No financial data to export", 'error'); return; }
@@ -4408,13 +4518,21 @@
         // Build HTML
         let html = '';
 
+        // Store filtered shifts on window so modal + CSV can access them
+        window.__pdFilteredShifts = filteredShifts;
+        window.__pdGroups = activeGroups;
+        window.__pdMetrics = metrics;
+        window.__pdActiveWeeks = activeWeeks;
+        window.__pdActiveWeekIndices = activeWeekIndices;
+        window.__pdWeeks = weeks;
+
         // Header with date picker
         html += `
           <div class="flex flex-wrap items-center justify-between gap-4 mb-6">
             <h2 class="text-lg font-bold text-slate-800 flex items-center gap-2">
               <i data-lucide="clock" class="w-5 h-5 text-violet-500"></i> Per Diem Analytics
             </h2>
-            <div class="flex items-center gap-2 text-sm">
+            <div class="flex flex-wrap items-center gap-2 text-sm">
               <label class="text-slate-500 font-medium">From:</label>
               <select id="pdFromMonth" onchange="updatePerDiemDateRange()" class="border border-slate-300 rounded px-2 py-1 text-xs">
                 ${pickerMonths.map(m => `<option value="${m}" ${m === storedFrom ? 'selected' : ''}>${m}</option>`).join('')}
@@ -4423,6 +4541,9 @@
               <select id="pdToMonth" onchange="updatePerDiemDateRange()" class="border border-slate-300 rounded px-2 py-1 text-xs">
                 ${pickerMonths.map(m => `<option value="${m}" ${m === storedTo ? 'selected' : ''}>${m}</option>`).join('')}
               </select>
+              <button onclick="window.exportPerDiemCSV()" class="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 rounded text-xs font-bold flex items-center gap-1.5">
+                <i data-lucide="download" class="w-3.5 h-3.5"></i> Export CSV
+              </button>
             </div>
           </div>
         `;
@@ -4461,8 +4582,9 @@
         `;
 
         // Per-system data tables
-        activeGroups.forEach(({ key, label }) => {
+        activeGroups.forEach(({ key, label, healthSystem: gSys, facility: gFac }) => {
           const sysMetrics = activeWeekIndices.map(i => metrics[key][i]);
+          const encodedKey = encodeURIComponent(key);
 
           html += `
             <div class="mb-6 border border-slate-200 rounded-lg overflow-hidden">
@@ -4480,11 +4602,21 @@
                   <tbody>
                     <tr class="border-b border-slate-100">
                       <td class="py-1.5 px-2 font-medium text-slate-600 sticky left-0 bg-white">Total Active Headcount</td>
-                      ${sysMetrics.map(m => `<td class="text-center py-1.5 px-2 ${m.activeHC > 0 ? 'text-slate-800' : 'text-slate-300'}">${m.activeHC || '-'}</td>`).join('')}
+                      ${sysMetrics.map((m, ci) => {
+                        const wi = activeWeekIndices[ci];
+                        return m.activeHC > 0
+                          ? `<td class="text-center py-1.5 px-2 text-blue-600 underline cursor-pointer hover:bg-blue-50" onclick="window.showPDDrilldown('${encodedKey}',${wi},'activeHC')">${m.activeHC}</td>`
+                          : `<td class="text-center py-1.5 px-2 text-slate-300">-</td>`;
+                      }).join('')}
                     </tr>
                     <tr class="border-b border-slate-100 bg-slate-50/50">
                       <td class="py-1.5 px-2 font-medium text-slate-600 sticky left-0 bg-slate-50/50">Actives Worked</td>
-                      ${sysMetrics.map(m => `<td class="text-center py-1.5 px-2 ${m.activesWorked > 0 ? 'text-slate-800' : 'text-slate-300'}">${m.activesWorked || '-'}</td>`).join('')}
+                      ${sysMetrics.map((m, ci) => {
+                        const wi = activeWeekIndices[ci];
+                        return m.activesWorked > 0
+                          ? `<td class="text-center py-1.5 px-2 text-blue-600 underline cursor-pointer hover:bg-blue-50" onclick="window.showPDDrilldown('${encodedKey}',${wi},'activesWorked')">${m.activesWorked}</td>`
+                          : `<td class="text-center py-1.5 px-2 text-slate-300">-</td>`;
+                      }).join('')}
                     </tr>
                     <tr class="border-b border-slate-100">
                       <td class="py-1.5 px-2 font-medium text-slate-600 sticky left-0 bg-white">% of Actives Worked</td>
@@ -4496,7 +4628,12 @@
                     </tr>
                     <tr class="border-b border-slate-100 bg-slate-50/50">
                       <td class="py-1.5 px-2 font-medium text-slate-600 sticky left-0 bg-slate-50/50">Total Shifts Worked</td>
-                      ${sysMetrics.map(m => `<td class="text-center py-1.5 px-2 ${m.totalShifts > 0 ? 'text-slate-800' : 'text-slate-300'}">${m.totalShifts || '-'}</td>`).join('')}
+                      ${sysMetrics.map((m, ci) => {
+                        const wi = activeWeekIndices[ci];
+                        return m.totalShifts > 0
+                          ? `<td class="text-center py-1.5 px-2 text-blue-600 underline cursor-pointer hover:bg-blue-50" onclick="window.showPDDrilldown('${encodedKey}',${wi},'shifts')">${m.totalShifts}</td>`
+                          : `<td class="text-center py-1.5 px-2 text-slate-300">-</td>`;
+                      }).join('')}
                     </tr>
                     <tr>
                       <td class="py-1.5 px-2 font-medium text-slate-600 sticky left-0 bg-white">Shifts/Nurse Avg</td>
@@ -4519,6 +4656,34 @@
             <div class="border border-slate-200 rounded-lg p-4">
               <h4 class="font-bold text-sm text-slate-700 mb-3">Shifts/Nurse Average - Weekly Trend</h4>
               <div class="h-64"><canvas id="pdShiftsPerNurseChart"></canvas></div>
+            </div>
+          </div>
+        `;
+
+        // Drilldown modal
+        html += `
+          <div id="pdDrilldownModal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50">
+            <div class="bg-white rounded-xl shadow-2xl w-full max-w-3xl max-h-[80vh] flex flex-col">
+              <div class="flex justify-between items-center px-5 py-4 border-b border-slate-200">
+                <h3 id="pdDrilldownTitle" class="font-bold text-slate-800 text-base"></h3>
+                <button onclick="document.getElementById('pdDrilldownModal').classList.add('hidden')" class="text-slate-400 hover:text-slate-700">
+                  <i data-lucide="x" class="w-5 h-5"></i>
+                </button>
+              </div>
+              <div class="overflow-y-auto flex-1 p-4">
+                <table class="w-full text-xs">
+                  <thead>
+                    <tr class="border-b-2 border-slate-300 bg-slate-50 sticky top-0">
+                      <th class="text-left py-2 px-3 font-bold text-slate-600">Worker</th>
+                      <th class="text-left py-2 px-3 font-bold text-slate-600">Date</th>
+                      <th class="text-left py-2 px-3 font-bold text-slate-600">Agency</th>
+                      <th class="text-left py-2 px-3 font-bold text-slate-600">Source</th>
+                    </tr>
+                  </thead>
+                  <tbody id="pdDrilldownBody"></tbody>
+                </table>
+              </div>
+              <div class="px-5 py-3 border-t border-slate-200 text-xs text-slate-500" id="pdDrilldownCount"></div>
             </div>
           </div>
         `;
