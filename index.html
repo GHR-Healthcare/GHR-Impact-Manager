@@ -2054,6 +2054,12 @@
               r.healthSystem = Utils.getHealthSystem(null, r.system);
             });
           }
+          if (data.openOrders) {
+            data.openOrders.forEach(o => {
+              o.healthSystem = Utils.getHealthSystem(o.facility_name, o.health_system || '');
+              o.facility = o.facility_name;
+            });
+          }
           window.store.state.perDiemData = data;
         }
       } catch (e) {
@@ -2118,10 +2124,10 @@
       }
 
       // Build assignment lookup for manager fields
-      const assignments = window.store.state.perDiemData?.assignments || [];
+      const allAssignments = window.store.state.perDiemData?.assignments || [];
       const normName = n => String(n || '').trim().toLowerCase();
       const assignmentMap = new Map();
-      assignments.forEach(a => {
+      allAssignments.forEach(a => {
         const k = normName(a.worker_name);
         if (!k) return;
         const existing = assignmentMap.get(k);
@@ -4392,6 +4398,7 @@
         const s = window.store.state;
         const assignments = s.perDiemData?.assignments || [];
         const shifts = s.perDiemData?.shifts || [];
+        const openOrders = s.perDiemData?.openOrders || [];
 
         if (assignments.length === 0 && shifts.length === 0) {
           if (!s.perDiemLoaded) {
@@ -4449,6 +4456,15 @@
           const agencyMatch = !ghrOnly || /ghr/i.test(sh.agency || '');
           const catMatch = matchesPDCategory(sh.agency);
           return sysMatch && facMatch && agencyMatch && catMatch;
+        });
+
+        // Open orders: apply health system + facility filter only (no GHR/agency filter — these are client demands)
+        // Also exclude transitioned systems' B4 open orders
+        const filteredOpenOrders = openOrders.filter(o => {
+          if (o.source_system === 'B4' && transitionedSystems.has(o.healthSystem)) return false;
+          const sysMatch = s.filterSelection.systems.size === 0 || s.filterSelection.systems.has(o.healthSystem);
+          const facMatch = s.filterSelection.facilities.size === 0 || s.filterSelection.facilities.has(o.facility);
+          return sysMatch && facMatch;
         });
 
         // Determine date range from shifts
@@ -4530,6 +4546,19 @@
             a.healthSystem === sys && (fac === null || a.facility === fac)
           );
 
+          // Contracted HC (static for this group across all weeks):
+          // B4 open slots (unfilled, from B4HEALTHOPENORDER) + B4 filled slots (active assignments) + VNDLY total job slots
+          const b4OpenSlots = filteredOpenOrders
+            .filter(o => o.source_system === 'B4' && o.healthSystem === sys && (fac === null || o.facility === fac))
+            .reduce((sum, o) => sum + (o.total_positions || 0), 0);
+          const b4FilledSlots = new Set(
+            sysAssignments.filter(a => a.source_system === 'B4').map(a => a.worker_name)
+          ).size;
+          const vndlySlots = filteredOpenOrders
+            .filter(o => o.source_system === 'VNDLY' && o.healthSystem === sys && (fac === null || o.facility === fac))
+            .reduce((sum, o) => sum + (o.total_positions || 0), 0);
+          const contractedHC = b4OpenSlots + b4FilledSlots + vndlySlots;
+
           metrics[key] = weeks.map((w, wi) => {
             // Rolling lookback window: from (LOOKBACK_WEEKS - 1) weeks before current week start to current week end
             const lookbackStart = new Date(w.start);
@@ -4556,7 +4585,9 @@
             const pctWorked = activeHC > 0 ? (activesWorked / activeHC * 100) : 0;
             const shiftsPerNurse = activeHC > 0 ? (totalShifts / activeHC) : 0;
 
-            return { week: w, activeHC, activesWorked, pctWorked, totalShifts, shiftsPerNurse };
+            const fillRate = contractedHC > 0 ? (activeHC / contractedHC * 100) : null;
+
+            return { week: w, activeHC, activesWorked, pctWorked, totalShifts, shiftsPerNurse, contractedHC, fillRate };
           });
         });
 
@@ -4721,9 +4752,22 @@
                           : `<td class="text-center py-1.5 px-2 text-slate-300">-</td>`;
                       }).join('')}
                     </tr>
-                    <tr>
+                    <tr class="border-b border-slate-100">
                       <td class="py-1.5 px-2 font-medium text-slate-600 sticky left-0 bg-white">Shifts/Nurse Avg</td>
                       ${sysMetrics.map(m => `<td class="text-center py-1.5 px-2 ${m.shiftsPerNurse > 0 ? 'text-slate-800' : 'text-slate-300'}">${m.shiftsPerNurse > 0 ? m.shiftsPerNurse.toFixed(2) : '-'}</td>`).join('')}
+                    </tr>
+                    <tr class="border-b border-slate-100 bg-slate-50/50">
+                      <td class="py-1.5 px-2 font-medium text-slate-600 sticky left-0 bg-slate-50/50">Contracted HC</td>
+                      ${sysMetrics.map(m => `<td class="text-center py-1.5 px-2 ${m.contractedHC > 0 ? 'text-slate-700' : 'text-slate-300'}">${m.contractedHC > 0 ? m.contractedHC : '-'}</td>`).join('')}
+                    </tr>
+                    <tr>
+                      <td class="py-1.5 px-2 font-medium text-slate-600 sticky left-0 bg-white">Fill Rate</td>
+                      ${sysMetrics.map(m => {
+                        if (m.fillRate === null) return `<td class="text-center py-1.5 px-2 text-slate-300">-</td>`;
+                        const pct = m.fillRate;
+                        const color = pct >= 75 ? 'text-emerald-700 bg-emerald-50' : pct >= 50 ? 'text-amber-700 bg-amber-50' : pct > 0 ? 'text-red-700 bg-red-50' : 'text-slate-300';
+                        return `<td class="text-center py-1.5 px-2 ${color} font-medium">${pct.toFixed(0)}%</td>`;
+                      }).join('')}
                     </tr>
                   </tbody>
                 </table>

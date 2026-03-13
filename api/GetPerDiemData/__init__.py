@@ -206,6 +206,52 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
         except Exception as e:
             print(f"Error loading VNDLY per diem shifts: {e}")
 
+        # ============================================================
+        # B4Health - Open (Unfilled) Orders
+        # ============================================================
+        open_orders = []
+        try:
+            cursor.execute(f'''
+                SELECT
+                    'B4' AS source_system,
+                    [Facility Name] AS facility_name,
+                    NULL AS health_system,
+                    SUM([Number of Positions]) AS total_positions
+                FROM dhc.B4HEALTHOPENORDER
+                WHERE Program LIKE '%Per Diem%'
+                    AND [Start Date] >= {date_from}
+                    AND [Start Date] < {date_to}
+                GROUP BY [Facility Name]
+            ''')
+            columns = [column[0] for column in cursor.description]
+            for row in cursor.fetchall():
+                open_orders.append(dict(zip(columns, row)))
+        except Exception as e:
+            print(f"Error loading B4 open orders: {e}")
+
+        # ============================================================
+        # VNDLY - Jobs (Total Positions = Open + Filled)
+        # ============================================================
+        try:
+            cursor.execute(f'''
+                SELECT
+                    'VNDLY' AS source_system,
+                    [Work Site (Job)] AS facility_name,
+                    [Health System] AS health_system,
+                    SUM([Job Quantity]) AS total_positions,
+                    SUM([Open Positions]) AS open_positions
+                FROM dbo.STAGING_VNDLY_JOBS
+                WHERE [Job Category] LIKE '%Per Diem%'
+                    AND [Start Date] < {date_to}
+                    AND ([End Date] IS NULL OR [End Date] >= {date_from})
+                GROUP BY [Health System], [Work Site (Job)]
+            ''')
+            columns = [column[0] for column in cursor.description]
+            for row in cursor.fetchall():
+                open_orders.append(dict(zip(columns, row)))
+        except Exception as e:
+            print(f"Error loading VNDLY open orders: {e}")
+
         conn.close()
 
         b4_assignments = len([r for r in assignments if r.get('source_system') == 'B4'])
@@ -218,7 +264,8 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
         return func.HttpResponse(
             json.dumps({
                 'assignments': assignments,
-                'shifts': shifts
+                'shifts': shifts,
+                'openOrders': open_orders
             }, default=str),
             mimetype="application/json",
             status_code=200
