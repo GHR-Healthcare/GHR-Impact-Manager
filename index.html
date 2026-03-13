@@ -2127,10 +2127,22 @@
       const shifts = window.__pdFilteredShifts || [];
       if (shifts.length === 0) { window.showToast('No shift data to export', 'error'); return; }
 
+      const assignments = window.store.state.perDiemData?.assignments || [];
       const fmtDate = d => d ? new Date(d).toISOString().slice(0, 10) : '';
       const escape = v => `"${String(v ?? '').replace(/"/g, '""')}"`;
 
-      const headers = ['Worker', 'Shift Date', 'Health System', 'Facility', 'Agency', 'Source'];
+      // Build lookup: worker_name + healthSystem -> { startDate, endDate }
+      // A worker may have multiple assignments; use the most recent active one
+      const assignmentMap = new Map();
+      assignments.forEach(a => {
+        const k = `${a.worker_name}|${a.healthSystem}`;
+        const existing = assignmentMap.get(k);
+        if (!existing || (a.startDate && (!existing.startDate || a.startDate > existing.startDate))) {
+          assignmentMap.set(k, { startDate: a.startDate, endDate: a.endDate });
+        }
+      });
+
+      const headers = ['Worker', 'Shift Date', 'Health System', 'Facility', 'Agency', 'Source', 'Assignment Start', 'Assignment End'];
       const csvRows = [headers.join(',')];
 
       // Sort by health system, worker, date
@@ -2146,13 +2158,16 @@
         const k = `${sh.worker_name}|${fmtDate(sh.shift_date)}|${sh.healthSystem}`;
         if (seen.has(k)) return;
         seen.add(k);
+        const asgn = assignmentMap.get(`${sh.worker_name}|${sh.healthSystem}`) || {};
         csvRows.push([
           escape(sh.worker_name),
           escape(fmtDate(sh.shift_date)),
           escape(sh.healthSystem),
           escape(sh.facility),
           escape(sh.agency),
-          escape(sh.source_system)
+          escape(sh.source_system),
+          escape(fmtDate(asgn.startDate)),
+          escape(fmtDate(asgn.endDate))
         ].join(','));
       });
 
