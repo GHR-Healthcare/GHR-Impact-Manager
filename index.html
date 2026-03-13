@@ -2087,10 +2087,6 @@
       const label = group?.label || key;
       const { healthSystem: gSys, facility: gFac } = group || {};
 
-      const LOOKBACK_WEEKS = 4;
-      const lookbackStart = new Date(w.start);
-      lookbackStart.setDate(lookbackStart.getDate() - (LOOKBACK_WEEKS - 1) * 7);
-
       // Filter shifts and assignments for this group
       const groupShifts = shifts.filter(sh =>
         sh.healthSystem === gSys && (gFac === null || sh.facility === gFac)
@@ -2103,10 +2099,10 @@
       const fmtDate = d => d ? new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '';
 
       if (mode === 'activeHC') {
-        // Distinct workers with an active assignment during the rolling window
+        // Distinct workers with an assignment overlapping this week
         const seen = new Map();
         groupAssignments
-          .filter(a => a.startDate && a.startDate <= w.end && (!a.endDate || a.endDate >= lookbackStart))
+          .filter(a => a.startDate && a.startDate <= w.end && (!a.endDate || a.endDate >= w.start))
           .forEach(a => { if (!seen.has(a.worker_name)) seen.set(a.worker_name, a); });
         rows = [...seen.values()].sort((a, b) => a.worker_name.localeCompare(b.worker_name));
       } else if (mode === 'activesWorked') {
@@ -4606,15 +4602,11 @@
           const contractedHC = b4OpenSlots + b4FilledSlots + vndlySlots;
 
           metrics[key] = weeks.map((w, wi) => {
-            // Rolling lookback window: from (LOOKBACK_WEEKS - 1) weeks before current week start to current week end
-            const lookbackStart = new Date(w.start);
-            lookbackStart.setDate(lookbackStart.getDate() - (LOOKBACK_WEEKS - 1) * 7);
-
-            // Active headcount: distinct workers with an assignment active during the rolling window
-            // Assignment is active if it started on or before window end AND ended on or after window start (or has no end date)
+            // Active headcount: distinct workers with an assignment overlapping this specific week
+            // Assignment overlaps if it started on or before week end AND ended on or after week start (or has no end date)
             const activeWorkers = new Set(
               sysAssignments
-                .filter(a => a.startDate && a.startDate <= w.end && (!a.endDate || a.endDate >= lookbackStart))
+                .filter(a => a.startDate && a.startDate <= w.end && (!a.endDate || a.endDate >= w.start))
                 .map(a => a.worker_name)
             );
             const activeHC = activeWorkers.size;
