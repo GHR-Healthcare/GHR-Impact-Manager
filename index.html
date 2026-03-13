@@ -1211,6 +1211,7 @@
                         });
                     }
                     window.store.state.perDiemData = pdData;
+                    window.store.state.perDiemLoaded = true;
                     console.log(`Loaded ${pdData.assignments?.length || 0} per diem assignments and ${pdData.shifts?.length || 0} per diem shifts`);
                     if (window.store.state.view === 'perdiem') {
                         window.store.dispatch('REFRESH_UI');
@@ -1218,10 +1219,12 @@
                 } else {
                     console.warn('Could not load per diem data');
                     window.store.state.perDiemData = { assignments: [], shifts: [] };
+                    window.store.state.perDiemLoaded = true;
                 }
             } catch (pdError) {
                 console.warn('Error loading per diem data:', pdError);
                 window.store.state.perDiemData = { assignments: [], shifts: [] };
+                window.store.state.perDiemLoaded = true;
             }
 
             return true;
@@ -4229,10 +4232,16 @@
         const shifts = s.perDiemData?.shifts || [];
 
         if (assignments.length === 0 && shifts.length === 0) {
-          container.innerHTML = `<div class="p-6 text-slate-500 bg-slate-50 border border-slate-200 rounded flex items-center gap-3">
-            <svg class="animate-spin h-5 w-5 text-blue-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg>
-            Loading per diem data from database...
-          </div>`;
+          if (!s.perDiemLoaded) {
+            container.innerHTML = `<div class="p-6 text-slate-500 bg-slate-50 border border-slate-200 rounded flex items-center gap-3">
+              <svg class="animate-spin h-5 w-5 text-blue-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg>
+              Loading per diem data from database...
+            </div>`;
+          } else {
+            container.innerHTML = `<div class="p-6 text-slate-500 bg-slate-50 border border-slate-200 rounded">
+              No per diem data found for the selected date range. The data may not be tagged as Per Diem in B4Health or VNDLY.
+            </div>`;
+          }
           return;
         }
 
@@ -4461,7 +4470,7 @@
                     </tr>
                     <tr>
                       <td class="py-1.5 px-2 font-medium text-slate-600 sticky left-0 bg-white">Shifts/Nurse Avg</td>
-                      ${sysMetrics.map(m => `<td class="text-center py-1.5 px-2 ${m.shiftsPerNurse > 0 ? 'text-slate-800' : 'text-slate-300'}">${m.shiftsPerNurse > 0 ? m.shiftsPerNurse.toFixed(1) : '-'}</td>`).join('')}
+                      ${sysMetrics.map(m => `<td class="text-center py-1.5 px-2 ${m.shiftsPerNurse > 0 ? 'text-slate-800' : 'text-slate-300'}">${m.shiftsPerNurse > 0 ? m.shiftsPerNurse.toFixed(2) : '-'}</td>`).join('')}
                     </tr>
                   </tbody>
                 </table>
@@ -4547,10 +4556,11 @@
               responsive: true,
               maintainAspectRatio: false,
               plugins: {
-                legend: { position: 'bottom', labels: { boxWidth: 12, font: { size: 10 } } }
+                legend: { position: 'bottom', labels: { boxWidth: 12, font: { size: 10 } } },
+                tooltip: { callbacks: { label: ctx => `${ctx.dataset.label}: ${ctx.parsed.y.toFixed(2)}` } }
               },
               scales: {
-                y: { min: 0, ticks: { font: { size: 10 } } },
+                y: { min: 0, ticks: { font: { size: 10 }, callback: v => v.toFixed(2) } },
                 x: { ticks: { font: { size: 9 }, maxRotation: 45 } }
               }
             }
@@ -4570,6 +4580,7 @@
         financialFromMonth: null,
         financialToMonth: null,
         perDiemData: { assignments: [], shifts: [] },
+        perDiemLoaded: false,
         perDiemFromMonth: null,
         perDiemToMonth: null,
         filters: { systems: new Set(), facilities: new Set(), categories: new Set(), specialties: new Set(), ageMin: null, ageMax: null, searchId: '' },

@@ -100,25 +100,38 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                         AND Contract_Status = 'Closed And Awarded'
                         AND Last_Name IS NOT NULL
                         AND First_Name IS NOT NULL
+                ),
+                DirectPD AS (
+                    SELECT DISTINCT
+                        e.[Employee] AS worker_name,
+                        e.[Work Date] AS shift_date,
+                        e.[Health System] AS system,
+                        e.[Agency Name] AS agency
+                    FROM dhc.B4HealthESR e
+                    WHERE e.[Health System] IS NOT NULL
+                        AND e.[Work Date] >= {date_from}
+                        AND e.[Work Date] < {date_to}
+                        AND e.[Program] LIKE '%Per Diem%'
+                ),
+                JoinedPD AS (
+                    SELECT DISTINCT
+                        e.[Employee] AS worker_name,
+                        e.[Work Date] AS shift_date,
+                        e.[Health System] AS system,
+                        e.[Agency Name] AS agency
+                    FROM dhc.B4HealthESR e
+                    INNER JOIN PD_Workers w
+                        ON w.employee_name = e.[Employee]
+                        AND w.Health_System = e.[Health System]
+                    WHERE e.[Health System] IS NOT NULL
+                        AND e.[Work Date] >= {date_from}
+                        AND e.[Work Date] < {date_to}
                 )
-                SELECT DISTINCT
-                    'B4' AS source_system,
-                    e.[Employee] AS worker_name,
-                    e.[Work Date] AS shift_date,
-                    e.[Health System] AS system,
-                    e.[Agency Name] AS agency
-                FROM dhc.B4HealthESR e
-                WHERE e.[Health System] IS NOT NULL
-                    AND e.[Work Date] >= {date_from}
-                    AND e.[Work Date] < {date_to}
-                    AND (
-                        e.[Program] LIKE '%Per Diem%'
-                        OR EXISTS (
-                            SELECT 1 FROM PD_Workers w
-                            WHERE w.employee_name = e.[Employee]
-                                AND w.Health_System = e.[Health System]
-                        )
-                    )
+                SELECT DISTINCT 'B4' AS source_system, worker_name, shift_date, system, agency
+                FROM DirectPD
+                UNION
+                SELECT DISTINCT 'B4' AS source_system, worker_name, shift_date, system, agency
+                FROM JoinedPD
             ''')
 
             columns = [column[0] for column in cursor.description]
