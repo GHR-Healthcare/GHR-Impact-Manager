@@ -322,6 +322,7 @@
               <tr>
                 <th class="text-left p-3 font-semibold text-slate-700">Keywords (comma-separated)</th>
                 <th class="text-left p-3 font-semibold text-slate-700 w-48">Health System</th>
+                <th class="text-center p-3 font-semibold text-slate-700 w-36" title="Break out per diem metrics by facility instead of rolling up to system level">Per Diem Breakout</th>
                 <th class="w-16 p-3"></th>
               </tr>
             </thead>
@@ -860,13 +861,13 @@
       // Health System Mappings (editable in Settings)
       HEALTH_SYSTEM_MAPPINGS: [
         { keywords: ['capital', 'hopewell', 'deborah'], system: 'Capital Health' },
-        { keywords: ['cooper', 'cape'], system: 'Cooper' },
+        { keywords: ['cooper', 'cape'], system: 'Cooper', perdiem_breakout: true },
         { keywords: ['redeemer'], system: 'Holy Redeemer' },
         { keywords: ['hunterdon'], system: 'Hunterdon' },
         { keywords: ['inspira'], system: 'Inspira' },
         { keywords: ['richmond', 'rumc'], system: 'RUMC' },
         { keywords: ['st. luke', 'grand view', 'sellersville', 'miners', 'carbon', 'lehigh'], system: 'St Lukes' },
-        { keywords: ['penn', 'lancaster', 'chester', 'hup', 'presbyterian'], system: 'UPHS' },
+        { keywords: ['penn', 'lancaster', 'chester', 'hup', 'presbyterian'], system: 'UPHS', perdiem_breakout: true },
         { keywords: ['virtua'], system: 'Virtua' },
         { keywords: ['jefferson', 'einstein', 'magee'], system: 'Jefferson' },
         { keywords: ['main line', 'mlh', 'lankenau', 'paoli'], system: 'Main Line Health' },
@@ -1051,7 +1052,8 @@
                     if (mappingsData.mappings && mappingsData.mappings.length > 0) {
                         CONSTANTS.HEALTH_SYSTEM_MAPPINGS = mappingsData.mappings.map(m => ({
                             keywords: Array.isArray(m.keywords) ? m.keywords : m.keywords.split(',').map(k => k.trim()),
-                            system: m.system_name
+                            system: m.system_name,
+                            perdiem_breakout: !!m.perdiem_breakout
                         }));
                         console.log('Loaded', CONSTANTS.HEALTH_SYSTEM_MAPPINGS.length, 'health system mappings from database');
                     }
@@ -4477,7 +4479,9 @@
         }
 
         // Systems that get broken out by facility instead of rolled up
-        const FACILITY_BREAKOUT_SYSTEMS = new Set(['UPHS', 'Cooper']);
+        const FACILITY_BREAKOUT_SYSTEMS = new Set(
+          CONSTANTS.HEALTH_SYSTEM_MAPPINGS.filter(m => m.perdiem_breakout).map(m => m.system)
+        );
 
         // Get all health systems from data
         const systemSet = new Set();
@@ -5680,7 +5684,8 @@
                     id: idx + 1,
                     keywords: m.keywords,
                     system_name: m.system,
-                    sort_order: idx
+                    sort_order: idx,
+                    perdiem_breakout: !!m.perdiem_breakout
                 }));
             }
         } catch (error) {
@@ -5689,7 +5694,8 @@
                 id: idx + 1,
                 keywords: m.keywords,
                 system_name: m.system,
-                sort_order: idx
+                sort_order: idx,
+                perdiem_breakout: !!m.perdiem_breakout
             }));
         }
         
@@ -5744,6 +5750,12 @@
                                class="w-full border border-slate-300 rounded px-2 py-1.5 text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none">
                     </td>
                     <td class="p-2 text-center">
+                        <input type="checkbox" ${mapping.perdiem_breakout ? 'checked' : ''}
+                               onchange="updateMapping(${idx}, 'perdiem_breakout', this.checked)"
+                               class="w-4 h-4 accent-blue-600 cursor-pointer"
+                               title="Show per diem metrics broken out by facility">
+                    </td>
+                    <td class="p-2 text-center">
                         <button onclick="deleteMapping(${idx})" class="text-red-500 hover:text-red-700 p-1" title="Delete">
                             <i data-lucide="trash-2" class="w-4 h-4"></i>
                         </button>
@@ -5795,7 +5807,8 @@
                 id: null,
                 keywords: [...m.keywords],
                 system_name: m.system,
-                sort_order: idx
+                sort_order: idx,
+                perdiem_breakout: !!m.perdiem_breakout
             }));
             renderMappingsTable();
             window.showToast('Mappings reset to defaults (not saved yet)', 'info');
@@ -5863,7 +5876,8 @@
                 // Update CONSTANTS with new mappings
                 CONSTANTS.HEALTH_SYSTEM_MAPPINGS = currentMappings.map(m => ({
                     keywords: Array.isArray(m.keywords) ? m.keywords : [m.keywords],
-                    system: m.system_name || m.system
+                    system: m.system_name || m.system,
+                    perdiem_breakout: !!m.perdiem_breakout
                 }));
                 
                 window.showToast('Settings saved successfully', 'success');
