@@ -97,7 +97,9 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                     SELECT DISTINCT
                         CONCAT(Last_Name, ', ', First_Name) AS employee_name,
                         Health_System,
-                        Facility
+                        Facility,
+                        Start_Date AS assignment_start,
+                        End_Date AS assignment_end
                     FROM dhc.B4HealthOrder
                     WHERE Program LIKE '%Per Diem%'
                         AND Contract_Status = 'Closed And Awarded'
@@ -131,6 +133,8 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                     INNER JOIN PD_Workers w
                         ON w.employee_name = e.[Employee]
                         AND w.Health_System = e.[Health System]
+                        AND e.[Work Date] >= w.assignment_start
+                        AND (w.assignment_end IS NULL OR e.[Work Date] <= w.assignment_end)
                     WHERE e.[Health System] IS NOT NULL
                         AND e.[Work Date] >= {date_from}
                         AND e.[Work Date] < {date_to}
