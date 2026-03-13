@@ -178,15 +178,19 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                     s.[Vendor Company Name] AS agency,
                     wo.[Default Work Site Name] AS facility
                 FROM dbo.STAGING_VNDLY_SPEND s
-                LEFT JOIN (
+                INNER JOIN (
                     SELECT DISTINCT
                         CONCAT([Contractor First Name], ' ', [Contractor Last Name]) AS worker_name,
                         [Health System],
-                        [Default Work Site Name]
+                        [Default Work Site Name],
+                        [Start Date] AS assignment_start,
+                        [End Date] AS assignment_end
                     FROM dbo.STAGING_VNDLY_WORKORDERS
                     WHERE [Labor Type] LIKE '%Per Diem%'
                 ) wo ON wo.worker_name = CONCAT(s.[Contractor First Name], ' ', s.[Contractor Last Name])
                     AND wo.[Health System] = s.[Health System]
+                    AND s.[Item Date] >= wo.assignment_start
+                    AND (wo.assignment_end IS NULL OR s.[Item Date] <= wo.assignment_end)
                 WHERE s.[Health System] IS NOT NULL
                     AND s.[Item Date] >= {date_from}
                     AND s.[Item Date] < {date_to}
