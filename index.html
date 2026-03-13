@@ -4647,7 +4647,7 @@
         // Per-system data tables
         activeGroups.forEach(({ key, label, healthSystem: gSys, facility: gFac }) => {
           const sysMetrics = activeWeekIndices.map(i => metrics[key][i]);
-          const encodedKey = encodeURIComponent(key);
+          const encodedKey = encodeURIComponent(key).replace(/'/g, '%27');
 
           html += `
             <div class="mb-6 border border-slate-200 rounded-lg overflow-hidden">

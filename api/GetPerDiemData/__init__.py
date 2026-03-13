@@ -60,7 +60,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                 SELECT DISTINCT
                     'B4' AS source_system,
                     Contract_ID AS contract_id,
-                    CONCAT(First_Name, ' ', Last_Name) AS worker_name,
+                    CONCAT(Last_Name, ', ', First_Name) AS worker_name,
                     Health_System AS system,
                     Facility AS facility,
                     Agency AS agency,
