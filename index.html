@@ -322,6 +322,7 @@
               <tr>
                 <th class="text-left p-3 font-semibold text-slate-700">Keywords (comma-separated)</th>
                 <th class="text-left p-3 font-semibold text-slate-700 w-48">Health System</th>
+                <th class="text-center p-3 font-semibold text-slate-700 w-36" title="Break out per diem metrics by facility instead of rolling up to system level">Per Diem Breakout</th>
                 <th class="w-16 p-3"></th>
               </tr>
             </thead>
@@ -377,6 +378,14 @@
         </button>
         <button onclick="store.dispatch('SET_VIEW','stats')" id="btnViewStats"
                 class="px-4 py-1.5 text-xs font-bold rounded-md transition-colors text-slate-500 hover:text-slate-700">Stats</button>
+        <button onclick="store.dispatch('SET_VIEW','perdiem')" id="btnViewPerDiem"
+                class="px-4 py-1.5 text-xs font-bold rounded-md transition-colors text-slate-500 hover:text-slate-700 flex items-center gap-1">
+          <i data-lucide="clock" class="w-3 h-3 text-violet-500"></i> Per Diem
+        </button>
+        <button onclick="store.dispatch('SET_VIEW','trend')" id="btnViewTrend"
+                class="px-4 py-1.5 text-xs font-bold rounded-md transition-colors text-slate-500 hover:text-slate-700 flex items-center gap-1">
+          <i data-lucide="trending-up" class="w-3 h-3 text-blue-500"></i> Trend
+        </button>
         <button onclick="store.dispatch('SET_VIEW','financials')" id="btnViewFinancials"
                 class="px-4 py-1.5 text-xs font-bold rounded-md transition-colors text-slate-500 hover:text-slate-700 flex items-center gap-1">
           <i data-lucide="dollar-sign" class="w-3 h-3 text-emerald-500"></i> Financials
@@ -447,6 +456,18 @@
     <div id="financialsViewWrapper" class="hidden flex flex-col h-full overflow-hidden bg-white shadow-lg rounded-lg border border-slate-200">
       <div class="flex-1 overflow-y-auto scroller p-6">
         <div id="financialsContent" class="space-y-6"></div>
+      </div>
+    </div>
+
+    <div id="perDiemViewWrapper" class="hidden flex flex-col h-full overflow-hidden bg-white shadow-lg rounded-lg border border-slate-200">
+      <div class="flex-1 overflow-y-auto scroller p-6">
+        <div id="perDiemContent" class="space-y-6"></div>
+      </div>
+    </div>
+
+    <div id="trendViewWrapper" class="hidden flex flex-col h-full overflow-hidden bg-white shadow-lg rounded-lg border border-slate-200">
+      <div class="flex-1 overflow-y-auto scroller p-6">
+        <div id="trendContent" class="space-y-6"></div>
       </div>
     </div>
   </div>
@@ -631,7 +652,7 @@
     const $ = (id) => document.getElementById(id);
 
     // App version - loaded from environment variable via API, with fallback
-    let APP_VERSION = '1.3.0';
+    let APP_VERSION = '1.4.0';
 
     const API_BASE_URL = '/api';
     
@@ -850,13 +871,13 @@
       // Health System Mappings (editable in Settings)
       HEALTH_SYSTEM_MAPPINGS: [
         { keywords: ['capital', 'hopewell', 'deborah'], system: 'Capital Health' },
-        { keywords: ['cooper', 'cape'], system: 'Cooper' },
+        { keywords: ['cooper', 'cape'], system: 'Cooper', perdiem_breakout: true },
         { keywords: ['redeemer'], system: 'Holy Redeemer' },
         { keywords: ['hunterdon'], system: 'Hunterdon' },
         { keywords: ['inspira'], system: 'Inspira' },
         { keywords: ['richmond', 'rumc'], system: 'RUMC' },
-        { keywords: ['st. luke', 'sellersville', 'miners', 'carbon', 'lehigh'], system: 'St Lukes' },
-        { keywords: ['penn', 'lancaster', 'chester', 'hup', 'presbyterian'], system: 'UPHS' },
+        { keywords: ['st. luke', 'grand view', 'sellersville', 'miners', 'carbon', 'lehigh'], system: 'St Lukes' },
+        { keywords: ['penn', 'lancaster', 'chester', 'hup', 'presbyterian'], system: 'UPHS', perdiem_breakout: true },
         { keywords: ['virtua'], system: 'Virtua' },
         { keywords: ['jefferson', 'einstein', 'magee'], system: 'Jefferson' },
         { keywords: ['main line', 'mlh', 'lankenau', 'paoli'], system: 'Main Line Health' },
@@ -1041,7 +1062,8 @@
                     if (mappingsData.mappings && mappingsData.mappings.length > 0) {
                         CONSTANTS.HEALTH_SYSTEM_MAPPINGS = mappingsData.mappings.map(m => ({
                             keywords: Array.isArray(m.keywords) ? m.keywords : m.keywords.split(',').map(k => k.trim()),
-                            system: m.system_name
+                            system: m.system_name,
+                            perdiem_breakout: !!m.perdiem_breakout
                         }));
                         console.log('Loaded', CONSTANTS.HEALTH_SYSTEM_MAPPINGS.length, 'health system mappings from database');
                     }
@@ -1178,6 +1200,72 @@
             } catch (finError) {
                 console.warn('Error loading financial data:', finError);
                 window.store.state.financialData = [];
+            }
+
+            // Load per diem data for the Per Diem tab
+            try {
+                const pdResponse = await fetch(`${API_BASE_URL}/perdiem-data`);
+                if (pdResponse.ok) {
+                    const pdData = await pdResponse.json();
+                    // Normalize assignments
+                    if (pdData.assignments) {
+                        pdData.assignments.forEach(r => {
+                            const parseLocalDate = s => { if (!s) return null; const [y,m,d] = s.split('T')[0].split('-'); return new Date(+y, +m-1, +d); };
+                            r.startDate = parseLocalDate(r.startDate);
+                            r.endDate = parseLocalDate(r.endDate);
+                            r.healthSystem = Utils.getHealthSystem(r.facility, r.system);
+                        });
+                    }
+                    // Normalize shifts
+                    if (pdData.shifts) {
+                        pdData.shifts.forEach(r => {
+                            if (r.shift_date) { const [y,m,d] = r.shift_date.split('T')[0].split('-'); r.shift_date = new Date(+y, +m-1, +d); } else { r.shift_date = null; }
+                            r.healthSystem = Utils.getHealthSystem(null, r.system);
+                        });
+                    }
+                    window.store.state.perDiemData = pdData;
+                    window.store.state.perDiemLoaded = true;
+                    console.log(`Loaded ${pdData.assignments?.length || 0} per diem assignments and ${pdData.shifts?.length || 0} per diem shifts`);
+                    if (window.store.state.view === 'perdiem') {
+                        window.store.dispatch('REFRESH_UI');
+                    }
+                } else {
+                    console.warn('Could not load per diem data');
+                    window.store.state.perDiemData = { assignments: [], shifts: [] };
+                    window.store.state.perDiemLoaded = true;
+                }
+            } catch (pdError) {
+                console.warn('Error loading per diem data:', pdError);
+                window.store.state.perDiemData = { assignments: [], shifts: [] };
+                window.store.state.perDiemLoaded = true;
+            }
+
+            // Load trend data
+            try {
+                const trendResponse = await fetch(`${API_BASE_URL}/trend-data`);
+                if (trendResponse.ok) {
+                    const trendData = await trendResponse.json();
+                    if (trendData.assignments) {
+                        trendData.assignments.forEach(r => {
+                            const parseLocalDate = s => { if (!s) return null; const [y,m,d] = s.split('T')[0].split('-'); return new Date(+y, +m-1, +d); };
+                            r.startDate = parseLocalDate(r.startDate);
+                            r.endDate = parseLocalDate(r.endDate);
+                            r.healthSystem = Utils.getHealthSystem(r.facility, r.system);
+                        });
+                    }
+                    window.store.state.trendData = trendData;
+                    window.store.state.trendLoaded = true;
+                    if (window.store.state.view === 'trend') {
+                        window.store.dispatch('REFRESH_UI');
+                    }
+                } else {
+                    window.store.state.trendData = { assignments: [] };
+                    window.store.state.trendLoaded = true;
+                }
+            } catch (trendError) {
+                console.warn('Error loading trend data:', trendError);
+                window.store.state.trendData = { assignments: [] };
+                window.store.state.trendLoaded = true;
             }
 
             return true;
@@ -1737,7 +1825,7 @@
         if (f.includes('hunterdon')) return 'Hunterdon';
         if (f.includes('inspira')) return 'Inspira';
         if (f.includes('richmond') || f.includes('rumc')) return 'RUMC';
-        if (f.includes('st. luke') || f.includes('sellersville') || f.includes('miners') || f.includes('carbon') || f.includes('lehigh')) return 'St Lukes';
+        if (f.includes('st. luke') || f.includes('grand view') || f.includes('sellersville') || f.includes('miners') || f.includes('carbon') || f.includes('lehigh')) return 'St Lukes';
         if (f.includes('penn') || f.includes('lancaster') || f.includes('chester') || f.includes('hup') || f.includes('presbyterian')) return 'UPHS';
         if (f.includes('virtua')) return 'Virtua';
         if (f.includes('jefferson') || f.includes('einstein') || f.includes('magee')) return 'Jefferson';
@@ -1969,6 +2057,253 @@
       View.financials();
       lucide?.createIcons?.();
     };
+
+    window.togglePerDiemGHR = () => {
+      window.store.state.perDiemGHROnly = !window.store.state.perDiemGHROnly;
+      View.perDiem();
+      lucide?.createIcons?.();
+    };
+
+    window.updatePerDiemDateRange = async () => {
+      const fromEl = document.getElementById('pdFromMonth');
+      const toEl = document.getElementById('pdToMonth');
+      if (!fromEl || !toEl) return;
+      const fromVal = fromEl.value;
+      const toVal = toEl.value;
+      if (fromVal > toVal) { window.showToast('From date must be before To date', 'error'); return; }
+      window.store.state.perDiemFromMonth = fromVal;
+      window.store.state.perDiemToMonth = toVal;
+
+      Utils.setLoading(true, 'Loading per diem data...');
+      try {
+        const params = new URLSearchParams({ from: fromVal, to: toVal });
+        const resp = await fetch(`${API_BASE_URL}/perdiem-data?${params}`);
+        if (resp.ok) {
+          const data = await resp.json();
+          if (data.assignments) {
+            data.assignments.forEach(r => {
+              const parseLocalDate = s => { if (!s) return null; const [y,m,d] = s.split('T')[0].split('-'); return new Date(+y, +m-1, +d); };
+              r.startDate = parseLocalDate(r.startDate);
+              r.endDate = parseLocalDate(r.endDate);
+              r.healthSystem = Utils.getHealthSystem(r.facility, r.system);
+            });
+          }
+          if (data.shifts) {
+            data.shifts.forEach(r => {
+              if (r.shift_date) { const [y,m,d] = r.shift_date.split('T')[0].split('-'); r.shift_date = new Date(+y, +m-1, +d); } else { r.shift_date = null; }
+              r.healthSystem = Utils.getHealthSystem(null, r.system);
+            });
+          }
+          if (data.openOrders) {
+            data.openOrders.forEach(o => {
+              o.healthSystem = Utils.getHealthSystem(o.facility_name, o.health_system || '');
+              o.facility = o.facility_name;
+            });
+          }
+          window.store.state.perDiemData = data;
+        }
+      } catch (e) {
+        console.warn('Error reloading per diem data:', e);
+      } finally {
+        Utils.setLoading(false);
+      }
+      View.perDiem();
+      lucide?.createIcons?.();
+    };
+
+    window.showPDDrilldown = (encodedKey, weekIndex, mode) => {
+      const key = decodeURIComponent(encodedKey);
+      const groups = window.__pdGroups || [];
+      const shifts = window.__pdFilteredShifts || [];
+      const assignments = window.__pdFilteredAssignments || [];
+      const openOrders = window.__pdFilteredOpenOrders || [];
+      const weeks = window.__pdWeeks || [];
+      const w = weeks[weekIndex];
+      if (!w) return;
+
+      const group = groups.find(g => g.key === key);
+      const label = group?.label || key;
+      const { healthSystem: gSys, facility: gFac } = group || {};
+
+      // Filter shifts and assignments for this group
+      const groupShifts = shifts.filter(sh =>
+        sh.healthSystem === gSys && (gFac === null || sh.facility === gFac)
+      );
+      const groupAssignments = assignments.filter(a =>
+        a.healthSystem === gSys && (gFac === null || a.facility === gFac)
+      );
+
+      let rows = [];
+      const fmtDate = d => d ? new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '';
+
+      if (mode === 'activeHC') {
+        // Distinct workers with an assignment overlapping this week
+        const seen = new Map();
+        groupAssignments
+          .filter(a => a.startDate && a.startDate <= w.end && (!a.endDate || a.endDate >= w.start))
+          .forEach(a => { if (!seen.has(a.worker_name)) seen.set(a.worker_name, a); });
+        rows = [...seen.values()].sort((a, b) => a.worker_name.localeCompare(b.worker_name));
+      } else if (mode === 'activesWorked') {
+        // Distinct workers who worked in this specific week
+        const seen = new Map();
+        groupShifts.filter(sh => sh.shift_date && sh.shift_date >= w.start && sh.shift_date <= w.end)
+          .forEach(sh => { if (!seen.has(sh.worker_name)) seen.set(sh.worker_name, sh); });
+        rows = [...seen.values()].sort((a, b) => a.worker_name.localeCompare(b.worker_name));
+      } else if (mode === 'openOrders') {
+        // All open orders for this group (not week-specific — same data across all weeks)
+        rows = openOrders
+          .filter(o => o.healthSystem === gSys && (gFac === null || o.facility === gFac))
+          .sort((a, b) => (a.facility_name || '').localeCompare(b.facility_name || '') || (a.specialty || '').localeCompare(b.specialty || ''));
+      } else {
+        // All individual shifts (deduped by worker+date) for this week
+        const seen = new Set();
+        groupShifts.filter(sh => sh.shift_date && sh.shift_date >= w.start && sh.shift_date <= w.end)
+          .forEach(sh => {
+            const k = sh.worker_name + '|' + sh.shift_date.toISOString().slice(0, 10);
+            if (!seen.has(k)) { seen.add(k); rows.push(sh); }
+          });
+        rows.sort((a, b) => a.worker_name.localeCompare(b.worker_name) || a.shift_date - b.shift_date);
+      }
+
+      // Build assignment lookup for manager fields (not needed for openOrders but harmless)
+      const allAssignments = window.store.state.perDiemData?.assignments || [];
+      const normName = n => String(n || '').trim().toLowerCase();
+      const assignmentMap = new Map();
+      allAssignments.forEach(a => {
+        const k = normName(a.worker_name);
+        if (!k) return;
+        const existing = assignmentMap.get(k);
+        if (!existing || (a.startDate && (!existing.startDate || a.startDate > existing.startDate))) {
+          assignmentMap.set(k, { account_manager: a.account_manager, hiring_manager: a.hiring_manager });
+        }
+      });
+
+      const modeLabels = { activeHC: 'Active Headcount', activesWorked: 'Actives Worked', shifts: 'Shifts Worked', openOrders: 'Total Available' };
+      const weekEnd = w.end.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+      document.getElementById('pdDrilldownTitle').textContent = mode === 'openOrders'
+        ? `${label} — Total Available Orders`
+        : `${label} — ${modeLabels[mode]} — Week ending ${weekEnd}`;
+      document.getElementById('pdDrilldownCount').textContent = `${rows.length} record${rows.length !== 1 ? 's' : ''}`;
+
+      const thead = document.getElementById('pdDrilldownHead');
+      if (mode === 'openOrders') {
+        thead.innerHTML = `<tr class="border-b-2 border-slate-300 bg-slate-50 sticky top-0">
+          <th class="text-left py-2 px-3 font-bold text-slate-600">Facility</th>
+          <th class="text-left py-2 px-3 font-bold text-slate-600">Specialty / Title</th>
+          <th class="text-center py-2 px-3 font-bold text-slate-600">Total</th>
+          <th class="text-center py-2 px-3 font-bold text-slate-600">Open</th>
+          <th class="text-left py-2 px-3 font-bold text-slate-600">Start Date</th>
+          <th class="text-left py-2 px-3 font-bold text-slate-600">Hiring Manager</th>
+          <th class="text-left py-2 px-3 font-bold text-slate-600">Source</th>
+        </tr>`;
+      } else {
+        thead.innerHTML = `<tr class="border-b-2 border-slate-300 bg-slate-50 sticky top-0">
+          <th class="text-left py-2 px-3 font-bold text-slate-600">Worker</th>
+          <th class="text-left py-2 px-3 font-bold text-slate-600">Date</th>
+          <th class="text-left py-2 px-3 font-bold text-slate-600">Agency</th>
+          <th class="text-left py-2 px-3 font-bold text-slate-600">Account Manager</th>
+          <th class="text-left py-2 px-3 font-bold text-slate-600">Hiring Manager</th>
+          <th class="text-left py-2 px-3 font-bold text-slate-600">Source</th>
+        </tr>`;
+      }
+
+      const tbody = document.getElementById('pdDrilldownBody');
+
+      if (mode === 'openOrders') {
+        tbody.innerHTML = rows.map((r, i) => `
+        <tr class="${i % 2 === 0 ? 'bg-white' : 'bg-slate-50'} border-b border-slate-100">
+          <td class="py-1.5 px-3 font-medium text-slate-700">${r.facility_name || '-'}</td>
+          <td class="py-1.5 px-3 text-slate-600">${r.specialty || '-'}</td>
+          <td class="py-1.5 px-3 text-center text-slate-700">${r.total_positions ?? '-'}</td>
+          <td class="py-1.5 px-3 text-center text-slate-600">${r.open_positions != null ? r.open_positions : '-'}</td>
+          <td class="py-1.5 px-3 text-slate-500">${r.start_date ? r.start_date.slice(0,10) : '-'}</td>
+          <td class="py-1.5 px-3 text-slate-500">${r.hiring_manager || '-'}</td>
+          <td class="py-1.5 px-3 text-slate-400">${r.source_system || '-'}</td>
+        </tr>`).join('') || '<tr><td colspan="7" class="py-4 text-center text-slate-400">No records found</td></tr>';
+      } else {
+      tbody.innerHTML = rows.map((r, i) => {
+        const mgr = assignmentMap.get(normName(r.worker_name)) || {};
+        const dateCell = mode === 'activeHC'
+          ? `${fmtDate(r.startDate)} – ${r.endDate ? fmtDate(r.endDate) : 'ongoing'}`
+          : fmtDate(r.shift_date);
+        return `
+        <tr class="${i % 2 === 0 ? 'bg-white' : 'bg-slate-50'} border-b border-slate-100">
+          <td class="py-1.5 px-3 font-medium text-slate-700">${r.worker_name || '-'}</td>
+          <td class="py-1.5 px-3 text-slate-600">${dateCell}</td>
+          <td class="py-1.5 px-3 text-slate-600">${r.agency || '-'}</td>
+          <td class="py-1.5 px-3 text-slate-500">${mgr.account_manager || '-'}</td>
+          <td class="py-1.5 px-3 text-slate-500">${mgr.hiring_manager || '-'}</td>
+          <td class="py-1.5 px-3 text-slate-400">${r.source_system || '-'}</td>
+        </tr>`;
+      }).join('') || '<tr><td colspan="6" class="py-4 text-center text-slate-400">No records found</td></tr>';
+      }
+
+      document.getElementById('pdDrilldownModal').classList.remove('hidden');
+      lucide?.createIcons?.();
+    };
+
+    window.exportPerDiemCSV = () => {
+      const shifts = window.__pdFilteredShifts || [];
+      if (shifts.length === 0) { window.showToast('No shift data to export', 'error'); return; }
+
+      const assignments = window.store.state.perDiemData?.assignments || [];
+      const fmtDate = d => d ? new Date(d).toISOString().slice(0, 10) : '';
+      const escape = v => `"${String(v ?? '').replace(/"/g, '""')}"`;
+
+      // Build lookup: normalized worker_name -> assignment data
+      // Use most recent assignment by startDate; name-only key avoids healthSystem mismatch issues
+      const normName = n => String(n || '').trim().toLowerCase();
+      const assignmentMap = new Map();
+      assignments.forEach(a => {
+        const k = normName(a.worker_name);
+        if (!k) return;
+        const existing = assignmentMap.get(k);
+        if (!existing || (a.startDate && (!existing.startDate || a.startDate > existing.startDate))) {
+          assignmentMap.set(k, { startDate: a.startDate, endDate: a.endDate, account_manager: a.account_manager, hiring_manager: a.hiring_manager });
+        }
+      });
+
+      const headers = ['Worker', 'Shift Date', 'Health System', 'Facility', 'Agency', 'Source', 'Assignment Start', 'Assignment End', 'Account Manager', 'Hiring Manager'];
+      const csvRows = [headers.join(',')];
+
+      // Sort by health system, worker, date
+      const sorted = [...shifts].sort((a, b) =>
+        (a.healthSystem || '').localeCompare(b.healthSystem || '') ||
+        (a.worker_name || '').localeCompare(b.worker_name || '') ||
+        (a.shift_date || 0) - (b.shift_date || 0)
+      );
+
+      // Dedup by worker+date+system
+      const seen = new Set();
+      sorted.forEach(sh => {
+        const k = `${sh.worker_name}|${fmtDate(sh.shift_date)}|${sh.healthSystem}`;
+        if (seen.has(k)) return;
+        seen.add(k);
+        const asgn = assignmentMap.get(normName(sh.worker_name)) || {};
+        csvRows.push([
+          escape(sh.worker_name),
+          escape(fmtDate(sh.shift_date)),
+          escape(sh.healthSystem),
+          escape(sh.facility),
+          escape(sh.agency),
+          escape(sh.source_system),
+          escape(fmtDate(asgn.startDate)),
+          escape(fmtDate(asgn.endDate)),
+          escape(asgn.account_manager),
+          escape(asgn.hiring_manager)
+        ].join(','));
+      });
+
+      const blob = new Blob([csvRows.join('\n')], { type: 'text/csv' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `PerDiem_Shifts_${new Date().toISOString().slice(0, 10)}.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
+      window.showToast(`Exported ${csvRows.length - 1} shift records`, 'success');
+    };
+
 
     window.exportFinancialPDF = async () => {
       const container = document.getElementById('financialsContent');
@@ -2857,17 +3192,21 @@
         $('hotJobsViewWrapper')?.classList.toggle('hidden', view !== 'hotjobs');
         $('statsViewWrapper')?.classList.toggle('hidden', view !== 'stats');
         $('financialsViewWrapper')?.classList.toggle('hidden', view !== 'financials');
+        $('perDiemViewWrapper')?.classList.toggle('hidden', view !== 'perdiem');
+        $('trendViewWrapper')?.classList.toggle('hidden', view !== 'trend');
 
         // Use visibility to hide KPI and legend on other tabs (preserves layout)
         const kpiEl = $('kpiContainer');
         const legendEl = $('legendContainer');
         if (kpiEl) kpiEl.style.visibility = view === 'list' ? 'visible' : 'hidden';
-        if (legendEl) legendEl.style.visibility = (view === 'stats' || view === 'financials') ? 'hidden' : 'visible';
+        if (legendEl) legendEl.style.visibility = (view === 'stats' || view === 'financials' || view === 'perdiem' || view === 'trend') ? 'hidden' : 'visible';
 
         const btnList = $('btnViewList');
         const btnHot = $('btnViewHot');
         const btnStats = $('btnViewStats');
         const btnFinancials = $('btnViewFinancials');
+        const btnPerDiem = $('btnViewPerDiem');
+        const btnTrend = $('btnViewTrend');
 
         const activeClass = "px-4 py-1.5 text-xs font-bold rounded-md transition-colors bg-blue-50 text-blue-700 shadow-sm border border-blue-100";
         const inactiveClass = "px-4 py-1.5 text-xs font-bold rounded-md transition-colors text-slate-500 hover:text-slate-700";
@@ -2879,6 +3218,8 @@
         if (btnHot) btnHot.className = view === 'hotjobs' ? activeIconClass : inactiveIconClass;
         if (btnStats) btnStats.className = view === 'stats' ? activeClass : inactiveClass;
         if (btnFinancials) btnFinancials.className = view === 'financials' ? activeIconClass : inactiveIconClass;
+        if (btnPerDiem) btnPerDiem.className = view === 'perdiem' ? activeIconClass : inactiveIconClass;
+        if (btnTrend) btnTrend.className = view === 'trend' ? activeIconClass : inactiveIconClass;
       },
 
       main() {
@@ -2887,6 +3228,8 @@
         else if (v === 'hotjobs') this.hotJobs();
         else if (v === 'stats') this.stats();
         else if (v === 'financials') this.financials();
+        else if (v === 'perdiem') this.perDiem();
+        else if (v === 'trend') this.trend();
         lucide.createIcons();
       },
 
@@ -4130,6 +4473,740 @@
         }
 
         lucide.createIcons();
+      },
+
+      perDiem() {
+        const container = $('perDiemContent');
+        if (!container) return;
+
+        const s = window.store.state;
+        const assignments = s.perDiemData?.assignments || [];
+        const shifts = s.perDiemData?.shifts || [];
+        const openOrders = s.perDiemData?.openOrders || [];
+
+        if (assignments.length === 0 && shifts.length === 0) {
+          if (!s.perDiemLoaded) {
+            container.innerHTML = `<div class="p-6 text-slate-500 bg-slate-50 border border-slate-200 rounded flex items-center gap-3">
+              <svg class="animate-spin h-5 w-5 text-blue-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg>
+              Loading per diem data from database...
+            </div>`;
+          } else {
+            container.innerHTML = `<div class="p-6 text-slate-500 bg-slate-50 border border-slate-200 rounded">
+              No per diem data found for the selected date range. The data may not be tagged as Per Diem in B4Health or VNDLY.
+            </div>`;
+          }
+          return;
+        }
+
+        // B4-to-VNDLY transition: these systems have fully moved to VNDLY,
+        // exclude all B4 data for them to prevent double-counting
+        const transitionedSystems = new Set(['RUMC', 'Holy Redeemer']);
+
+        const dedupedAssignments = assignments.filter(a =>
+          !(a.source_system === 'B4' && transitionedSystems.has(a.healthSystem))
+        );
+
+        const dedupedShifts = shifts.filter(sh =>
+          !(sh.source_system === 'B4' && transitionedSystems.has(sh.healthSystem))
+        );
+
+        // Category filter helper for per diem: match agency against selected job-program categories
+        // "Nursing" categories → exclude Allied agencies; "Allied" categories → only Allied agencies
+        const selectedCats = s.filterSelection.categories;
+        const matchesPDCategory = (agency) => {
+          if (selectedCats.size === 0) return true;
+          const isAllied = /allied/i.test(agency || '');
+          for (const cat of selectedCats) {
+            const cl = String(cat).toLowerCase();
+            if (/allied/.test(cl) && isAllied) return true;
+            if (!/allied/.test(cl) && !isAllied) return true;
+          }
+          return false;
+        };
+
+        // Apply global filters (system, facility, GHR-only toggle, category)
+        const ghrOnly = s.perDiemGHROnly;
+        const filteredAssignments = dedupedAssignments.filter(a => {
+          const sysMatch = s.filterSelection.systems.size === 0 || s.filterSelection.systems.has(a.healthSystem);
+          const facMatch = s.filterSelection.facilities.size === 0 || s.filterSelection.facilities.has(a.facility);
+          const agencyMatch = !ghrOnly || /ghr/i.test(a.agency || '');
+          const catMatch = matchesPDCategory(a.agency);
+          return sysMatch && facMatch && agencyMatch && catMatch;
+        });
+
+        const filteredShifts = dedupedShifts.filter(sh => {
+          const sysMatch = s.filterSelection.systems.size === 0 || s.filterSelection.systems.has(sh.healthSystem);
+          const facMatch = s.filterSelection.facilities.size === 0 || s.filterSelection.facilities.has(sh.facility);
+          const agencyMatch = !ghrOnly || /ghr/i.test(sh.agency || '');
+          const catMatch = matchesPDCategory(sh.agency);
+          return sysMatch && facMatch && agencyMatch && catMatch;
+        });
+
+        // Open orders: apply health system + facility filter only (no GHR/agency filter — these are client demands)
+        // Also exclude transitioned systems' B4 open orders
+        const filteredOpenOrders = openOrders.filter(o => {
+          if (o.source_system === 'B4' && transitionedSystems.has(o.healthSystem)) return false;
+          const sysMatch = s.filterSelection.systems.size === 0 || s.filterSelection.systems.has(o.healthSystem);
+          const facMatch = s.filterSelection.facilities.size === 0 || s.filterSelection.facilities.has(o.facility);
+          return sysMatch && facMatch;
+        });
+
+        // Determine date range from shifts
+        const shiftDates = filteredShifts.map(sh => sh.shift_date).filter(Boolean);
+        if (shiftDates.length === 0 && filteredAssignments.length === 0) {
+          container.innerHTML = `<div class="p-6 text-slate-500 bg-slate-50 border border-slate-200 rounded flex items-center gap-3">
+            <i data-lucide="info" class="w-5 h-5"></i> No per diem data matches the current filters.
+          </div>`;
+          return;
+        }
+
+        // Build weekly buckets (Sun-Sat weeks, week-ending Saturday)
+        const getSunday = (d) => {
+          const dt = new Date(d);
+          const day = dt.getDay(); // 0=Sun
+          const diff = dt.getDate() - day;
+          return new Date(dt.getFullYear(), dt.getMonth(), diff);
+        };
+
+        // Find min/max shift dates for week range
+        let minDate = shiftDates.length > 0 ? new Date(Math.min(...shiftDates)) : new Date();
+        let maxDate = shiftDates.length > 0 ? new Date(Math.max(...shiftDates)) : new Date();
+
+        const weekStart = getSunday(minDate);
+        const now = new Date();
+        const currentWeekEnd = new Date(getSunday(now));
+        currentWeekEnd.setDate(currentWeekEnd.getDate() + 6);
+
+        // Generate week boundaries (Sun-Sat)
+        const weeks = [];
+        let ws = new Date(weekStart);
+        while (ws <= maxDate && ws <= currentWeekEnd) {
+          const we = new Date(ws);
+          we.setDate(we.getDate() + 6); // Saturday
+          weeks.push({ start: new Date(ws), end: we });
+          ws.setDate(ws.getDate() + 7);
+        }
+
+        // Systems that get broken out by facility instead of rolled up
+        const FACILITY_BREAKOUT_SYSTEMS = new Set(
+          CONSTANTS.HEALTH_SYSTEM_MAPPINGS.filter(m => m.perdiem_breakout).map(m => m.system)
+        );
+
+        // Get all health systems from data
+        const systemSet = new Set();
+        filteredAssignments.forEach(a => { if (a.healthSystem) systemSet.add(a.healthSystem); });
+        filteredShifts.forEach(sh => { if (sh.healthSystem) systemSet.add(sh.healthSystem); });
+
+        // Build groups: breakout systems expand to one group per facility, others are one group per system
+        const groups = [];
+        [...systemSet].sort().forEach(sys => {
+          if (FACILITY_BREAKOUT_SYSTEMS.has(sys)) {
+            const facSet = new Set();
+            filteredShifts.filter(sh => sh.healthSystem === sys && sh.facility).forEach(sh => facSet.add(sh.facility));
+            filteredAssignments.filter(a => a.healthSystem === sys && a.facility).forEach(a => facSet.add(a.facility));
+            if (facSet.size > 0) {
+              [...facSet].sort().forEach(fac => {
+                groups.push({ key: `${sys}|${fac}`, label: `${sys} - ${fac}`, healthSystem: sys, facility: fac });
+              });
+            } else {
+              groups.push({ key: sys, label: sys, healthSystem: sys, facility: null });
+            }
+          } else {
+            groups.push({ key: sys, label: sys, healthSystem: sys, facility: null });
+          }
+        });
+
+        // Compute metrics per group per week
+        // Active HC = distinct workers with an active assignment overlapping the rolling 4-week window
+        // Actives Worked = distinct workers who actually worked a shift that specific week
+        const metrics = {}; // { groupKey: [{ week, activeHC, activesWorked, pctWorked, totalShifts, shiftsPerNurse }] }
+        const LOOKBACK_WEEKS = 4; // rolling window size for active headcount
+
+        groups.forEach(({ key, healthSystem: sys, facility: fac }) => {
+          const sysShifts = filteredShifts.filter(sh =>
+            sh.healthSystem === sys && (fac === null || sh.facility === fac)
+          );
+          const sysAssignments = filteredAssignments.filter(a =>
+            a.healthSystem === sys && (fac === null || a.facility === fac)
+          );
+
+          // Contracted HC (static for this group across all weeks):
+          // B4 open slots (unfilled, from B4HEALTHOPENORDER) + B4 filled slots (active assignments) + VNDLY total job slots
+          const b4OpenSlots = filteredOpenOrders
+            .filter(o => o.source_system === 'B4' && o.healthSystem === sys && (fac === null || o.facility === fac))
+            .reduce((sum, o) => sum + (o.total_positions || 0), 0);
+          const b4FilledSlots = new Set(
+            sysAssignments.filter(a => a.source_system === 'B4').map(a => a.worker_name)
+          ).size;
+          const vndlySlots = filteredOpenOrders
+            .filter(o => o.source_system === 'VNDLY' && o.healthSystem === sys && (fac === null || o.facility === fac))
+            .reduce((sum, o) => sum + (o.total_positions || 0), 0);
+          const contractedHC = b4OpenSlots + b4FilledSlots + vndlySlots;
+
+          metrics[key] = weeks.map((w, wi) => {
+            // Active headcount: distinct workers with an assignment overlapping this specific week
+            // Assignment overlaps if it started on or before week end AND ended on or after week start (or has no end date)
+            const activeWorkers = new Set(
+              sysAssignments
+                .filter(a => a.startDate && a.startDate <= w.end && (!a.endDate || a.endDate >= w.start))
+                .map(a => a.worker_name)
+            );
+            const activeHC = activeWorkers.size;
+
+            // Shifts in this week — dedupe by worker+date (overtime creates multiple rows)
+            const weekShifts = sysShifts.filter(sh =>
+              sh.shift_date && sh.shift_date >= w.start && sh.shift_date <= w.end
+            );
+
+            // Count distinct worker+date combos as shifts (1 shift per person per day)
+            const shiftKeys = new Set(weekShifts.map(sh => sh.worker_name + '|' + sh.shift_date.toISOString().slice(0, 10)));
+            const totalShifts = shiftKeys.size;
+            const activesWorked = new Set(weekShifts.map(sh => sh.worker_name)).size;
+            const pctWorked = activeHC > 0 ? (activesWorked / activeHC * 100) : 0;
+            const shiftsPerNurse = activeHC > 0 ? (totalShifts / activeHC) : 0;
+
+            const fillRate = contractedHC > 0 ? (activeHC / contractedHC * 100) : null;
+
+            return { week: w, activeHC, activesWorked, pctWorked, totalShifts, shiftsPerNurse, contractedHC, fillRate };
+          });
+        });
+
+        // Filter out weeks where ALL systems have zero activity (no shifts and no headcount)
+        const activeWeekIndices = [];
+        weeks.forEach((w, i) => {
+          const hasActivity = groups.some(g => metrics[g.key][i] && (metrics[g.key][i].totalShifts > 0 || metrics[g.key][i].activeHC > 0));
+          if (hasActivity) activeWeekIndices.push(i);
+        });
+
+        const activeWeeks = activeWeekIndices.map(i => weeks[i]);
+
+        // Filter groups to only those with at least one week of activity
+        const activeGroups = groups.filter(g =>
+          activeWeekIndices.some(i => metrics[g.key][i] && (metrics[g.key][i].totalShifts > 0 || metrics[g.key][i].activeHC > 0))
+        );
+
+        // Format week label (show week-ending Saturday date)
+        const fmtWeek = (w) => {
+          return w.end.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+        };
+
+        // Month picker for date range
+        const pickerMonths = [];
+        for (let i = 24; i >= 0; i--) {
+          const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+          pickerMonths.push(d.toISOString().slice(0, 7));
+        }
+
+        // Determine current from/to values
+        const allShiftMonths = [...new Set(shiftDates.map(d => d.toISOString().slice(0, 7)))].sort();
+        const storedFrom = s.perDiemFromMonth || (allShiftMonths[0] || pickerMonths[pickerMonths.length - 7] || pickerMonths[0]);
+        const storedTo = s.perDiemToMonth || (allShiftMonths[allShiftMonths.length - 1] || pickerMonths[pickerMonths.length - 1]);
+
+        // Chart colors
+        const lineColors = ['#3b82f6', '#ef4444', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899', '#06b6d4', '#f97316', '#6366f1', '#14b8a6'];
+
+        // Build HTML
+        let html = '';
+
+        // Store filtered shifts on window so modal + CSV can access them
+        window.__pdFilteredShifts = filteredShifts;
+        window.__pdFilteredAssignments = filteredAssignments;
+        window.__pdFilteredOpenOrders = filteredOpenOrders;
+        window.__pdGroups = activeGroups;
+        window.__pdMetrics = metrics;
+        window.__pdActiveWeeks = activeWeeks;
+        window.__pdActiveWeekIndices = activeWeekIndices;
+        window.__pdWeeks = weeks;
+
+        // Header with date picker
+        html += `
+          <div class="flex flex-wrap items-center justify-between gap-4 mb-6">
+            <h2 class="text-lg font-bold text-slate-800 flex items-center gap-2">
+              <i data-lucide="clock" class="w-5 h-5 text-violet-500"></i> Per Diem Analytics
+            </h2>
+            <div class="flex flex-wrap items-center gap-2 text-sm">
+              <label class="text-slate-500 font-medium">From:</label>
+              <select id="pdFromMonth" onchange="updatePerDiemDateRange()" class="border border-slate-300 rounded px-2 py-1 text-xs">
+                ${pickerMonths.map(m => `<option value="${m}" ${m === storedFrom ? 'selected' : ''}>${m}</option>`).join('')}
+              </select>
+              <label class="text-slate-500 font-medium">To:</label>
+              <select id="pdToMonth" onchange="updatePerDiemDateRange()" class="border border-slate-300 rounded px-2 py-1 text-xs">
+                ${pickerMonths.map(m => `<option value="${m}" ${m === storedTo ? 'selected' : ''}>${m}</option>`).join('')}
+              </select>
+              <button onclick="window.exportPerDiemCSV()" class="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 rounded text-xs font-bold flex items-center gap-1.5">
+                <i data-lucide="download" class="w-3.5 h-3.5"></i> Export CSV
+              </button>
+              <div class="flex items-center gap-2 ml-2 pl-2 border-l border-slate-200">
+                <span class="text-xs text-slate-500 font-medium">Agency:</span>
+                <button onclick="window.togglePerDiemGHR()" class="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold border transition-colors ${ghrOnly ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-slate-600 border-slate-300 hover:border-blue-400'}">
+                  ${ghrOnly ? '<i data-lucide="filter" class="w-3 h-3"></i> GHR Only' : '<i data-lucide="filter-x" class="w-3 h-3"></i> All Agencies'}
+                </button>
+              </div>
+            </div>
+          </div>
+        `;
+
+        // Summary cards
+        const totalActiveHC = activeGroups.reduce((sum, g) => {
+          const last = metrics[g.key]?.[activeWeekIndices[activeWeekIndices.length - 1]];
+          return sum + (last?.activeHC || 0);
+        }, 0);
+        const totalShiftsLastWeek = activeGroups.reduce((sum, g) => {
+          const last = metrics[g.key]?.[activeWeekIndices[activeWeekIndices.length - 1]];
+          return sum + (last?.totalShifts || 0);
+        }, 0);
+        // Count distinct health systems (not groups) for the summary card
+        const uniqueSystemCount = new Set(activeGroups.map(g => g.healthSystem)).size;
+
+        html += `
+          <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+            <div class="bg-violet-50 border border-violet-200 rounded-lg p-4">
+              <div class="text-2xl font-bold text-violet-700">${uniqueSystemCount}</div>
+              <div class="text-xs text-violet-600 font-medium">Health Systems</div>
+            </div>
+            <div class="bg-blue-50 border border-blue-200 rounded-lg p-4">
+              <div class="text-2xl font-bold text-blue-700">${filteredAssignments.length}</div>
+              <div class="text-xs text-blue-600 font-medium">Active Per Diem Workers</div>
+            </div>
+            <div class="bg-emerald-50 border border-emerald-200 rounded-lg p-4">
+              <div class="text-2xl font-bold text-emerald-700">${totalActiveHC}</div>
+              <div class="text-xs text-emerald-600 font-medium">Current Week Headcount</div>
+            </div>
+            <div class="bg-amber-50 border border-amber-200 rounded-lg p-4">
+              <div class="text-2xl font-bold text-amber-700">${totalShiftsLastWeek}</div>
+              <div class="text-xs text-amber-600 font-medium">Current Week Shifts</div>
+            </div>
+          </div>
+        `;
+
+        // Per-system data tables
+        activeGroups.forEach(({ key, label, healthSystem: gSys, facility: gFac }) => {
+          const sysMetrics = activeWeekIndices.map(i => metrics[key][i]);
+          const encodedKey = encodeURIComponent(key).replace(/'/g, '%27');
+
+          html += `
+            <div class="mb-6 border border-slate-200 rounded-lg overflow-hidden">
+              <div class="bg-slate-50 px-4 py-3 border-b border-slate-200">
+                <h3 class="font-bold text-sm text-slate-700">${label}</h3>
+              </div>
+              <div class="overflow-x-auto">
+                <table class="w-full text-xs">
+                  <thead>
+                    <tr class="border-b-2 border-slate-300">
+                      <th class="text-left py-1.5 px-2 font-bold text-slate-600 sticky left-0 bg-white min-w-[160px]">Metric</th>
+                      ${activeWeeks.map(w => `<th class="text-center py-1.5 px-2 font-bold text-slate-500 min-w-[70px]">${fmtWeek(w)}</th>`).join('')}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr class="border-b border-slate-100">
+                      <td class="py-1.5 px-2 font-medium text-slate-600 sticky left-0 bg-white">Total Active Headcount</td>
+                      ${sysMetrics.map((m, ci) => {
+                        const wi = activeWeekIndices[ci];
+                        return m.activeHC > 0
+                          ? `<td class="text-center py-1.5 px-2 text-blue-600 underline cursor-pointer hover:bg-blue-50" onclick="window.showPDDrilldown('${encodedKey}',${wi},'activeHC')">${m.activeHC}</td>`
+                          : `<td class="text-center py-1.5 px-2 text-slate-300">-</td>`;
+                      }).join('')}
+                    </tr>
+                    <tr class="border-b border-slate-100 bg-slate-50/50">
+                      <td class="py-1.5 px-2 font-medium text-slate-600 sticky left-0 bg-slate-50/50">Actives Worked</td>
+                      ${sysMetrics.map((m, ci) => {
+                        const wi = activeWeekIndices[ci];
+                        return m.activesWorked > 0
+                          ? `<td class="text-center py-1.5 px-2 text-blue-600 underline cursor-pointer hover:bg-blue-50" onclick="window.showPDDrilldown('${encodedKey}',${wi},'activesWorked')">${m.activesWorked}</td>`
+                          : `<td class="text-center py-1.5 px-2 text-slate-300">-</td>`;
+                      }).join('')}
+                    </tr>
+                    <tr class="border-b border-slate-100">
+                      <td class="py-1.5 px-2 font-medium text-slate-600 sticky left-0 bg-white">% of Actives Worked</td>
+                      ${sysMetrics.map(m => {
+                        const pct = m.pctWorked;
+                        const color = pct >= 75 ? 'text-emerald-700 bg-emerald-50' : pct >= 50 ? 'text-amber-700 bg-amber-50' : pct > 0 ? 'text-red-700 bg-red-50' : 'text-slate-300';
+                        return `<td class="text-center py-1.5 px-2 ${color} font-medium">${pct > 0 ? pct.toFixed(0) + '%' : '-'}</td>`;
+                      }).join('')}
+                    </tr>
+                    <tr class="border-b border-slate-100 bg-slate-50/50">
+                      <td class="py-1.5 px-2 font-medium text-slate-600 sticky left-0 bg-slate-50/50">Total Shifts Worked</td>
+                      ${sysMetrics.map((m, ci) => {
+                        const wi = activeWeekIndices[ci];
+                        return m.totalShifts > 0
+                          ? `<td class="text-center py-1.5 px-2 text-blue-600 underline cursor-pointer hover:bg-blue-50" onclick="window.showPDDrilldown('${encodedKey}',${wi},'shifts')">${m.totalShifts}</td>`
+                          : `<td class="text-center py-1.5 px-2 text-slate-300">-</td>`;
+                      }).join('')}
+                    </tr>
+                    <tr class="border-b border-slate-100">
+                      <td class="py-1.5 px-2 font-medium text-slate-600 sticky left-0 bg-white">Shifts/Nurse Avg</td>
+                      ${sysMetrics.map(m => `<td class="text-center py-1.5 px-2 ${m.shiftsPerNurse > 0 ? 'text-slate-800' : 'text-slate-300'}">${m.shiftsPerNurse > 0 ? m.shiftsPerNurse.toFixed(2) : '-'}</td>`).join('')}
+                    </tr>
+                    <tr class="border-b border-slate-100 bg-slate-50/50">
+                      <td class="py-1.5 px-2 font-medium text-slate-600 sticky left-0 bg-slate-50/50">Total Available</td>
+                      ${sysMetrics.map((m, wi) => m.contractedHC > 0
+                          ? `<td class="text-center py-1.5 px-2 text-blue-600 underline cursor-pointer hover:bg-blue-50" onclick="window.showPDDrilldown('${encodedKey}',${activeWeekIndices[wi]},'openOrders')">${m.contractedHC}</td>`
+                          : `<td class="text-center py-1.5 px-2 text-slate-300">-</td>`
+                      ).join('')}
+                    </tr>
+                    <tr>
+                      <td class="py-1.5 px-2 font-medium text-slate-600 sticky left-0 bg-white">Fill Rate</td>
+                      ${sysMetrics.map(m => {
+                        if (m.fillRate === null) return `<td class="text-center py-1.5 px-2 text-slate-300">-</td>`;
+                        const pct = m.fillRate;
+                        const color = pct >= 75 ? 'text-emerald-700 bg-emerald-50' : pct >= 50 ? 'text-amber-700 bg-amber-50' : pct > 0 ? 'text-red-700 bg-red-50' : 'text-slate-300';
+                        return `<td class="text-center py-1.5 px-2 ${color} font-medium">${pct.toFixed(0)}%</td>`;
+                      }).join('')}
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          `;
+        });
+
+        // Charts section
+        html += `
+          <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-6">
+            <div class="border border-slate-200 rounded-lg p-4">
+              <h4 class="font-bold text-sm text-slate-700 mb-3">% of Actives Worked - Weekly Trend</h4>
+              <div class="h-64"><canvas id="pdPctWorkedChart"></canvas></div>
+            </div>
+            <div class="border border-slate-200 rounded-lg p-4">
+              <h4 class="font-bold text-sm text-slate-700 mb-3">Shifts/Nurse Average - Weekly Trend</h4>
+              <div class="h-64"><canvas id="pdShiftsPerNurseChart"></canvas></div>
+            </div>
+          </div>
+        `;
+
+        // Drilldown modal
+        html += `
+          <div id="pdDrilldownModal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50">
+            <div class="bg-white rounded-xl shadow-2xl w-full max-w-3xl max-h-[80vh] flex flex-col">
+              <div class="flex justify-between items-center px-5 py-4 border-b border-slate-200">
+                <h3 id="pdDrilldownTitle" class="font-bold text-slate-800 text-base"></h3>
+                <button onclick="document.getElementById('pdDrilldownModal').classList.add('hidden')" class="text-slate-400 hover:text-slate-700">
+                  <i data-lucide="x" class="w-5 h-5"></i>
+                </button>
+              </div>
+              <div class="overflow-y-auto flex-1 p-4">
+                <table class="w-full text-xs">
+                  <thead id="pdDrilldownHead">
+                    <tr class="border-b-2 border-slate-300 bg-slate-50 sticky top-0">
+                      <th class="text-left py-2 px-3 font-bold text-slate-600">Worker</th>
+                      <th class="text-left py-2 px-3 font-bold text-slate-600">Date</th>
+                      <th class="text-left py-2 px-3 font-bold text-slate-600">Agency</th>
+                      <th class="text-left py-2 px-3 font-bold text-slate-600">Account Manager</th>
+                      <th class="text-left py-2 px-3 font-bold text-slate-600">Hiring Manager</th>
+                      <th class="text-left py-2 px-3 font-bold text-slate-600">Source</th>
+                    </tr>
+                  </thead>
+                  <tbody id="pdDrilldownBody"></tbody>
+                </table>
+              </div>
+              <div class="px-5 py-3 border-t border-slate-200 text-xs text-slate-500" id="pdDrilldownCount"></div>
+            </div>
+          </div>
+        `;
+
+        container.innerHTML = html;
+
+        // Render charts
+        const weekLabels = activeWeeks.map(w => fmtWeek(w));
+
+        // Destroy previous chart instances
+        if (window.__pdPctWorkedChart) { window.__pdPctWorkedChart.destroy(); window.__pdPctWorkedChart = null; }
+        if (window.__pdShiftsPerNurseChart) { window.__pdShiftsPerNurseChart.destroy(); window.__pdShiftsPerNurseChart = null; }
+
+        // % Actives Worked chart
+        const pctCtx = document.getElementById('pdPctWorkedChart')?.getContext('2d');
+        if (pctCtx) {
+          const pctDatasets = activeGroups.map(({ key, label }, i) => ({
+            label,
+            data: activeWeekIndices.map(wi => metrics[key][wi]?.pctWorked || 0),
+            borderColor: lineColors[i % lineColors.length],
+            backgroundColor: lineColors[i % lineColors.length] + '20',
+            borderWidth: 2,
+            fill: false,
+            tension: 0.3,
+            pointRadius: 2,
+            spanGaps: true
+          }));
+
+          window.__pdPctWorkedChart = new Chart(pctCtx, {
+            type: 'line',
+            data: { labels: weekLabels, datasets: pctDatasets },
+            options: {
+              responsive: true,
+              maintainAspectRatio: false,
+              plugins: {
+                legend: { position: 'bottom', labels: { boxWidth: 12, font: { size: 10 } } }
+              },
+              scales: {
+                y: { min: 0, max: 100, ticks: { callback: (v) => v + '%', font: { size: 10 } } },
+                x: { ticks: { font: { size: 9 }, maxRotation: 45 } }
+              }
+            }
+          });
+        }
+
+        // Shifts/Nurse chart
+        const snCtx = document.getElementById('pdShiftsPerNurseChart')?.getContext('2d');
+        if (snCtx) {
+          const snDatasets = activeGroups.map(({ key, label }, i) => ({
+            label,
+            data: activeWeekIndices.map(wi => metrics[key][wi]?.shiftsPerNurse || 0),
+            borderColor: lineColors[i % lineColors.length],
+            backgroundColor: lineColors[i % lineColors.length] + '20',
+            borderWidth: 2,
+            fill: false,
+            tension: 0.3,
+            pointRadius: 2,
+            spanGaps: true
+          }));
+
+          window.__pdShiftsPerNurseChart = new Chart(snCtx, {
+            type: 'line',
+            data: { labels: weekLabels, datasets: snDatasets },
+            options: {
+              responsive: true,
+              maintainAspectRatio: false,
+              plugins: {
+                legend: { position: 'bottom', labels: { boxWidth: 12, font: { size: 10 } } },
+                tooltip: { callbacks: { label: ctx => `${ctx.dataset.label}: ${ctx.parsed.y.toFixed(2)}` } }
+              },
+              scales: {
+                y: { min: 0, ticks: { font: { size: 10 }, callback: v => v.toFixed(2) } },
+                x: { ticks: { font: { size: 9 }, maxRotation: 45 } }
+              }
+            }
+          });
+        }
+
+        lucide.createIcons();
+      },
+
+      trend() {
+        const container = $('trendContent');
+        if (!container) return;
+
+        const s = window.store.state;
+        const allAssignments = s.trendData?.assignments || [];
+
+        if (!s.trendLoaded) {
+          container.innerHTML = `<div class="p-6 text-slate-500 bg-slate-50 border border-slate-200 rounded flex items-center gap-3">
+            <svg class="animate-spin h-5 w-5 text-blue-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg>
+            Loading trend data from database...
+          </div>`;
+          return;
+        }
+
+        // Category filter helper (same pattern as perDiem)
+        const selectedCats = s.filterSelection.categories;
+        const matchesTrendCategory = (agency) => {
+          if (selectedCats.size === 0) return true;
+          const isAllied = /allied/i.test(agency || '');
+          for (const cat of selectedCats) {
+            const cl = String(cat).toLowerCase();
+            if (/allied/.test(cl) && isAllied) return true;
+            if (!/allied/.test(cl) && !isAllied) return true;
+          }
+          return false;
+        };
+
+        // Apply global filters
+        const filtered = allAssignments.filter(r => {
+          const sysMatch = s.filterSelection.systems.size === 0 || s.filterSelection.systems.has(r.healthSystem);
+          const facMatch = s.filterSelection.facilities.size === 0 || s.filterSelection.facilities.has(r.facility);
+          const catMatch = matchesTrendCategory(r.agency);
+          const specMatch = s.filterSelection.specialties.size === 0 ||
+            Array.from(s.filterSelection.specialties).some(sp => sp.toLowerCase() === (r.specialty || '').toLowerCase());
+          return sysMatch && facMatch && catMatch && specMatch;
+        });
+
+        // Build 9 week buckets: 4 back + current + 4 forward (Sun-Sat)
+        const getSunday = (d) => {
+          const dt = new Date(d);
+          const day = dt.getDay();
+          return new Date(dt.getFullYear(), dt.getMonth(), dt.getDate() - day);
+        };
+
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        const currentSunday = getSunday(today);
+
+        const weeks = [];
+        for (let i = -4; i <= 4; i++) {
+          const start = new Date(currentSunday);
+          start.setDate(start.getDate() + i * 7);
+          const end = new Date(start);
+          end.setDate(end.getDate() + 6);
+          weeks.push({ start, end });
+        }
+
+        // Linear regression helper
+        function linearRegression(points) {
+          const n = points.length;
+          if (n < 2) return { slope: 0, intercept: points.length ? points[0].y : 0 };
+          const sumX = points.reduce((s, p) => s + p.x, 0);
+          const sumY = points.reduce((s, p) => s + p.y, 0);
+          const sumXY = points.reduce((s, p) => s + p.x * p.y, 0);
+          const sumXX = points.reduce((s, p) => s + p.x * p.x, 0);
+          const denom = (n * sumXX - sumX * sumX);
+          const slope = denom !== 0 ? (n * sumXY - sumX * sumY) / denom : 0;
+          const intercept = (sumY - slope * sumX) / n;
+          return { slope, intercept };
+        }
+
+        // Compute headcount per week
+        const weekHC = weeks.map(({ start, end }) => {
+          const names = new Set();
+          filtered.forEach(r => {
+            const sd = r.startDate;
+            const ed = r.endDate;
+            const overlaps = sd <= end && (ed === null || ed >= start);
+            if (overlaps) names.add(r.worker_name || '');
+          });
+          return names.size;
+        });
+
+        // Split into actuals (weekEnd <= today) and pipeline (weekStart > today)
+        // current week (index 4) counts as actuals
+        const fmtWeekEnd = (d) => {
+          const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+          return `${months[d.getMonth()]} ${d.getDate()}`;
+        };
+
+        const labels = weeks.map(w => fmtWeekEnd(w.end));
+
+        // Find the last actual week index (current week = last week where start <= today)
+        let lastActualIdx = 0;
+        weeks.forEach((w, i) => { if (w.start <= today) lastActualIdx = i; });
+
+        const actualsData = weeks.map((w, i) => {
+          return i <= lastActualIdx ? weekHC[i] : null;
+        });
+
+        const pipelineData = weeks.map((w, i) => {
+          // Share the last actuals point so lines connect visually
+          return i >= lastActualIdx ? weekHC[i] : null;
+        });
+
+        // Linear regression on all actual weeks
+        const regressionPoints = weeks
+          .map((w, i) => i <= lastActualIdx ? { x: i, y: weekHC[i] } : null)
+          .filter(Boolean);
+        const { slope, intercept } = linearRegression(regressionPoints);
+
+        const projectionData = weeks.map((w, i) => {
+          // Anchor projection at last actuals point, extend through future weeks
+          if (i >= lastActualIdx) {
+            return Math.max(0, Math.round(slope * i + intercept));
+          }
+          return null;
+        });
+
+        // Build summary table rows
+        const tableRows = weeks.map((w, i) => {
+          const isActual = w.end <= today || w.start <= today;
+          const isFuture = w.start > today;
+          const actualHC = isActual ? weekHC[i] : '—';
+          const pipelineHC = isFuture ? weekHC[i] : '—';
+          const projHC = isFuture ? Math.max(0, Math.round(slope * i + intercept)) : '—';
+          const isCurrentWeek = !isActual && !isFuture;
+          // current week (today is within the week)
+          const isCurrent = w.start <= today && w.end >= today;
+          return `<tr class="${isCurrent ? 'bg-blue-50 font-semibold' : 'hover:bg-slate-50'}">
+            <td class="px-3 py-1.5 border-b border-slate-100 text-slate-600">${fmtWeekEnd(w.end)}</td>
+            <td class="px-3 py-1.5 border-b border-slate-100 text-center text-slate-700">${actualHC}</td>
+            <td class="px-3 py-1.5 border-b border-slate-100 text-center text-green-700">${pipelineHC}</td>
+            <td class="px-3 py-1.5 border-b border-slate-100 text-center text-orange-600">${projHC}</td>
+          </tr>`;
+        }).join('');
+
+        container.innerHTML = `
+          <div class="flex items-center justify-between mb-4">
+            <h2 class="text-lg font-bold text-slate-700">Headcount Trend</h2>
+            <p class="text-xs text-slate-400">4-week lookback · 4-week projection · follows active filters</p>
+          </div>
+          <div class="bg-white rounded-xl border border-slate-200 p-4 shadow-sm">
+            <canvas id="trendChart" height="120"></canvas>
+          </div>
+          <div class="mt-6">
+            <h3 class="text-sm font-bold text-slate-600 mb-2">Weekly Summary</h3>
+            <div class="rounded-lg border border-slate-200 overflow-hidden">
+              <table class="w-full text-xs">
+                <thead>
+                  <tr class="bg-slate-100 text-slate-500 uppercase tracking-wide text-[10px]">
+                    <th class="px-3 py-2 text-left font-semibold">Week Ending</th>
+                    <th class="px-3 py-2 text-center font-semibold text-blue-600">Actuals HC</th>
+                    <th class="px-3 py-2 text-center font-semibold text-green-600">Pipeline HC</th>
+                    <th class="px-3 py-2 text-center font-semibold text-orange-500">Trend Projection</th>
+                  </tr>
+                </thead>
+                <tbody>${tableRows}</tbody>
+              </table>
+            </div>
+          </div>
+        `;
+
+        // Destroy existing chart if any
+        if (window.__trendChart) {
+          window.__trendChart.destroy();
+          window.__trendChart = null;
+        }
+
+        const canvas = $('trendChart');
+        if (canvas && typeof Chart !== 'undefined') {
+          window.__trendChart = new Chart(canvas, {
+            type: 'line',
+            data: {
+              labels,
+              datasets: [
+                {
+                  label: 'Actual Headcount',
+                  data: actualsData,
+                  borderColor: '#3b82f6',
+                  backgroundColor: 'rgba(59,130,246,0.1)',
+                  fill: true,
+                  tension: 0.3,
+                  pointRadius: 5,
+                },
+                {
+                  label: 'Pipeline (Confirmed)',
+                  data: pipelineData,
+                  borderColor: '#22c55e',
+                  backgroundColor: 'rgba(34,197,94,0.08)',
+                  fill: false,
+                  tension: 0.3,
+                  pointRadius: 5,
+                },
+                {
+                  label: 'Trend Projection',
+                  data: projectionData,
+                  borderColor: '#f97316',
+                  borderDash: [6, 4],
+                  fill: false,
+                  tension: 0,
+                  pointRadius: 4,
+                  pointStyle: 'circle',
+                }
+              ]
+            },
+            options: {
+              responsive: true,
+              interaction: { mode: 'index', intersect: false },
+              plugins: {
+                legend: { position: 'top', labels: { boxWidth: 12, font: { size: 11 } } },
+                tooltip: { callbacks: { label: ctx => `${ctx.dataset.label}: ${ctx.parsed.y ?? '—'}` } }
+              },
+              scales: {
+                y: {
+                  ticks: { font: { size: 11 } },
+                  title: { display: true, text: 'Headcount', font: { size: 11 } }
+                },
+                x: { ticks: { font: { size: 11 }, maxRotation: 30 } }
+              }
+            }
+          });
+        }
+
+        lucide.createIcons();
       }
     };
 
@@ -4141,6 +5218,11 @@
         financialData: [],
         financialFromMonth: null,
         financialToMonth: null,
+        perDiemData: { assignments: [], shifts: [] },
+        perDiemLoaded: false,
+        perDiemFromMonth: null,
+        perDiemToMonth: null,
+        perDiemGHROnly: true,
         filters: { systems: new Set(), facilities: new Set(), categories: new Set(), specialties: new Set(), ageMin: null, ageMax: null, searchId: '' },
         filterSelection: { systems: new Set(), facilities: new Set(), categories: new Set(), specialties: new Set() },
         searchQuery: '',
@@ -4163,17 +5245,20 @@
               s.jobs = payload.jobs || [];
               s.statsData = payload.statsData || { onAssignment: [], upcoming: [] };
 
-              // Combine jobs AND statsData for filter options (so KPIs filter correctly for both B4Health and VNDLY)
+              // Combine jobs AND statsData AND perDiemData for filter options
               const allAssignments = [...(s.statsData.onAssignment || []), ...(s.statsData.upcoming || [])];
+              const pdAssignments = s.perDiemData?.assignments || [];
 
               // Use healthSystem (mapped value) for system filter - include both jobs and assignments
               s.filters.systems = new Set([
                 ...s.jobs.map(j => j.healthSystem),
-                ...allAssignments.map(a => a.healthSystem)
+                ...allAssignments.map(a => a.healthSystem),
+                ...pdAssignments.map(a => a.healthSystem)
               ].filter(Boolean));
               s.filters.facilities = new Set([
                 ...s.jobs.map(j => j.facility),
-                ...allAssignments.map(a => a.facility)
+                ...allAssignments.map(a => a.facility),
+                ...pdAssignments.map(a => a.facility)
               ].filter(Boolean));
               s.filters.categories = new Set(s.jobs.map(j => j.program).filter(Boolean));
               // Apply cleanFilterText to specialty values for consistent matching
@@ -4195,16 +5280,19 @@
             }
 
             case 'REFRESH_UI': {
-              // Combine jobs AND statsData for filter options (so KPIs filter correctly for both B4Health and VNDLY)
+              // Combine jobs AND statsData AND perDiemData for filter options
               const allAssignments = [...(s.statsData.onAssignment || []), ...(s.statsData.upcoming || [])];
+              const pdAssignments = s.perDiemData?.assignments || [];
 
               s.filters.systems = new Set([
                 ...s.jobs.map(j => j.healthSystem),
-                ...allAssignments.map(a => a.healthSystem)
+                ...allAssignments.map(a => a.healthSystem),
+                ...pdAssignments.map(a => a.healthSystem)
               ].filter(Boolean));
               s.filters.facilities = new Set([
                 ...s.jobs.map(j => j.facility),
-                ...allAssignments.map(a => a.facility)
+                ...allAssignments.map(a => a.facility),
+                ...pdAssignments.map(a => a.facility)
               ].filter(Boolean));
               s.filters.categories = new Set(s.jobs.map(j => j.program).filter(Boolean));
               // Apply cleanFilterText to specialty values for consistent matching
@@ -4967,7 +6055,8 @@
                     id: idx + 1,
                     keywords: m.keywords,
                     system_name: m.system,
-                    sort_order: idx
+                    sort_order: idx,
+                    perdiem_breakout: !!m.perdiem_breakout
                 }));
             }
         } catch (error) {
@@ -4976,7 +6065,8 @@
                 id: idx + 1,
                 keywords: m.keywords,
                 system_name: m.system,
-                sort_order: idx
+                sort_order: idx,
+                perdiem_breakout: !!m.perdiem_breakout
             }));
         }
         
@@ -5031,6 +6121,12 @@
                                class="w-full border border-slate-300 rounded px-2 py-1.5 text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none">
                     </td>
                     <td class="p-2 text-center">
+                        <input type="checkbox" ${mapping.perdiem_breakout ? 'checked' : ''}
+                               onchange="updateMapping(${idx}, 'perdiem_breakout', this.checked)"
+                               class="w-4 h-4 accent-blue-600 cursor-pointer"
+                               title="Show per diem metrics broken out by facility">
+                    </td>
+                    <td class="p-2 text-center">
                         <button onclick="deleteMapping(${idx})" class="text-red-500 hover:text-red-700 p-1" title="Delete">
                             <i data-lucide="trash-2" class="w-4 h-4"></i>
                         </button>
@@ -5082,7 +6178,8 @@
                 id: null,
                 keywords: [...m.keywords],
                 system_name: m.system,
-                sort_order: idx
+                sort_order: idx,
+                perdiem_breakout: !!m.perdiem_breakout
             }));
             renderMappingsTable();
             window.showToast('Mappings reset to defaults (not saved yet)', 'info');
@@ -5150,7 +6247,8 @@
                 // Update CONSTANTS with new mappings
                 CONSTANTS.HEALTH_SYSTEM_MAPPINGS = currentMappings.map(m => ({
                     keywords: Array.isArray(m.keywords) ? m.keywords : [m.keywords],
-                    system: m.system_name || m.system
+                    system: m.system_name || m.system,
+                    perdiem_breakout: !!m.perdiem_breakout
                 }));
                 
                 window.showToast('Settings saved successfully', 'success');
