@@ -5074,30 +5074,29 @@
 
         const labels = weeks.map(w => fmtWeekEnd(w.end));
 
+        // Find the last actual week index (current week = last week where start <= today)
+        let lastActualIdx = 0;
+        weeks.forEach((w, i) => { if (w.start <= today) lastActualIdx = i; });
+
         const actualsData = weeks.map((w, i) => {
-          // actuals: weeks where weekEnd <= today (current week inclusive)
-          return w.end <= today || w.start <= today ? weekHC[i] : null;
+          return i <= lastActualIdx ? weekHC[i] : null;
         });
 
         const pipelineData = weeks.map((w, i) => {
-          // pipeline: weeks where weekStart > today (future)
-          return w.start > today ? weekHC[i] : null;
+          // Share the last actuals point so lines connect visually
+          return i >= lastActualIdx ? weekHC[i] : null;
         });
 
-        // Linear regression on the 4 actual past weeks (indices 0-3)
-        const regressionPoints = [];
-        for (let i = 0; i <= 4; i++) {
-          if (actualsData[i] !== null) {
-            regressionPoints.push({ x: i, y: actualsData[i] });
-          }
-        }
+        // Linear regression on all actual weeks
+        const regressionPoints = weeks
+          .map((w, i) => i <= lastActualIdx ? { x: i, y: weekHC[i] } : null)
+          .filter(Boolean);
         const { slope, intercept } = linearRegression(regressionPoints);
 
         const projectionData = weeks.map((w, i) => {
-          // Project for future weeks (indices 5-8)
-          if (w.start > today) {
-            const val = Math.max(0, Math.round(slope * i + intercept));
-            return val;
+          // Anchor projection at last actuals point, extend through future weeks
+          if (i >= lastActualIdx) {
+            return Math.max(0, Math.round(slope * i + intercept));
           }
           return null;
         });
