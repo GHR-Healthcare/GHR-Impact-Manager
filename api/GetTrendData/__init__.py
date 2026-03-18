@@ -40,8 +40,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                 FROM dhc.B4HealthOrder
                 WHERE Contract_Status = 'Closed And Awarded'
                     AND Start_Date IS NOT NULL
-                    AND Start_Date >= DATEADD(WEEK, -6, GETDATE())
-                    AND (End_Date IS NULL OR End_Date >= DATEADD(WEEK, -6, GETDATE()))
+                    AND (End_Date IS NULL OR End_Date >= DATEADD(WEEK, -4, GETDATE()))
             ''')
 
             columns = [column[0] for column in cursor.description]
@@ -72,8 +71,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                 FROM dbo.STAGING_VNDLY_WORKORDERS
                 WHERE [Current Status] = 'Active'
                     AND [Start Date] IS NOT NULL
-                    AND [Start Date] >= DATEADD(WEEK, -6, GETDATE())
-                    AND ([End Date] IS NULL OR [End Date] >= DATEADD(WEEK, -6, GETDATE()))
+                    AND ([End Date] IS NULL OR [End Date] >= DATEADD(WEEK, -4, GETDATE()))
             ''')
 
             columns = [column[0] for column in cursor.description]
