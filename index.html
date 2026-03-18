@@ -1251,7 +1251,8 @@
                             r.billing_week_start = parseLocalDate(r.billing_week_start);
                             r.billing_week_end = parseLocalDate(r.billing_week_end);
                             r.item_date = parseLocalDate(r.item_date);
-                            r.healthSystem = Utils.getHealthSystem(null, r.health_system);
+                            // B4 uses facility_name for system mapping; VNDLY uses health_system
+                            r.healthSystem = Utils.getHealthSystem(r.facility_name || null, r.health_system);
                         });
                     }
                     window.store.state.hoursData = hoursData;
@@ -5056,9 +5057,13 @@
           return;
         }
 
+        // Exclude B4 data for systems that have transitioned to VNDLY (same logic as overview)
+        const transitionedSystems = new Set(['RUMC', 'Holy Redeemer']);
+        const deduped = rows.filter(r => !(r.source_system === 'B4' && transitionedSystems.has(r.healthSystem)));
+
         // Apply system/facility filters from global filter
         const fs = s.filterSelection;
-        const filtered = rows.filter(r => {
+        const filtered = deduped.filter(r => {
           const sysMatch = fs.systems.size === 0 || fs.systems.has(r.healthSystem);
           const facMatch = fs.facilities.size === 0 || fs.facilities.has(r.health_system);
           return sysMatch && facMatch;
