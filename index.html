@@ -4538,12 +4538,17 @@
         // exclude all B4 data for them to prevent double-counting
         const transitionedSystems = new Set(['RUMC', 'Holy Redeemer']);
 
+        // Systems excluded from per diem view entirely (data quality issues)
+        const excludedPDSystems = new Set(['Sunrise']);
+
         const dedupedAssignments = assignments.filter(a =>
-          !(a.source_system === 'B4' && transitionedSystems.has(a.healthSystem))
+          !(a.source_system === 'B4' && transitionedSystems.has(a.healthSystem)) &&
+          !excludedPDSystems.has(a.healthSystem)
         );
 
         const dedupedShifts = shifts.filter(sh =>
-          !(sh.source_system === 'B4' && transitionedSystems.has(sh.healthSystem))
+          !(sh.source_system === 'B4' && transitionedSystems.has(sh.healthSystem)) &&
+          !excludedPDSystems.has(sh.healthSystem)
         );
 
         // Category filter helper for per diem: match agency against selected job-program categories
@@ -4582,6 +4587,7 @@
         // Also exclude transitioned systems' B4 open orders
         const filteredOpenOrders = openOrders.filter(o => {
           if (o.source_system === 'B4' && transitionedSystems.has(o.healthSystem)) return false;
+          if (excludedPDSystems.has(o.healthSystem)) return false;
           const sysMatch = s.filterSelection.systems.size === 0 || s.filterSelection.systems.has(o.healthSystem);
           const facMatch = s.filterSelection.facilities.size === 0 || s.filterSelection.facilities.has(o.facility);
           return sysMatch && facMatch;
@@ -5059,7 +5065,11 @@
 
         // Exclude B4 data for systems that have transitioned to VNDLY (same logic as overview)
         const transitionedSystems = new Set(['RUMC', 'Holy Redeemer']);
-        const deduped = rows.filter(r => !(r.source_system === 'B4' && transitionedSystems.has(r.healthSystem)));
+        const excludedPDSystems = new Set(['Sunrise']);
+        const deduped = rows.filter(r =>
+          !(r.source_system === 'B4' && transitionedSystems.has(r.healthSystem)) &&
+          !excludedPDSystems.has(r.healthSystem)
+        );
 
         // Apply system/facility filters from global filter
         const fs = s.filterSelection;
