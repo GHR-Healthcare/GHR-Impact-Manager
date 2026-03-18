@@ -1240,6 +1240,32 @@
                 window.store.state.perDiemLoaded = true;
             }
 
+            // Load hours analysis data (GHR vs other agencies, per diem hours)
+            try {
+                const hoursResponse = await fetch(`${API_BASE_URL}/hours-data`);
+                if (hoursResponse.ok) {
+                    const hoursData = await hoursResponse.json();
+                    if (hoursData.rows) {
+                        hoursData.rows.forEach(r => {
+                            const parseLocalDate = s => { if (!s) return null; const [y,m,d] = s.split('T')[0].split('-'); return new Date(+y, +m-1, +d); };
+                            r.billing_week_start = parseLocalDate(r.billing_week_start);
+                            r.billing_week_end = parseLocalDate(r.billing_week_end);
+                            r.item_date = parseLocalDate(r.item_date);
+                            r.healthSystem = Utils.getHealthSystem(null, r.health_system);
+                        });
+                    }
+                    window.store.state.hoursData = hoursData;
+                    window.store.state.hoursLoaded = true;
+                } else {
+                    window.store.state.hoursData = { rows: [] };
+                    window.store.state.hoursLoaded = true;
+                }
+            } catch (hoursError) {
+                console.warn('Error loading hours data:', hoursError);
+                window.store.state.hoursData = { rows: [] };
+                window.store.state.hoursLoaded = true;
+            }
+
             // Load trend data
             try {
                 const trendResponse = await fetch(`${API_BASE_URL}/trend-data`);
@@ -3198,7 +3224,7 @@
         // Use visibility to hide KPI and legend on other tabs (preserves layout)
         const kpiEl = $('kpiContainer');
         const legendEl = $('legendContainer');
-        if (kpiEl) kpiEl.style.visibility = view === 'list' ? 'visible' : 'hidden';
+        if (kpiEl) kpiEl.style.visibility = (view === 'list' || view === 'perdiem' || view === 'financials') ? 'visible' : 'hidden';
         if (legendEl) legendEl.style.visibility = (view === 'stats' || view === 'financials' || view === 'perdiem' || view === 'trend') ? 'hidden' : 'visible';
 
         const btnList = $('btnViewList');
@@ -3842,6 +3868,21 @@
         lucide.createIcons();
       },
 
+      renderKpiCards(cards) {
+        const container = $('kpiContainer');
+        if (!container) return;
+        container.innerHTML = cards.map(c => `
+          <div class="bg-white p-2 sm:p-4 rounded-lg border border-slate-200 shadow-sm flex flex-col justify-between hover:shadow-md transition-shadow relative">
+            <div class="flex justify-between items-start mb-1 sm:mb-2">
+              <span class="text-[9px] sm:text-xs font-bold text-slate-500 uppercase tracking-wider leading-tight">${c.label}</span>
+              <i data-lucide="${c.icon}" class="w-3 h-3 sm:w-4 sm:h-4 text-${c.color}-500 shrink-0"></i>
+            </div>
+            <div class="text-base sm:text-2xl font-bold text-slate-800">${c.val}</div>
+          </div>
+        `).join('');
+        lucide.createIcons();
+      },
+
       legend() {
         const el = $('legendContainer');
         if (!el) return;
@@ -4138,30 +4179,16 @@
             </div>
           </div>
 
-          <div class="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
-            <div class="bg-white p-4 rounded-lg border border-slate-200 shadow-sm text-center">
-              <div class="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">Total Billings (${monthLabel(latestMonth)})</div>
-              <div class="text-2xl font-bold text-slate-800">${fmt(totalBilling)}</div>
-              ${billingChange !== null ? `<div class="text-xs ${changeColor} font-medium flex items-center justify-center gap-1 mt-1"><i data-lucide="${changeIcon}" class="w-3 h-3"></i> ${billingChange}% vs prior</div>` : ''}
-            </div>
-            <div class="bg-white p-4 rounded-lg border border-slate-200 shadow-sm text-center">
-              <div class="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">GHR Billings</div>
-              <div class="text-2xl font-bold text-blue-700">${fmt(totalGhrBilling)}</div>
-            </div>
-            <div class="bg-white p-4 rounded-lg border border-slate-200 shadow-sm text-center">
-              <div class="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">Affiliate Billings</div>
-              <div class="text-2xl font-bold text-purple-700">${fmt(totalAffBilling)}</div>
-            </div>
-            <div class="bg-white p-4 rounded-lg border border-slate-200 shadow-sm text-center">
-              <div class="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">GHR Fill Rate</div>
-              <div class="text-2xl font-bold text-emerald-700">${fillRate}%</div>
-            </div>
-            <div class="bg-white p-4 rounded-lg border border-slate-200 shadow-sm text-center">
-              <div class="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">Total Headcount</div>
-              <div class="text-2xl font-bold text-slate-800">${totalHC.toLocaleString()}</div>
-              <div class="text-xs text-slate-500 mt-1">GHR: ${totalGhrHC} | Aff: ${totalAffHC}</div>
-            </div>
-          </div>`;
+`;
+
+        this.renderKpiCards([
+          { label: `Total Billings (${monthLabel(latestMonth)})`, val: fmt(totalBilling) + (billingChange !== null ? ` <span class="${changeColor} text-xs font-normal">${parseFloat(billingChange) >= 0 ? '▲' : '▼'} ${Math.abs(billingChange)}%</span>` : ''), icon: 'dollar-sign', color: 'slate' },
+          { label: 'GHR Billings', val: fmt(totalGhrBilling), icon: 'building-2', color: 'blue' },
+          { label: 'Affiliate Billings', val: fmt(totalAffBilling), icon: 'users', color: 'purple' },
+          { label: 'GHR Fill Rate', val: `${fillRate}%`, icon: 'pie-chart', color: 'emerald' },
+          { label: 'GHR Headcount', val: totalGhrHC.toLocaleString(), icon: 'user-check', color: 'blue' },
+          { label: 'Affiliate Headcount', val: totalAffHC.toLocaleString(), icon: 'user-check', color: 'purple' },
+        ]);
 
         // ====== MSP BILLINGS SECTION ======
         html += `<div id="pdfBillingsSection" class="bg-white p-4 rounded-lg shadow-sm border border-slate-200 mb-6">
@@ -4480,6 +4507,14 @@
         if (!container) return;
 
         const s = window.store.state;
+
+        // Sub-tab routing
+        const subTab = s.perDiemSubTab || 'overview';
+        if (subTab === 'hours') {
+          this.hoursAnalysis(container);
+          return;
+        }
+
         const assignments = s.perDiemData?.assignments || [];
         const shifts = s.perDiemData?.shifts || [];
         const openOrders = s.perDiemData?.openOrders || [];
@@ -4718,6 +4753,20 @@
         window.__pdActiveWeekIndices = activeWeekIndices;
         window.__pdWeeks = weeks;
 
+        // Sub-tab nav
+        html += `
+          <div class="flex gap-1 mb-5 border-b border-slate-200 pb-0">
+            <button onclick="window.store.state.perDiemSubTab='overview'; View.perDiem(); lucide.createIcons();"
+              class="px-4 py-2 text-xs font-bold rounded-t-md border border-b-0 transition-colors ${subTab === 'overview' ? 'bg-white border-slate-200 text-violet-700' : 'bg-slate-50 border-transparent text-slate-500 hover:text-slate-700'}">
+              Overview
+            </button>
+            <button onclick="window.store.state.perDiemSubTab='hours'; View.perDiem(); lucide.createIcons();"
+              class="px-4 py-2 text-xs font-bold rounded-t-md border border-b-0 transition-colors ${subTab === 'hours' ? 'bg-white border-slate-200 text-violet-700' : 'bg-slate-50 border-transparent text-slate-500 hover:text-slate-700'}">
+              Hours Analysis
+            </button>
+          </div>
+        `;
+
         // Header with date picker
         html += `
           <div class="flex flex-wrap items-center justify-between gap-4 mb-6">
@@ -4746,7 +4795,7 @@
           </div>
         `;
 
-        // Summary cards
+        // Summary KPI cards (rendered into shared kpiContainer)
         const totalActiveHC = activeGroups.reduce((sum, g) => {
           const last = metrics[g.key]?.[activeWeekIndices[activeWeekIndices.length - 1]];
           return sum + (last?.activeHC || 0);
@@ -4755,29 +4804,24 @@
           const last = metrics[g.key]?.[activeWeekIndices[activeWeekIndices.length - 1]];
           return sum + (last?.totalShifts || 0);
         }, 0);
-        // Count distinct health systems (not groups) for the summary card
         const uniqueSystemCount = new Set(activeGroups.map(g => g.healthSystem)).size;
-
-        html += `
-          <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-            <div class="bg-violet-50 border border-violet-200 rounded-lg p-4">
-              <div class="text-2xl font-bold text-violet-700">${uniqueSystemCount}</div>
-              <div class="text-xs text-violet-600 font-medium">Health Systems</div>
-            </div>
-            <div class="bg-blue-50 border border-blue-200 rounded-lg p-4">
-              <div class="text-2xl font-bold text-blue-700">${filteredAssignments.length}</div>
-              <div class="text-xs text-blue-600 font-medium">Active Per Diem Workers</div>
-            </div>
-            <div class="bg-emerald-50 border border-emerald-200 rounded-lg p-4">
-              <div class="text-2xl font-bold text-emerald-700">${totalActiveHC}</div>
-              <div class="text-xs text-emerald-600 font-medium">Current Week Headcount</div>
-            </div>
-            <div class="bg-amber-50 border border-amber-200 rounded-lg p-4">
-              <div class="text-2xl font-bold text-amber-700">${totalShiftsLastWeek}</div>
-              <div class="text-xs text-amber-600 font-medium">Current Week Shifts</div>
-            </div>
-          </div>
-        `;
+        const overallFillRate = (() => {
+          let filled = 0, total = 0;
+          activeGroups.forEach(g => {
+            const last = metrics[g.key]?.[activeWeekIndices[activeWeekIndices.length - 1]];
+            filled += last?.activeHC || 0;
+            total += last?.contractedHC || 0;
+          });
+          return total > 0 ? Math.round(filled / total * 100) + '%' : '-';
+        })();
+        this.renderKpiCards([
+          { label: 'Health Systems', val: uniqueSystemCount, icon: 'building-2', color: 'violet' },
+          { label: 'Active Per Diem Workers', val: filteredAssignments.length, icon: 'users', color: 'blue' },
+          { label: 'Current Week Headcount', val: totalActiveHC, icon: 'user-check', color: 'emerald' },
+          { label: 'Current Week Shifts', val: totalShiftsLastWeek, icon: 'calendar', color: 'amber' },
+          { label: 'Fill Rate (Current Week)', val: overallFillRate, icon: 'trending-up', color: 'green' },
+          { label: 'Total Available Positions', val: (() => { let t = 0; activeGroups.forEach(g => { const last = metrics[g.key]?.[activeWeekIndices[activeWeekIndices.length-1]]; t += last?.contractedHC || 0; }); return t || '-'; })(), icon: 'clipboard-list', color: 'slate' },
+        ]);
 
         // Per-system data tables
         activeGroups.forEach(({ key, label, healthSystem: gSys, facility: gFac }) => {
@@ -4860,16 +4904,16 @@
           `;
         });
 
-        // Charts section
+        // Charts section — stacked full-width for more detail
         html += `
-          <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-6">
+          <div class="space-y-6 mt-6">
             <div class="border border-slate-200 rounded-lg p-4">
               <h4 class="font-bold text-sm text-slate-700 mb-3">% of Actives Worked - Weekly Trend</h4>
-              <div class="h-64"><canvas id="pdPctWorkedChart"></canvas></div>
+              <div class="h-72"><canvas id="pdPctWorkedChart"></canvas></div>
             </div>
             <div class="border border-slate-200 rounded-lg p-4">
               <h4 class="font-bold text-sm text-slate-700 mb-3">Shifts/Nurse Average - Weekly Trend</h4>
-              <div class="h-64"><canvas id="pdShiftsPerNurseChart"></canvas></div>
+              <div class="h-72"><canvas id="pdShiftsPerNurseChart"></canvas></div>
             </div>
           </div>
         `;
@@ -4973,6 +5017,238 @@
               scales: {
                 y: { min: 0, ticks: { font: { size: 10 }, callback: v => v.toFixed(2) } },
                 x: { ticks: { font: { size: 9 }, maxRotation: 45 } }
+              }
+            }
+          });
+        }
+
+        lucide.createIcons();
+      },
+
+      hoursAnalysis(container) {
+        const s = window.store.state;
+        const rows = s.hoursData?.rows || [];
+        const subTab = s.perDiemSubTab || 'hours';
+
+        const subTabNav = `
+          <div class="flex gap-1 mb-5 border-b border-slate-200 pb-0">
+            <button onclick="window.store.state.perDiemSubTab='overview'; View.perDiem(); lucide.createIcons();"
+              class="px-4 py-2 text-xs font-bold rounded-t-md border border-b-0 transition-colors bg-slate-50 border-transparent text-slate-500 hover:text-slate-700">
+              Overview
+            </button>
+            <button onclick="window.store.state.perDiemSubTab='hours'; View.perDiem(); lucide.createIcons();"
+              class="px-4 py-2 text-xs font-bold rounded-t-md border border-b-0 transition-colors bg-white border-slate-200 text-violet-700">
+              Hours Analysis
+            </button>
+          </div>
+        `;
+
+        if (!s.hoursLoaded) {
+          container.innerHTML = subTabNav + `<div class="p-6 text-slate-500 bg-slate-50 border border-slate-200 rounded flex items-center gap-3">
+            <svg class="animate-spin h-5 w-5 text-blue-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg>
+            Loading hours data from database...
+          </div>`;
+          return;
+        }
+
+        if (rows.length === 0) {
+          container.innerHTML = subTabNav + `<div class="p-6 text-slate-500 bg-slate-50 border border-slate-200 rounded">No per diem hours data found.</div>`;
+          return;
+        }
+
+        // Apply system/facility filters from global filter
+        const fs = s.filterSelection;
+        const filtered = rows.filter(r => {
+          const sysMatch = fs.systems.size === 0 || fs.systems.has(r.healthSystem);
+          const facMatch = fs.facilities.size === 0 || fs.facilities.has(r.health_system);
+          return sysMatch && facMatch;
+        });
+
+        // Build week labels from billing_week_start/end
+        const weekMap = new Map(); // "MM/DD - MM/DD/YYYY" => { ghrHours, otherHours }
+        const unitMap = new Map(); // work_site => { ghrHours, otherHours }
+        const vendorMap = new Map(); // vendor => hours
+
+        const fmtMD = d => d ? `${d.getMonth()+1}/${d.getDate()}` : '';
+        const fmtMDY = d => d ? `${d.getMonth()+1}/${d.getDate()}/${d.getFullYear()}` : '';
+
+        filtered.forEach(r => {
+          const hrs = r.hours || 0;
+          const isGhr = r.is_ghr === 1 || r.is_ghr === true;
+          const weekLabel = r.billing_week_start && r.billing_week_end
+            ? `${fmtMD(r.billing_week_start)} - ${fmtMDY(r.billing_week_end)}`
+            : (r.item_date ? fmtMDY(r.item_date) : 'Unknown');
+          const weekKey = r.billing_week_start ? r.billing_week_start.getTime() : 0;
+
+          if (!weekMap.has(weekKey)) weekMap.set(weekKey, { label: weekLabel, ghr: 0, other: 0 });
+          const w = weekMap.get(weekKey);
+          if (isGhr) w.ghr += hrs; else w.other += hrs;
+
+          const unit = r.work_site || 'Unknown';
+          if (!unitMap.has(unit)) unitMap.set(unit, { ghr: 0, other: 0 });
+          const u = unitMap.get(unit);
+          if (isGhr) u.ghr += hrs; else u.other += hrs;
+
+          const vendor = r.vendor || 'Unknown';
+          if (!vendorMap.has(vendor)) vendorMap.set(vendor, 0);
+          vendorMap.set(vendor, vendorMap.get(vendor) + hrs);
+        });
+
+        // Sort weeks chronologically
+        const sortedWeeks = [...weekMap.entries()].sort((a, b) => a[0] - b[0]);
+        const weekLabels = sortedWeeks.map(([, v]) => v.label);
+        const ghrWeekHours = sortedWeeks.map(([, v]) => +v.ghr.toFixed(2));
+        const otherWeekHours = sortedWeeks.map(([, v]) => +v.other.toFixed(2));
+        const totalWeekHours = sortedWeeks.map((_, i) => +(ghrWeekHours[i] + otherWeekHours[i]).toFixed(2));
+        const ghrWeekPct = sortedWeeks.map((_, i) => totalWeekHours[i] > 0 ? +(ghrWeekHours[i] / totalWeekHours[i] * 100).toFixed(1) : 0);
+
+        // Sort units by total desc, remove TOTAL row if present
+        const sortedUnits = [...unitMap.entries()]
+          .filter(([k]) => k.toUpperCase() !== 'TOTAL')
+          .sort((a, b) => (b[1].ghr + b[1].other) - (a[1].ghr + a[1].other));
+
+        // Summary KPI cards
+        const totalGhr = filtered.filter(r => r.is_ghr === 1 || r.is_ghr === true).reduce((s, r) => s + (r.hours || 0), 0);
+        const totalOther = filtered.filter(r => !r.is_ghr).reduce((s, r) => s + (r.hours || 0), 0);
+        const totalHrs = totalGhr + totalOther;
+        const ghrPct = totalHrs > 0 ? (totalGhr / totalHrs * 100).toFixed(1) : '0.0';
+        this.renderKpiCards([
+          { label: 'GHR Hours', val: totalGhr.toFixed(1), icon: 'clock', color: 'blue' },
+          { label: 'All Other Agencies', val: totalOther.toFixed(1), icon: 'clock', color: 'slate' },
+          { label: 'Total Hours', val: totalHrs.toFixed(1), icon: 'activity', color: 'violet' },
+          { label: 'GHR Fill %', val: ghrPct + '%', icon: 'pie-chart', color: 'emerald' },
+          { label: 'Weeks of Data', val: sortedWeeks.length, icon: 'calendar', color: 'amber' },
+          { label: 'Units Covered', val: sortedUnits.length, icon: 'building-2', color: 'indigo' },
+        ]);
+
+        // Unit table rows
+        const unitRows = sortedUnits.map(([unit, d]) => {
+          const tot = d.ghr + d.other;
+          const pct = tot > 0 ? (d.ghr / tot * 100).toFixed(1) : '0.0';
+          const barW = parseFloat(pct);
+          return `<tr class="border-b border-slate-100 hover:bg-slate-50">
+            <td class="px-3 py-2 text-slate-700 font-medium">${unit}</td>
+            <td class="px-3 py-2 text-center text-blue-700">${d.ghr.toFixed(1)}</td>
+            <td class="px-3 py-2 text-center text-slate-600">${d.other.toFixed(1)}</td>
+            <td class="px-3 py-2 text-center font-semibold">${tot.toFixed(1)}</td>
+            <td class="px-3 py-2 text-center">
+              <div class="flex items-center gap-2">
+                <div class="flex-1 bg-slate-100 rounded-full h-2">
+                  <div class="bg-blue-500 h-2 rounded-full" style="width:${barW}%"></div>
+                </div>
+                <span class="text-xs font-bold text-blue-700 w-12 text-right">${pct}%</span>
+              </div>
+            </td>
+          </tr>`;
+        }).join('');
+
+        // Totals row
+        const unitTotalGhr = sortedUnits.reduce((s, [, d]) => s + d.ghr, 0);
+        const unitTotalOther = sortedUnits.reduce((s, [, d]) => s + d.other, 0);
+        const unitTotal = unitTotalGhr + unitTotalOther;
+        const unitTotalPct = unitTotal > 0 ? (unitTotalGhr / unitTotal * 100).toFixed(1) : '0.0';
+
+        container.innerHTML = subTabNav + `
+          <div class="flex items-center justify-between mb-4">
+            <h2 class="text-lg font-bold text-slate-700">Hours Analysis — GHR vs. All Other Agencies</h2>
+            <p class="text-xs text-slate-400">Per diem hours · last 13 weeks · follows active filters</p>
+          </div>
+
+          <div class="space-y-6">
+            <div class="bg-white border border-slate-200 rounded-lg p-4 shadow-sm">
+              <h3 class="font-bold text-sm text-slate-700 mb-3">Weekly Hours Trend</h3>
+              <div class="h-80"><canvas id="hoursWeeklyChart"></canvas></div>
+            </div>
+
+            <div class="bg-white border border-slate-200 rounded-lg p-4 shadow-sm">
+              <h3 class="font-bold text-sm text-slate-700 mb-3">GHR % of Total Hours — Weekly</h3>
+              <div class="h-64"><canvas id="hoursGhrPctChart"></canvas></div>
+            </div>
+
+            <div class="bg-white border border-slate-200 rounded-lg p-4 shadow-sm">
+              <h3 class="font-bold text-sm text-slate-700 mb-3">Hours by Unit</h3>
+              <div class="overflow-x-auto">
+                <table class="w-full text-xs">
+                  <thead>
+                    <tr class="bg-slate-100 text-slate-500 uppercase tracking-wide text-[10px]">
+                      <th class="px-3 py-2 text-left font-semibold">Organization Unit</th>
+                      <th class="px-3 py-2 text-center font-semibold text-blue-600">GHR Hours</th>
+                      <th class="px-3 py-2 text-center font-semibold text-slate-600">Other Hours</th>
+                      <th class="px-3 py-2 text-center font-semibold">Total</th>
+                      <th class="px-3 py-2 text-left font-semibold text-blue-600">GHR %</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    ${unitRows}
+                    <tr class="bg-slate-100 font-bold text-xs border-t-2 border-slate-300">
+                      <td class="px-3 py-2 text-slate-800">TOTAL</td>
+                      <td class="px-3 py-2 text-center text-blue-700">${unitTotalGhr.toFixed(1)}</td>
+                      <td class="px-3 py-2 text-center text-slate-600">${unitTotalOther.toFixed(1)}</td>
+                      <td class="px-3 py-2 text-center">${unitTotal.toFixed(1)}</td>
+                      <td class="px-3 py-2 text-blue-700">${unitTotalPct}%</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        `;
+
+        // Weekly hours stacked bar chart
+        if (window.__hoursWeeklyChart) { window.__hoursWeeklyChart.destroy(); window.__hoursWeeklyChart = null; }
+        const weeklyCtx = $('hoursWeeklyChart')?.getContext('2d');
+        if (weeklyCtx && typeof Chart !== 'undefined') {
+          window.__hoursWeeklyChart = new Chart(weeklyCtx, {
+            type: 'bar',
+            data: {
+              labels: weekLabels,
+              datasets: [
+                { label: 'GHR Hours', data: ghrWeekHours, backgroundColor: '#3b82f6', stack: 'hours' },
+                { label: 'Other Agencies', data: otherWeekHours, backgroundColor: '#94a3b8', stack: 'hours' }
+              ]
+            },
+            options: {
+              responsive: true, maintainAspectRatio: false,
+              plugins: {
+                legend: { position: 'bottom', labels: { boxWidth: 12, font: { size: 10 } } },
+                tooltip: { callbacks: { label: ctx => `${ctx.dataset.label}: ${ctx.parsed.y.toFixed(1)} hrs` } }
+              },
+              scales: {
+                x: { stacked: true, ticks: { font: { size: 9 }, maxRotation: 45 } },
+                y: { stacked: true, ticks: { font: { size: 10 } }, title: { display: true, text: 'Hours', font: { size: 10 } } }
+              }
+            }
+          });
+        }
+
+        // GHR % line chart
+        if (window.__hoursGhrPctChart) { window.__hoursGhrPctChart.destroy(); window.__hoursGhrPctChart = null; }
+        const pctCtx = $('hoursGhrPctChart')?.getContext('2d');
+        if (pctCtx && typeof Chart !== 'undefined') {
+          window.__hoursGhrPctChart = new Chart(pctCtx, {
+            type: 'line',
+            data: {
+              labels: weekLabels,
+              datasets: [{
+                label: 'GHR %',
+                data: ghrWeekPct,
+                borderColor: '#3b82f6',
+                backgroundColor: '#3b82f620',
+                borderWidth: 2,
+                fill: true,
+                tension: 0.3,
+                pointRadius: 3
+              }]
+            },
+            options: {
+              responsive: true, maintainAspectRatio: false,
+              plugins: {
+                legend: { display: false },
+                tooltip: { callbacks: { label: ctx => `GHR: ${ctx.parsed.y.toFixed(1)}%` } }
+              },
+              scales: {
+                x: { ticks: { font: { size: 9 }, maxRotation: 45 } },
+                y: { min: 0, max: 100, ticks: { font: { size: 10 }, callback: v => v + '%' }, title: { display: true, text: 'GHR %', font: { size: 10 } } }
               }
             }
           });
@@ -5119,6 +5395,12 @@
           </tr>`;
         }).join('');
 
+        // Destroy existing chart before replacing DOM (so Chart.js cleans up canvas reference)
+        if (window.__trendChart) {
+          window.__trendChart.destroy();
+          window.__trendChart = null;
+        }
+
         container.innerHTML = `
           <div class="flex items-center justify-between mb-4">
             <h2 class="text-lg font-bold text-slate-700">Headcount Trend</h2>
@@ -5144,12 +5426,6 @@
             </div>
           </div>
         `;
-
-        // Destroy existing chart if any
-        if (window.__trendChart) {
-          window.__trendChart.destroy();
-          window.__trendChart = null;
-        }
 
         const canvas = $('trendChart');
         if (canvas && typeof Chart !== 'undefined') {
@@ -5220,6 +5496,9 @@
         financialToMonth: null,
         perDiemData: { assignments: [], shifts: [] },
         perDiemLoaded: false,
+        hoursData: { rows: [] },
+        hoursLoaded: false,
+        perDiemSubTab: 'overview',
         perDiemFromMonth: null,
         perDiemToMonth: null,
         perDiemGHROnly: true,
