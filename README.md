@@ -2,6 +2,13 @@
 
 ## Version History
 
+**1.5.0** - Trend Tab with Headcount Projection
+- New Trend tab with 4-week lookback and 4-week forward projection
+- Line chart showing Actual HC, Pipeline (confirmed), and linear trend projection
+- Weekly summary table with actuals, pipeline, and trend projection columns
+- Follows all active filters (health system, facility, category, specialty)
+- New API endpoint: `/api/GetTrendData` (route: `trend-data`)
+
 **1.4.0** - Per Diem Analytics Tab
 - New Per Diem tab with weekly metrics per health system (headcount, actives worked, % worked, shifts, shifts/nurse avg)
 - Data sourced from B4Health and VNDLY systems
