@@ -4502,11 +4502,16 @@
         // exclude all B4 data for them to prevent double-counting
         const transitionedSystems = new Set(['RUMC', 'Holy Redeemer']);
 
+        // Systems excluded from per diem tab entirely
+        const isExcludedFromPerDiem = (sys) => /sunrise/i.test(sys || '');
+
         const dedupedAssignments = assignments.filter(a =>
+          !isExcludedFromPerDiem(a.healthSystem) &&
           !(a.source_system === 'B4' && transitionedSystems.has(a.healthSystem))
         );
 
         const dedupedShifts = shifts.filter(sh =>
+          !isExcludedFromPerDiem(sh.healthSystem) &&
           !(sh.source_system === 'B4' && transitionedSystems.has(sh.healthSystem))
         );
 
@@ -4545,6 +4550,7 @@
         // Open orders: apply health system + facility filter only (no GHR/agency filter — these are client demands)
         // Also exclude transitioned systems' B4 open orders
         const filteredOpenOrders = openOrders.filter(o => {
+          if (isExcludedFromPerDiem(o.healthSystem)) return false;
           if (o.source_system === 'B4' && transitionedSystems.has(o.healthSystem)) return false;
           const sysMatch = s.filterSelection.systems.size === 0 || s.filterSelection.systems.has(o.healthSystem);
           const facMatch = s.filterSelection.facilities.size === 0 || s.filterSelection.facilities.has(o.facility);
