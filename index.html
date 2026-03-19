@@ -5019,7 +5019,7 @@
           return sysMatch && facMatch && catMatch && specMatch;
         });
 
-        // Build 9 week buckets: 4 back + current + 4 forward (Sun-Sat)
+        // Build 7 week buckets: 4 back + current + 2 forward (Sun-Sat)
         const getSunday = (d) => {
           const dt = new Date(d);
           const day = dt.getDay();
@@ -5031,7 +5031,7 @@
         const currentSunday = getSunday(today);
 
         const weeks = [];
-        for (let i = -4; i <= 4; i++) {
+        for (let i = -4; i <= 2; i++) {
           const start = new Date(currentSunday);
           start.setDate(start.getDate() + i * 7);
           const end = new Date(start);
@@ -5053,17 +5053,26 @@
           return { slope, intercept };
         }
 
-        // Compute headcount per week
-        const weekHC = weeks.map(({ start, end }) => {
-          const names = new Set();
+        // Helper: is this a GHR agency?
+        const isGHRAgency = (agency) => /ghr|planet\s*healthcare/i.test(agency || '');
+
+        // Compute headcount per week, split by GHR vs Affiliate
+        const weekData = weeks.map(({ start, end }) => {
+          const ghrNames = new Set();
+          const affNames = new Set();
           filtered.forEach(r => {
             const sd = r.startDate;
             const ed = r.endDate;
             const overlaps = sd <= end && (ed === null || ed >= start);
-            if (overlaps) names.add(r.worker_name || '');
+            if (overlaps) {
+              const name = r.worker_name || '';
+              if (isGHRAgency(r.agency)) ghrNames.add(name);
+              else affNames.add(name);
+            }
           });
-          return names.size;
+          return { ghr: ghrNames.size, aff: affNames.size, total: ghrNames.size + affNames.size };
         });
+        const weekHC = weekData.map(d => d.total);
 
         // Split into actuals (weekEnd <= today) and pipeline (weekStart > today)
         // current week (index 4) counts as actuals
@@ -5080,6 +5089,12 @@
 
         const actualsData = weeks.map((w, i) => {
           return i <= lastActualIdx ? weekHC[i] : null;
+        });
+        const ghrActualsData = weeks.map((w, i) => {
+          return i <= lastActualIdx ? weekData[i].ghr : null;
+        });
+        const affActualsData = weeks.map((w, i) => {
+          return i <= lastActualIdx ? weekData[i].aff : null;
         });
 
         const pipelineData = weeks.map((w, i) => {
@@ -5106,14 +5121,16 @@
           const isActual = w.end <= today || w.start <= today;
           const isFuture = w.start > today;
           const actualHC = isActual ? weekHC[i] : '—';
+          const ghrHC = isActual ? weekData[i].ghr : (isFuture ? weekData[i].ghr : '—');
+          const affHC = isActual ? weekData[i].aff : (isFuture ? weekData[i].aff : '—');
           const pipelineHC = isFuture ? weekHC[i] : '—';
           const projHC = isFuture ? Math.max(0, Math.round(slope * i + intercept)) : '—';
-          const isCurrentWeek = !isActual && !isFuture;
-          // current week (today is within the week)
           const isCurrent = w.start <= today && w.end >= today;
           return `<tr class="${isCurrent ? 'bg-blue-50 font-semibold' : 'hover:bg-slate-50'}">
             <td class="px-3 py-1.5 border-b border-slate-100 text-slate-600">${fmtWeekEnd(w.end)}</td>
             <td class="px-3 py-1.5 border-b border-slate-100 text-center text-slate-700">${actualHC}</td>
+            <td class="px-3 py-1.5 border-b border-slate-100 text-center text-blue-700">${ghrHC}</td>
+            <td class="px-3 py-1.5 border-b border-slate-100 text-center text-purple-700">${affHC}</td>
             <td class="px-3 py-1.5 border-b border-slate-100 text-center text-green-700">${pipelineHC}</td>
             <td class="px-3 py-1.5 border-b border-slate-100 text-center text-orange-600">${projHC}</td>
           </tr>`;
@@ -5122,7 +5139,7 @@
         container.innerHTML = `
           <div class="flex items-center justify-between mb-4">
             <h2 class="text-lg font-bold text-slate-700">Headcount Trend</h2>
-            <p class="text-xs text-slate-400">4-week lookback · 4-week projection · follows active filters</p>
+            <p class="text-xs text-slate-400">4-week lookback · 2-week projection · follows active filters</p>
           </div>
           <div class="bg-white rounded-xl border border-slate-200 p-4 shadow-sm">
             <canvas id="trendChart" height="120"></canvas>
@@ -5134,7 +5151,9 @@
                 <thead>
                   <tr class="bg-slate-100 text-slate-500 uppercase tracking-wide text-[10px]">
                     <th class="px-3 py-2 text-left font-semibold">Week Ending</th>
-                    <th class="px-3 py-2 text-center font-semibold text-blue-600">Actuals HC</th>
+                    <th class="px-3 py-2 text-center font-semibold text-slate-600">Total HC</th>
+                    <th class="px-3 py-2 text-center font-semibold text-blue-600">GHR</th>
+                    <th class="px-3 py-2 text-center font-semibold text-purple-600">Affiliate</th>
                     <th class="px-3 py-2 text-center font-semibold text-green-600">Pipeline HC</th>
                     <th class="px-3 py-2 text-center font-semibold text-orange-500">Trend Projection</th>
                   </tr>
@@ -5159,13 +5178,31 @@
               labels,
               datasets: [
                 {
-                  label: 'Actual Headcount',
+                  label: 'Total Headcount',
                   data: actualsData,
-                  borderColor: '#3b82f6',
-                  backgroundColor: 'rgba(59,130,246,0.1)',
+                  borderColor: '#64748b',
+                  backgroundColor: 'rgba(100,116,139,0.08)',
                   fill: true,
                   tension: 0.3,
                   pointRadius: 5,
+                },
+                {
+                  label: 'GHR',
+                  data: ghrActualsData,
+                  borderColor: '#3b82f6',
+                  backgroundColor: 'rgba(59,130,246,0.1)',
+                  fill: false,
+                  tension: 0.3,
+                  pointRadius: 4,
+                },
+                {
+                  label: 'Affiliate',
+                  data: affActualsData,
+                  borderColor: '#8b5cf6',
+                  backgroundColor: 'rgba(139,92,246,0.1)',
+                  fill: false,
+                  tension: 0.3,
+                  pointRadius: 4,
                 },
                 {
                   label: 'Pipeline (Confirmed)',
