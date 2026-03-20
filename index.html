@@ -2421,22 +2421,28 @@
           // Clone fill rate section but remove the trend chart canvas container
           // so it only shows the bar chart + heatmap table
           const frWrapper = document.createElement('div');
-          frWrapper.style.cssText = 'position:absolute;left:-9999px;top:0;width:1400px;background:#ffffff;padding:28px 16px 16px 16px;';
+          frWrapper.style.cssText = 'position:absolute;left:-9999px;top:0;width:1400px;background:#ffffff;padding:40px 24px 24px 24px;';
           const frClone = fillRateSection.cloneNode(true);
+          // Strip outer border/shadow that can cause clipping
+          frClone.style.cssText = 'background:#ffffff;padding:0;border:none;box-shadow:none;';
           frClone.querySelectorAll('button').forEach(b => b.remove());
           // Remove 0% fill rate bars from PDF
           frClone.querySelectorAll('[data-fill-pct="0.0"]').forEach(el => el.remove());
           // Remove overflow:hidden from bar containers so nothing is clipped during capture
           frClone.querySelectorAll('.overflow-hidden').forEach(el => el.classList.remove('overflow-hidden'));
 
-          // Find the grid that contains bar chart + trend chart, restructure to full width bar + remove trend
+          // Remove trend chart column, make bar chart full width
           const gridDiv = frClone.querySelector('.grid.grid-cols-1.lg\\:grid-cols-2');
           if (gridDiv) {
-            const cols = gridDiv.children;
-            if (cols.length >= 2) {
-              cols[1].remove();
-            }
-            gridDiv.className = 'mb-4';
+            if (gridDiv.children.length >= 2) gridDiv.children[1].remove();
+            gridDiv.style.cssText = 'display:block;margin-bottom:16px;';
+            // Make bar rows taller for easier reading at PDF scale
+            frClone.querySelectorAll('.flex.items-center.gap-2').forEach(row => {
+              const bar = row.querySelector('.flex-1');
+              if (bar) bar.style.height = '24px';
+              const label = row.querySelector('.w-52');
+              if (label) { label.style.minWidth = '180px'; label.style.fontSize = '11px'; }
+            });
           }
 
           // Center table cell content vertically
