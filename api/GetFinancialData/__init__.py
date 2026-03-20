@@ -74,19 +74,19 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                         [Item ID],
                         [Contractor First Name],
                         [Contractor Last Name],
-                        [Item Date],
+                        [Billing Cycle End Date],
                         [Health System],
                         [Vendor Company Name],
                         [Client Amount],
                         ROW_NUMBER() OVER (PARTITION BY [Item ID] ORDER BY [Item Date]) AS rn
                     FROM dbo.STAGING_VNDLY_SPEND
-                    WHERE [Item Date] >= {date_from}
-                        AND [Item Date] < {date_to}
+                    WHERE [Billing Cycle End Date] >= {date_from}
+                        AND [Billing Cycle End Date] < {date_to}
                         AND [Health System] IS NOT NULL
                 )
                 SELECT
                     'VNDLY' AS source_system,
-                    FORMAT(DATEFROMPARTS(YEAR([Item Date]), MONTH([Item Date]), 1), 'yyyy-MM') AS month,
+                    FORMAT(DATEFROMPARTS(YEAR([Billing Cycle End Date]), MONTH([Billing Cycle End Date]), 1), 'yyyy-MM') AS month,
                     [Health System] AS health_system,
                     CASE
                         WHEN [Vendor Company Name] LIKE '%GHR%' OR [Vendor Company Name] LIKE '%Planet Healthcare%'
@@ -97,13 +97,13 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                 FROM DeduplicatedSpend
                 WHERE rn = 1
                 GROUP BY
-                    FORMAT(DATEFROMPARTS(YEAR([Item Date]), MONTH([Item Date]), 1), 'yyyy-MM'),
+                    FORMAT(DATEFROMPARTS(YEAR([Billing Cycle End Date]), MONTH([Billing Cycle End Date]), 1), 'yyyy-MM'),
                     [Health System],
                     CASE
                         WHEN [Vendor Company Name] LIKE '%GHR%' OR [Vendor Company Name] LIKE '%Planet Healthcare%'
                         THEN 'GHR' ELSE 'Affiliate'
                     END
-                ORDER BY FORMAT(DATEFROMPARTS(YEAR([Item Date]), MONTH([Item Date]), 1), 'yyyy-MM'), [Health System]
+                ORDER BY FORMAT(DATEFROMPARTS(YEAR([Billing Cycle End Date]), MONTH([Billing Cycle End Date]), 1), 'yyyy-MM'), [Health System]
             ''')
 
             columns = [column[0] for column in cursor.description]
