@@ -2453,30 +2453,26 @@
             th.style.padding = '4px 4px';
             th.style.height = '26px';
           });
-          // Wrap each td's content in a flex div so html2canvas centers it properly
-          // (html2canvas doesn't reliably respect vertical-align:middle on table cells)
+          // Style table cells with explicit equal padding so content is visually centered
           frClone.querySelectorAll('td').forEach(td => {
-            const inner = document.createElement('div');
-            inner.style.display = 'flex';
-            inner.style.alignItems = 'center';
-            inner.style.height = '26px';
-            while (td.firstChild) inner.appendChild(td.firstChild);
-            td.appendChild(inner);
-            td.style.padding = '0';
-            td.style.height = '26px';
-            const span = inner.querySelector('span');
+            const span = td.querySelector('span');
             if (span) {
-              inner.style.justifyContent = 'center';
-              inner.style.padding = '0 2px';
-              span.style.display = 'block';
+              td.style.padding = '7px 2px';
+              td.style.textAlign = 'center';
+              td.style.lineHeight = 'normal';
+              span.style.display = 'inline-block';
               span.style.width = '100%';
               span.style.textAlign = 'center';
-              span.style.padding = '3px 0';
               span.style.fontSize = '10px';
+              span.style.padding = '0';
+              span.style.lineHeight = 'normal';
+              // Remove py-0.5 class which adds uneven vertical padding
+              span.classList.remove('py-0.5');
             } else {
-              inner.style.justifyContent = 'flex-start';
-              inner.style.padding = '0 6px';
-              inner.style.fontSize = '11px';
+              td.style.padding = '7px 6px';
+              td.style.fontSize = '11px';
+              td.style.lineHeight = 'normal';
+              td.style.textAlign = 'left';
             }
           });
 
