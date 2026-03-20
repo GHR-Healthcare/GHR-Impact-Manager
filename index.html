@@ -2453,27 +2453,30 @@
             th.style.padding = '4px 4px';
             th.style.height = '26px';
           });
+          // Wrap each td's content in a flex div so html2canvas centers it properly
+          // (html2canvas doesn't reliably respect vertical-align:middle on table cells)
           frClone.querySelectorAll('td').forEach(td => {
+            const inner = document.createElement('div');
+            inner.style.display = 'flex';
+            inner.style.alignItems = 'center';
+            inner.style.height = '26px';
+            while (td.firstChild) inner.appendChild(td.firstChild);
+            td.appendChild(inner);
+            td.style.padding = '0';
             td.style.height = '26px';
-            td.style.verticalAlign = 'middle';
-            const span = td.querySelector('span');
+            const span = inner.querySelector('span');
             if (span) {
-              // Data cell: font-size:0 on td collapses the baseline gap that pushes
-              // inline-block children to the bottom; span restores its own font size
-              td.style.textAlign = 'center';
-              td.style.padding = '0 2px';
-              td.style.fontSize = '0';
-              span.style.display = 'inline-block';
-              span.style.verticalAlign = 'middle';
-              span.style.fontSize = '10px';
+              inner.style.justifyContent = 'center';
+              inner.style.padding = '0 2px';
+              span.style.display = 'block';
               span.style.width = '100%';
-              span.style.padding = '3px 0';
               span.style.textAlign = 'center';
+              span.style.padding = '3px 0';
+              span.style.fontSize = '10px';
             } else {
-              // Label cell: just ensure text is visible and vertically centered
-              td.style.padding = '0 6px';
-              td.style.fontSize = '11px';
-              td.style.textAlign = 'left';
+              inner.style.justifyContent = 'flex-start';
+              inner.style.padding = '0 6px';
+              inner.style.fontSize = '11px';
             }
           });
 
