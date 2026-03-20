@@ -70,15 +70,15 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
         try:
             cursor.execute(f'''
                 WITH DeduplicatedSpend AS (
-                    SELECT
+                    SELECT DISTINCT
                         [Item ID],
                         [Contractor First Name],
                         [Contractor Last Name],
                         [Billing Cycle End Date],
                         [Health System],
                         [Vendor Company Name],
-                        [Client Amount],
-                        ROW_NUMBER() OVER (PARTITION BY [Item ID] ORDER BY [Item Date]) AS rn
+                        [Item Date],
+                        [Client Amount]
                     FROM dbo.STAGING_VNDLY_SPEND
                     WHERE [Billing Cycle End Date] >= {date_from}
                         AND [Billing Cycle End Date] < {date_to}
@@ -95,7 +95,6 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                     COUNT(DISTINCT CONCAT([Contractor First Name], ' ', [Contractor Last Name])) AS headcount,
                     SUM(ISNULL(TRY_CAST([Client Amount] AS DECIMAL(18,2)), 0)) AS estimated_billing
                 FROM DeduplicatedSpend
-                WHERE rn = 1
                 GROUP BY
                     FORMAT(DATEFROMPARTS(YEAR([Billing Cycle End Date]), MONTH([Billing Cycle End Date]), 1), 'yyyy-MM'),
                     [Health System],
