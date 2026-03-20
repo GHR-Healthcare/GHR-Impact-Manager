@@ -2447,22 +2447,22 @@
             });
           }
 
-          // Center table cell content vertically and horizontally
+          // Give table rows consistent height and center all cell content
+          frClone.querySelectorAll('tr').forEach(tr => { tr.style.height = '26px'; });
+          frClone.querySelectorAll('th').forEach(th => {
+            th.style.verticalAlign = 'middle';
+            th.style.padding = '4px 4px';
+          });
           frClone.querySelectorAll('td').forEach(td => {
             td.style.verticalAlign = 'middle';
             td.style.textAlign = 'center';
-            td.style.padding = '0';
-            td.style.lineHeight = '1';
-            // Center the span badge inside
+            td.style.padding = '3px 2px';
             const span = td.querySelector('span');
             if (span) {
-              span.style.display = 'inline-flex';
-              span.style.alignItems = 'center';
-              span.style.justifyContent = 'center';
-              span.style.padding = '0';
-              span.style.lineHeight = '1';
-              span.style.height = '20px';
-              span.style.width = '100%';
+              span.style.display = 'block';
+              span.style.padding = '3px 0';
+              span.style.textAlign = 'center';
+              span.style.lineHeight = '1.2';
             }
           });
 
