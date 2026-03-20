@@ -2463,34 +2463,46 @@
           }
         }
 
+        // Helper: export a chart canvas with a white background (prevents black bg on JPEG)
+        const chartToWhiteImg = (chartCanvas) => {
+          const tmp = document.createElement('canvas');
+          tmp.width = chartCanvas.width;
+          tmp.height = chartCanvas.height;
+          const ctx2 = tmp.getContext('2d');
+          ctx2.fillStyle = '#ffffff';
+          ctx2.fillRect(0, 0, tmp.width, tmp.height);
+          ctx2.drawImage(chartCanvas, 0, 0);
+          return tmp.toDataURL('image/jpeg', 0.9);
+        };
+
         // ---- PAGE 4: Both Trend Charts (Billings Trend + Fill Rate Trend) ----
         const billingsTrendCanvas = document.getElementById('billingsTrendChart');
         const fillRateTrendCanvas = document.getElementById('fillRateTrendChart');
         if (billingsTrendCanvas || fillRateTrendCanvas) {
           pdf.addPage('a4', 'landscape');
-          const halfHeight = (usableHeight - 10) / 2;
+          const maxHalf = (usableHeight - 14) / 2;
+          let yPos = margin;
 
           if (billingsTrendCanvas) {
             pdf.setFontSize(13);
             pdf.setTextColor(30, 41, 59);
-            pdf.text('MSP Billings Trend', margin, margin + 5);
-            const bImg = billingsTrendCanvas.toDataURL('image/jpeg', 0.8);
+            pdf.text('MSP Billings Trend', margin, yPos + 5);
+            const bImg = chartToWhiteImg(billingsTrendCanvas);
             const bAspect = billingsTrendCanvas.height / billingsTrendCanvas.width;
-            const bW = usableWidth;
-            const bH = Math.min(bW * bAspect, halfHeight - 10);
-            pdf.addImage(bImg, 'JPEG', margin, margin + 8, bW, bH);
+            const bH = Math.min(usableWidth * bAspect, maxHalf - 8);
+            pdf.addImage(bImg, 'JPEG', margin, yPos + 8, usableWidth, bH);
+            yPos = yPos + 8 + bH + 8;
           }
 
           if (fillRateTrendCanvas) {
-            const yStart = margin + halfHeight + 5;
             pdf.setFontSize(13);
             pdf.setTextColor(30, 41, 59);
-            pdf.text('Fill Rate Trend', margin, yStart + 5);
-            const frImg = fillRateTrendCanvas.toDataURL('image/jpeg', 0.8);
+            pdf.text('Fill Rate Trend', margin, yPos + 5);
+            const frImg = chartToWhiteImg(fillRateTrendCanvas);
             const frAspect = fillRateTrendCanvas.height / fillRateTrendCanvas.width;
-            const frW = usableWidth;
-            const frH = Math.min(frW * frAspect, halfHeight - 10);
-            pdf.addImage(frImg, 'JPEG', margin, yStart + 8, frW, frH);
+            const remaining = usableHeight - (yPos - margin) - 14;
+            const frH = Math.min(usableWidth * frAspect, remaining - 8);
+            pdf.addImage(frImg, 'JPEG', margin, yPos + 8, usableWidth, frH);
           }
         }
 
