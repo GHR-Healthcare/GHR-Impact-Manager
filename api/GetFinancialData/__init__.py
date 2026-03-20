@@ -167,31 +167,18 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
         conn.close()
 
         # ============================================================
-        # Dedup: For systems that exist in both B4 and VNDLY,
-        # prefer VNDLY data. Only include B4 data for months
-        # where VNDLY has no data for that system.
+        # Combine B4 and VNDLY data.
+        # For systems that transitioned (RUMC, Holy Redeemer), include BOTH
+        # sources — B4 and VNDLY cover different workers/date ranges during
+        # the transition period so there is no double-counting risk.
+        # Once fully transitioned, B4 simply has no rows for those months.
         # ============================================================
-
-        # Build a set of (month, vndly_system_name) pairs that VNDLY covers
-        vndly_coverage = set()
-        for r in vndly_data:
-            vndly_coverage.add((r['month'], r['health_system']))
-
-        # Filter B4 data: exclude rows where VNDLY already covers that system/month
-        monthly_data = list(vndly_data)  # Start with all VNDLY data
+        monthly_data = list(vndly_data)
 
         for r in b4_data:
-            b4_system = r['health_system']
-            vndly_name = B4_TO_VNDLY_SYSTEM_MAP.get(b4_system)
-
-            if vndly_name:
-                # This is a system that transitioned to VNDLY
-                # Only include B4 data if VNDLY has NO data for this month
-                if (r['month'], vndly_name) not in vndly_coverage:
-                    monthly_data.append(r)
-            else:
-                # System is only in B4, always include
-                monthly_data.append(r)
+            # Always include B4 data regardless of whether VNDLY has data
+            # for the same system/month (they cover non-overlapping workers)
+            monthly_data.append(r)
 
         vndly_count = len([r for r in monthly_data if r.get('source_system') == 'VNDLY'])
         b4_count = len([r for r in monthly_data if r.get('source_system') == 'B4'])
