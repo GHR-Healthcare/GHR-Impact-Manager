@@ -2457,13 +2457,15 @@
             td.style.textAlign = 'center';
             td.style.padding = '0 2px';
             td.style.height = '26px';
-            td.style.lineHeight = '26px';
+            td.style.fontSize = '0'; // collapse baseline gap so inline-block centers properly
             const span = td.querySelector('span');
             if (span) {
-              span.style.display = 'inline';
-              span.style.padding = '0';
-              span.style.lineHeight = 'inherit';
+              span.style.display = 'inline-block';
               span.style.verticalAlign = 'middle';
+              span.style.fontSize = '10px';
+              span.style.width = '100%';
+              span.style.padding = '3px 0';
+              span.style.textAlign = 'center';
             }
           });
 
