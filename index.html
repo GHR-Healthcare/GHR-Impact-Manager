@@ -2454,18 +2454,26 @@
             th.style.height = '26px';
           });
           frClone.querySelectorAll('td').forEach(td => {
-            td.style.textAlign = 'center';
-            td.style.padding = '0 2px';
             td.style.height = '26px';
-            td.style.fontSize = '0'; // collapse baseline gap so inline-block centers properly
+            td.style.verticalAlign = 'middle';
             const span = td.querySelector('span');
             if (span) {
+              // Data cell: font-size:0 on td collapses the baseline gap that pushes
+              // inline-block children to the bottom; span restores its own font size
+              td.style.textAlign = 'center';
+              td.style.padding = '0 2px';
+              td.style.fontSize = '0';
               span.style.display = 'inline-block';
               span.style.verticalAlign = 'middle';
               span.style.fontSize = '10px';
               span.style.width = '100%';
               span.style.padding = '3px 0';
               span.style.textAlign = 'center';
+            } else {
+              // Label cell: just ensure text is visible and vertically centered
+              td.style.padding = '0 6px';
+              td.style.fontSize = '11px';
+              td.style.textAlign = 'left';
             }
           });
 
