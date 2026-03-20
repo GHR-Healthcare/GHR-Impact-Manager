@@ -2421,10 +2421,10 @@
           // Clone fill rate section but remove the trend chart canvas container
           // so it only shows the bar chart + heatmap table
           const frWrapper = document.createElement('div');
-          frWrapper.style.cssText = 'position:absolute;left:-9999px;top:0;width:1400px;background:#ffffff;padding:40px 24px 24px 24px;';
+          frWrapper.style.cssText = 'position:fixed;left:-9999px;top:0;width:1400px;background:#ffffff;padding:40px 24px 24px 24px;';
           const frClone = fillRateSection.cloneNode(true);
           // Strip outer border/shadow that can cause clipping
-          frClone.style.cssText = 'background:#ffffff;padding:0;border:none;box-shadow:none;';
+          frClone.style.cssText = 'background:#ffffff;padding:24px 0 0 0;border:none;box-shadow:none;overflow:visible;';
           frClone.querySelectorAll('button').forEach(b => b.remove());
           // Remove 0% fill rate bars from PDF
           frClone.querySelectorAll('[data-fill-pct="0.0"]').forEach(el => el.remove());
@@ -2445,10 +2445,23 @@
             });
           }
 
-          // Center table cell content vertically
+          // Center table cell content vertically and horizontally
           frClone.querySelectorAll('td').forEach(td => {
             td.style.verticalAlign = 'middle';
             td.style.textAlign = 'center';
+            td.style.padding = '0';
+            td.style.lineHeight = '1';
+            // Center the span badge inside
+            const span = td.querySelector('span');
+            if (span) {
+              span.style.display = 'inline-flex';
+              span.style.alignItems = 'center';
+              span.style.justifyContent = 'center';
+              span.style.padding = '0';
+              span.style.lineHeight = '1';
+              span.style.height = '20px';
+              span.style.width = '100%';
+            }
           });
 
           frWrapper.appendChild(frClone);
@@ -2459,7 +2472,11 @@
             scale: 1.5,
             useCORS: true,
             backgroundColor: '#ffffff',
-            logging: false
+            logging: false,
+            scrollY: 0,
+            scrollX: 0,
+            windowWidth: 1400,
+            windowHeight: frWrapper.scrollHeight + 200
           });
           document.body.removeChild(frWrapper);
 
