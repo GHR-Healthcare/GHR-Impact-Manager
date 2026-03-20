@@ -2429,7 +2429,9 @@
           // Remove 0% fill rate bars from PDF
           frClone.querySelectorAll('[data-fill-pct="0.0"]').forEach(el => el.remove());
           // Remove overflow:hidden from bar containers so nothing is clipped during capture
+          // Also remove 'truncate' class which also applies overflow:hidden via its own CSS rule
           frClone.querySelectorAll('.overflow-hidden').forEach(el => el.classList.remove('overflow-hidden'));
+          frClone.querySelectorAll('.truncate').forEach(el => { el.classList.remove('truncate'); el.style.overflow = 'visible'; });
 
           // Remove trend chart column, make bar chart full width
           const gridDiv = frClone.querySelector('.grid.grid-cols-1.lg\\:grid-cols-2');
