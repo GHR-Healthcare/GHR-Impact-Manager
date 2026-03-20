@@ -2465,30 +2465,32 @@
             th.style.padding = '4px 4px';
             th.style.height = '26px';
           });
-          // Style table cells: fixed line-height on td + vertical-align:middle on span
-          // centers the inline-block badge within the line box
+          // Style table cells: fixed height on td, span uses position+transform to center
           frClone.querySelectorAll('td').forEach(td => {
+            td.style.height = '28px';
+            td.style.padding = '0';
+            td.style.position = 'relative';
             const span = td.querySelector('span');
             if (span) {
-              td.style.padding = '0 2px';
               td.style.textAlign = 'center';
-              td.style.lineHeight = '28px';
-              span.style.display = 'inline-block';
-              span.style.verticalAlign = 'middle';
-              span.style.width = '100%';
+              span.style.display = 'block';
+              span.style.position = 'absolute';
+              span.style.top = '50%';
+              span.style.left = '2px';
+              span.style.right = '2px';
+              span.style.transform = 'translateY(-50%)';
               span.style.textAlign = 'center';
               span.style.fontSize = '10px';
               span.style.fontWeight = 'bold';
-              span.style.padding = '2px 0';
               span.style.lineHeight = '1.4';
-              // Remove py-0.5 so it doesn't shift the baseline
               span.classList.remove('py-0.5');
+              span.style.padding = '1px 0';
             } else {
-              td.style.padding = '0 6px';
+              td.style.textAlign = 'left';
+              td.style.paddingLeft = '6px';
               td.style.lineHeight = '28px';
               td.style.fontSize = '11px';
               td.style.fontWeight = '600';
-              td.style.textAlign = 'left';
             }
           });
 
