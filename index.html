@@ -2465,32 +2465,30 @@
             th.style.padding = '4px 4px';
             th.style.height = '26px';
           });
-          // Style table cells: fixed height on td, span uses position+transform to center
+          // Style table cells: span fills full cell height so line-height centers text
+          // This avoids relying on vertical-align or transform which html2canvas ignores
           frClone.querySelectorAll('td').forEach(td => {
-            td.style.height = '28px';
             td.style.padding = '0';
-            td.style.position = 'relative';
             const span = td.querySelector('span');
             if (span) {
               td.style.textAlign = 'center';
               span.style.display = 'block';
-              span.style.position = 'absolute';
-              span.style.top = '50%';
-              span.style.left = '2px';
-              span.style.right = '2px';
-              span.style.transform = 'translateY(-50%)';
+              span.style.width = '100%';
+              span.style.height = '28px';
+              span.style.lineHeight = '28px';
               span.style.textAlign = 'center';
               span.style.fontSize = '10px';
               span.style.fontWeight = 'bold';
-              span.style.lineHeight = '1.4';
+              span.style.padding = '0';
+              span.style.borderRadius = '0';
               span.classList.remove('py-0.5');
-              span.style.padding = '1px 0';
             } else {
-              td.style.textAlign = 'left';
               td.style.paddingLeft = '6px';
+              td.style.height = '28px';
               td.style.lineHeight = '28px';
               td.style.fontSize = '11px';
               td.style.fontWeight = '600';
+              td.style.textAlign = 'left';
             }
           });
 
