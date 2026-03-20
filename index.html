@@ -2359,7 +2359,19 @@
           wrapper.style.cssText = 'position:absolute;left:-9999px;top:0;width:1400px;background:#ffffff;padding:28px 16px 16px 16px;';
           const clone = element.cloneNode(true);
           clone.querySelectorAll('button').forEach(b => b.remove());
-          clone.querySelectorAll('td').forEach(td => { td.style.verticalAlign = 'middle'; td.style.textAlign = 'center'; });
+          clone.querySelectorAll('td, th').forEach(cell => {
+            cell.style.verticalAlign = 'middle';
+            cell.style.textAlign = 'center';
+            cell.style.color = '#1e293b';
+            cell.style.fontWeight = '600';
+          });
+          // Boost text contrast across the clone
+          clone.querySelectorAll('p, span, div, h1, h2, h3, h4, h5, h6').forEach(el => {
+            const c = window.getComputedStyle(el).color;
+            if (c && (c.includes('rgb(148') || c.includes('rgb(156') || c.includes('rgb(107'))) {
+              el.style.color = '#334155'; // replace light slate grays with darker
+            }
+          });
           wrapper.appendChild(clone);
           document.body.appendChild(wrapper);
 
@@ -2453,25 +2465,29 @@
             th.style.padding = '4px 4px';
             th.style.height = '26px';
           });
-          // Style table cells with explicit equal padding so content is visually centered
+          // Style table cells: fixed line-height on td + vertical-align:middle on span
+          // centers the inline-block badge within the line box
           frClone.querySelectorAll('td').forEach(td => {
             const span = td.querySelector('span');
             if (span) {
-              td.style.padding = '7px 2px';
+              td.style.padding = '0 2px';
               td.style.textAlign = 'center';
-              td.style.lineHeight = 'normal';
+              td.style.lineHeight = '28px';
               span.style.display = 'inline-block';
+              span.style.verticalAlign = 'middle';
               span.style.width = '100%';
               span.style.textAlign = 'center';
               span.style.fontSize = '10px';
-              span.style.padding = '0';
-              span.style.lineHeight = 'normal';
-              // Remove py-0.5 class which adds uneven vertical padding
+              span.style.fontWeight = 'bold';
+              span.style.padding = '2px 0';
+              span.style.lineHeight = '1.4';
+              // Remove py-0.5 so it doesn't shift the baseline
               span.classList.remove('py-0.5');
             } else {
-              td.style.padding = '7px 6px';
+              td.style.padding = '0 6px';
+              td.style.lineHeight = '28px';
               td.style.fontSize = '11px';
-              td.style.lineHeight = 'normal';
+              td.style.fontWeight = '600';
               td.style.textAlign = 'left';
             }
           });
