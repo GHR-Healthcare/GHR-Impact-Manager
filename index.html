@@ -2448,21 +2448,22 @@
           }
 
           // Give table rows consistent height and center all cell content
-          frClone.querySelectorAll('tr').forEach(tr => { tr.style.height = '26px'; });
           frClone.querySelectorAll('th').forEach(th => {
             th.style.verticalAlign = 'middle';
             th.style.padding = '4px 4px';
+            th.style.height = '26px';
           });
           frClone.querySelectorAll('td').forEach(td => {
-            td.style.verticalAlign = 'middle';
             td.style.textAlign = 'center';
-            td.style.padding = '3px 2px';
+            td.style.padding = '0 2px';
+            td.style.height = '26px';
+            td.style.lineHeight = '26px';
             const span = td.querySelector('span');
             if (span) {
-              span.style.display = 'block';
-              span.style.padding = '3px 0';
-              span.style.textAlign = 'center';
-              span.style.lineHeight = '1.2';
+              span.style.display = 'inline';
+              span.style.padding = '0';
+              span.style.lineHeight = 'inherit';
+              span.style.verticalAlign = 'middle';
             }
           });
 
