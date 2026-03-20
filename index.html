@@ -2356,9 +2356,10 @@
 
           // Clone into offscreen container for clean render
           const wrapper = document.createElement('div');
-          wrapper.style.cssText = 'position:absolute;left:-9999px;top:0;width:1400px;background:#ffffff;padding:16px;';
+          wrapper.style.cssText = 'position:absolute;left:-9999px;top:0;width:1400px;background:#ffffff;padding:28px 16px 16px 16px;';
           const clone = element.cloneNode(true);
           clone.querySelectorAll('button').forEach(b => b.remove());
+          clone.querySelectorAll('td').forEach(td => { td.style.verticalAlign = 'middle'; td.style.textAlign = 'center'; });
           wrapper.appendChild(clone);
           document.body.appendChild(wrapper);
 
@@ -2420,11 +2421,13 @@
           // Clone fill rate section but remove the trend chart canvas container
           // so it only shows the bar chart + heatmap table
           const frWrapper = document.createElement('div');
-          frWrapper.style.cssText = 'position:absolute;left:-9999px;top:0;width:1400px;background:#ffffff;padding:16px;';
+          frWrapper.style.cssText = 'position:absolute;left:-9999px;top:0;width:1400px;background:#ffffff;padding:28px 16px 16px 16px;';
           const frClone = fillRateSection.cloneNode(true);
           frClone.querySelectorAll('button').forEach(b => b.remove());
           // Remove 0% fill rate bars from PDF
           frClone.querySelectorAll('[data-fill-pct="0.0"]').forEach(el => el.remove());
+          // Remove overflow:hidden from bar containers so nothing is clipped during capture
+          frClone.querySelectorAll('.overflow-hidden').forEach(el => el.classList.remove('overflow-hidden'));
 
           // Find the grid that contains bar chart + trend chart, restructure to full width bar + remove trend
           const gridDiv = frClone.querySelector('.grid.grid-cols-1.lg\\:grid-cols-2');
@@ -2435,6 +2438,12 @@
             }
             gridDiv.className = 'mb-4';
           }
+
+          // Center table cell content vertically
+          frClone.querySelectorAll('td').forEach(td => {
+            td.style.verticalAlign = 'middle';
+            td.style.textAlign = 'center';
+          });
 
           frWrapper.appendChild(frClone);
           document.body.appendChild(frWrapper);
