@@ -2421,7 +2421,7 @@
           // Clone fill rate section but remove the trend chart canvas container
           // so it only shows the bar chart + heatmap table
           const frWrapper = document.createElement('div');
-          frWrapper.style.cssText = 'position:absolute;left:-9999px;top:0;width:1400px;background:#ffffff;padding:16px 24px 24px 24px;';
+          frWrapper.style.cssText = 'position:fixed;left:-9999px;top:0;width:1400px;background:#ffffff;padding:8px 24px 24px 24px;';
           const frClone = fillRateSection.cloneNode(true);
           // Strip outer border/shadow that can cause clipping
           frClone.style.cssText = 'background:#ffffff;padding:0;border:none;box-shadow:none;overflow:visible;';
@@ -2473,8 +2473,8 @@
             useCORS: true,
             backgroundColor: '#ffffff',
             logging: false,
-            scrollY: -window.scrollY,
             scrollX: 0,
+            scrollY: 0,
             windowWidth: 1400
           });
           document.body.removeChild(frWrapper);
