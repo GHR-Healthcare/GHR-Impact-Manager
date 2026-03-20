@@ -2459,41 +2459,28 @@
             });
           }
 
-          // Give table rows consistent height and center all cell content
-          frClone.querySelectorAll('th').forEach(th => {
-            th.style.verticalAlign = 'middle';
-            th.style.padding = '4px 4px';
-            th.style.height = '26px';
-          });
-          // Style table cells: span fills full cell height so line-height centers text
-          // This avoids relying on vertical-align or transform which html2canvas ignores
-          frClone.querySelectorAll('td').forEach(td => {
-            td.style.padding = '0';
-            const span = td.querySelector('span');
-            if (span) {
-              td.style.textAlign = 'center';
-              span.style.display = 'block';
-              span.style.width = '100%';
-              span.style.height = '28px';
-              span.style.lineHeight = '28px';
-              span.style.textAlign = 'center';
-              span.style.fontSize = '10px';
-              span.style.fontWeight = 'bold';
-              span.style.padding = '0';
-              span.style.borderRadius = '0';
-              span.classList.remove('py-0.5');
-            } else {
-              td.style.paddingLeft = '6px';
-              td.style.height = '28px';
-              td.style.lineHeight = '28px';
-              td.style.fontSize = '11px';
-              td.style.fontWeight = '600';
-              td.style.textAlign = 'left';
-            }
-          });
-
           frWrapper.appendChild(frClone);
           document.body.appendChild(frWrapper);
+
+          // Style table cells AFTER appending to DOM so getComputedStyle works
+          // Replace Tailwind class-based colors with inline styles, then use
+          // line-height centering on a block span that fills the full cell height
+          frWrapper.querySelectorAll('th').forEach(th => {
+            th.style.cssText = 'padding:5px 4px;font-weight:bold;font-size:11px;text-align:center;color:#1e293b;';
+          });
+          frWrapper.querySelectorAll('td').forEach(td => {
+            const span = td.querySelector('span');
+            if (span) {
+              const cs = window.getComputedStyle(span);
+              const bg = cs.backgroundColor;
+              const color = cs.color;
+              td.style.cssText = 'padding:0;text-align:center;';
+              span.className = '';
+              span.style.cssText = `display:block;width:100%;height:26px;line-height:26px;text-align:center;font-size:10px;font-weight:bold;background:${bg};color:${color};`;
+            } else {
+              td.style.cssText = 'padding:0 0 0 6px;height:26px;line-height:26px;font-size:11px;font-weight:600;color:#1e293b;text-align:left;';
+            }
+          });
 
           pdf.addPage('a4', 'landscape');
           const frCanvas = await html2canvas(frWrapper, {
