@@ -110,7 +110,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                     e.[Work Date] AS shift_date,
                     e.[Health System] AS system,
                     e.[Agency Name] AS agency,
-                    w.Facility AS facility
+                    COALESCE(e.[Facility Name], w.Facility) AS facility
                 FROM dhc.B4HealthESR e
                 LEFT JOIN PD_Workers w
                     ON w.employee_name = e.[Employee]
@@ -121,7 +121,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                     AND e.[Program] LIKE '%Per Diem%'
                     AND (e.[WC] IS NULL OR (
                         e.[WC] NOT LIKE '%cancel%'
-                        AND e.[WC] NOT LIKE '%orient%'
+
                         AND e.[WC] NOT LIKE 'Expense%'
                         AND e.[WC] NOT IN ('Request Time Off', 'Unscheduled PTO', 'Sick Time', 'Call Out', 'Meeting', 'Education', 'Bonus')
                     ))

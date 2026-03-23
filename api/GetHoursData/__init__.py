@@ -57,7 +57,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                     AND (
                         [WC] IS NULL OR (
                             [WC] NOT LIKE '%cancel%'
-                            AND [WC] NOT LIKE '%orient%'
+
                             AND [WC] NOT LIKE 'Expense%'
                             AND [WC] NOT IN (
                                 'Request Time Off', 'Unscheduled PTO', 'Sick Time',
