@@ -371,26 +371,28 @@
     <div class="flex items-center gap-3 shrink-0">
       <div class="flex bg-white border border-slate-200 rounded-lg p-1 shadow-sm" id="viewToggles">
         <button onclick="store.dispatch('SET_VIEW','list')" id="btnViewList"
-                class="px-4 py-1.5 text-xs font-bold rounded-md transition-colors bg-blue-50 text-blue-700 shadow-sm border border-blue-100 flex items-center gap-1">
-          <i data-lucide="list" class="w-3 h-3"></i> List View</button>
+                class="px-4 py-1.5 text-xs font-bold rounded-md transition-colors bg-blue-50 text-blue-700 shadow-sm border border-blue-100 flex items-center gap-1.5">
+          <i data-lucide="list" class="w-3.5 h-3.5"></i> List
+        </button>
         <button onclick="store.dispatch('SET_VIEW','hotjobs')" id="btnViewHot"
-                class="px-4 py-1.5 text-xs font-bold rounded-md transition-colors text-slate-500 hover:text-slate-700 flex items-center gap-1">
-          <i data-lucide="flame" class="w-3 h-3 text-orange-500"></i> Hot Jobs
+                class="px-4 py-1.5 text-xs font-bold rounded-md transition-colors text-slate-500 hover:text-slate-700 flex items-center gap-1.5">
+          <i data-lucide="flame" class="w-3.5 h-3.5"></i> Hot Jobs
         </button>
         <button onclick="store.dispatch('SET_VIEW','stats')" id="btnViewStats"
-                class="px-4 py-1.5 text-xs font-bold rounded-md transition-colors text-slate-500 hover:text-slate-700 flex items-center gap-1">
-          <i data-lucide="bar-chart-3" class="w-3 h-3 text-blue-500"></i> Stats</button>
+                class="px-4 py-1.5 text-xs font-bold rounded-md transition-colors text-slate-500 hover:text-slate-700 flex items-center gap-1.5">
+          <i data-lucide="bar-chart-3" class="w-3.5 h-3.5"></i> Stats
+        </button>
         <button onclick="store.dispatch('SET_VIEW','perdiem')" id="btnViewPerDiem"
-                class="px-4 py-1.5 text-xs font-bold rounded-md transition-colors text-slate-500 hover:text-slate-700 flex items-center gap-1">
-          <i data-lucide="clock" class="w-3 h-3 text-violet-500"></i> Per Diem
+                class="px-4 py-1.5 text-xs font-bold rounded-md transition-colors text-slate-500 hover:text-slate-700 flex items-center gap-1.5">
+          <i data-lucide="clock" class="w-3.5 h-3.5"></i> Per Diem
         </button>
         <button onclick="store.dispatch('SET_VIEW','trend')" id="btnViewTrend"
-                class="px-4 py-1.5 text-xs font-bold rounded-md transition-colors text-slate-500 hover:text-slate-700 flex items-center gap-1">
-          <i data-lucide="trending-up" class="w-3 h-3 text-blue-500"></i> Trend
+                class="px-4 py-1.5 text-xs font-bold rounded-md transition-colors text-slate-500 hover:text-slate-700 flex items-center gap-1.5">
+          <i data-lucide="trending-up" class="w-3.5 h-3.5"></i> Trend
         </button>
         <button onclick="store.dispatch('SET_VIEW','financials')" id="btnViewFinancials"
-                class="px-4 py-1.5 text-xs font-bold rounded-md transition-colors text-slate-500 hover:text-slate-700 flex items-center gap-1">
-          <i data-lucide="dollar-sign" class="w-3 h-3 text-emerald-500"></i> Financials
+                class="px-4 py-1.5 text-xs font-bold rounded-md transition-colors text-slate-500 hover:text-slate-700 flex items-center gap-1.5">
+          <i data-lucide="dollar-sign" class="w-3.5 h-3.5"></i> Financials
         </button>
       </div>
       <button onclick="exportTravelAgingReport()" id="btnTravelAgingReport"
@@ -3295,18 +3297,15 @@
         const btnPerDiem = $('btnViewPerDiem');
         const btnTrend = $('btnViewTrend');
 
-        const activeClass = "px-4 py-1.5 text-xs font-bold rounded-md transition-colors bg-blue-50 text-blue-700 shadow-sm border border-blue-100";
-        const inactiveClass = "px-4 py-1.5 text-xs font-bold rounded-md transition-colors text-slate-500 hover:text-slate-700";
-        // Buttons with icons need flex
-        const activeIconClass = "px-4 py-1.5 text-xs font-bold rounded-md transition-colors bg-blue-50 text-blue-700 shadow-sm border border-blue-100 flex items-center gap-1";
-        const inactiveIconClass = "px-4 py-1.5 text-xs font-bold rounded-md transition-colors text-slate-500 hover:text-slate-700 flex items-center gap-1";
+        const activeClass = "px-4 py-1.5 text-xs font-bold rounded-md transition-colors bg-blue-50 text-blue-700 shadow-sm border border-blue-100 flex items-center gap-1.5";
+        const inactiveClass = "px-4 py-1.5 text-xs font-bold rounded-md transition-colors text-slate-500 hover:text-slate-700 flex items-center gap-1.5";
 
         if (btnList) btnList.className = view === 'list' ? activeClass : inactiveClass;
-        if (btnHot) btnHot.className = view === 'hotjobs' ? activeIconClass : inactiveIconClass;
+        if (btnHot) btnHot.className = view === 'hotjobs' ? activeClass : inactiveClass;
         if (btnStats) btnStats.className = view === 'stats' ? activeClass : inactiveClass;
-        if (btnFinancials) btnFinancials.className = view === 'financials' ? activeIconClass : inactiveIconClass;
-        if (btnPerDiem) btnPerDiem.className = view === 'perdiem' ? activeIconClass : inactiveIconClass;
-        if (btnTrend) btnTrend.className = view === 'trend' ? activeIconClass : inactiveIconClass;
+        if (btnFinancials) btnFinancials.className = view === 'financials' ? activeClass : inactiveClass;
+        if (btnPerDiem) btnPerDiem.className = view === 'perdiem' ? activeClass : inactiveClass;
+        if (btnTrend) btnTrend.className = view === 'trend' ? activeClass : inactiveClass;
       },
 
       main() {
