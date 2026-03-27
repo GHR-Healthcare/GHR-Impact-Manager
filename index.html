@@ -5723,11 +5723,11 @@
                     },
                     afterLabel: (ctx) => {
                       const i = ctx.dataIndex;
-                      if (i > lastActualIdx) return '';
                       const wd = weekData[i];
+                      if (!wd) return '';
                       const dsLabel = ctx.dataset.label;
                       let catData = null;
-                      if (dsLabel === 'Total Headcount') {
+                      if (dsLabel === 'Total Headcount' || dsLabel === 'Pipeline (Confirmed)') {
                         // Combine GHR + Aff categories
                         const allCats = new Set([...Object.keys(wd.catGhr), ...Object.keys(wd.catAff)]);
                         catData = {};
