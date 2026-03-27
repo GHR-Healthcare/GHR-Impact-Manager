@@ -5844,6 +5844,28 @@
           return dt.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
         };
 
+        // Group by health system for summary table
+        const bySystem = {};
+        filtered.forEach(r => {
+          const sys = r.healthSystem || 'Unknown';
+          if (!bySystem[sys]) bySystem[sys] = { submitted: 0, offered: 0, rto: 0, total: 0 };
+          bySystem[sys].total++;
+          const st = (r.status || '').toLowerCase();
+          if (st === 'submitted' || st === 'applied') bySystem[sys].submitted++;
+          else if (st.includes('offer') && !st.includes('declined')) bySystem[sys].offered++;
+          else if (st === 'ready to onboard' || st === 'verification in progress') bySystem[sys].rto++;
+        });
+
+        const systemSummaryRows = Object.entries(bySystem).sort((a, b) => b[1].total - a[1].total).map(([sys, d]) =>
+          `<tr class="hover:bg-slate-50 border-b border-slate-100">
+            <td class="px-3 py-2 text-xs font-medium text-slate-700">${sys}</td>
+            <td class="px-3 py-2 text-xs text-center text-amber-700">${d.submitted}</td>
+            <td class="px-3 py-2 text-xs text-center text-blue-700">${d.offered}</td>
+            <td class="px-3 py-2 text-xs text-center text-emerald-700">${d.rto}</td>
+            <td class="px-3 py-2 text-xs text-center font-semibold text-slate-700">${d.total}</td>
+          </tr>`
+        ).join('');
+
         // Column filter state (persisted on window so it survives re-renders)
         if (!window.__pendingFilters) window.__pendingFilters = {};
         const pf = window.__pendingFilters;
@@ -5939,6 +5961,25 @@
               <span class="text-xs font-semibold text-slate-600">${colFiltered.length} records</span>
             </div>
           </div>
+          <div class="mb-6">
+            <h3 class="text-sm font-bold text-slate-600 mb-2">By Health System</h3>
+            <div class="rounded-lg border border-slate-200 overflow-hidden">
+              <table class="w-full text-xs">
+                <thead>
+                  <tr class="bg-slate-100 text-slate-500 uppercase tracking-wide text-[10px]">
+                    <th class="px-3 py-2 text-left font-semibold">System</th>
+                    <th class="px-3 py-2 text-center font-semibold text-amber-600">Submitted</th>
+                    <th class="px-3 py-2 text-center font-semibold text-blue-600">Offer Pending</th>
+                    <th class="px-3 py-2 text-center font-semibold text-emerald-600">RTO / Verifying</th>
+                    <th class="px-3 py-2 text-center font-semibold text-slate-600">Total</th>
+                  </tr>
+                </thead>
+                <tbody>${systemSummaryRows}</tbody>
+              </table>
+            </div>
+          </div>
+
+          <h3 class="text-sm font-bold text-slate-600 mb-2">Detail</h3>
           <div class="rounded-lg border border-slate-200 overflow-x-auto">
             <table class="w-full text-xs">
               <thead>
