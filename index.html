@@ -5808,9 +5808,16 @@
 
                     tooltipEl.innerHTML = html;
                     tooltipEl.style.display = 'block';
-                    const canvasRect = context.chart.canvas.getBoundingClientRect();
-                    const containerRect = context.chart.canvas.parentElement.getBoundingClientRect();
-                    tooltipEl.style.left = (tooltipModel.caretX + 12) + 'px';
+                    // Position tooltip, flipping to left side if it would overflow
+                    const container = context.chart.canvas.parentElement;
+                    const containerW = container.offsetWidth;
+                    const tipW = tooltipEl.offsetWidth;
+                    let left = tooltipModel.caretX + 12;
+                    if (left + tipW > containerW) {
+                      left = tooltipModel.caretX - tipW - 12;
+                      if (left < 0) left = 4;
+                    }
+                    tooltipEl.style.left = left + 'px';
                     tooltipEl.style.top = '10px';
                   }
                 }
