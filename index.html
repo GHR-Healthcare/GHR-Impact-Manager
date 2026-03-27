@@ -5804,21 +5804,24 @@
         const bySystem = {};
         filtered.forEach(r => {
           const sys = r.healthSystem || 'Unknown';
-          if (!bySystem[sys]) bySystem[sys] = { submitted: 0, offered: 0, rto: 0, total: 0 };
-          bySystem[sys].total++;
+          if (!bySystem[sys]) bySystem[sys] = { ghrSub: 0, affSub: 0, ghrOffer: 0, affOffer: 0, ghrRto: 0, affRto: 0, ghr: 0, aff: 0 };
+          const isGhr = r.is_ghr;
+          if (isGhr) bySystem[sys].ghr++; else bySystem[sys].aff++;
           const st = (r.status || '').toLowerCase();
-          if (st === 'submitted' || st === 'applied') bySystem[sys].submitted++;
-          else if (st.includes('offer') && !st.includes('declined')) bySystem[sys].offered++;
-          else if (st === 'ready to onboard' || st === 'verification in progress') bySystem[sys].rto++;
+          if (st === 'submitted' || st === 'applied') { if (isGhr) bySystem[sys].ghrSub++; else bySystem[sys].affSub++; }
+          else if (st.includes('offer') && !st.includes('declined')) { if (isGhr) bySystem[sys].ghrOffer++; else bySystem[sys].affOffer++; }
+          else if (st === 'ready to onboard' || st === 'verification in progress') { if (isGhr) bySystem[sys].ghrRto++; else bySystem[sys].affRto++; }
         });
 
-        const systemSummaryRows = Object.entries(bySystem).sort((a, b) => b[1].total - a[1].total).map(([sys, d]) =>
+        const ghrAff = (g, a) => `<span class="text-blue-700 font-semibold">${g}</span> <span class="text-slate-300">/</span> <span class="text-purple-700 font-semibold">${a}</span>`;
+
+        const systemSummaryRows = Object.entries(bySystem).sort((a, b) => (b[1].ghr + b[1].aff) - (a[1].ghr + a[1].aff)).map(([sys, d]) =>
           `<tr class="hover:bg-slate-50 border-b border-slate-100">
             <td class="px-3 py-2 text-xs font-medium text-slate-700">${sys}</td>
-            <td class="px-3 py-2 text-xs text-center text-amber-700">${d.submitted}</td>
-            <td class="px-3 py-2 text-xs text-center text-blue-700">${d.offered}</td>
-            <td class="px-3 py-2 text-xs text-center text-emerald-700">${d.rto}</td>
-            <td class="px-3 py-2 text-xs text-center font-semibold text-slate-700">${d.total}</td>
+            <td class="px-3 py-2 text-xs text-center">${ghrAff(d.ghrSub, d.affSub)}</td>
+            <td class="px-3 py-2 text-xs text-center">${ghrAff(d.ghrOffer, d.affOffer)}</td>
+            <td class="px-3 py-2 text-xs text-center">${ghrAff(d.ghrRto, d.affRto)}</td>
+            <td class="px-3 py-2 text-xs text-center font-semibold">${ghrAff(d.ghr, d.aff)}</td>
           </tr>`
         ).join('');
 
@@ -5829,6 +5832,7 @@
         // Collect unique values for each filterable column
         const cols = [
           { key: 'source_system', label: 'Source', get: r => r.source_system || '—' },
+          { key: 'agency_type', label: 'Agency', get: r => r.is_ghr ? 'GHR' : 'Affiliate' },
           { key: 'healthSystem', label: 'System', get: r => r.healthSystem || '—' },
           { key: 'facility', label: 'Facility', get: r => r.facility || '—' },
           { key: 'worker', label: 'Worker', get: r => r.worker_name || r.full_name || '—' },
@@ -5878,17 +5882,24 @@
         };
 
         // Build table rows
-        const buildRow = (r) => `<tr class="hover:bg-slate-50 border-b border-slate-100">
-          <td class="px-3 py-2 text-xs text-slate-500">${r.source_system}</td>
-          <td class="px-3 py-2 text-xs font-medium text-slate-700">${r.healthSystem || '—'}</td>
-          <td class="px-3 py-2 text-xs text-slate-600">${r.facility || '—'}</td>
-          <td class="px-3 py-2 text-xs text-slate-700 font-medium">${r.worker_name || r.full_name || '—'}</td>
-          <td class="px-3 py-2 text-xs text-slate-600">${r.position_type || r.care_type || '—'}</td>
-          <td class="px-3 py-2 text-xs"><span class="inline-block px-2 py-0.5 rounded text-[10px] font-bold ${statusColor(r.status)}">${r.status}</span></td>
-          <td class="px-3 py-2 text-xs text-slate-500">${fmtDate(r.submission_date)}</td>
-          <td class="px-3 py-2 text-xs text-slate-500">${fmtDate(r.offer_date)}</td>
-          <td class="px-3 py-2 text-xs text-slate-500">${r.rto || '—'}</td>
-        </tr>`;
+        const buildRow = (r) => {
+          const isGhr = r.is_ghr;
+          const agencyBadge = isGhr
+            ? '<span class="inline-block px-2 py-0.5 rounded text-[10px] font-bold bg-blue-100 text-blue-800">GHR</span>'
+            : '<span class="inline-block px-2 py-0.5 rounded text-[10px] font-bold bg-purple-100 text-purple-800">Affiliate</span>';
+          return `<tr class="hover:bg-slate-50 border-b border-slate-100">
+            <td class="px-3 py-2 text-xs text-slate-500">${r.source_system}</td>
+            <td class="px-3 py-2 text-xs">${agencyBadge}</td>
+            <td class="px-3 py-2 text-xs font-medium text-slate-700">${r.healthSystem || '—'}</td>
+            <td class="px-3 py-2 text-xs text-slate-600">${r.facility || '—'}</td>
+            <td class="px-3 py-2 text-xs text-slate-700 font-medium">${r.worker_name || r.full_name || '—'}</td>
+            <td class="px-3 py-2 text-xs text-slate-600">${r.position_type || r.care_type || '—'}</td>
+            <td class="px-3 py-2 text-xs"><span class="inline-block px-2 py-0.5 rounded text-[10px] font-bold ${statusColor(r.status)}">${r.status}</span></td>
+            <td class="px-3 py-2 text-xs text-slate-500">${fmtDate(r.submission_date)}</td>
+            <td class="px-3 py-2 text-xs text-slate-500">${fmtDate(r.offer_date)}</td>
+            <td class="px-3 py-2 text-xs text-slate-500">${r.rto || '—'}</td>
+          </tr>`;
+        };
 
         // Global filter helpers
         window.__pendingToggleFilter = (key, btn) => {
@@ -5918,14 +5929,14 @@
 
         container.innerHTML = `
           <div class="flex items-center justify-between mb-4">
-            <h2 class="text-lg font-bold text-slate-700">GHR Pending Submissions</h2>
+            <h2 class="text-lg font-bold text-slate-700">Pending Submissions</h2>
             <div class="flex items-center gap-3">
-              <span class="text-xs text-slate-400">Last 6 months · GHR only</span>
+              <span class="text-xs text-slate-400">Last 6 months</span>
               <span class="text-xs font-semibold text-slate-600">${colFiltered.length} records</span>
             </div>
           </div>
           <div class="mb-6">
-            <h3 class="text-sm font-bold text-slate-600 mb-2">By Health System</h3>
+            <h3 class="text-sm font-bold text-slate-600 mb-2">By Health System <span class="font-normal text-slate-400 text-[10px] ml-2"><span class="text-blue-600">GHR</span> / <span class="text-purple-600">Affiliate</span></span></h3>
             <div class="rounded-lg border border-slate-200 overflow-hidden">
               <table class="w-full text-xs">
                 <thead>

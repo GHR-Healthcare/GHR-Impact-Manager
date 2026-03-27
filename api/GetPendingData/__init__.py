@@ -63,9 +63,9 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                         WHEN Offer_Date IS NOT NULL THEN 'Offer Pending'
                         ELSE 'Submitted'
                     END AS status
+                    ,CASE WHEN Agency_Name LIKE '%GHR%' THEN 1 ELSE 0 END AS is_ghr
                 FROM dhc.B4Health_Contract_Submissions
-                WHERE Agency_Name LIKE '%GHR%'
-                    AND Submission_Date >= DATEADD(MONTH, -6, GETDATE())
+                WHERE Submission_Date >= DATEADD(MONTH, -6, GETDATE())
                     AND LTRIM(RTRIM(IsActive)) = 'Yes'
                 ORDER BY Submission_Date DESC
             ''')
@@ -110,8 +110,9 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                     [Rejected Reason - Choice] AS rejected_reason,
                     [RTO] AS rto,
                     [Candidate ID] AS candidate_id
+                    ,CASE WHEN [Vendor Company Name] LIKE '%GHR%' THEN 1 ELSE 0 END AS is_ghr
                 FROM dbo.STAGING_VNDLY_SUBMISSIONS
-                WHERE [Vendor Company Name] LIKE '%GHR%'
+                WHERE 1=1
                     AND [Application Date] >= DATEADD(MONTH, -6, GETDATE())
                 ORDER BY [Application Date] DESC
             ''')
