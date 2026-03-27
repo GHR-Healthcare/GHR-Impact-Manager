@@ -22,6 +22,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
 
         cursor = conn.cursor()
         submissions = []
+        errors = []
 
         # ============================================================
         # B4 - GHR submissions that are still active (not cancelled)
@@ -77,6 +78,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                         row_dict[key] = val.isoformat()
                 submissions.append(row_dict)
         except Exception as e:
+            errors.append(f"B4: {str(e)}")
             print(f"Error loading B4 pending submissions: {e}")
 
         # ============================================================
@@ -122,13 +124,14 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                         row_dict[key] = val.isoformat()
                 submissions.append(row_dict)
         except Exception as e:
+            errors.append(f"VNDLY: {str(e)}")
             print(f"Error loading VNDLY pending submissions: {e}")
 
         cursor.close()
         conn.close()
 
         return func.HttpResponse(
-            json.dumps({"submissions": submissions}),
+            json.dumps({"submissions": submissions, "errors": errors}),
             mimetype="application/json",
             headers={"Access-Control-Allow-Origin": "*"}
         )
