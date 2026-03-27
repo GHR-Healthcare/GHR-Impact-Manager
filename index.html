@@ -394,6 +394,10 @@
                 class="px-4 py-1.5 text-xs font-bold rounded-md transition-colors text-slate-500 hover:text-slate-700 flex items-center gap-1.5">
           <i data-lucide="dollar-sign" class="w-3.5 h-3.5"></i> Financials
         </button>
+        <button onclick="store.dispatch('SET_VIEW','pending')" id="btnViewPending"
+                class="px-4 py-1.5 text-xs font-bold rounded-md transition-colors text-slate-500 hover:text-slate-700 flex items-center gap-1.5">
+          <i data-lucide="file-clock" class="w-3.5 h-3.5"></i> Pending
+        </button>
       </div>
       <button onclick="exportTravelAgingReport()" id="btnTravelAgingReport"
               class="px-4 py-1.5 text-xs font-bold rounded-lg transition-colors bg-purple-600 hover:bg-purple-700 text-white shadow-sm flex items-center gap-1.5">
@@ -472,6 +476,12 @@
     <div id="trendViewWrapper" class="hidden flex flex-col h-full overflow-hidden bg-white shadow-lg rounded-lg border border-slate-200">
       <div class="flex-1 overflow-y-auto scroller p-6">
         <div id="trendContent" class="space-y-6"></div>
+      </div>
+    </div>
+
+    <div id="pendingViewWrapper" class="hidden flex flex-col h-full overflow-hidden bg-white shadow-lg rounded-lg border border-slate-200">
+      <div class="flex-1 overflow-y-auto scroller p-6">
+        <div id="pendingContent" class="space-y-6"></div>
       </div>
     </div>
   </div>
@@ -1297,6 +1307,31 @@
                 console.warn('Error loading trend data:', trendError);
                 window.store.state.trendData = { assignments: [] };
                 window.store.state.trendLoaded = true;
+            }
+
+            // Load pending submissions data (GHR only)
+            try {
+                const pendingResponse = await fetch(`${API_BASE_URL}/pending-data`);
+                if (pendingResponse.ok) {
+                    const pendingData = await pendingResponse.json();
+                    if (pendingData.submissions) {
+                        pendingData.submissions.forEach(r => {
+                            r.healthSystem = Utils.getHealthSystem(r.facility || null, r.health_system);
+                        });
+                    }
+                    window.store.state.pendingData = pendingData;
+                    window.store.state.pendingLoaded = true;
+                    if (window.store.state.view === 'pending') {
+                        window.store.dispatch('REFRESH_UI');
+                    }
+                } else {
+                    window.store.state.pendingData = { submissions: [] };
+                    window.store.state.pendingLoaded = true;
+                }
+            } catch (pendingError) {
+                console.warn('Error loading pending data:', pendingError);
+                window.store.state.pendingData = { submissions: [] };
+                window.store.state.pendingLoaded = true;
             }
 
             return true;
@@ -3283,6 +3318,7 @@
         $('financialsViewWrapper')?.classList.toggle('hidden', view !== 'financials');
         $('perDiemViewWrapper')?.classList.toggle('hidden', view !== 'perdiem');
         $('trendViewWrapper')?.classList.toggle('hidden', view !== 'trend');
+        $('pendingViewWrapper')?.classList.toggle('hidden', view !== 'pending');
 
         // Use visibility to hide KPI and legend on other tabs (preserves layout)
         const kpiEl = $('kpiContainer');
@@ -3292,7 +3328,7 @@
           kpiEl.style.visibility = kpiViews.has(view) ? 'visible' : 'hidden';
           kpiEl.style.display = kpiViews.has(view) ? '' : 'none';
         }
-        if (legendEl) legendEl.style.visibility = (view === 'stats' || view === 'financials' || view === 'perdiem' || view === 'trend') ? 'hidden' : 'visible';
+        if (legendEl) legendEl.style.visibility = (view === 'stats' || view === 'financials' || view === 'perdiem' || view === 'trend' || view === 'pending') ? 'hidden' : 'visible';
 
         const btnList = $('btnViewList');
         const btnHot = $('btnViewHot');
@@ -3310,6 +3346,8 @@
         if (btnFinancials) btnFinancials.className = view === 'financials' ? activeClass : inactiveClass;
         if (btnPerDiem) btnPerDiem.className = view === 'perdiem' ? activeClass : inactiveClass;
         if (btnTrend) btnTrend.className = view === 'trend' ? activeClass : inactiveClass;
+        const btnPending = $('btnViewPending');
+        if (btnPending) btnPending.className = view === 'pending' ? activeClass : inactiveClass;
       },
 
       main() {
@@ -3320,6 +3358,7 @@
         else if (v === 'financials') this.financials();
         else if (v === 'perdiem') this.perDiem();
         else if (v === 'trend') this.trend();
+        else if (v === 'pending') this.pending();
         lucide.createIcons();
       },
 
@@ -4034,20 +4073,20 @@
 
           <div class="bg-white p-4 rounded-lg shadow-sm border border-slate-200">
             <h4 class="font-bold text-slate-700 mb-4">4-Week Trend Analysis</h4>
-            <div class="h-64"><canvas id="trendChart"></canvas></div>
+            <div class="h-64"><canvas id="statsTrendChart"></canvas></div>
           </div>
         `;
 
         const chartData = [...metrics].reverse();
-        const ctx = $('trendChart')?.getContext?.('2d');
+        const ctx = $('statsTrendChart')?.getContext?.('2d');
         if (!ctx) return;
 
-        if (window.__trendChart) {
-          try { window.__trendChart.destroy(); } catch {}
-          window.__trendChart = null;
+        if (window.__statsTrendChart) {
+          try { window.__statsTrendChart.destroy(); } catch {}
+          window.__statsTrendChart = null;
         }
 
-        window.__trendChart = new Chart(ctx, {
+        window.__statsTrendChart = new Chart(ctx, {
           type: 'line',
           data: {
             labels: chartData.map(m => m.label),
@@ -5414,32 +5453,32 @@
         const weekData = weeks.map(({ start, end }) => {
           const ghrNames = new Set();
           const affNames = new Set();
-          const specGhr = {};   // specialty → Set of names
-          const specAff = {};
+          const catGhr = {};   // category → Set of names
+          const catAff = {};
           filtered.forEach(r => {
             const sd = r.startDate;
             const ed = r.endDate;
             const overlaps = sd <= end && (ed === null || ed >= start);
             if (overlaps) {
               const name = r.worker_name || '';
-              const spec = r.specialty || 'Unknown';
+              const cat = /allied/i.test(r.agency || '') ? 'Allied' : 'Nursing';
               if (isGHRAgency(r.agency)) {
                 ghrNames.add(name);
-                if (!specGhr[spec]) specGhr[spec] = new Set();
-                specGhr[spec].add(name);
+                if (!catGhr[cat]) catGhr[cat] = new Set();
+                catGhr[cat].add(name);
               } else {
                 affNames.add(name);
-                if (!specAff[spec]) specAff[spec] = new Set();
-                specAff[spec].add(name);
+                if (!catAff[cat]) catAff[cat] = new Set();
+                catAff[cat].add(name);
               }
             }
           });
           // Convert sets to counts
-          const specGhrCounts = {};
-          const specAffCounts = {};
-          for (const [k, v] of Object.entries(specGhr)) specGhrCounts[k] = v.size;
-          for (const [k, v] of Object.entries(specAff)) specAffCounts[k] = v.size;
-          return { ghr: ghrNames.size, aff: affNames.size, total: ghrNames.size + affNames.size, specGhr: specGhrCounts, specAff: specAffCounts };
+          const catGhrCounts = {};
+          const catAffCounts = {};
+          for (const [k, v] of Object.entries(catGhr)) catGhrCounts[k] = v.size;
+          for (const [k, v] of Object.entries(catAff)) catAffCounts[k] = v.size;
+          return { ghr: ghrNames.size, aff: affNames.size, total: ghrNames.size + affNames.size, catGhr: catGhrCounts, catAff: catAffCounts };
         });
         const weekHC = weekData.map(d => d.total);
 
@@ -5496,13 +5535,13 @@
             : `<span class="text-red-500 text-[9px] ml-1">${diff}</span>`;
         };
 
-        // Collect all specialties across all weeks
-        const allSpecialties = new Set();
+        // Collect all categories across all weeks
+        const allCategories = new Set();
         weekData.forEach(wd => {
-          Object.keys(wd.specGhr).forEach(s => allSpecialties.add(s));
-          Object.keys(wd.specAff).forEach(s => allSpecialties.add(s));
+          Object.keys(wd.catGhr).forEach(s => allCategories.add(s));
+          Object.keys(wd.catAff).forEach(s => allCategories.add(s));
         });
-        const sortedSpecs = [...allSpecialties].sort();
+        const sortedCats = [...allCategories].sort();
 
         // Build row data: for each week, compute values
         const getVal = (i, type) => {
@@ -5530,13 +5569,13 @@
           return `<tr class="hover:bg-slate-50">${cells}</tr>`;
         };
 
-        const buildSpecRows = (type, specDataKey, color) => {
+        const buildCatRows = (type, catDataKey) => {
           const rowId = `trendRow_${type}`;
-          return sortedSpecs.map(spec => {
-            let cells = `<td class="px-3 py-1 border-b border-slate-50 text-[10px] text-slate-500 pl-10">${spec}</td>`;
+          return sortedCats.map(cat => {
+            let cells = `<td class="px-3 py-1 border-b border-slate-50 text-[10px] text-slate-500 pl-10">${cat}</td>`;
             weeks.forEach((w, i) => {
-              const val = weekData[i][specDataKey]?.[spec] || 0;
-              const prev = i > 0 ? (weekData[i - 1][specDataKey]?.[spec] || 0) : null;
+              const val = weekData[i][catDataKey]?.[cat] || 0;
+              const prev = i > 0 ? (weekData[i - 1][catDataKey]?.[cat] || 0) : null;
               const isCurrent = i === currentWeekIdx;
               cells += `<td class="px-3 py-1 border-b border-slate-50 text-center text-[10px] text-slate-500 ${isCurrent ? 'bg-blue-50' : ''}">${val}${wowDelta(val, prev)}</td>`;
             });
@@ -5549,17 +5588,17 @@
           return `<th class="px-3 py-2 text-center font-semibold ${isCurrent ? 'bg-blue-50 text-blue-700' : ''}">${fmtWeekEnd(w.end)}</th>`;
         }).join('');
 
-        // Total spec rows combine GHR + Affiliate
-        const buildTotalSpecRows = () => {
+        // Total cat rows combine GHR + Affiliate
+        const buildTotalCatRows = () => {
           const rowId = 'trendRow_total';
-          return sortedSpecs.map(spec => {
-            let cells = `<td class="px-3 py-1 border-b border-slate-50 text-[10px] text-slate-500 pl-10">${spec}</td>`;
+          return sortedCats.map(cat => {
+            let cells = `<td class="px-3 py-1 border-b border-slate-50 text-[10px] text-slate-500 pl-10">${cat}</td>`;
             weeks.forEach((w, i) => {
-              const gVal = weekData[i].specGhr?.[spec] || 0;
-              const aVal = weekData[i].specAff?.[spec] || 0;
+              const gVal = weekData[i].catGhr?.[cat] || 0;
+              const aVal = weekData[i].catAff?.[cat] || 0;
               const val = gVal + aVal;
-              const gPrev = i > 0 ? (weekData[i - 1].specGhr?.[spec] || 0) : null;
-              const aPrev = i > 0 ? (weekData[i - 1].specAff?.[spec] || 0) : null;
+              const gPrev = i > 0 ? (weekData[i - 1].catGhr?.[cat] || 0) : null;
+              const aPrev = i > 0 ? (weekData[i - 1].catAff?.[cat] || 0) : null;
               const prev = gPrev != null ? gPrev + aPrev : null;
               const isCurrent = i === currentWeekIdx;
               cells += `<td class="px-3 py-1 border-b border-slate-50 text-center text-[10px] text-slate-500 ${isCurrent ? 'bg-blue-50' : ''}">${val}${wowDelta(val, prev)}</td>`;
@@ -5570,11 +5609,11 @@
 
         const summaryTableBody = [
           buildDataRow('Total', 'total', 'slate-700', true),
-          buildTotalSpecRows(),
+          buildTotalCatRows(),
           buildDataRow('GHR', 'ghr', 'blue-700', true),
-          buildSpecRows('ghr', 'specGhr', 'blue'),
+          buildCatRows('ghr', 'catGhr'),
           buildDataRow('Affiliate', 'aff', 'purple-700', true),
-          buildSpecRows('aff', 'specAff', 'purple'),
+          buildCatRows('aff', 'catAff'),
         ].join('');
 
         // Destroy existing chart before replacing DOM (so Chart.js cleans up canvas reference)
@@ -5682,18 +5721,25 @@
                       }
                       return `${ctx.dataset.label}: ${val}${delta}`;
                     },
-                    afterBody: (tooltipItems) => {
-                      const i = tooltipItems[0]?.dataIndex;
-                      if (i == null || i > lastActualIdx) return '';
+                    afterLabel: (ctx) => {
+                      const i = ctx.dataIndex;
+                      if (i > lastActualIdx) return '';
                       const wd = weekData[i];
-                      const allSpecs = new Set([...Object.keys(wd.specGhr), ...Object.keys(wd.specAff)]);
-                      const lines = ['\n— Category Breakdown —'];
-                      [...allSpecs].sort().forEach(spec => {
-                        const g = wd.specGhr[spec] || 0;
-                        const a = wd.specAff[spec] || 0;
-                        lines.push(`  ${spec}: ${g + a}  (GHR ${g} / Aff ${a})`);
-                      });
-                      return lines;
+                      const dsLabel = ctx.dataset.label;
+                      let catData = null;
+                      if (dsLabel === 'Total Headcount') {
+                        // Combine GHR + Aff categories
+                        const allCats = new Set([...Object.keys(wd.catGhr), ...Object.keys(wd.catAff)]);
+                        catData = {};
+                        allCats.forEach(c => catData[c] = (wd.catGhr[c] || 0) + (wd.catAff[c] || 0));
+                      } else if (dsLabel === 'GHR') {
+                        catData = wd.catGhr;
+                      } else if (dsLabel === 'Affiliate') {
+                        catData = wd.catAff;
+                      }
+                      if (!catData || Object.keys(catData).length === 0) return '';
+                      return Object.entries(catData).sort((a, b) => a[0].localeCompare(b[0]))
+                        .map(([cat, count]) => `    ${cat}: ${count}`);
                     }
                   }
                 }
@@ -5708,6 +5754,196 @@
             }
           });
         }
+
+        lucide.createIcons();
+      },
+
+      pending() {
+        const container = $('pendingContent');
+        if (!container) return;
+        const s = window.store.state;
+
+        if (!s.pendingLoaded) {
+          container.innerHTML = `<div class="p-6 text-slate-500 bg-slate-50 border border-slate-200 rounded flex items-center gap-3">
+            <svg class="animate-spin h-5 w-5 text-blue-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg>
+            Loading pending submissions...
+          </div>`;
+          return;
+        }
+
+        const allSubs = s.pendingData?.submissions || [];
+
+        // Apply global filters
+        const filtered = allSubs.filter(r => {
+          const sysMatch = s.filterSelection.systems.size === 0 || s.filterSelection.systems.has(r.healthSystem);
+          return sysMatch;
+        });
+
+        // Status color helpers
+        const statusColor = (status) => {
+          const s = (status || '').toLowerCase();
+          if (s.includes('awarded') || s === 'onboarded' || s === 'ready to onboard') return 'bg-emerald-100 text-emerald-800';
+          if (s.includes('offer') && !s.includes('declined')) return 'bg-blue-100 text-blue-800';
+          if (s === 'submitted' || s === 'applied' || s === 'verification in progress') return 'bg-amber-100 text-amber-800';
+          if (s.includes('declined') || s.includes('rejected') || s.includes('retracted') || s === 'withdrawn') return 'bg-red-100 text-red-800';
+          if (s === 'job closed') return 'bg-slate-100 text-slate-500';
+          return 'bg-slate-100 text-slate-600';
+        };
+
+        // Split into active pipeline and terminal
+        const activeSubs = filtered.filter(r => {
+          const st = (r.status || '').toLowerCase();
+          return !st.includes('declined') && !st.includes('rejected') && !st.includes('retracted')
+            && st !== 'withdrawn' && st !== 'job closed' && st !== 'onboarded' && st !== 'awarded';
+        });
+        const terminalSubs = filtered.filter(r => !activeSubs.includes(r));
+
+        // KPI counts
+        const totalActive = activeSubs.length;
+        const offerPending = activeSubs.filter(r => {
+          const st = (r.status || '').toLowerCase();
+          return st.includes('offer');
+        }).length;
+        const submitted = activeSubs.filter(r => {
+          const st = (r.status || '').toLowerCase();
+          return st === 'submitted' || st === 'applied';
+        }).length;
+        const readyToOnboard = activeSubs.filter(r => {
+          const st = (r.status || '').toLowerCase();
+          return st === 'ready to onboard' || st === 'verification in progress';
+        }).length;
+
+        // Group by health system for summary
+        const bySystem = {};
+        activeSubs.forEach(r => {
+          const sys = r.healthSystem || 'Unknown';
+          if (!bySystem[sys]) bySystem[sys] = { submitted: 0, offered: 0, rto: 0, total: 0 };
+          bySystem[sys].total++;
+          const st = (r.status || '').toLowerCase();
+          if (st === 'submitted' || st === 'applied') bySystem[sys].submitted++;
+          else if (st.includes('offer')) bySystem[sys].offered++;
+          else if (st === 'ready to onboard' || st === 'verification in progress') bySystem[sys].rto++;
+        });
+
+        const fmtDate = (d) => {
+          if (!d) return '—';
+          const dt = new Date(d);
+          if (isNaN(dt)) return '—';
+          return dt.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+        };
+
+        // Build table rows
+        const buildRow = (r) => `<tr class="hover:bg-slate-50 border-b border-slate-100">
+          <td class="px-3 py-2 text-xs text-slate-500">${r.source_system}</td>
+          <td class="px-3 py-2 text-xs font-medium text-slate-700">${r.healthSystem || '—'}</td>
+          <td class="px-3 py-2 text-xs text-slate-600">${r.facility || '—'}</td>
+          <td class="px-3 py-2 text-xs text-slate-700 font-medium">${r.worker_name || r.full_name || '—'}</td>
+          <td class="px-3 py-2 text-xs text-slate-600">${r.position_type || r.care_type || '—'}</td>
+          <td class="px-3 py-2 text-xs"><span class="inline-block px-2 py-0.5 rounded text-[10px] font-bold ${statusColor(r.status)}">${r.status}</span></td>
+          <td class="px-3 py-2 text-xs text-slate-500">${fmtDate(r.submission_date)}</td>
+          <td class="px-3 py-2 text-xs text-slate-500">${fmtDate(r.offer_date)}</td>
+          <td class="px-3 py-2 text-xs text-slate-500">${r.rto || '—'}</td>
+        </tr>`;
+
+        const systemSummaryRows = Object.entries(bySystem).sort((a, b) => b[1].total - a[1].total).map(([sys, d]) =>
+          `<tr class="hover:bg-slate-50 border-b border-slate-100">
+            <td class="px-3 py-2 text-xs font-medium text-slate-700">${sys}</td>
+            <td class="px-3 py-2 text-xs text-center text-amber-700">${d.submitted}</td>
+            <td class="px-3 py-2 text-xs text-center text-blue-700">${d.offered}</td>
+            <td class="px-3 py-2 text-xs text-center text-emerald-700">${d.rto}</td>
+            <td class="px-3 py-2 text-xs text-center font-semibold text-slate-700">${d.total}</td>
+          </tr>`
+        ).join('');
+
+        container.innerHTML = `
+          <div class="flex items-center justify-between mb-4">
+            <h2 class="text-lg font-bold text-slate-700">GHR Pending Submissions</h2>
+            <p class="text-xs text-slate-400">Last 6 months · GHR agencies only</p>
+          </div>
+
+          <div class="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-6">
+            <div class="bg-white border border-slate-200 rounded-lg p-4 text-center">
+              <div class="text-2xl font-bold text-slate-700">${totalActive}</div>
+              <div class="text-xs text-slate-500 mt-1">Active Pipeline</div>
+            </div>
+            <div class="bg-white border border-slate-200 rounded-lg p-4 text-center">
+              <div class="text-2xl font-bold text-amber-600">${submitted}</div>
+              <div class="text-xs text-slate-500 mt-1">Submitted</div>
+            </div>
+            <div class="bg-white border border-slate-200 rounded-lg p-4 text-center">
+              <div class="text-2xl font-bold text-blue-600">${offerPending}</div>
+              <div class="text-xs text-slate-500 mt-1">Offer Pending</div>
+            </div>
+            <div class="bg-white border border-slate-200 rounded-lg p-4 text-center">
+              <div class="text-2xl font-bold text-emerald-600">${readyToOnboard}</div>
+              <div class="text-xs text-slate-500 mt-1">Ready to Onboard</div>
+            </div>
+          </div>
+
+          <div class="mb-6">
+            <h3 class="text-sm font-bold text-slate-600 mb-2">By Health System</h3>
+            <div class="rounded-lg border border-slate-200 overflow-hidden">
+              <table class="w-full text-xs">
+                <thead>
+                  <tr class="bg-slate-100 text-slate-500 uppercase tracking-wide text-[10px]">
+                    <th class="px-3 py-2 text-left font-semibold">System</th>
+                    <th class="px-3 py-2 text-center font-semibold text-amber-600">Submitted</th>
+                    <th class="px-3 py-2 text-center font-semibold text-blue-600">Offer Pending</th>
+                    <th class="px-3 py-2 text-center font-semibold text-emerald-600">RTO / Verifying</th>
+                    <th class="px-3 py-2 text-center font-semibold text-slate-600">Total</th>
+                  </tr>
+                </thead>
+                <tbody>${systemSummaryRows}</tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="mb-4 flex items-center justify-between">
+            <h3 class="text-sm font-bold text-slate-600">Active Pipeline Detail</h3>
+            <button onclick="document.getElementById('terminalSection').classList.toggle('hidden')"
+                    class="text-xs text-slate-400 hover:text-slate-600">Show/Hide Completed (${terminalSubs.length})</button>
+          </div>
+          <div class="rounded-lg border border-slate-200 overflow-x-auto">
+            <table class="w-full text-xs">
+              <thead>
+                <tr class="bg-slate-100 text-slate-500 uppercase tracking-wide text-[10px]">
+                  <th class="px-3 py-2 text-left font-semibold">Source</th>
+                  <th class="px-3 py-2 text-left font-semibold">System</th>
+                  <th class="px-3 py-2 text-left font-semibold">Facility</th>
+                  <th class="px-3 py-2 text-left font-semibold">Worker</th>
+                  <th class="px-3 py-2 text-left font-semibold">Position</th>
+                  <th class="px-3 py-2 text-left font-semibold">Status</th>
+                  <th class="px-3 py-2 text-left font-semibold">Submitted</th>
+                  <th class="px-3 py-2 text-left font-semibold">Offer Date</th>
+                  <th class="px-3 py-2 text-left font-semibold">RTO</th>
+                </tr>
+              </thead>
+              <tbody>${activeSubs.map(buildRow).join('')}</tbody>
+            </table>
+          </div>
+
+          <div id="terminalSection" class="hidden mt-6">
+            <h3 class="text-sm font-bold text-slate-600 mb-2">Completed / Declined / Withdrawn</h3>
+            <div class="rounded-lg border border-slate-200 overflow-x-auto">
+              <table class="w-full text-xs">
+                <thead>
+                  <tr class="bg-slate-100 text-slate-500 uppercase tracking-wide text-[10px]">
+                    <th class="px-3 py-2 text-left font-semibold">Source</th>
+                    <th class="px-3 py-2 text-left font-semibold">System</th>
+                    <th class="px-3 py-2 text-left font-semibold">Facility</th>
+                    <th class="px-3 py-2 text-left font-semibold">Worker</th>
+                    <th class="px-3 py-2 text-left font-semibold">Position</th>
+                    <th class="px-3 py-2 text-left font-semibold">Status</th>
+                    <th class="px-3 py-2 text-left font-semibold">Submitted</th>
+                    <th class="px-3 py-2 text-left font-semibold">Offer Date</th>
+                    <th class="px-3 py-2 text-left font-semibold">RTO</th>
+                  </tr>
+                </thead>
+                <tbody>${terminalSubs.map(buildRow).join('')}</tbody>
+              </table>
+            </div>
+          </div>
+        `;
 
         lucide.createIcons();
       }
@@ -5725,6 +5961,8 @@
         perDiemLoaded: false,
         hoursData: { rows: [] },
         hoursLoaded: false,
+        pendingData: { submissions: [] },
+        pendingLoaded: false,
         perDiemSubTab: 'overview',
         perDiemFromMonth: null,
         perDiemToMonth: null,
