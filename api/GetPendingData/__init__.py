@@ -66,7 +66,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                 FROM dhc.B4Health_Contract_Submissions
                 WHERE Agency_Name LIKE '%GHR%'
                     AND Submission_Date >= DATEADD(MONTH, -6, GETDATE())
-                    AND IsActive = 1
+                    AND LTRIM(RTRIM(IsActive)) = 'Yes'
                 ORDER BY Submission_Date DESC
             ''')
 
