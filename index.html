@@ -5552,107 +5552,68 @@
           return null;
         });
 
-        // Build summary table: dates across top, rows for Total/GHR/Affiliate with expandable categories
-        // Compute WoW delta helper
-        const wowDelta = (val, prevVal) => {
-          if (val == null || prevVal == null) return '';
-          const diff = val - prevVal;
-          if (diff === 0) return '';
-          return diff > 0
-            ? `<span class="text-emerald-600 text-[9px] ml-1">+${diff}</span>`
-            : `<span class="text-red-500 text-[9px] ml-1">${diff}</span>`;
-        };
+        // Build category breakdown table: categories as rows, dates as columns
+        // Each cell shows "GHR ±Δ / Aff ±Δ"
+        const currentWeekIdx = weeks.findIndex(w => w.start <= today && w.end >= today);
 
-        // Collect all categories across all weeks
         const allCategories = new Set();
         weekData.forEach(wd => {
-          Object.keys(wd.catGhr).forEach(s => allCategories.add(s));
-          Object.keys(wd.catAff).forEach(s => allCategories.add(s));
+          Object.keys(wd.catGhr).forEach(c => allCategories.add(c));
+          Object.keys(wd.catAff).forEach(c => allCategories.add(c));
         });
         const sortedCats = [...allCategories].sort();
 
-        // Build row data: for each week, compute values
-        const getVal = (i, type) => {
-          if (type === 'total') return weekHC[i];
-          if (type === 'ghr') return weekData[i].ghr;
-          if (type === 'aff') return weekData[i].aff;
-          if (type === 'pipeline') return i >= lastActualIdx ? weekHC[i] : null;
-          if (type === 'projection') return i >= lastActualIdx ? Math.max(0, Math.round(slope * i + intercept)) : null;
-          return null;
+        const summaryTableHeaders = weeks.map((w, i) => {
+          const isCurrent = i === currentWeekIdx;
+          return `<th class="px-2 py-2 text-center font-semibold ${isCurrent ? 'bg-blue-50 text-blue-700' : ''}">${fmtWeekEnd(w.end)}</th>`;
+        }).join('');
+
+        const deltaSpan = (val, prev) => {
+          if (prev == null) return '';
+          const diff = val - prev;
+          if (diff === 0) return '';
+          return diff > 0
+            ? `<span class="text-emerald-600"> +${diff}</span>`
+            : `<span class="text-red-500"> ${diff}</span>`;
         };
 
-        const currentWeekIdx = weeks.findIndex(w => w.start <= today && w.end >= today);
-
-        const buildDataRow = (label, type, color, specData) => {
-          const hasSpecs = specData != null;
-          const rowId = `trendRow_${type}`;
-          let cells = `<td class="px-3 py-1.5 border-b border-slate-100 font-semibold text-${color} whitespace-nowrap">
-            ${hasSpecs ? `<button onclick="document.querySelectorAll('.${rowId}_spec').forEach(r=>r.classList.toggle('hidden'))" class="mr-1 text-slate-400 hover:text-slate-600 text-[10px] font-bold w-4 h-4 inline-flex items-center justify-center rounded border border-slate-300">+</button>` : '<span class="w-5 inline-block"></span>'}${label}
-          </td>`;
+        // Build a row for a category
+        const buildCatRow = (cat) => {
+          let cells = `<td class="px-3 py-1.5 border-b border-slate-100 font-medium text-slate-700 whitespace-nowrap text-xs">${cat}</td>`;
           weeks.forEach((w, i) => {
-            const val = getVal(i, type);
-            const prev = i > 0 ? getVal(i - 1, type) : null;
+            const g = weekData[i].catGhr?.[cat] || 0;
+            const a = weekData[i].catAff?.[cat] || 0;
+            const gPrev = i > 0 ? (weekData[i - 1].catGhr?.[cat] || 0) : null;
+            const aPrev = i > 0 ? (weekData[i - 1].catAff?.[cat] || 0) : null;
             const isCurrent = i === currentWeekIdx;
-            cells += `<td class="px-3 py-1.5 border-b border-slate-100 text-center ${isCurrent ? 'bg-blue-50 font-semibold' : ''}">${val != null ? val + wowDelta(val, prev) : '—'}</td>`;
+            cells += `<td class="px-2 py-1.5 border-b border-slate-100 text-center text-[10px] ${isCurrent ? 'bg-blue-50' : ''}">
+              <span class="text-blue-700 font-semibold">${g}${deltaSpan(g, gPrev)}</span>
+              <span class="text-slate-300 mx-0.5">/</span>
+              <span class="text-purple-700 font-semibold">${a}${deltaSpan(a, aPrev)}</span>
+            </td>`;
           });
           return `<tr class="hover:bg-slate-50">${cells}</tr>`;
         };
 
-        const buildCatRows = (type, catDataKey) => {
-          const rowId = `trendRow_${type}`;
-          return sortedCats.map(cat => {
-            let cells = `<td class="px-3 py-1 border-b border-slate-50 text-[10px] text-slate-500 pl-10">${cat}</td>`;
-            weeks.forEach((w, i) => {
-              const val = weekData[i][catDataKey]?.[cat] || 0;
-              const prev = i > 0 ? (weekData[i - 1][catDataKey]?.[cat] || 0) : null;
-              const isCurrent = i === currentWeekIdx;
-              cells += `<td class="px-3 py-1 border-b border-slate-50 text-center text-[10px] text-slate-500 ${isCurrent ? 'bg-blue-50' : ''}">${val}${wowDelta(val, prev)}</td>`;
-            });
-            return `<tr class="${rowId}_spec hidden hover:bg-slate-50">${cells}</tr>`;
-          }).join('');
+        // Total row
+        const buildTotalRow = () => {
+          let cells = `<td class="px-3 py-1.5 border-b border-slate-200 font-bold text-slate-800 whitespace-nowrap text-xs">Total</td>`;
+          weeks.forEach((w, i) => {
+            const g = weekData[i].ghr;
+            const a = weekData[i].aff;
+            const gPrev = i > 0 ? weekData[i - 1].ghr : null;
+            const aPrev = i > 0 ? weekData[i - 1].aff : null;
+            const isCurrent = i === currentWeekIdx;
+            cells += `<td class="px-2 py-1.5 border-b border-slate-200 text-center text-[11px] font-bold ${isCurrent ? 'bg-blue-50' : ''}">
+              <span class="text-blue-700">${g}${deltaSpan(g, gPrev)}</span>
+              <span class="text-slate-300 mx-0.5">/</span>
+              <span class="text-purple-700">${a}${deltaSpan(a, aPrev)}</span>
+            </td>`;
+          });
+          return `<tr class="bg-slate-50">${cells}</tr>`;
         };
 
-        const summaryTableHeaders = weeks.map((w, i) => {
-          const isCurrent = i === currentWeekIdx;
-          return `<th class="px-3 py-2 text-center font-semibold ${isCurrent ? 'bg-blue-50 text-blue-700' : ''}">${fmtWeekEnd(w.end)}</th>`;
-        }).join('');
-
-        // Total cat rows combine GHR + Affiliate; optional type override for pipeline
-        const buildTotalCatRows = (type) => {
-          const rowId = `trendRow_${type || 'total'}`;
-          const isPipeline = type === 'pipeline';
-          return sortedCats.map(cat => {
-            let cells = `<td class="px-3 py-1 border-b border-slate-50 text-[10px] text-slate-500 pl-10">${cat}</td>`;
-            weeks.forEach((w, i) => {
-              if (isPipeline && i < lastActualIdx) {
-                const isCurrent = i === currentWeekIdx;
-                cells += `<td class="px-3 py-1 border-b border-slate-50 text-center text-[10px] text-slate-400 ${isCurrent ? 'bg-blue-50' : ''}">—</td>`;
-              } else {
-                const gVal = weekData[i].catGhr?.[cat] || 0;
-                const aVal = weekData[i].catAff?.[cat] || 0;
-                const val = gVal + aVal;
-                const gPrev = i > 0 ? (weekData[i - 1].catGhr?.[cat] || 0) : null;
-                const aPrev = i > 0 ? (weekData[i - 1].catAff?.[cat] || 0) : null;
-                const prev = gPrev != null ? gPrev + aPrev : null;
-                const isCurrent = i === currentWeekIdx;
-                cells += `<td class="px-3 py-1 border-b border-slate-50 text-center text-[10px] text-slate-500 ${isCurrent ? 'bg-blue-50' : ''}">${val}${wowDelta(val, prev)}</td>`;
-              }
-            });
-            return `<tr class="${rowId}_spec hidden hover:bg-slate-50">${cells}</tr>`;
-          }).join('');
-        };
-
-        const summaryTableBody = [
-          buildDataRow('Total', 'total', 'slate-700', true),
-          buildTotalCatRows(),
-          buildDataRow('GHR', 'ghr', 'blue-700', true),
-          buildCatRows('ghr', 'catGhr'),
-          buildDataRow('Affiliate', 'aff', 'purple-700', true),
-          buildCatRows('aff', 'catAff'),
-          buildDataRow('Pipeline', 'pipeline', 'green-700', true),
-          buildTotalCatRows('pipeline'),
-          buildDataRow('Trend Projection', 'projection', 'orange-600', false),
-        ].join('');
+        const catTableBody = buildTotalRow() + sortedCats.map(buildCatRow).join('');
 
         // Destroy existing charts before replacing DOM
         if (window.__trendChart) { window.__trendChart.destroy(); window.__trendChart = null; }
@@ -5666,16 +5627,16 @@
             <canvas id="trendChart" height="100"></canvas>
           </div>
           <div class="mt-6">
-            <h3 class="text-sm font-bold text-slate-600 mb-2">Weekly Summary</h3>
+            <h3 class="text-sm font-bold text-slate-600 mb-2">Category Breakdown <span class="font-normal text-slate-400 text-[10px] ml-2"><span class="text-blue-600">GHR</span> / <span class="text-purple-600">Affiliate</span></span></h3>
             <div class="rounded-lg border border-slate-200 overflow-x-auto">
               <table class="w-full text-xs">
                 <thead>
                   <tr class="bg-slate-100 text-slate-500 uppercase tracking-wide text-[10px]">
-                    <th class="px-3 py-2 text-left font-semibold min-w-[120px]"></th>
+                    <th class="px-3 py-2 text-left font-semibold min-w-[160px]">Category</th>
                     ${summaryTableHeaders}
                   </tr>
                 </thead>
-                <tbody>${summaryTableBody}</tbody>
+                <tbody>${catTableBody}</tbody>
               </table>
             </div>
           </div>
