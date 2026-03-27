@@ -5644,20 +5644,21 @@
           buildCatRows('aff', 'catAff'),
         ].join('');
 
-        // Destroy existing chart before replacing DOM (so Chart.js cleans up canvas reference)
-        if (window.__trendChart) {
-          window.__trendChart.destroy();
-          window.__trendChart = null;
-        }
+        // Destroy existing charts before replacing DOM
+        if (window.__trendChart) { window.__trendChart.destroy(); window.__trendChart = null; }
+        if (window.__trendCatChart) { window.__trendCatChart.destroy(); window.__trendCatChart = null; }
 
         container.innerHTML = `
           <div class="flex items-center justify-between mb-4">
             <h2 class="text-lg font-bold text-slate-700">Headcount Trend</h2>
             <p class="text-xs text-slate-400">4-week lookback · 2-week projection · follows active filters</p>
           </div>
-          <div class="bg-white rounded-xl border border-slate-200 p-4 shadow-sm relative" style="overflow:visible;">
-            <canvas id="trendChart" height="130"></canvas>
-            <div id="trendTooltip" style="display:none;position:absolute;pointer-events:none;z-index:100;background:rgba(30,41,59,0.95);color:#fff;border-radius:8px;padding:10px 14px;font-size:11px;line-height:1.5;white-space:nowrap;max-height:80vh;overflow-y:auto;"></div>
+          <div class="bg-white rounded-xl border border-slate-200 p-4 shadow-sm mb-4">
+            <h3 class="text-xs font-bold text-slate-500 mb-2">Category Breakdown by Week</h3>
+            <canvas id="trendCategoryChart" height="100"></canvas>
+          </div>
+          <div class="bg-white rounded-xl border border-slate-200 p-4 shadow-sm">
+            <canvas id="trendChart" height="100"></canvas>
           </div>
           <div class="mt-6">
             <h3 class="text-sm font-bold text-slate-600 mb-2">Weekly Summary</h3>
@@ -5736,89 +5737,12 @@
               plugins: {
                 legend: { position: 'top', labels: { boxWidth: 12, font: { size: 11 } } },
                 tooltip: {
-                  enabled: false,
-                  external: function(context) {
-                    const tooltipEl = document.getElementById('trendTooltip');
-                    if (!tooltipEl) return;
-                    const tooltipModel = context.tooltip;
-                    if (tooltipModel.opacity === 0) { tooltipEl.style.display = 'none'; return; }
-
-                    // Build HTML table: categories as columns, rows for Total/GHR/Affiliate/Pipeline
-                    const dataIndex = tooltipModel.dataPoints?.[0]?.dataIndex;
-                    const wd = dataIndex != null ? weekData[dataIndex] : null;
-                    const prevWd = dataIndex > 0 ? weekData[dataIndex - 1] : null;
-
-                    let html = `<div style="font-weight:bold;margin-bottom:6px;font-size:12px;">${tooltipModel.title?.[0] || ''}</div>`;
-
-                    if (wd) {
-                      // Collect all categories
-                      const allCats = new Set([...Object.keys(wd.catGhr), ...Object.keys(wd.catAff)]);
-                      const cats = [...allCats].sort();
-
-                      // Build row data: { label, color, total, catCounts, prevTotal, prevCatCounts }
-                      const totalCats = {}; const prevTotalCats = {};
-                      cats.forEach(c => {
-                        totalCats[c] = (wd.catGhr[c] || 0) + (wd.catAff[c] || 0);
-                        if (prevWd) prevTotalCats[c] = (prevWd.catGhr[c] || 0) + (prevWd.catAff[c] || 0);
-                      });
-
-                      const rows = [
-                        { label: 'Total', color: '#64748b', total: wd.total, prevTotal: prevWd?.total, cats: totalCats, prevCats: prevTotalCats },
-                        { label: 'GHR', color: '#3b82f6', total: wd.ghr, prevTotal: prevWd?.ghr, cats: wd.catGhr, prevCats: prevWd?.catGhr || {} },
-                        { label: 'Affiliate', color: '#8b5cf6', total: wd.aff, prevTotal: prevWd?.aff, cats: wd.catAff, prevCats: prevWd?.catAff || {} },
-                        { label: 'Pipeline', color: '#22c55e', total: wd.total, prevTotal: prevWd?.total, cats: totalCats, prevCats: prevTotalCats },
-                      ];
-
-                      const deltaHtml = (val, prev) => {
-                        if (prev == null) return '';
-                        const diff = val - prev;
-                        if (diff > 0) return ` <span style="color:#34d399;font-size:9px;">+${diff}</span>`;
-                        if (diff < 0) return ` <span style="color:#f87171;font-size:9px;">${diff}</span>`;
-                        return '';
-                      };
-
-                      // Table
-                      const cellStyle = 'padding:2px 6px;text-align:center;';
-                      const headerStyle = 'padding:2px 6px;text-align:center;color:#94a3b8;font-size:9px;font-weight:bold;';
-                      html += `<table style="border-collapse:collapse;margin-top:4px;">`;
-                      // Header row
-                      html += `<tr><td style="${headerStyle}"></td><td style="${headerStyle}">Total</td>`;
-                      cats.forEach(c => { html += `<td style="${headerStyle}">${c}</td>`; });
-                      html += `</tr>`;
-                      // Data rows
-                      rows.forEach(r => {
-                        html += `<tr>`;
-                        html += `<td style="padding:2px 6px;font-weight:bold;white-space:nowrap;"><span style="display:inline-block;width:8px;height:8px;background:${r.color};border-radius:2px;margin-right:4px;"></span>${r.label}</td>`;
-                        html += `<td style="${cellStyle}font-weight:bold;">${r.total}${deltaHtml(r.total, r.prevTotal)}</td>`;
-                        cats.forEach(c => {
-                          const val = r.cats[c] || 0;
-                          const prev = r.prevCats[c] || 0;
-                          html += `<td style="${cellStyle}">${val}${deltaHtml(val, prev)}</td>`;
-                        });
-                        html += `</tr>`;
-                      });
-                      html += `</table>`;
-                    } else {
-                      // Fallback for no week data
-                      (tooltipModel.dataPoints || []).forEach(dp => {
-                        if (dp.parsed.y == null) return;
-                        html += `<div>${dp.dataset.label}: ${dp.parsed.y}</div>`;
-                      });
+                  callbacks: {
+                    label: ctx => {
+                      const val = ctx.parsed.y;
+                      if (val == null) return null;
+                      return `${ctx.dataset.label}: ${val}`;
                     }
-
-                    tooltipEl.innerHTML = html;
-                    tooltipEl.style.display = 'block';
-                    // Position tooltip, flipping to left side if it would overflow
-                    const container = context.chart.canvas.parentElement;
-                    const containerW = container.offsetWidth;
-                    const tipW = tooltipEl.offsetWidth;
-                    let left = tooltipModel.caretX + 12;
-                    if (left + tipW > containerW) {
-                      left = tooltipModel.caretX - tipW - 12;
-                      if (left < 0) left = 4;
-                    }
-                    tooltipEl.style.left = left + 'px';
-                    tooltipEl.style.top = '10px';
                   }
                 }
               },
@@ -5829,6 +5753,46 @@
                   title: { display: true, text: 'Headcount', font: { size: 11 } }
                 },
                 x: { ticks: { font: { size: 11 }, maxRotation: 30 } }
+              }
+            }
+          });
+        }
+
+        // Build stacked bar chart for category breakdown
+        const catCanvas = $('trendCategoryChart');
+        if (catCanvas && typeof Chart !== 'undefined') {
+          // Collect all categories and assign colors
+          const allCats = new Set();
+          weekData.forEach(wd => {
+            Object.keys(wd.catGhr).forEach(c => allCats.add(c));
+            Object.keys(wd.catAff).forEach(c => allCats.add(c));
+          });
+          const cats = [...allCats].sort();
+          const catColors = [
+            '#3b82f6', '#8b5cf6', '#22c55e', '#f97316', '#ef4444',
+            '#06b6d4', '#ec4899', '#eab308', '#64748b', '#14b8a6',
+            '#a855f7', '#f43f5e', '#84cc16', '#0ea5e9'
+          ];
+
+          const catDatasets = cats.map((cat, idx) => ({
+            label: cat,
+            data: weeks.map((w, i) => (weekData[i].catGhr[cat] || 0) + (weekData[i].catAff[cat] || 0)),
+            backgroundColor: catColors[idx % catColors.length],
+            stack: 'total',
+          }));
+
+          window.__trendCatChart = new Chart(catCanvas, {
+            type: 'bar',
+            data: { labels, datasets: catDatasets },
+            options: {
+              responsive: true,
+              plugins: {
+                legend: { position: 'top', labels: { boxWidth: 10, font: { size: 10 } } },
+                tooltip: { mode: 'index' }
+              },
+              scales: {
+                x: { stacked: true, ticks: { font: { size: 11 }, maxRotation: 30 } },
+                y: { stacked: true, ticks: { font: { size: 11 } }, title: { display: true, text: 'Headcount', font: { size: 11 } } }
               }
             }
           });
