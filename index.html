@@ -5775,8 +5775,25 @@
                           catData = wd.catAff;
                         }
                         if (catData && Object.keys(catData).length > 0) {
+                          // Get previous week's cat data for deltas
+                          const prevWd = dataIndex > 0 ? weekData[dataIndex - 1] : null;
+                          let prevCatData = null;
+                          if (prevWd) {
+                            if (dsLabel === 'Total Headcount' || dsLabel === 'Pipeline (Confirmed)') {
+                              prevCatData = {};
+                              new Set([...Object.keys(prevWd.catGhr), ...Object.keys(prevWd.catAff)]).forEach(c => prevCatData[c] = (prevWd.catGhr[c] || 0) + (prevWd.catAff[c] || 0));
+                            } else if (dsLabel === 'GHR') { prevCatData = prevWd.catGhr; }
+                            else if (dsLabel === 'Affiliate') { prevCatData = prevWd.catAff; }
+                          }
                           Object.entries(catData).sort((a, b) => a[0].localeCompare(b[0])).forEach(([cat, count]) => {
-                            html += `<div style="padding-left:20px;color:#94a3b8;font-size:10px;">${cat}: ${count}</div>`;
+                            let catDelta = '';
+                            if (prevCatData) {
+                              const prev = prevCatData[cat] || 0;
+                              const diff = count - prev;
+                              if (diff > 0) catDelta = ` <span style="color:#34d399;">+${diff}</span>`;
+                              else if (diff < 0) catDelta = ` <span style="color:#f87171;">${diff}</span>`;
+                            }
+                            html += `<div style="padding-left:20px;color:#94a3b8;font-size:10px;">${cat}: ${count}${catDelta}</div>`;
                           });
                         }
                       }
