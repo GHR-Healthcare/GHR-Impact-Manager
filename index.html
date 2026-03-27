@@ -5615,6 +5615,25 @@
 
         const catTableBody = buildTotalRow() + sortedCats.map(buildCatRow).join('');
 
+        // Weekly summary rows: Total HC, GHR, Affiliate, Pipeline, Trend Projection
+        const summaryRows = [
+          { label: 'Total HC', color: 'slate-700', getData: i => weekData[i].total },
+          { label: 'GHR', color: 'blue-700', getData: i => weekData[i].ghr },
+          { label: 'Affiliate', color: 'purple-700', getData: i => weekData[i].aff },
+          { label: 'Pipeline (Confirmed)', color: 'green-700', getData: i => i >= lastActualIdx ? weekData[i].total : null },
+          { label: 'Trend Projection', color: 'orange-600', getData: i => i >= lastActualIdx ? Math.max(0, Math.round(slope * i + intercept)) : null },
+        ];
+        const summaryTableBody = summaryRows.map(r => {
+          let cells = `<td class="px-3 py-1.5 border-b border-slate-100 font-semibold text-${r.color} whitespace-nowrap">${r.label}</td>`;
+          weeks.forEach((w, i) => {
+            const val = r.getData(i);
+            const prev = i > 0 ? r.getData(i - 1) : null;
+            const isCurrent = i === currentWeekIdx;
+            cells += `<td class="px-3 py-1.5 border-b border-slate-100 text-center ${isCurrent ? 'bg-blue-50 font-semibold' : ''}">${val != null ? val + deltaSpan(val, prev) : '—'}</td>`;
+          });
+          return `<tr class="hover:bg-slate-50">${cells}</tr>`;
+        }).join('');
+
         // Destroy existing charts before replacing DOM
         if (window.__trendChart) { window.__trendChart.destroy(); window.__trendChart = null; }
 
@@ -5637,6 +5656,20 @@
                   </tr>
                 </thead>
                 <tbody>${catTableBody}</tbody>
+              </table>
+            </div>
+          </div>
+          <div class="mt-6">
+            <h3 class="text-sm font-bold text-slate-600 mb-2">Weekly Summary</h3>
+            <div class="rounded-lg border border-slate-200 overflow-x-auto">
+              <table class="w-full text-xs">
+                <thead>
+                  <tr class="bg-slate-100 text-slate-500 uppercase tracking-wide text-[10px]">
+                    <th class="px-3 py-2 text-left font-semibold min-w-[140px]"></th>
+                    ${summaryTableHeaders}
+                  </tr>
+                </thead>
+                <tbody>${summaryTableBody}</tbody>
               </table>
             </div>
           </div>
