@@ -67,7 +67,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                     [Default Work Site Name] AS facility,
                     [Vendor Company Name] AS agency,
                     [Job Title] AS specialty,
-                    [Job Category] AS category,
+                    [Labor Type] AS category,
                     [Start Date] AS startDate,
                     [End Date] AS endDate
                 FROM dbo.STAGING_VNDLY_WORKORDERS
