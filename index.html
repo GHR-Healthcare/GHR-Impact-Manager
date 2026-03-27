@@ -5573,10 +5573,11 @@
 
         // Build row data: for each week, compute values
         const getVal = (i, type) => {
-          const isActual = weeks[i].end <= today || weeks[i].start <= today;
-          if (type === 'total') return isActual ? weekHC[i] : weekHC[i];
+          if (type === 'total') return weekHC[i];
           if (type === 'ghr') return weekData[i].ghr;
           if (type === 'aff') return weekData[i].aff;
+          if (type === 'pipeline') return i >= lastActualIdx ? weekHC[i] : null;
+          if (type === 'projection') return i >= lastActualIdx ? Math.max(0, Math.round(slope * i + intercept)) : null;
           return null;
         };
 
@@ -5592,7 +5593,7 @@
             const val = getVal(i, type);
             const prev = i > 0 ? getVal(i - 1, type) : null;
             const isCurrent = i === currentWeekIdx;
-            cells += `<td class="px-3 py-1.5 border-b border-slate-100 text-center ${isCurrent ? 'bg-blue-50 font-semibold' : ''}">${val}${wowDelta(val, prev)}</td>`;
+            cells += `<td class="px-3 py-1.5 border-b border-slate-100 text-center ${isCurrent ? 'bg-blue-50 font-semibold' : ''}">${val != null ? val + wowDelta(val, prev) : '—'}</td>`;
           });
           return `<tr class="hover:bg-slate-50">${cells}</tr>`;
         };
@@ -5616,20 +5617,26 @@
           return `<th class="px-3 py-2 text-center font-semibold ${isCurrent ? 'bg-blue-50 text-blue-700' : ''}">${fmtWeekEnd(w.end)}</th>`;
         }).join('');
 
-        // Total cat rows combine GHR + Affiliate
-        const buildTotalCatRows = () => {
-          const rowId = 'trendRow_total';
+        // Total cat rows combine GHR + Affiliate; optional type override for pipeline
+        const buildTotalCatRows = (type) => {
+          const rowId = `trendRow_${type || 'total'}`;
+          const isPipeline = type === 'pipeline';
           return sortedCats.map(cat => {
             let cells = `<td class="px-3 py-1 border-b border-slate-50 text-[10px] text-slate-500 pl-10">${cat}</td>`;
             weeks.forEach((w, i) => {
-              const gVal = weekData[i].catGhr?.[cat] || 0;
-              const aVal = weekData[i].catAff?.[cat] || 0;
-              const val = gVal + aVal;
-              const gPrev = i > 0 ? (weekData[i - 1].catGhr?.[cat] || 0) : null;
-              const aPrev = i > 0 ? (weekData[i - 1].catAff?.[cat] || 0) : null;
-              const prev = gPrev != null ? gPrev + aPrev : null;
-              const isCurrent = i === currentWeekIdx;
-              cells += `<td class="px-3 py-1 border-b border-slate-50 text-center text-[10px] text-slate-500 ${isCurrent ? 'bg-blue-50' : ''}">${val}${wowDelta(val, prev)}</td>`;
+              if (isPipeline && i < lastActualIdx) {
+                const isCurrent = i === currentWeekIdx;
+                cells += `<td class="px-3 py-1 border-b border-slate-50 text-center text-[10px] text-slate-400 ${isCurrent ? 'bg-blue-50' : ''}">—</td>`;
+              } else {
+                const gVal = weekData[i].catGhr?.[cat] || 0;
+                const aVal = weekData[i].catAff?.[cat] || 0;
+                const val = gVal + aVal;
+                const gPrev = i > 0 ? (weekData[i - 1].catGhr?.[cat] || 0) : null;
+                const aPrev = i > 0 ? (weekData[i - 1].catAff?.[cat] || 0) : null;
+                const prev = gPrev != null ? gPrev + aPrev : null;
+                const isCurrent = i === currentWeekIdx;
+                cells += `<td class="px-3 py-1 border-b border-slate-50 text-center text-[10px] text-slate-500 ${isCurrent ? 'bg-blue-50' : ''}">${val}${wowDelta(val, prev)}</td>`;
+              }
             });
             return `<tr class="${rowId}_spec hidden hover:bg-slate-50">${cells}</tr>`;
           }).join('');
@@ -5642,20 +5649,18 @@
           buildCatRows('ghr', 'catGhr'),
           buildDataRow('Affiliate', 'aff', 'purple-700', true),
           buildCatRows('aff', 'catAff'),
+          buildDataRow('Pipeline', 'pipeline', 'green-700', true),
+          buildTotalCatRows('pipeline'),
+          buildDataRow('Trend Projection', 'projection', 'orange-600', false),
         ].join('');
 
         // Destroy existing charts before replacing DOM
         if (window.__trendChart) { window.__trendChart.destroy(); window.__trendChart = null; }
-        if (window.__trendCatChart) { window.__trendCatChart.destroy(); window.__trendCatChart = null; }
 
         container.innerHTML = `
           <div class="flex items-center justify-between mb-4">
             <h2 class="text-lg font-bold text-slate-700">Headcount Trend</h2>
             <p class="text-xs text-slate-400">4-week lookback · 2-week projection · follows active filters</p>
-          </div>
-          <div class="bg-white rounded-xl border border-slate-200 p-4 shadow-sm mb-4">
-            <h3 class="text-xs font-bold text-slate-500 mb-2">Category Breakdown by Week</h3>
-            <canvas id="trendCategoryChart" height="100"></canvas>
           </div>
           <div class="bg-white rounded-xl border border-slate-200 p-4 shadow-sm">
             <canvas id="trendChart" height="100"></canvas>
@@ -5758,45 +5763,6 @@
           });
         }
 
-        // Build stacked bar chart for category breakdown
-        const catCanvas = $('trendCategoryChart');
-        if (catCanvas && typeof Chart !== 'undefined') {
-          // Collect all categories and assign colors
-          const allCats = new Set();
-          weekData.forEach(wd => {
-            Object.keys(wd.catGhr).forEach(c => allCats.add(c));
-            Object.keys(wd.catAff).forEach(c => allCats.add(c));
-          });
-          const cats = [...allCats].sort();
-          const catColors = [
-            '#3b82f6', '#8b5cf6', '#22c55e', '#f97316', '#ef4444',
-            '#06b6d4', '#ec4899', '#eab308', '#64748b', '#14b8a6',
-            '#a855f7', '#f43f5e', '#84cc16', '#0ea5e9'
-          ];
-
-          const catDatasets = cats.map((cat, idx) => ({
-            label: cat,
-            data: weeks.map((w, i) => (weekData[i].catGhr[cat] || 0) + (weekData[i].catAff[cat] || 0)),
-            backgroundColor: catColors[idx % catColors.length],
-            stack: 'total',
-          }));
-
-          window.__trendCatChart = new Chart(catCanvas, {
-            type: 'bar',
-            data: { labels, datasets: catDatasets },
-            options: {
-              responsive: true,
-              plugins: {
-                legend: { position: 'top', labels: { boxWidth: 10, font: { size: 10 } } },
-                tooltip: { mode: 'index' }
-              },
-              scales: {
-                x: { stacked: true, ticks: { font: { size: 11 }, maxRotation: 30 } },
-                y: { stacked: true, ticks: { font: { size: 11 } }, title: { display: true, text: 'Headcount', font: { size: 11 } } }
-              }
-            }
-          });
-        }
 
         lucide.createIcons();
       },
