@@ -5449,6 +5449,34 @@
         // Helper: is this a GHR agency?
         const isGHRAgency = (agency) => /ghr|planet\s*healthcare/i.test(agency || '');
 
+        // Normalize category names across B4 (Program) and VNDLY (Labor Type)
+        // Strip "- 48" / "– 48" suffixes, normalize "Allied Health" → "Allied"
+        const normalizeCategory = (cat) => {
+          if (!cat) return 'Unknown';
+          // Strip " - 48", " – 48" and similar hour-based suffixes
+          let c = cat.replace(/\s*[-–]\s*\d+\s*$/, '').trim();
+          // Normalize "Allied Health" → "Allied"
+          c = c.replace(/Allied\s+Health/i, 'Allied');
+          // Normalize "Local Contract (Nursing)" / "Local Contract Allied" etc.
+          if (/^local\s+contract/i.test(c)) {
+            if (/nurs/i.test(c)) return 'Local Contract (Nursing)';
+            if (/allied/i.test(c)) return 'Local Contract (Allied)';
+            return c;
+          }
+          if (/^contract\s*\(allied\)/i.test(c)) return 'Contract (Allied)';
+          if (/^contract\s*\(nurs/i.test(c)) return 'Contract (Nursing)';
+          if (/^travel.*allied/i.test(c)) return 'Travel Allied';
+          if (/^travel.*nurs/i.test(c)) return 'Travel Nursing';
+          if (/^per\s*diem.*nurs/i.test(c)) return 'Per Diem (Nursing)';
+          if (/^per\s*diem.*allied/i.test(c)) return 'Per Diem (Allied)';
+          if (/^nursing$/i.test(c)) return 'Nursing';
+          if (/^allied$/i.test(c)) return 'Allied';
+          if (/physician/i.test(c)) return 'Physicians';
+          if (/advanced\s*practice/i.test(c)) return 'Advanced Practices';
+          if (/non.?clinical/i.test(c)) return 'Non-Clinical';
+          return c;
+        };
+
         // Compute headcount per week, split by GHR vs Affiliate, with specialty breakdown
         const weekData = weeks.map(({ start, end }) => {
           const ghrNames = new Set();
@@ -5461,7 +5489,7 @@
             const overlaps = sd <= end && (ed === null || ed >= start);
             if (overlaps) {
               const name = r.worker_name || '';
-              const cat = r.category || 'Unknown';
+              const cat = normalizeCategory(r.category);
               if (isGHRAgency(r.agency)) {
                 ghrNames.add(name);
                 if (!catGhr[cat]) catGhr[cat] = new Set();
