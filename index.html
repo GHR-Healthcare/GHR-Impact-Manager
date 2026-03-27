@@ -5561,7 +5561,18 @@
           Object.keys(wd.catGhr).forEach(c => allCategories.add(c));
           Object.keys(wd.catAff).forEach(c => allCategories.add(c));
         });
-        const sortedCats = [...allCategories].sort();
+        const catSortOrder = [
+          'Contract (Nursing)', 'Local Contract (Nursing)', 'Travel Nursing', 'Per Diem (Nursing)',
+          'Contract (Allied)', 'Local Contract (Allied)', 'Travel Allied', 'Per Diem (Allied)',
+          'Advanced Practices', 'Physicians', 'Information Technology', 'Non-Clinical', 'Perm Placement'
+        ];
+        const sortedCats = [...allCategories].sort((a, b) => {
+          const ai = catSortOrder.findIndex(c => a.toLowerCase().includes(c.toLowerCase()));
+          const bi = catSortOrder.findIndex(c => b.toLowerCase().includes(c.toLowerCase()));
+          const aIdx = ai >= 0 ? ai : 999;
+          const bIdx = bi >= 0 ? bi : 999;
+          return aIdx !== bIdx ? aIdx - bIdx : a.localeCompare(b);
+        });
 
         const summaryTableHeaders = weeks.map((w, i) => {
           const isCurrent = i === currentWeekIdx;
