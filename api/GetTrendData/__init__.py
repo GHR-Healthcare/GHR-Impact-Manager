@@ -35,6 +35,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                     Facility AS facility,
                     Agency AS agency,
                     Care_Type AS specialty,
+                    Program AS category,
                     Start_Date AS startDate,
                     End_Date AS endDate
                 FROM dhc.B4HealthOrder
@@ -66,6 +67,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                     [Default Work Site Name] AS facility,
                     [Vendor Company Name] AS agency,
                     [Job Title] AS specialty,
+                    [Job Category] AS category,
                     [Start Date] AS startDate,
                     [End Date] AS endDate
                 FROM dbo.STAGING_VNDLY_WORKORDERS
