@@ -5656,7 +5656,7 @@
             <p class="text-xs text-slate-400">4-week lookback · 2-week projection · follows active filters</p>
           </div>
           <div class="bg-white rounded-xl border border-slate-200 p-4 shadow-sm relative" style="overflow:visible;">
-            <canvas id="trendChart" height="180"></canvas>
+            <canvas id="trendChart" height="130"></canvas>
             <div id="trendTooltip" style="display:none;position:absolute;pointer-events:none;z-index:100;background:rgba(30,41,59,0.95);color:#fff;border-radius:8px;padding:10px 14px;font-size:11px;line-height:1.5;white-space:nowrap;max-height:80vh;overflow-y:auto;"></div>
           </div>
           <div class="mt-6">
@@ -5793,6 +5793,7 @@
               },
               scales: {
                 y: {
+                  beginAtZero: false,
                   ticks: { font: { size: 11 } },
                   title: { display: true, text: 'Headcount', font: { size: 11 } }
                 },
