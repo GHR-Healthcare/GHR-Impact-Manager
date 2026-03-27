@@ -3287,7 +3287,11 @@
         // Use visibility to hide KPI and legend on other tabs (preserves layout)
         const kpiEl = $('kpiContainer');
         const legendEl = $('legendContainer');
-        if (kpiEl) kpiEl.style.visibility = (view === 'list' || view === 'perdiem' || view === 'financials') ? 'visible' : 'hidden';
+        const kpiViews = new Set(['list', 'perdiem', 'financials']);
+        if (kpiEl) {
+          kpiEl.style.visibility = kpiViews.has(view) ? 'visible' : 'hidden';
+          kpiEl.style.display = kpiViews.has(view) ? '' : 'none';
+        }
         if (legendEl) legendEl.style.visibility = (view === 'stats' || view === 'financials' || view === 'perdiem' || view === 'trend') ? 'hidden' : 'visible';
 
         const btnList = $('btnViewList');
@@ -5406,21 +5410,36 @@
         // Helper: is this a GHR agency?
         const isGHRAgency = (agency) => /ghr|planet\s*healthcare/i.test(agency || '');
 
-        // Compute headcount per week, split by GHR vs Affiliate
+        // Compute headcount per week, split by GHR vs Affiliate, with specialty breakdown
         const weekData = weeks.map(({ start, end }) => {
           const ghrNames = new Set();
           const affNames = new Set();
+          const specGhr = {};   // specialty → Set of names
+          const specAff = {};
           filtered.forEach(r => {
             const sd = r.startDate;
             const ed = r.endDate;
             const overlaps = sd <= end && (ed === null || ed >= start);
             if (overlaps) {
               const name = r.worker_name || '';
-              if (isGHRAgency(r.agency)) ghrNames.add(name);
-              else affNames.add(name);
+              const spec = r.specialty || 'Unknown';
+              if (isGHRAgency(r.agency)) {
+                ghrNames.add(name);
+                if (!specGhr[spec]) specGhr[spec] = new Set();
+                specGhr[spec].add(name);
+              } else {
+                affNames.add(name);
+                if (!specAff[spec]) specAff[spec] = new Set();
+                specAff[spec].add(name);
+              }
             }
           });
-          return { ghr: ghrNames.size, aff: affNames.size, total: ghrNames.size + affNames.size };
+          // Convert sets to counts
+          const specGhrCounts = {};
+          const specAffCounts = {};
+          for (const [k, v] of Object.entries(specGhr)) specGhrCounts[k] = v.size;
+          for (const [k, v] of Object.entries(specAff)) specAffCounts[k] = v.size;
+          return { ghr: ghrNames.size, aff: affNames.size, total: ghrNames.size + affNames.size, specGhr: specGhrCounts, specAff: specAffCounts };
         });
         const weekHC = weekData.map(d => d.total);
 
@@ -5466,25 +5485,97 @@
           return null;
         });
 
-        // Build summary table rows
-        const tableRows = weeks.map((w, i) => {
-          const isActual = w.end <= today || w.start <= today;
-          const isFuture = w.start > today;
-          const actualHC = isActual ? weekHC[i] : '—';
-          const ghrHC = isActual ? weekData[i].ghr : (isFuture ? weekData[i].ghr : '—');
-          const affHC = isActual ? weekData[i].aff : (isFuture ? weekData[i].aff : '—');
-          const pipelineHC = isFuture ? weekHC[i] : '—';
-          const projHC = isFuture ? Math.max(0, Math.round(slope * i + intercept)) : '—';
-          const isCurrent = w.start <= today && w.end >= today;
-          return `<tr class="${isCurrent ? 'bg-blue-50 font-semibold' : 'hover:bg-slate-50'}">
-            <td class="px-3 py-1.5 border-b border-slate-100 text-slate-600">${fmtWeekEnd(w.end)}</td>
-            <td class="px-3 py-1.5 border-b border-slate-100 text-center text-slate-700">${actualHC}</td>
-            <td class="px-3 py-1.5 border-b border-slate-100 text-center text-blue-700">${ghrHC}</td>
-            <td class="px-3 py-1.5 border-b border-slate-100 text-center text-purple-700">${affHC}</td>
-            <td class="px-3 py-1.5 border-b border-slate-100 text-center text-green-700">${pipelineHC}</td>
-            <td class="px-3 py-1.5 border-b border-slate-100 text-center text-orange-600">${projHC}</td>
-          </tr>`;
+        // Build summary table: dates across top, rows for Total/GHR/Affiliate with expandable categories
+        // Compute WoW delta helper
+        const wowDelta = (val, prevVal) => {
+          if (val == null || prevVal == null) return '';
+          const diff = val - prevVal;
+          if (diff === 0) return '';
+          return diff > 0
+            ? `<span class="text-emerald-600 text-[9px] ml-1">+${diff}</span>`
+            : `<span class="text-red-500 text-[9px] ml-1">${diff}</span>`;
+        };
+
+        // Collect all specialties across all weeks
+        const allSpecialties = new Set();
+        weekData.forEach(wd => {
+          Object.keys(wd.specGhr).forEach(s => allSpecialties.add(s));
+          Object.keys(wd.specAff).forEach(s => allSpecialties.add(s));
+        });
+        const sortedSpecs = [...allSpecialties].sort();
+
+        // Build row data: for each week, compute values
+        const getVal = (i, type) => {
+          const isActual = weeks[i].end <= today || weeks[i].start <= today;
+          if (type === 'total') return isActual ? weekHC[i] : weekHC[i];
+          if (type === 'ghr') return weekData[i].ghr;
+          if (type === 'aff') return weekData[i].aff;
+          return null;
+        };
+
+        const currentWeekIdx = weeks.findIndex(w => w.start <= today && w.end >= today);
+
+        const buildDataRow = (label, type, color, specData) => {
+          const hasSpecs = specData != null;
+          const rowId = `trendRow_${type}`;
+          let cells = `<td class="px-3 py-1.5 border-b border-slate-100 font-semibold text-${color} whitespace-nowrap">
+            ${hasSpecs ? `<button onclick="document.querySelectorAll('.${rowId}_spec').forEach(r=>r.classList.toggle('hidden'))" class="mr-1 text-slate-400 hover:text-slate-600 text-[10px] font-bold w-4 h-4 inline-flex items-center justify-center rounded border border-slate-300">+</button>` : '<span class="w-5 inline-block"></span>'}${label}
+          </td>`;
+          weeks.forEach((w, i) => {
+            const val = getVal(i, type);
+            const prev = i > 0 ? getVal(i - 1, type) : null;
+            const isCurrent = i === currentWeekIdx;
+            cells += `<td class="px-3 py-1.5 border-b border-slate-100 text-center ${isCurrent ? 'bg-blue-50 font-semibold' : ''}">${val}${wowDelta(val, prev)}</td>`;
+          });
+          return `<tr class="hover:bg-slate-50">${cells}</tr>`;
+        };
+
+        const buildSpecRows = (type, specDataKey, color) => {
+          const rowId = `trendRow_${type}`;
+          return sortedSpecs.map(spec => {
+            let cells = `<td class="px-3 py-1 border-b border-slate-50 text-[10px] text-slate-500 pl-10">${spec}</td>`;
+            weeks.forEach((w, i) => {
+              const val = weekData[i][specDataKey]?.[spec] || 0;
+              const prev = i > 0 ? (weekData[i - 1][specDataKey]?.[spec] || 0) : null;
+              const isCurrent = i === currentWeekIdx;
+              cells += `<td class="px-3 py-1 border-b border-slate-50 text-center text-[10px] text-slate-500 ${isCurrent ? 'bg-blue-50' : ''}">${val}${wowDelta(val, prev)}</td>`;
+            });
+            return `<tr class="${rowId}_spec hidden hover:bg-slate-50">${cells}</tr>`;
+          }).join('');
+        };
+
+        const summaryTableHeaders = weeks.map((w, i) => {
+          const isCurrent = i === currentWeekIdx;
+          return `<th class="px-3 py-2 text-center font-semibold ${isCurrent ? 'bg-blue-50 text-blue-700' : ''}">${fmtWeekEnd(w.end)}</th>`;
         }).join('');
+
+        // Total spec rows combine GHR + Affiliate
+        const buildTotalSpecRows = () => {
+          const rowId = 'trendRow_total';
+          return sortedSpecs.map(spec => {
+            let cells = `<td class="px-3 py-1 border-b border-slate-50 text-[10px] text-slate-500 pl-10">${spec}</td>`;
+            weeks.forEach((w, i) => {
+              const gVal = weekData[i].specGhr?.[spec] || 0;
+              const aVal = weekData[i].specAff?.[spec] || 0;
+              const val = gVal + aVal;
+              const gPrev = i > 0 ? (weekData[i - 1].specGhr?.[spec] || 0) : null;
+              const aPrev = i > 0 ? (weekData[i - 1].specAff?.[spec] || 0) : null;
+              const prev = gPrev != null ? gPrev + aPrev : null;
+              const isCurrent = i === currentWeekIdx;
+              cells += `<td class="px-3 py-1 border-b border-slate-50 text-center text-[10px] text-slate-500 ${isCurrent ? 'bg-blue-50' : ''}">${val}${wowDelta(val, prev)}</td>`;
+            });
+            return `<tr class="${rowId}_spec hidden hover:bg-slate-50">${cells}</tr>`;
+          }).join('');
+        };
+
+        const summaryTableBody = [
+          buildDataRow('Total', 'total', 'slate-700', true),
+          buildTotalSpecRows(),
+          buildDataRow('GHR', 'ghr', 'blue-700', true),
+          buildSpecRows('ghr', 'specGhr', 'blue'),
+          buildDataRow('Affiliate', 'aff', 'purple-700', true),
+          buildSpecRows('aff', 'specAff', 'purple'),
+        ].join('');
 
         // Destroy existing chart before replacing DOM (so Chart.js cleans up canvas reference)
         if (window.__trendChart) {
@@ -5502,19 +5593,15 @@
           </div>
           <div class="mt-6">
             <h3 class="text-sm font-bold text-slate-600 mb-2">Weekly Summary</h3>
-            <div class="rounded-lg border border-slate-200 overflow-hidden">
+            <div class="rounded-lg border border-slate-200 overflow-x-auto">
               <table class="w-full text-xs">
                 <thead>
                   <tr class="bg-slate-100 text-slate-500 uppercase tracking-wide text-[10px]">
-                    <th class="px-3 py-2 text-left font-semibold">Week Ending</th>
-                    <th class="px-3 py-2 text-center font-semibold text-slate-600">Total HC</th>
-                    <th class="px-3 py-2 text-center font-semibold text-blue-600">GHR</th>
-                    <th class="px-3 py-2 text-center font-semibold text-purple-600">Affiliate</th>
-                    <th class="px-3 py-2 text-center font-semibold text-green-600">Pipeline HC</th>
-                    <th class="px-3 py-2 text-center font-semibold text-orange-500">Trend Projection</th>
+                    <th class="px-3 py-2 text-left font-semibold min-w-[120px]"></th>
+                    ${summaryTableHeaders}
                   </tr>
                 </thead>
-                <tbody>${tableRows}</tbody>
+                <tbody>${summaryTableBody}</tbody>
               </table>
             </div>
           </div>
@@ -5580,7 +5667,36 @@
               interaction: { mode: 'index', intersect: false },
               plugins: {
                 legend: { position: 'top', labels: { boxWidth: 12, font: { size: 11 } } },
-                tooltip: { callbacks: { label: ctx => `${ctx.dataset.label}: ${ctx.parsed.y ?? '—'}` } }
+                tooltip: {
+                  callbacks: {
+                    label: ctx => {
+                      const val = ctx.parsed.y;
+                      if (val == null) return null;
+                      const i = ctx.dataIndex;
+                      const prevIdx = i - 1;
+                      let delta = '';
+                      const prevVal = ctx.dataset.data[prevIdx];
+                      if (prevVal != null && prevIdx >= 0) {
+                        const diff = val - prevVal;
+                        if (diff !== 0) delta = diff > 0 ? `  \u25B2+${diff}` : `  \u25BC${diff}`;
+                      }
+                      return `${ctx.dataset.label}: ${val}${delta}`;
+                    },
+                    afterBody: (tooltipItems) => {
+                      const i = tooltipItems[0]?.dataIndex;
+                      if (i == null || i > lastActualIdx) return '';
+                      const wd = weekData[i];
+                      const allSpecs = new Set([...Object.keys(wd.specGhr), ...Object.keys(wd.specAff)]);
+                      const lines = ['\n— Category Breakdown —'];
+                      [...allSpecs].sort().forEach(spec => {
+                        const g = wd.specGhr[spec] || 0;
+                        const a = wd.specAff[spec] || 0;
+                        lines.push(`  ${spec}: ${g + a}  (GHR ${g} / Aff ${a})`);
+                      });
+                      return lines;
+                    }
+                  }
+                }
               },
               scales: {
                 y: {
