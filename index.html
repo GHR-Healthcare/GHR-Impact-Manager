@@ -5655,8 +5655,9 @@
             <h2 class="text-lg font-bold text-slate-700">Headcount Trend</h2>
             <p class="text-xs text-slate-400">4-week lookback · 2-week projection · follows active filters</p>
           </div>
-          <div class="bg-white rounded-xl border border-slate-200 p-4 shadow-sm">
+          <div class="bg-white rounded-xl border border-slate-200 p-4 shadow-sm relative" style="overflow:visible;">
             <canvas id="trendChart" height="180"></canvas>
+            <div id="trendTooltip" style="display:none;position:absolute;pointer-events:none;z-index:100;background:rgba(30,41,59,0.95);color:#fff;border-radius:8px;padding:10px 14px;font-size:11px;line-height:1.5;white-space:nowrap;max-height:80vh;overflow-y:auto;"></div>
           </div>
           <div class="mt-6">
             <h3 class="text-sm font-bold text-slate-600 mb-2">Weekly Summary</h3>
@@ -5735,44 +5736,58 @@
               plugins: {
                 legend: { position: 'top', labels: { boxWidth: 12, font: { size: 11 } } },
                 tooltip: {
-                  bodyFont: { size: 11 },
-                  titleFont: { size: 12 },
-                  padding: 12,
-                  boxPadding: 4,
-                  callbacks: {
-                    label: ctx => {
-                      const val = ctx.parsed.y;
-                      if (val == null) return null;
-                      const i = ctx.dataIndex;
-                      const prevIdx = i - 1;
+                  enabled: false,
+                  external: function(context) {
+                    const tooltipEl = document.getElementById('trendTooltip');
+                    if (!tooltipEl) return;
+                    const tooltipModel = context.tooltip;
+                    if (tooltipModel.opacity === 0) { tooltipEl.style.display = 'none'; return; }
+
+                    // Build HTML content
+                    let html = `<div style="font-weight:bold;margin-bottom:6px;font-size:12px;">${tooltipModel.title?.[0] || ''}</div>`;
+                    const dataIndex = tooltipModel.dataPoints?.[0]?.dataIndex;
+                    const wd = dataIndex != null ? weekData[dataIndex] : null;
+
+                    (tooltipModel.dataPoints || []).forEach(dp => {
+                      const val = dp.parsed.y;
+                      if (val == null) return;
+                      const prevVal = dp.dataset.data[dp.dataIndex - 1];
                       let delta = '';
-                      const prevVal = ctx.dataset.data[prevIdx];
-                      if (prevVal != null && prevIdx >= 0) {
+                      if (prevVal != null) {
                         const diff = val - prevVal;
-                        if (diff !== 0) delta = diff > 0 ? `  \u25B2+${diff}` : `  \u25BC${diff}`;
+                        if (diff > 0) delta = ` <span style="color:#34d399;">▲+${diff}</span>`;
+                        else if (diff < 0) delta = ` <span style="color:#f87171;">▼${diff}</span>`;
                       }
-                      return `${ctx.dataset.label}: ${val}${delta}`;
-                    },
-                    afterLabel: (ctx) => {
-                      const i = ctx.dataIndex;
-                      const wd = weekData[i];
-                      if (!wd) return '';
-                      const dsLabel = ctx.dataset.label;
-                      let catData = null;
-                      if (dsLabel === 'Total Headcount' || dsLabel === 'Pipeline (Confirmed)') {
-                        // Combine GHR + Aff categories
-                        const allCats = new Set([...Object.keys(wd.catGhr), ...Object.keys(wd.catAff)]);
-                        catData = {};
-                        allCats.forEach(c => catData[c] = (wd.catGhr[c] || 0) + (wd.catAff[c] || 0));
-                      } else if (dsLabel === 'GHR') {
-                        catData = wd.catGhr;
-                      } else if (dsLabel === 'Affiliate') {
-                        catData = wd.catAff;
+                      const color = dp.dataset.borderColor;
+                      html += `<div style="margin-top:4px;"><span style="display:inline-block;width:10px;height:10px;background:${color};border-radius:2px;margin-right:6px;"></span><b>${dp.dataset.label}:</b> ${val}${delta}</div>`;
+
+                      // Category breakdown
+                      if (wd) {
+                        let catData = null;
+                        const dsLabel = dp.dataset.label;
+                        if (dsLabel === 'Total Headcount' || dsLabel === 'Pipeline (Confirmed)') {
+                          const allCats = new Set([...Object.keys(wd.catGhr), ...Object.keys(wd.catAff)]);
+                          catData = {};
+                          allCats.forEach(c => catData[c] = (wd.catGhr[c] || 0) + (wd.catAff[c] || 0));
+                        } else if (dsLabel === 'GHR') {
+                          catData = wd.catGhr;
+                        } else if (dsLabel === 'Affiliate') {
+                          catData = wd.catAff;
+                        }
+                        if (catData && Object.keys(catData).length > 0) {
+                          Object.entries(catData).sort((a, b) => a[0].localeCompare(b[0])).forEach(([cat, count]) => {
+                            html += `<div style="padding-left:20px;color:#94a3b8;font-size:10px;">${cat}: ${count}</div>`;
+                          });
+                        }
                       }
-                      if (!catData || Object.keys(catData).length === 0) return '';
-                      return Object.entries(catData).sort((a, b) => a[0].localeCompare(b[0]))
-                        .map(([cat, count]) => `    ${cat}: ${count}`);
-                    }
+                    });
+
+                    tooltipEl.innerHTML = html;
+                    tooltipEl.style.display = 'block';
+                    const canvasRect = context.chart.canvas.getBoundingClientRect();
+                    const containerRect = context.chart.canvas.parentElement.getBoundingClientRect();
+                    tooltipEl.style.left = (tooltipModel.caretX + 12) + 'px';
+                    tooltipEl.style.top = '10px';
                   }
                 }
               },
