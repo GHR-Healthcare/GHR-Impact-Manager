@@ -2,7 +2,7 @@ import azure.functions as func
 import pyodbc
 import os
 import json
-from datetime import datetime
+from datetime import datetime, date
 
 
 def main(req: func.HttpRequest) -> func.HttpResponse:
@@ -73,7 +73,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             for row in cursor.fetchall():
                 row_dict = dict(zip(columns, row))
                 for key, val in row_dict.items():
-                    if isinstance(val, datetime):
+                    if isinstance(val, (datetime, date)):
                         row_dict[key] = val.isoformat()
                 submissions.append(row_dict)
         except Exception as e:
@@ -118,7 +118,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             for row in cursor.fetchall():
                 row_dict = dict(zip(columns, row))
                 for key, val in row_dict.items():
-                    if isinstance(val, datetime):
+                    if isinstance(val, (datetime, date)):
                         row_dict[key] = val.isoformat()
                 submissions.append(row_dict)
         except Exception as e:
