@@ -5412,7 +5412,7 @@
           return sysMatch && facMatch && catMatch && specMatch;
         });
 
-        // Build 7 week buckets: 4 back + current + 2 forward (Sun-Sat)
+        // Build 8 week buckets: 4 back + current + 3 forward (Sun-Sat)
         const getSunday = (d) => {
           const dt = new Date(d);
           const day = dt.getDay();
@@ -5424,7 +5424,7 @@
         const currentSunday = getSunday(today);
 
         const weeks = [];
-        for (let i = -4; i <= 2; i++) {
+        for (let i = -4; i <= 3; i++) {
           const start = new Date(currentSunday);
           start.setDate(start.getDate() + i * 7);
           const end = new Date(start);
@@ -5477,12 +5477,14 @@
           return c;
         };
 
-        // Compute headcount per week, split by GHR vs Affiliate, with specialty breakdown
+        // Compute headcount per week, split by GHR vs Affiliate, with category + system breakdown
         const weekData = weeks.map(({ start, end }) => {
           const ghrNames = new Set();
           const affNames = new Set();
           const catGhr = {};   // category → Set of names
           const catAff = {};
+          const catSysGhr = {};  // category → system → Set of names
+          const catSysAff = {};
           filtered.forEach(r => {
             const sd = r.startDate;
             const ed = r.endDate;
@@ -5490,23 +5492,41 @@
             if (overlaps) {
               const name = r.worker_name || '';
               const cat = normalizeCategory(r.category);
+              const sys = r.healthSystem || 'Unknown';
               if (isGHRAgency(r.agency)) {
                 ghrNames.add(name);
                 if (!catGhr[cat]) catGhr[cat] = new Set();
                 catGhr[cat].add(name);
+                if (!catSysGhr[cat]) catSysGhr[cat] = {};
+                if (!catSysGhr[cat][sys]) catSysGhr[cat][sys] = new Set();
+                catSysGhr[cat][sys].add(name);
               } else {
                 affNames.add(name);
                 if (!catAff[cat]) catAff[cat] = new Set();
                 catAff[cat].add(name);
+                if (!catSysAff[cat]) catSysAff[cat] = {};
+                if (!catSysAff[cat][sys]) catSysAff[cat][sys] = new Set();
+                catSysAff[cat][sys].add(name);
               }
             }
           });
           // Convert sets to counts
           const catGhrCounts = {};
           const catAffCounts = {};
+          const catSysGhrCounts = {};  // category → system → count
+          const catSysAffCounts = {};
           for (const [k, v] of Object.entries(catGhr)) catGhrCounts[k] = v.size;
           for (const [k, v] of Object.entries(catAff)) catAffCounts[k] = v.size;
-          return { ghr: ghrNames.size, aff: affNames.size, total: ghrNames.size + affNames.size, catGhr: catGhrCounts, catAff: catAffCounts };
+          for (const [cat, systems] of Object.entries(catSysGhr)) {
+            catSysGhrCounts[cat] = {};
+            for (const [sys, names] of Object.entries(systems)) catSysGhrCounts[cat][sys] = names.size;
+          }
+          for (const [cat, systems] of Object.entries(catSysAff)) {
+            catSysAffCounts[cat] = {};
+            for (const [sys, names] of Object.entries(systems)) catSysAffCounts[cat][sys] = names.size;
+          }
+          return { ghr: ghrNames.size, aff: affNames.size, total: ghrNames.size + affNames.size,
+            catGhr: catGhrCounts, catAff: catAffCounts, catSysGhr: catSysGhrCounts, catSysAff: catSysAffCounts };
         });
         const weekHC = weekData.map(d => d.total);
 
@@ -5577,7 +5597,7 @@
         const summaryTableHeaders = weeks.map((w, i) => {
           const isCurrent = i === currentWeekIdx;
           return `<th class="px-2 py-2 text-center font-semibold ${isCurrent ? 'bg-blue-50 text-blue-700' : ''}">${fmtWeekEnd(w.end)}</th>`;
-        }).join('');
+        }).join('') + `<th class="px-2 py-2 text-center font-semibold bg-slate-50 text-slate-600 border-l border-slate-200">4-Wk Avg</th>`;
 
         const deltaSpan = (val, prev) => {
           if (prev == null) return '';
@@ -5588,9 +5608,37 @@
             : `<span class="text-red-500"> ${diff}</span>`;
         };
 
-        // Build a row for a category
+        // Collect all systems that appear in any category
+        const getSystemsForCat = (cat) => {
+          const systems = new Set();
+          weekData.forEach(wd => {
+            Object.keys(wd.catSysGhr?.[cat] || {}).forEach(s => systems.add(s));
+            Object.keys(wd.catSysAff?.[cat] || {}).forEach(s => systems.add(s));
+          });
+          return [...systems].sort();
+        };
+
+        // 4-week rolling average helper (uses last 4 actual weeks up to currentWeekIdx)
+        const rolling4Wk = (getData) => {
+          const endIdx = currentWeekIdx >= 0 ? currentWeekIdx : lastActualIdx;
+          const startIdx = Math.max(0, endIdx - 3);
+          let sum = 0, count = 0;
+          for (let i = startIdx; i <= endIdx; i++) {
+            const v = getData(i);
+            if (v != null) { sum += v; count++; }
+          }
+          return count > 0 ? Math.round(sum / count) : null;
+        };
+
+        // Build a row for a category (expandable)
         const buildCatRow = (cat) => {
-          let cells = `<td class="px-3 py-1.5 border-b border-slate-100 font-medium text-slate-700 whitespace-nowrap text-xs">${cat}</td>`;
+          const catId = cat.replace(/[^a-zA-Z0-9]/g, '_');
+          const systems = getSystemsForCat(cat);
+          const hasSubRows = systems.length > 1;
+          const toggleAttr = hasSubRows ? `onclick="document.querySelectorAll('.cat-sys-${catId}').forEach(r=>r.classList.toggle('hidden'))" style="cursor:pointer"` : '';
+          const chevron = hasSubRows ? `<span class="inline-block w-3 text-slate-400 mr-1 cat-chevron-${catId}">&#9654;</span>` : `<span class="inline-block w-3 mr-1"></span>`;
+
+          let cells = `<td class="px-3 py-1.5 border-b border-slate-100 font-medium text-slate-700 whitespace-nowrap text-xs">${chevron}${cat}</td>`;
           weeks.forEach((w, i) => {
             const g = weekData[i].catGhr?.[cat] || 0;
             const a = weekData[i].catAff?.[cat] || 0;
@@ -5603,12 +5651,54 @@
               <span class="text-purple-700 font-semibold">${a}${deltaSpan(a, aPrev)}</span>
             </td>`;
           });
-          return `<tr class="hover:bg-slate-50">${cells}</tr>`;
+          // 4-week rolling avg
+          const avgG = rolling4Wk(i => weekData[i].catGhr?.[cat] || 0);
+          const avgA = rolling4Wk(i => weekData[i].catAff?.[cat] || 0);
+          const curG = weekData[currentWeekIdx >= 0 ? currentWeekIdx : lastActualIdx]?.catGhr?.[cat] || 0;
+          const curA = weekData[currentWeekIdx >= 0 ? currentWeekIdx : lastActualIdx]?.catAff?.[cat] || 0;
+          cells += `<td class="px-2 py-1.5 border-b border-slate-100 text-center text-[10px] bg-slate-50 border-l border-slate-200">
+            <span class="text-blue-700 font-semibold">${avgG != null ? avgG : '—'}${avgG != null ? deltaSpan(curG, avgG) : ''}</span>
+            <span class="text-slate-300 mx-0.5">/</span>
+            <span class="text-purple-700 font-semibold">${avgA != null ? avgA : '—'}${avgA != null ? deltaSpan(curA, avgA) : ''}</span>
+          </td>`;
+
+          let rows = `<tr class="hover:bg-slate-50" ${toggleAttr}>${cells}</tr>`;
+
+          // Sub-rows for each health system (hidden by default)
+          if (hasSubRows) {
+            systems.forEach(sys => {
+              let sysCells = `<td class="pl-8 pr-3 py-1 border-b border-slate-50 text-slate-500 whitespace-nowrap text-[10px]">${sys}</td>`;
+              weeks.forEach((w, i) => {
+                const g = weekData[i].catSysGhr?.[cat]?.[sys] || 0;
+                const a = weekData[i].catSysAff?.[cat]?.[sys] || 0;
+                const gPrev = i > 0 ? (weekData[i - 1].catSysGhr?.[cat]?.[sys] || 0) : null;
+                const aPrev = i > 0 ? (weekData[i - 1].catSysAff?.[cat]?.[sys] || 0) : null;
+                const isCurrent = i === currentWeekIdx;
+                sysCells += `<td class="px-2 py-1 border-b border-slate-50 text-center text-[10px] ${isCurrent ? 'bg-blue-50/50' : ''}">
+                  <span class="text-blue-600">${g}${deltaSpan(g, gPrev)}</span>
+                  <span class="text-slate-200 mx-0.5">/</span>
+                  <span class="text-purple-600">${a}${deltaSpan(a, aPrev)}</span>
+                </td>`;
+              });
+              // 4-week rolling for system
+              const sAvgG = rolling4Wk(i => weekData[i].catSysGhr?.[cat]?.[sys] || 0);
+              const sAvgA = rolling4Wk(i => weekData[i].catSysAff?.[cat]?.[sys] || 0);
+              const sCurG = weekData[currentWeekIdx >= 0 ? currentWeekIdx : lastActualIdx]?.catSysGhr?.[cat]?.[sys] || 0;
+              const sCurA = weekData[currentWeekIdx >= 0 ? currentWeekIdx : lastActualIdx]?.catSysAff?.[cat]?.[sys] || 0;
+              sysCells += `<td class="px-2 py-1 border-b border-slate-50 text-center text-[10px] bg-slate-50 border-l border-slate-200">
+                <span class="text-blue-600">${sAvgG != null ? sAvgG : '—'}${sAvgG != null ? deltaSpan(sCurG, sAvgG) : ''}</span>
+                <span class="text-slate-200 mx-0.5">/</span>
+                <span class="text-purple-600">${sAvgA != null ? sAvgA : '—'}${sAvgA != null ? deltaSpan(sCurA, sAvgA) : ''}</span>
+              </td>`;
+              rows += `<tr class="cat-sys-${catId} hidden bg-slate-25 hover:bg-slate-50">${sysCells}</tr>`;
+            });
+          }
+          return rows;
         };
 
         // Total row
         const buildTotalRow = () => {
-          let cells = `<td class="px-3 py-1.5 border-b border-slate-200 font-bold text-slate-800 whitespace-nowrap text-xs">Total</td>`;
+          let cells = `<td class="px-3 py-1.5 border-b border-slate-200 font-bold text-slate-800 whitespace-nowrap text-xs"><span class="inline-block w-3 mr-1"></span>Total</td>`;
           weeks.forEach((w, i) => {
             const g = weekData[i].ghr;
             const a = weekData[i].aff;
@@ -5621,6 +5711,16 @@
               <span class="text-purple-700">${a}${deltaSpan(a, aPrev)}</span>
             </td>`;
           });
+          // 4-week rolling avg total
+          const avgG = rolling4Wk(i => weekData[i].ghr);
+          const avgA = rolling4Wk(i => weekData[i].aff);
+          const curG = weekData[currentWeekIdx >= 0 ? currentWeekIdx : lastActualIdx]?.ghr || 0;
+          const curA = weekData[currentWeekIdx >= 0 ? currentWeekIdx : lastActualIdx]?.aff || 0;
+          cells += `<td class="px-2 py-1.5 border-b border-slate-200 text-center text-[11px] font-bold bg-slate-50 border-l border-slate-200">
+            <span class="text-blue-700">${avgG != null ? avgG : '—'}${avgG != null ? deltaSpan(curG, avgG) : ''}</span>
+            <span class="text-slate-300 mx-0.5">/</span>
+            <span class="text-purple-700">${avgA != null ? avgA : '—'}${avgA != null ? deltaSpan(curA, avgA) : ''}</span>
+          </td>`;
           return `<tr class="bg-slate-50">${cells}</tr>`;
         };
 
@@ -5642,6 +5742,10 @@
             const isCurrent = i === currentWeekIdx;
             cells += `<td class="px-3 py-1.5 border-b border-slate-100 text-center ${isCurrent ? 'bg-blue-50 font-semibold' : ''}">${val != null ? val + deltaSpan(val, prev) : '—'}</td>`;
           });
+          // 4-week rolling avg
+          const avg = rolling4Wk(r.getData);
+          const cur = r.getData(currentWeekIdx >= 0 ? currentWeekIdx : lastActualIdx);
+          cells += `<td class="px-3 py-1.5 border-b border-slate-100 text-center bg-slate-50 border-l border-slate-200 font-semibold">${avg != null ? avg + deltaSpan(cur, avg) : '—'}</td>`;
           return `<tr class="hover:bg-slate-50">${cells}</tr>`;
         }).join('');
 
@@ -5651,7 +5755,7 @@
         container.innerHTML = `
           <div class="flex items-center justify-between mb-4">
             <h2 class="text-lg font-bold text-slate-700">Headcount Trend</h2>
-            <p class="text-xs text-slate-400">4-week lookback · 2-week projection · follows active filters</p>
+            <p class="text-xs text-slate-400">4-week lookback · 3-week projection · follows active filters</p>
           </div>
           <div class="bg-white rounded-xl border border-slate-200 p-4 shadow-sm">
             <canvas id="trendChart" height="100"></canvas>
