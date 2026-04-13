@@ -4638,7 +4638,7 @@
 
         // B4-to-VNDLY transition: these systems have fully moved to VNDLY,
         // exclude all B4 data for them to prevent double-counting
-        const transitionedSystems = new Set(['RUMC', 'Holy Redeemer']);
+        const transitionedSystems = new Set(['RUMC', 'Holy Redeemer', 'Cooper']);
 
         // Systems excluded from per diem tab entirely
         const isExcludedFromPerDiem = (sys) => /sunrise/i.test(sys || '');
@@ -5166,7 +5166,7 @@
         }
 
         // Exclude B4 data for systems that have transitioned to VNDLY (same logic as overview)
-        const transitionedSystems = new Set(['RUMC', 'Holy Redeemer']);
+        const transitionedSystems = new Set(['RUMC', 'Holy Redeemer', 'Cooper']);
         const isExcludedSystem = (sys) => /sunrise/i.test(sys || '');
         const deduped = rows.filter(r =>
           !(r.source_system === 'B4' && transitionedSystems.has(r.healthSystem)) &&

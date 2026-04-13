@@ -65,7 +65,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                     CONCAT([Contractor First Name], ' ', [Contractor Last Name]) AS worker_name,
                     [Health System] AS system,
                     [Default Work Site Name] AS facility,
-                    [Vendor Company Name] AS agency,
+                    [Vendor Name] AS agency,
                     [Job Title] AS specialty,
                     [Labor Type] AS category,
                     [Start Date] AS startDate,
