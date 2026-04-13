@@ -5397,24 +5397,32 @@
           return;
         }
 
-        // Category filter helper (same pattern as perDiem)
+        // Exclude B4 records for systems that have fully transitioned to VNDLY (prevents double-counting)
+        const transitionedSystems = new Set(['RUMC', 'Holy Redeemer', 'Cooper']);
+        const deduped = allAssignments.filter(r =>
+          !(r.source_system === 'B4' && transitionedSystems.has(r.healthSystem))
+        );
+
+        // Category filter: match normalized category against selected filter values
         const selectedCats = s.filterSelection.categories;
-        const matchesTrendCategory = (agency) => {
+        const matchesTrendCategory = (cat) => {
           if (selectedCats.size === 0) return true;
-          const isAllied = /allied/i.test(agency || '');
-          for (const cat of selectedCats) {
-            const cl = String(cat).toLowerCase();
-            if (/allied/.test(cl) && isAllied) return true;
-            if (!/allied/.test(cl) && !isAllied) return true;
+          const nc = (cat || '').toLowerCase();
+          for (const filterCat of selectedCats) {
+            const fc = String(filterCat).toLowerCase();
+            if (nc === fc || nc.includes(fc) || fc.includes(nc)) return true;
+            // Broad group match: both nursing or both allied
+            if (/nurs/i.test(nc) && /nurs/i.test(fc)) return true;
+            if (/allied/i.test(nc) && /allied/i.test(fc)) return true;
           }
           return false;
         };
 
         // Apply global filters
-        const filtered = allAssignments.filter(r => {
+        const filtered = deduped.filter(r => {
           const sysMatch = s.filterSelection.systems.size === 0 || s.filterSelection.systems.has(r.healthSystem);
           const facMatch = s.filterSelection.facilities.size === 0 || s.filterSelection.facilities.has(r.facility);
-          const catMatch = matchesTrendCategory(r.agency);
+          const catMatch = matchesTrendCategory(r.category);
           const specMatch = s.filterSelection.specialties.size === 0 ||
             Array.from(s.filterSelection.specialties).some(sp => sp.toLowerCase() === (r.specialty || '').toLowerCase());
           return sysMatch && facMatch && catMatch && specMatch;
