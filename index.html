@@ -5763,10 +5763,25 @@
         const buildGroupHeaderRow = (label, colSpan) =>
           `<tr class="bg-slate-200"><td colspan="${colSpan}" class="px-3 py-1 text-[10px] font-bold uppercase tracking-wider text-slate-500">${label}</td></tr>`;
 
-        const buildSubtotalRow = (cats) => {
+        const buildSubtotalRow = (cats, groupLabel) => {
+          const subId = groupLabel.replace(/[^a-zA-Z0-9]/g, '_') + '_sub';
           const avgG = rolling4Wk(i => cats.reduce((s, c) => s + (weekData[i].catGhr?.[c] || 0), 0));
           const avgA = rolling4Wk(i => cats.reduce((s, c) => s + (weekData[i].catAff?.[c] || 0), 0));
-          let cells = `<td class="px-3 py-1 border-b-2 border-slate-200 font-bold text-slate-700 whitespace-nowrap text-xs pl-6">Subtotal</td>`;
+
+          // Collect all systems across all categories in this group
+          const groupSystems = new Set();
+          cats.forEach(cat => {
+            weekData.forEach(wd => {
+              Object.keys(wd.catSysGhr?.[cat] || {}).forEach(s => groupSystems.add(s));
+              Object.keys(wd.catSysAff?.[cat] || {}).forEach(s => groupSystems.add(s));
+            });
+          });
+          const groupSystemsList = [...groupSystems].sort();
+          const hasSubRows = groupSystemsList.length > 1;
+          const toggleAttr = hasSubRows ? `onclick="document.querySelectorAll('.sub-sys-${subId}').forEach(r=>r.classList.toggle('hidden'))" style="cursor:pointer"` : '';
+          const chevron = hasSubRows ? `<span class="inline-block w-3 text-slate-400 mr-1">&#9654;</span>` : `<span class="inline-block w-3 mr-1"></span>`;
+
+          let cells = `<td class="px-3 py-1 border-b-2 border-slate-200 font-bold text-slate-700 whitespace-nowrap text-xs pl-4">${chevron}Subtotal</td>`;
           weeks.forEach((w, i) => {
             const g = cats.reduce((s, c) => s + (weekData[i].catGhr?.[c] || 0), 0);
             const a = cats.reduce((s, c) => s + (weekData[i].catAff?.[c] || 0), 0);
@@ -5786,7 +5801,37 @@
               </td>`;
             }
           });
-          return `<tr class="bg-slate-50/50">${cells}</tr>`;
+
+          let rows = `<tr class="bg-slate-50/50 hover:bg-slate-100" ${toggleAttr}>${cells}</tr>`;
+
+          if (hasSubRows) {
+            groupSystemsList.forEach(sys => {
+              const sAvgG = rolling4Wk(i => cats.reduce((s, c) => s + (weekData[i].catSysGhr?.[c]?.[sys] || 0), 0));
+              const sAvgA = rolling4Wk(i => cats.reduce((s, c) => s + (weekData[i].catSysAff?.[c]?.[sys] || 0), 0));
+              let sysCells = `<td class="pl-10 pr-3 py-1 border-b border-slate-100 text-slate-500 whitespace-nowrap text-[10px]">${sys}</td>`;
+              weeks.forEach((w, i) => {
+                const g = cats.reduce((s, c) => s + (weekData[i].catSysGhr?.[c]?.[sys] || 0), 0);
+                const a = cats.reduce((s, c) => s + (weekData[i].catSysAff?.[c]?.[sys] || 0), 0);
+                const gPrev = i > 0 ? cats.reduce((s, c) => s + (weekData[i-1].catSysGhr?.[c]?.[sys] || 0), 0) : null;
+                const aPrev = i > 0 ? cats.reduce((s, c) => s + (weekData[i-1].catSysAff?.[c]?.[sys] || 0), 0) : null;
+                const isCurrent = i === currentWeekIdx;
+                sysCells += `<td class="px-2 py-1 border-b border-slate-100 text-center text-[10px] ${isCurrent ? 'bg-blue-50/50' : ''}">
+                  <span class="text-blue-600">${g}${deltaSpan(g, gPrev)}</span>
+                  <span class="text-slate-200 mx-0.5">/</span>
+                  <span class="text-purple-600">${a}${deltaSpan(a, aPrev)}</span>
+                </td>`;
+                if (isCurrent) {
+                  sysCells += `<td class="px-2 py-1 border-b border-slate-100 text-center text-[10px] bg-amber-50 border-l border-r border-amber-200">
+                    <span class="text-blue-600">${sAvgG != null ? sAvgG : '—'}</span>
+                    <span class="text-slate-200 mx-0.5">/</span>
+                    <span class="text-purple-600">${sAvgA != null ? sAvgA : '—'}</span>
+                  </td>`;
+                }
+              });
+              rows += `<tr class="sub-sys-${subId} hidden bg-slate-25 hover:bg-slate-50">${sysCells}</tr>`;
+            });
+          }
+          return rows;
         };
 
         // Total col count: weeks + 1 (avg col after current week) + 1 (label col)
@@ -5799,7 +5844,7 @@
           groupCats.forEach(c => assignedCats.add(c));
           catTableBodyParts.push(buildGroupHeaderRow(group.label, totalCols));
           groupCats.forEach(c => catTableBodyParts.push(buildCatRow(c)));
-          if (groupCats.length > 1) catTableBodyParts.push(buildSubtotalRow(groupCats));
+          if (groupCats.length > 1) catTableBodyParts.push(buildSubtotalRow(groupCats, group.label));
         });
         const catTableBody = catTableBodyParts.join('');
 
