@@ -4122,6 +4122,7 @@
 
         // Apply global system filter
         const selectedSystems = window.store.state.filterSelection.systems;
+        console.log('[Financials] selectedSystems:', [...selectedSystems], 'rawData rows:', rawData.length);
         const filteredData = rawData.filter(r => {
           if (selectedSystems.size === 0) return true;
           const sys = Utils.getHealthSystem(null, r.health_system) || r.health_system || 'Unknown';
