@@ -4120,12 +4120,20 @@
           return;
         }
 
+        // Apply global system filter
+        const selectedSystems = window.store.state.filterSelection.systems;
+        const filteredData = rawData.filter(r => {
+          if (selectedSystems.size === 0) return true;
+          const sys = Utils.getHealthSystem(null, r.health_system) || r.health_system || 'Unknown';
+          return selectedSystems.has(sys);
+        });
+
         // Aggregate data: { month: { system: { ghrBilling, affBilling, ghrHeadcount, affHeadcount } } }
         const monthMap = {};
         const systemSet = new Set();
         const monthSet = new Set();
 
-        rawData.forEach(r => {
+        filteredData.forEach(r => {
           const m = r.month;
           const sys = Utils.getHealthSystem(null, r.health_system) || r.health_system || 'Unknown';
           monthSet.add(m);
@@ -5739,20 +5747,20 @@
         const buildSubtotalRow = (cats) => {
           const avgG = rolling4Wk(i => cats.reduce((s, c) => s + (weekData[i].catGhr?.[c] || 0), 0));
           const avgA = rolling4Wk(i => cats.reduce((s, c) => s + (weekData[i].catAff?.[c] || 0), 0));
-          let cells = `<td class="px-3 py-1 border-b-2 border-slate-200 font-semibold text-slate-600 whitespace-nowrap text-xs pl-6">Subtotal</td>`;
+          let cells = `<td class="px-3 py-1 border-b-2 border-slate-200 font-bold text-slate-700 whitespace-nowrap text-xs pl-6">Subtotal</td>`;
           weeks.forEach((w, i) => {
             const g = cats.reduce((s, c) => s + (weekData[i].catGhr?.[c] || 0), 0);
             const a = cats.reduce((s, c) => s + (weekData[i].catAff?.[c] || 0), 0);
             const gPrev = i > 0 ? cats.reduce((s, c) => s + (weekData[i-1].catGhr?.[c] || 0), 0) : null;
             const aPrev = i > 0 ? cats.reduce((s, c) => s + (weekData[i-1].catAff?.[c] || 0), 0) : null;
             const isCurrent = i === currentWeekIdx;
-            cells += `<td class="px-2 py-1 border-b-2 border-slate-200 text-center text-[10px] font-semibold ${isCurrent ? 'bg-blue-50' : ''}">
+            cells += `<td class="px-2 py-1 border-b-2 border-slate-200 text-center text-[10px] font-bold ${isCurrent ? 'bg-blue-50' : ''}">
               <span class="text-blue-700">${g}${deltaSpan(g, gPrev)}</span>
               <span class="text-slate-300 mx-0.5">/</span>
               <span class="text-purple-700">${a}${deltaSpan(a, aPrev)}</span>
             </td>`;
             if (isCurrent) {
-              cells += `<td class="px-2 py-1 border-b-2 border-slate-200 text-center text-[10px] font-semibold bg-amber-50 border-l border-r border-amber-200">
+              cells += `<td class="px-2 py-1 border-b-2 border-slate-200 text-center text-[10px] font-bold bg-amber-50 border-l border-r border-amber-200">
                 <span class="text-blue-700">${avgG != null ? avgG : '—'}</span>
                 <span class="text-slate-300 mx-0.5">/</span>
                 <span class="text-purple-700">${avgA != null ? avgA : '—'}</span>
