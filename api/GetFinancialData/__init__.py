@@ -76,6 +76,8 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                         [Contractor Last Name],
                         [Billing Cycle End Date],
                         [Health System],
+                        [Default Work Site Name] AS facility,
+                        [Labor Type] AS category,
                         [Vendor Company Name],
                         [Item Date],
                         [Client Amount]
@@ -88,6 +90,8 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                     'VNDLY' AS source_system,
                     FORMAT(DATEFROMPARTS(YEAR([Billing Cycle End Date]), MONTH([Billing Cycle End Date]), 1), 'yyyy-MM') AS month,
                     [Health System] AS health_system,
+                    facility,
+                    category,
                     CASE
                         WHEN [Vendor Company Name] LIKE '%GHR%' OR [Vendor Company Name] LIKE '%Planet Healthcare%'
                         THEN 'GHR' ELSE 'Affiliate'
@@ -98,6 +102,8 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                 GROUP BY
                     FORMAT(DATEFROMPARTS(YEAR([Billing Cycle End Date]), MONTH([Billing Cycle End Date]), 1), 'yyyy-MM'),
                     [Health System],
+                    facility,
+                    category,
                     CASE
                         WHEN [Vendor Company Name] LIKE '%GHR%' OR [Vendor Company Name] LIKE '%Planet Healthcare%'
                         THEN 'GHR' ELSE 'Affiliate'
@@ -126,6 +132,8 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                         [Employee],
                         [Work Date],
                         [Health System],
+                        [Facility Name] AS facility,
+                        [Care Type] AS category,
                         [Agency Name],
                         [Bill Total]
                     FROM dhc.B4HealthESR
@@ -137,6 +145,8 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                     'B4' AS source_system,
                     FORMAT(DATEFROMPARTS(YEAR([Work Date]), MONTH([Work Date]), 1), 'yyyy-MM') AS month,
                     [Health System] AS health_system,
+                    facility,
+                    category,
                     CASE
                         WHEN [Agency Name] LIKE 'GHR%' OR [Agency Name] LIKE '%Planet Healthcare%'
                         THEN 'GHR' ELSE 'Affiliate'
@@ -147,6 +157,8 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                 GROUP BY
                     FORMAT(DATEFROMPARTS(YEAR([Work Date]), MONTH([Work Date]), 1), 'yyyy-MM'),
                     [Health System],
+                    facility,
+                    category,
                     CASE
                         WHEN [Agency Name] LIKE 'GHR%' OR [Agency Name] LIKE '%Planet Healthcare%'
                         THEN 'GHR' ELSE 'Affiliate'

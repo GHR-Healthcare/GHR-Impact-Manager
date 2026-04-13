@@ -4120,13 +4120,23 @@
           return;
         }
 
-        // Apply global system filter
-        const selectedSystems = window.store.state.filterSelection.systems;
-        console.log('[Financials] selectedSystems:', [...selectedSystems], 'rawData rows:', rawData.length);
+        // Apply global filters (system, facility, category)
+        const fs = window.store.state.filterSelection;
         const filteredData = rawData.filter(r => {
-          if (selectedSystems.size === 0) return true;
           const sys = Utils.getHealthSystem(null, r.health_system) || r.health_system || 'Unknown';
-          return selectedSystems.has(sys);
+          if (fs.systems.size > 0 && !fs.systems.has(sys)) return false;
+          if (fs.facilities.size > 0 && r.facility && !fs.facilities.has(r.facility)) return false;
+          if (fs.categories.size > 0 && r.category) {
+            const nc = (r.category || '').toLowerCase();
+            const match = Array.from(fs.categories).some(fc => {
+              const f = String(fc).toLowerCase();
+              return nc === f || nc.includes(f) || f.includes(nc) ||
+                (/nurs/i.test(nc) && /nurs/i.test(f)) ||
+                (/allied/i.test(nc) && /allied/i.test(f));
+            });
+            if (!match) return false;
+          }
+          return true;
         });
 
         // Aggregate data: { month: { system: { ghrBilling, affBilling, ghrHeadcount, affHeadcount } } }
