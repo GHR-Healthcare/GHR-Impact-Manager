@@ -7,12 +7,12 @@ import urllib.parse
 
 def get_graph_token():
     """Get an access token for Microsoft Graph using client credentials flow."""
-    tenant_id = os.environ.get('GRAPH_TENANT_ID', '')
-    client_id = os.environ.get('GRAPH_CLIENT_ID', '')
-    client_secret = os.environ.get('GRAPH_CLIENT_SECRET', '')
+    tenant_id = os.environ.get('AAD_TENANT_ID', '')
+    client_id = os.environ.get('AAD_CLIENT_ID', '')
+    client_secret = os.environ.get('AAD_CLIENT_SECRET', '')
 
     if not all([tenant_id, client_id, client_secret]):
-        raise ValueError('Missing GRAPH_TENANT_ID, GRAPH_CLIENT_ID, or GRAPH_CLIENT_SECRET env vars')
+        raise ValueError('Missing AAD_TENANT_ID, AAD_CLIENT_ID, or AAD_CLIENT_SECRET env vars')
 
     token_url = f'https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token'
     body = urllib.parse.urlencode({
