@@ -1286,9 +1286,16 @@
                 const trendResponse = await fetch(`${API_BASE_URL}/trend-data`);
                 if (trendResponse.ok) {
                     const trendData = await trendResponse.json();
+                    const parseLocalDate = s => { if (!s) return null; const [y,m,d] = s.split('T')[0].split('-'); return new Date(+y, +m-1, +d); };
                     if (trendData.assignments) {
                         trendData.assignments.forEach(r => {
-                            const parseLocalDate = s => { if (!s) return null; const [y,m,d] = s.split('T')[0].split('-'); return new Date(+y, +m-1, +d); };
+                            r.startDate = parseLocalDate(r.startDate);
+                            r.endDate = parseLocalDate(r.endDate);
+                            r.healthSystem = Utils.getHealthSystem(r.facility, r.system);
+                        });
+                    }
+                    if (trendData.pending) {
+                        trendData.pending.forEach(r => {
                             r.startDate = parseLocalDate(r.startDate);
                             r.endDate = parseLocalDate(r.endDate);
                             r.healthSystem = Utils.getHealthSystem(r.facility, r.system);
@@ -5417,6 +5424,7 @@
 
         const s = window.store.state;
         const allAssignments = s.trendData?.assignments || [];
+        const allPending = s.trendData?.pending || [];
 
         if (!s.trendLoaded) {
           container.innerHTML = `<div class="p-6 text-slate-500 bg-slate-50 border border-slate-200 rounded flex items-center gap-3">
@@ -5448,14 +5456,16 @@
         };
 
         // Apply global filters
-        const filtered = deduped.filter(r => {
+        const filterRow = (r) => {
           const sysMatch = s.filterSelection.systems.size === 0 || s.filterSelection.systems.has(r.healthSystem);
           const facMatch = s.filterSelection.facilities.size === 0 || s.filterSelection.facilities.has(r.facility);
           const catMatch = matchesTrendCategory(r.category);
           const specMatch = s.filterSelection.specialties.size === 0 ||
             Array.from(s.filterSelection.specialties).some(sp => sp.toLowerCase() === (r.specialty || '').toLowerCase());
           return sysMatch && facMatch && catMatch && specMatch;
-        });
+        };
+        const filtered = deduped.filter(filterRow);
+        const filteredPending = allPending.filter(filterRow);
 
         // Build 8 week buckets: 4 back + current + 3 forward (Sun-Sat)
         const getSunday = (d) => {
@@ -5570,8 +5580,24 @@
             catSysAffCounts[cat] = {};
             for (const [sys, names] of Object.entries(systems)) catSysAffCounts[cat][sys] = names.size;
           }
+          // Pending headcount (future weeks only)
+          const pendingGhrNames = new Set();
+          const pendingAffNames = new Set();
+          filteredPending.forEach(r => {
+            const sd = r.startDate;
+            const ed = r.endDate;
+            const overlaps = sd <= end && (ed === null || ed >= start);
+            if (overlaps) {
+              const name = r.worker_name || '';
+              if (isGHRAgency(r.agency)) pendingGhrNames.add(name);
+              else pendingAffNames.add(name);
+            }
+          });
+
           return { ghr: ghrNames.size, aff: affNames.size, total: ghrNames.size + affNames.size,
-            catGhr: catGhrCounts, catAff: catAffCounts, catSysGhr: catSysGhrCounts, catSysAff: catSysAffCounts };
+            catGhr: catGhrCounts, catAff: catAffCounts, catSysGhr: catSysGhrCounts, catSysAff: catSysAffCounts,
+            pendingGhr: pendingGhrNames.size, pendingAff: pendingAffNames.size,
+            pendingTotal: pendingGhrNames.size + pendingAffNames.size };
         });
         const weekHC = weekData.map(d => d.total);
 
@@ -5601,6 +5627,14 @@
         const pipelineData = weeks.map((w, i) => {
           // Share the last actuals point so lines connect visually
           return i >= lastActualIdx ? weekHC[i] : null;
+        });
+
+        // Pending data (future weeks only, anchored at lastActualIdx)
+        const pendingGhrData = weeks.map((w, i) => i >= lastActualIdx ? weekData[i].pendingGhr : null);
+        const pendingAffData = weeks.map((w, i) => i >= lastActualIdx ? weekData[i].pendingAff : null);
+        const pipelineWithPendingData = weeks.map((w, i) => {
+          if (i < lastActualIdx) return null;
+          return weekData[i].total + weekData[i].pendingTotal;
         });
 
         // Linear regression on all actual weeks
@@ -5872,7 +5906,10 @@
           { label: 'GHR', color: 'blue-700', getData: i => weekData[i].ghr },
           { label: 'Affiliate', color: 'purple-700', getData: i => weekData[i].aff },
           { label: 'Pipeline (Confirmed)', color: 'green-700', getData: i => i >= lastActualIdx ? weekData[i].total : null },
-          { label: 'Trend Projection', color: 'orange-600', getData: i => i >= lastActualIdx ? Math.max(0, Math.round(slope * i + intercept)) : null },
+          { label: 'Pending GHR', color: 'amber-600', getData: i => i >= lastActualIdx ? weekData[i].pendingGhr : null },
+          { label: 'Pending Affiliate', color: 'yellow-600', getData: i => i >= lastActualIdx ? weekData[i].pendingAff : null },
+          { label: 'Pipeline w/ Pending', color: 'orange-600', getData: i => i >= lastActualIdx ? weekData[i].total + weekData[i].pendingTotal : null },
+          { label: 'Trend Projection', color: 'slate-500', getData: i => i >= lastActualIdx ? Math.max(0, Math.round(slope * i + intercept)) : null },
         ];
         const summaryTableBody = summaryRows.map(r => {
           const avg = rolling4Wk(r.getData);
@@ -5895,7 +5932,7 @@
         container.innerHTML = `
           <div class="flex items-center justify-between mb-4">
             <h2 class="text-lg font-bold text-slate-700">Headcount Trend</h2>
-            <p class="text-xs text-slate-400">4-week lookback · 3-week projection · follows active filters</p>
+            <p class="text-xs text-slate-400">4-week lookback · 3-week projection · pending = submitted/applied · follows active filters</p>
           </div>
           <div class="bg-white rounded-xl border border-slate-200 p-4 shadow-sm">
             <canvas id="trendChart" height="100"></canvas>
@@ -5974,9 +6011,39 @@
                   pointRadius: 5,
                 },
                 {
+                  label: 'Pending GHR',
+                  data: pendingGhrData,
+                  borderColor: '#d97706',
+                  backgroundColor: 'rgba(217,119,6,0.1)',
+                  borderDash: [4, 3],
+                  fill: false,
+                  tension: 0.3,
+                  pointRadius: 4,
+                },
+                {
+                  label: 'Pending Affiliate',
+                  data: pendingAffData,
+                  borderColor: '#ca8a04',
+                  backgroundColor: 'rgba(202,138,4,0.1)',
+                  borderDash: [4, 3],
+                  fill: false,
+                  tension: 0.3,
+                  pointRadius: 4,
+                },
+                {
+                  label: 'Pipeline w/ Pending',
+                  data: pipelineWithPendingData,
+                  borderColor: '#ea580c',
+                  backgroundColor: 'rgba(234,88,12,0.08)',
+                  borderDash: [2, 2],
+                  fill: false,
+                  tension: 0.3,
+                  pointRadius: 5,
+                },
+                {
                   label: 'Trend Projection',
                   data: projectionData,
-                  borderColor: '#f97316',
+                  borderColor: '#94a3b8',
                   borderDash: [6, 4],
                   fill: false,
                   tension: 0,
