@@ -7573,12 +7573,11 @@
         const tbody = document.getElementById('pmMappingsTableBody');
         if (!tbody) return;
 
-        // Collect all known facilities from live data
+        // Use same facility source as the facility filter dropdown (open positions only)
         const s = window.store.state;
-        const knownFacilities = new Set();
-        (s.jobs || []).forEach(j => { if (j.facility) knownFacilities.add(j.facility); });
-        (s.statsData?.onAssignment || []).forEach(r => { if (r.facility) knownFacilities.add(r.facility); });
-        (s.trendData?.assignments || []).forEach(r => { if (r.facility) knownFacilities.add(r.facility); });
+        const knownFacilities = new Set(
+            (s.jobs || []).map(j => j.facility).filter(Boolean)
+        );
         // Always include facilities from saved mappings so they don't disappear if they drop out of data
         currentPMMappings.forEach(m => { if (m.facility) knownFacilities.add(m.facility); });
 
