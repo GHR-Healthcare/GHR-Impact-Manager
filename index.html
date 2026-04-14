@@ -6166,30 +6166,39 @@
         if (window.__trendChart) { window.__trendChart.destroy(); window.__trendChart = null; }
 
         container.innerHTML = `
+          <div class="flex items-center justify-between mb-3 pb-3 border-b border-slate-100">
+            <div class="flex items-center gap-3">
+              <span class="text-[10px] font-semibold text-slate-400 uppercase tracking-wide">Group By</span>
+              <div class="flex bg-slate-100 rounded-lg p-0.5 gap-0.5 text-[10px] font-semibold" id="trendGroupByBtns">
+                <button onclick="window.__trendView='category';document.getElementById('trendBreakdownBody').innerHTML=window.__trendCatBody;document.getElementById('trendBreakdownLabel').textContent='Category';document.getElementById('trendGroupByBtns').querySelectorAll('button').forEach(b=>b.classList.remove('bg-white','shadow-sm','text-slate-700'));this.classList.add('bg-white','shadow-sm','text-slate-700')"
+                  class="px-2.5 py-1 rounded-md bg-white shadow-sm text-slate-700 transition-colors">Category</button>
+                <button onclick="window.__trendView='account';document.getElementById('trendBreakdownBody').innerHTML=window.__trendSysBody;document.getElementById('trendBreakdownLabel').textContent='Account';document.getElementById('trendGroupByBtns').querySelectorAll('button').forEach(b=>b.classList.remove('bg-white','shadow-sm','text-slate-700'));this.classList.add('bg-white','shadow-sm','text-slate-700')"
+                  class="px-2.5 py-1 rounded-md text-slate-500 hover:text-slate-700 transition-colors">Account</button>
+                <button onclick="window.__trendView='pm';document.getElementById('trendBreakdownBody').innerHTML=window.__trendPMBody;document.getElementById('trendBreakdownLabel').textContent='PM';document.getElementById('trendGroupByBtns').querySelectorAll('button').forEach(b=>b.classList.remove('bg-white','shadow-sm','text-slate-700'));this.classList.add('bg-white','shadow-sm','text-slate-700')"
+                  class="px-2.5 py-1 rounded-md text-slate-500 hover:text-slate-700 transition-colors">PM</button>
+              </div>
+              <button onclick="window.collapseAllTrend()" class="flex items-center gap-1 px-2.5 py-1 rounded-md text-[10px] font-semibold text-slate-500 hover:text-slate-700 hover:bg-slate-100 transition-colors border border-slate-200">
+                <i data-lucide="chevrons-up-down" class="w-3 h-3"></i> Collapse All
+              </button>
+            </div>
+            <p class="text-xs text-slate-400">4-week lookback · 3-week projection · follows active filters</p>
+          </div>
           <div class="flex items-center justify-between mb-4">
             <h2 class="text-lg font-bold text-slate-700">Headcount Trend</h2>
-            <p class="text-xs text-slate-400">4-week lookback · 3-week projection · pending = submitted/applied · follows active filters</p>
           </div>
           <div class="bg-white rounded-xl border border-slate-200 p-4 shadow-sm">
             <canvas id="trendChart" height="100"></canvas>
           </div>
           <div class="mt-6">
-            <div class="flex items-center justify-between mb-2">
-              <h3 class="text-sm font-bold text-slate-600">Breakdown <span class="font-normal text-slate-400 text-[10px] ml-2"><span class="text-blue-600">GHR</span> / <span class="text-purple-600">Affiliate</span></span></h3>
-              <div class="flex bg-slate-100 rounded-lg p-0.5 gap-0.5 text-[10px] font-semibold">
-                <button onclick="window.__trendView='category';document.getElementById('trendBreakdownBody').innerHTML=window.__trendCatBody;document.getElementById('trendBreakdownLabel').textContent='Category';this.closest('div').querySelectorAll('button').forEach(b=>b.classList.remove('bg-white','shadow-sm','text-slate-700'));this.classList.add('bg-white','shadow-sm','text-slate-700')"
-                  class="px-2.5 py-1 rounded-md bg-white shadow-sm text-slate-700 transition-colors">Category</button>
-                <button onclick="window.__trendView='account';document.getElementById('trendBreakdownBody').innerHTML=window.__trendSysBody;document.getElementById('trendBreakdownLabel').textContent='Account';this.closest('div').querySelectorAll('button').forEach(b=>b.classList.remove('bg-white','shadow-sm','text-slate-700'));this.classList.add('bg-white','shadow-sm','text-slate-700')"
-                  class="px-2.5 py-1 rounded-md text-slate-500 hover:text-slate-700 transition-colors">Account</button>
-                <button onclick="window.__trendView='pm';document.getElementById('trendBreakdownBody').innerHTML=window.__trendPMBody;document.getElementById('trendBreakdownLabel').textContent='PM';this.closest('div').querySelectorAll('button').forEach(b=>b.classList.remove('bg-white','shadow-sm','text-slate-700'));this.classList.add('bg-white','shadow-sm','text-slate-700')"
-                  class="px-2.5 py-1 rounded-md text-slate-500 hover:text-slate-700 transition-colors">PM</button>
-              </div>
+            <div class="flex items-center gap-2 mb-2">
+              <h3 class="text-sm font-bold text-slate-600" id="trendBreakdownLabel">Category</h3>
+              <span class="text-slate-400 text-[10px]"><span class="text-blue-600">GHR</span> / <span class="text-purple-600">Affiliate</span></span>
             </div>
             <div class="rounded-lg border border-slate-200 overflow-x-auto">
               <table class="w-full text-xs">
                 <thead>
                   <tr class="bg-slate-100 text-slate-500 uppercase tracking-wide text-[10px]">
-                    <th class="px-3 py-2 text-left font-semibold min-w-[160px]" id="trendBreakdownLabel">Category</th>
+                    <th class="px-3 py-2 text-left font-semibold min-w-[160px]"></th>
                     ${summaryTableHeaders}
                   </tr>
                 </thead>
@@ -6221,10 +6230,18 @@
         // Restore previous toggle selection if re-rendering
         if (window.__trendView === 'account') {
           const el = document.getElementById('trendBreakdownBody');
-          if (el) { el.innerHTML = sysTableBody; document.getElementById('trendBreakdownLabel').textContent = 'Account'; }
+          const lbl = document.getElementById('trendBreakdownLabel');
+          if (el) el.innerHTML = sysTableBody;
+          if (lbl) lbl.textContent = 'Account';
+          const btns = document.getElementById('trendGroupByBtns');
+          if (btns) { btns.querySelectorAll('button').forEach((b,i) => { b.classList.remove('bg-white','shadow-sm','text-slate-700'); if(i===1) b.classList.add('bg-white','shadow-sm','text-slate-700'); }); }
         } else if (window.__trendView === 'pm') {
           const el = document.getElementById('trendBreakdownBody');
-          if (el) { el.innerHTML = pmTableBody; document.getElementById('trendBreakdownLabel').textContent = 'PM'; }
+          const lbl = document.getElementById('trendBreakdownLabel');
+          if (el) el.innerHTML = pmTableBody;
+          if (lbl) lbl.textContent = 'PM';
+          const btns = document.getElementById('trendGroupByBtns');
+          if (btns) { btns.querySelectorAll('button').forEach((b,i) => { b.classList.remove('bg-white','shadow-sm','text-slate-700'); if(i===2) b.classList.add('bg-white','shadow-sm','text-slate-700'); }); }
         }
 
         const canvas = $('trendChart');
@@ -7606,6 +7623,12 @@
     window.hidePMDropdown = function(idx) {
         const dropdown = document.getElementById(`pmDropdown_${idx}`);
         if (dropdown) dropdown.classList.add('hidden');
+    };
+
+    window.collapseAllTrend = function() {
+        const tbody = document.getElementById('trendBreakdownBody');
+        if (!tbody) return;
+        tbody.querySelectorAll('tr[class*="cat-sys-"], tr[class*="sys-cat-"], tr[class*="pm-sys-"]').forEach(r => r.classList.add('hidden'));
     };
 
     window.updateMapping = function(idx, field, value) {
