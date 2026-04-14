@@ -35,7 +35,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
     GET /api/search-users?q=mike
     Returns up to 10 matching users from Microsoft Graph (displayName, mail, jobTitle).
     Requires app registration with User.Read.All application permission.
-    Env vars: GRAPH_TENANT_ID, GRAPH_CLIENT_ID, GRAPH_CLIENT_SECRET
+    Env vars: AAD_TENANT_ID, AAD_CLIENT_ID, AAD_CLIENT_SECRET
     """
     query = (req.params.get('q') or '').strip()
 
@@ -49,15 +49,15 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
     try:
         token = get_graph_token()
 
-        # Search by displayName prefix using $filter or $search
-        encoded_query = urllib.parse.quote(query)
-        graph_url = (
-            f'https://graph.microsoft.com/v1.0/users'
-            f'?$filter=startswith(displayName,\'{encoded_query}\') or startswith(givenName,\'{encoded_query}\')'
-            f'&$select=id,displayName,mail,jobTitle,department'
-            f'&$top=10'
-            f'&$orderby=displayName'
-        )
+        # Use $search for flexible prefix matching across displayName and other fields.
+        # $count=true is required when using ConsistencyLevel: eventual.
+        params = urllib.parse.urlencode({
+            '$search': f'"displayName:{query}"',
+            '$count': 'true',
+            '$select': 'id,displayName,mail,jobTitle,department',
+            '$top': '10',
+        })
+        graph_url = f'https://graph.microsoft.com/v1.0/users?{params}'
 
         graph_req = urllib.request.Request(graph_url)
         graph_req.add_header('Authorization', f'Bearer {token}')
@@ -88,12 +88,20 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             mimetype='application/json',
             status_code=500
         )
+    except urllib.error.HTTPError as e:
+        body = e.read().decode('utf-8', errors='replace')
+        print(f'Graph HTTP error {e.code}: {body}')
+        return func.HttpResponse(
+            json.dumps({'error': f'Graph API error {e.code}', 'detail': body, 'users': []}),
+            mimetype='application/json',
+            status_code=500
+        )
     except Exception as e:
         print(f'Graph search error: {e}')
         import traceback
         traceback.print_exc()
         return func.HttpResponse(
-            json.dumps({'error': 'Search unavailable', 'users': []}),
+            json.dumps({'error': str(e), 'users': []}),
             mimetype='application/json',
             status_code=500
         )
