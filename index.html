@@ -1905,7 +1905,11 @@
 
       checkCategoryMatch(program, filterVal) {
         if (!filterVal) return true;
-        return String(program || '').toLowerCase() === String(filterVal || '').toLowerCase();
+        const p = String(program || '').toLowerCase();
+        const f = String(filterVal || '').toLowerCase();
+        if (f === 'all nursing') return CONSTANTS.NURSING_KEYWORDS.some(k => p.includes(k));
+        if (f === 'all allied') return CONSTANTS.ALLIED_KEYWORDS.some(k => p.includes(k));
+        return p === f;
       },
 
       /**
@@ -3214,13 +3218,27 @@
           return true;
         };
 
-        // Update Systems dropdown (based on jobs matching all OTHER filters)
+        // Update Systems dropdown (based on jobs + assignments matching all OTHER filters)
         if (changedFilter !== 'systems') {
           const validSystems = new Set();
           allJobs.forEach(job => {
             if (jobMatchesFilters(job, 'systems') && job.healthSystem) {
               validSystems.add(job.healthSystem);
             }
+          });
+          // Also include systems that have matching assignments (Stats/Trend data)
+          // so selecting "All Nursing" doesn't remove systems with nursing assignments but no open orders
+          const assignmentSources = [
+            ...(s.statsData?.onAssignment || []),
+            ...(s.statsData?.upcoming || []),
+            ...(s.trendData?.assignments || []),
+          ];
+          assignmentSources.forEach(r => {
+            if (!r.healthSystem) return;
+            const catOk = s.filterSelection.categories.size === 0 ||
+              Utils.matchesStatsCategoryFilter(r.specialty, s.filterSelection.categories);
+            const facOk = s.filterSelection.facilities.size === 0 || s.filterSelection.facilities.has(r.facility);
+            if (catOk && facOk) validSystems.add(r.healthSystem);
           });
 
           // Remove invalid selections
@@ -6336,33 +6354,20 @@
 
               if (val === 'All') set.clear();
               else if (val === 'All Nursing') {
-                s.filterSelection.categories.clear();
-                // Get categories from currently visible options (respecting other filters)
-                const categoryContainer = $('categoryFilterContainer');
-                const visibleCategories = categoryContainer ?
-                  Array.from(categoryContainer.querySelectorAll('[onclick*="TOGGLE_FILTER"]'))
-                    .map(el => {
-                      const match = el.getAttribute('onclick')?.match(/val:'([^']+)'/);
-                      return match ? match[1] : null;
-                    })
-                    .filter(c => c && c !== 'All' && c !== 'All Nursing' && c !== 'All Allied') : [];
-                visibleCategories
-                  .filter(c => CONSTANTS.NURSING_KEYWORDS.some(k => String(c).toLowerCase().includes(k)))
-                  .forEach(c => s.filterSelection.categories.add(c));
+                // Toggle sentinel — if already active, clear it; otherwise set it exclusively
+                if (s.filterSelection.categories.has('All Nursing')) {
+                  s.filterSelection.categories.clear();
+                } else {
+                  s.filterSelection.categories.clear();
+                  s.filterSelection.categories.add('All Nursing');
+                }
               } else if (val === 'All Allied') {
-                s.filterSelection.categories.clear();
-                // Get categories from currently visible options (respecting other filters)
-                const categoryContainer = $('categoryFilterContainer');
-                const visibleCategories = categoryContainer ?
-                  Array.from(categoryContainer.querySelectorAll('[onclick*="TOGGLE_FILTER"]'))
-                    .map(el => {
-                      const match = el.getAttribute('onclick')?.match(/val:'([^']+)'/);
-                      return match ? match[1] : null;
-                    })
-                    .filter(c => c && c !== 'All' && c !== 'All Nursing' && c !== 'All Allied') : [];
-                visibleCategories
-                  .filter(c => CONSTANTS.ALLIED_KEYWORDS.some(k => String(c).toLowerCase().includes(k)))
-                  .forEach(c => s.filterSelection.categories.add(c));
+                if (s.filterSelection.categories.has('All Allied')) {
+                  s.filterSelection.categories.clear();
+                } else {
+                  s.filterSelection.categories.clear();
+                  s.filterSelection.categories.add('All Allied');
+                }
               } else {
                 if (set.has(val)) set.delete(val);
                 else set.add(val);
