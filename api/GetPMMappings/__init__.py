@@ -6,14 +6,13 @@ import json
 
 def main(req: func.HttpRequest) -> func.HttpResponse:
     """
-    GET: Retrieve all PM-to-facility mappings
-    POST: Save/update PM mappings (replaces all)
+    GET: Retrieve all facility → PM mappings
+    POST: Save/update mappings (replaces all)
 
     Table: dbo.pm_mappings
-      id            INT IDENTITY PRIMARY KEY
-      pm_name       NVARCHAR(200) NOT NULL
-      facilities    NVARCHAR(MAX)   -- comma-separated facility names
-      sort_order    INT DEFAULT 0
+      id        INT IDENTITY PRIMARY KEY
+      facility  NVARCHAR(200) NOT NULL
+      pm_name   NVARCHAR(200) NULL
     """
     try:
         conn = pyodbc.connect(
@@ -27,6 +26,18 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
 
         cursor = conn.cursor()
 
+        # Migrate old schema (pm_name + facilities columns) to new (facility + pm_name)
+        cursor.execute("""
+            IF EXISTS (
+                SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS
+                WHERE TABLE_NAME = 'pm_mappings' AND COLUMN_NAME = 'facilities'
+            )
+            BEGIN
+                DROP TABLE dbo.pm_mappings
+            END
+        """)
+        conn.commit()
+
         # Auto-create table if it doesn't exist
         cursor.execute("""
             IF NOT EXISTS (
@@ -34,30 +45,19 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                 WHERE TABLE_NAME = 'pm_mappings'
             )
             CREATE TABLE dbo.pm_mappings (
-                id         INT IDENTITY(1,1) PRIMARY KEY,
-                pm_name    NVARCHAR(200) NOT NULL,
-                facilities NVARCHAR(MAX) NULL,
-                sort_order INT DEFAULT 0
+                id       INT IDENTITY(1,1) PRIMARY KEY,
+                facility NVARCHAR(200) NOT NULL,
+                pm_name  NVARCHAR(200) NULL
             )
         """)
         conn.commit()
 
         if req.method == 'GET':
-            cursor.execute('''
-                SELECT id, pm_name, facilities, sort_order
-                FROM dbo.pm_mappings
-                ORDER BY sort_order, pm_name
-            ''')
-
-            columns = [column[0] for column in cursor.description]
-            mappings = []
-            for row in cursor.fetchall():
-                row_dict = dict(zip(columns, row))
-                # Parse facilities from comma-separated string to array
-                fac_str = row_dict.get('facilities') or ''
-                row_dict['facilities'] = [f.strip() for f in fac_str.split(',') if f.strip()]
-                mappings.append(row_dict)
-
+            cursor.execute('SELECT facility, pm_name FROM dbo.pm_mappings ORDER BY facility')
+            mappings = [
+                {'facility': row[0], 'pm_name': row[1] or ''}
+                for row in cursor.fetchall()
+            ]
             conn.close()
 
             return func.HttpResponse(
@@ -79,26 +79,22 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
 
             cursor.execute('DELETE FROM dbo.pm_mappings')
 
-            for idx, mapping in enumerate(mappings):
-                pm_name = (mapping.get('pm_name') or '').strip()
-                if not pm_name:
-                    continue
-                facilities = mapping.get('facilities', [])
-                if isinstance(facilities, list):
-                    facilities_str = ', '.join(f.strip() for f in facilities if f.strip())
-                else:
-                    facilities_str = str(facilities)
-
-                cursor.execute('''
-                    INSERT INTO dbo.pm_mappings (pm_name, facilities, sort_order)
-                    VALUES (?, ?, ?)
-                ''', pm_name, facilities_str, idx)
+            saved = 0
+            for m in mappings:
+                facility = (m.get('facility') or '').strip()
+                pm_name = (m.get('pm_name') or '').strip()
+                if facility and pm_name:
+                    cursor.execute(
+                        'INSERT INTO dbo.pm_mappings (facility, pm_name) VALUES (?, ?)',
+                        facility, pm_name
+                    )
+                    saved += 1
 
             conn.commit()
             conn.close()
 
             return func.HttpResponse(
-                json.dumps({'success': True, 'count': len(mappings)}),
+                json.dumps({'success': True, 'count': saved}),
                 mimetype="application/json",
                 status_code=200
             )

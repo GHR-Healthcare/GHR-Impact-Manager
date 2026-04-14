@@ -365,27 +365,20 @@
 
       <!-- Program Managers Tab -->
       <div id="settingsPanelPM" class="p-6 overflow-y-auto hidden">
-        <p class="text-sm text-slate-500 mb-4">Assign GHR Program Managers to facilities. Each PM can cover multiple facilities (comma-separated). Used to group headcount in the Trend tab PM view.</p>
+        <p class="text-sm text-slate-500 mb-4">Assign a GHR Program Manager to each facility. Used to group headcount in the Trend tab PM view.</p>
 
         <div class="border rounded-lg overflow-hidden mb-4">
           <table class="w-full text-sm">
             <thead class="bg-slate-100">
               <tr>
-                <th class="text-left p-3 font-semibold text-slate-700 w-48">Program Manager</th>
-                <th class="text-left p-3 font-semibold text-slate-700">Facilities (comma-separated)</th>
-                <th class="w-16 p-3"></th>
+                <th class="text-left p-3 font-semibold text-slate-700">Facility</th>
+                <th class="text-left p-3 font-semibold text-slate-700 w-72">Program Manager</th>
               </tr>
             </thead>
             <tbody id="pmMappingsTableBody" class="divide-y">
               <!-- PM mappings loaded here -->
             </tbody>
           </table>
-        </div>
-
-        <div class="flex gap-2">
-          <button onclick="addPMRow()" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded text-sm font-medium flex items-center gap-1">
-            <i data-lucide="plus" class="w-4 h-4"></i> Add Program Manager
-          </button>
         </div>
       </div>
       
@@ -5468,9 +5461,8 @@
         // Build facility → PM lookup from saved PM mappings
         const pmMappings = s.pmMappings || [];
         const facilityToPM = {};
-        pmMappings.forEach(pm => {
-          const facs = Array.isArray(pm.facilities) ? pm.facilities : [];
-          facs.forEach(f => { if (f) facilityToPM[f.toLowerCase().trim()] = pm.pm_name; });
+        pmMappings.forEach(m => {
+          if (m.facility) facilityToPM[m.facility.toLowerCase().trim()] = m.pm_name || 'Unassigned';
         });
         const resolvePM = (facility) => {
           if (!facility) return 'Unassigned';
@@ -7530,13 +7522,32 @@
     function renderPMMappingsTable() {
         const tbody = document.getElementById('pmMappingsTableBody');
         if (!tbody) return;
-        tbody.innerHTML = currentPMMappings.map((pm, idx) => {
-            const facStr = Array.isArray(pm.facilities) ? pm.facilities.join(', ') : (pm.facilities || '');
+
+        // Collect all known facilities from live data
+        const s = window.store.state;
+        const knownFacilities = new Set();
+        (s.jobs || []).forEach(j => { if (j.facility) knownFacilities.add(j.facility); });
+        (s.statsData?.onAssignment || []).forEach(r => { if (r.facility) knownFacilities.add(r.facility); });
+        (s.trendData?.assignments || []).forEach(r => { if (r.facility) knownFacilities.add(r.facility); });
+        // Always include facilities from saved mappings so they don't disappear if they drop out of data
+        currentPMMappings.forEach(m => { if (m.facility) knownFacilities.add(m.facility); });
+
+        const facilitiesSorted = [...knownFacilities].sort((a, b) => a.localeCompare(b));
+        window.__pmFacilitiesList = facilitiesSorted;
+
+        // Build lookup from saved mappings
+        const pmByFacility = {};
+        currentPMMappings.forEach(m => { if (m.facility) pmByFacility[m.facility] = m.pm_name || ''; });
+
+        tbody.innerHTML = facilitiesSorted.map((facility, idx) => {
+            const pmName = (pmByFacility[facility] || '').replace(/"/g, '&quot;');
+            const facDisplay = facility.replace(/</g, '&lt;').replace(/>/g, '&gt;');
             return `
-                <tr class="hover:bg-slate-50" data-idx="${idx}">
+                <tr class="hover:bg-slate-50">
+                    <td class="p-3 text-slate-700">${facDisplay}</td>
                     <td class="p-2">
                         <div class="relative">
-                            <input type="text" value="${pm.pm_name || ''}"
+                            <input type="text" value="${pmName}"
                                    id="pmNameInput_${idx}"
                                    oninput="searchPMUsers(${idx}, this.value)"
                                    onblur="setTimeout(()=>hidePMDropdown(${idx}), 200)"
@@ -7546,21 +7557,17 @@
                             <div id="pmDropdown_${idx}" class="hidden absolute z-50 left-0 right-0 top-full mt-0.5 bg-white border border-slate-200 rounded shadow-lg max-h-48 overflow-y-auto text-sm"></div>
                         </div>
                     </td>
-                    <td class="p-2">
-                        <input type="text" value="${facStr}"
-                               onchange="updatePMMapping(${idx}, 'facilities', this.value)"
-                               placeholder="e.g. HUP, Chester County Hospital, ..."
-                               class="w-full border border-slate-300 rounded px-2 py-1.5 text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none">
-                    </td>
-                    <td class="p-2 text-center">
-                        <button onclick="deletePMRow(${idx})" class="text-red-500 hover:text-red-700 p-1" title="Delete">
-                            <i data-lucide="trash-2" class="w-4 h-4"></i>
-                        </button>
-                    </td>
                 </tr>
             `;
         }).join('');
         lucide.createIcons();
+    }
+
+    function collectPMMappingsFromDOM() {
+        return (window.__pmFacilitiesList || []).map((facility, idx) => {
+            const input = document.getElementById(`pmNameInput_${idx}`);
+            return { facility, pm_name: (input?.value || '').trim() };
+        }).filter(m => m.pm_name);
     }
 
     const pmSearchTimers = {};
@@ -7593,37 +7600,12 @@
     window.selectPMUser = function(idx, displayName) {
         const input = document.getElementById(`pmNameInput_${idx}`);
         if (input) input.value = displayName;
-        updatePMMapping(idx, 'pm_name', displayName);
         hidePMDropdown(idx);
     };
 
     window.hidePMDropdown = function(idx) {
         const dropdown = document.getElementById(`pmDropdown_${idx}`);
         if (dropdown) dropdown.classList.add('hidden');
-        // Also persist whatever is typed
-        const input = document.getElementById(`pmNameInput_${idx}`);
-        if (input) updatePMMapping(idx, 'pm_name', input.value);
-    };
-
-    window.updatePMMapping = function(idx, field, value) {
-        if (!currentPMMappings[idx]) return;
-        if (field === 'facilities') {
-            currentPMMappings[idx].facilities = value.split(',').map(f => f.trim()).filter(f => f);
-        } else {
-            currentPMMappings[idx][field] = value;
-        }
-    };
-
-    window.deletePMRow = function(idx) {
-        currentPMMappings.splice(idx, 1);
-        renderPMMappingsTable();
-    };
-
-    window.addPMRow = function() {
-        currentPMMappings.push({ id: null, pm_name: '', facilities: [], sort_order: currentPMMappings.length });
-        renderPMMappingsTable();
-        const tbody = document.getElementById('pmMappingsTableBody');
-        if (tbody) { const input = tbody.lastElementChild?.querySelector('input'); if (input) input.focus(); }
     };
 
     window.updateMapping = function(idx, field, value) {
@@ -7733,7 +7715,7 @@
                 fetch(`${API_BASE_URL}/pm-mappings`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ mappings: currentPMMappings })
+                    body: JSON.stringify({ mappings: collectPMMappingsFromDOM() })
                 })
             ]);
 
@@ -7746,7 +7728,7 @@
                 }));
 
                 // Update PM mappings in store for trend view
-                window.store.state.pmMappings = currentPMMappings;
+                window.store.state.pmMappings = collectPMMappingsFromDOM();
 
                 window.showToast('Settings saved successfully', 'success');
                 closeSettingsModal();
