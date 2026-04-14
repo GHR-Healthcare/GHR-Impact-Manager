@@ -1287,20 +1287,14 @@
                 if (trendResponse.ok) {
                     const trendData = await trendResponse.json();
                     const parseLocalDate = s => { if (!s) return null; const [y,m,d] = s.split('T')[0].split('-'); return new Date(+y, +m-1, +d); };
-                    if (trendData.assignments) {
-                        trendData.assignments.forEach(r => {
-                            r.startDate = parseLocalDate(r.startDate);
-                            r.endDate = parseLocalDate(r.endDate);
-                            r.healthSystem = Utils.getHealthSystem(r.facility, r.system);
-                        });
-                    }
-                    if (trendData.pending) {
-                        trendData.pending.forEach(r => {
-                            r.startDate = parseLocalDate(r.startDate);
-                            r.endDate = parseLocalDate(r.endDate);
-                            r.healthSystem = Utils.getHealthSystem(r.facility, r.system);
-                        });
-                    }
+                    const normalizeTrendRow = r => {
+                        r.startDate = parseLocalDate(r.startDate);
+                        r.endDate = parseLocalDate(r.endDate);
+                        r.healthSystem = Utils.getHealthSystem(r.facility, r.system);
+                        r.pm = r.pm || 'Unassigned';
+                    };
+                    if (trendData.assignments) trendData.assignments.forEach(normalizeTrendRow);
+                    if (trendData.pending) trendData.pending.forEach(normalizeTrendRow);
                     window.store.state.trendData = trendData;
                     window.store.state.trendLoaded = true;
                     if (window.store.state.view === 'trend') {
@@ -5532,14 +5526,37 @@
           return c;
         };
 
-        // Compute headcount per week, split by GHR vs Affiliate, with category + system breakdown
+        // Compute headcount per week, split by GHR vs Affiliate, with category + system + PM breakdown
         const weekData = weeks.map(({ start, end }) => {
           const ghrNames = new Set();
           const affNames = new Set();
-          const catGhr = {};   // category → Set of names
+          const catGhr = {};         // category → Set of names
           const catAff = {};
-          const catSysGhr = {};  // category → system → Set of names
+          const catSysGhr = {};      // category → system → Set of names
           const catSysAff = {};
+          const sysGhr = {};         // system → Set of names
+          const sysAff = {};
+          const sysCatGhr = {};      // system → category → Set of names
+          const sysCatAff = {};
+          const pmGhr = {};          // pm → Set of names
+          const pmAff = {};
+          const pmSysGhr = {};       // pm → system → Set of names
+          const pmSysAff = {};
+          const pmSysCatGhr = {};    // pm → system → category → Set of names
+          const pmSysCatAff = {};
+
+          const addToNested2 = (map, k1, k2, val) => {
+            if (!map[k1]) map[k1] = {};
+            if (!map[k1][k2]) map[k1][k2] = new Set();
+            map[k1][k2].add(val);
+          };
+          const addToNested3 = (map, k1, k2, k3, val) => {
+            if (!map[k1]) map[k1] = {};
+            if (!map[k1][k2]) map[k1][k2] = {};
+            if (!map[k1][k2][k3]) map[k1][k2][k3] = new Set();
+            map[k1][k2][k3].add(val);
+          };
+
           filtered.forEach(r => {
             const sd = r.startDate;
             const ed = r.endDate;
@@ -5548,38 +5565,48 @@
               const name = r.worker_name || '';
               const cat = normalizeCategory(r.category);
               const sys = r.healthSystem || 'Unknown';
+              const pm = r.pm || 'Unassigned';
               if (isGHRAgency(r.agency)) {
                 ghrNames.add(name);
-                if (!catGhr[cat]) catGhr[cat] = new Set();
-                catGhr[cat].add(name);
-                if (!catSysGhr[cat]) catSysGhr[cat] = {};
-                if (!catSysGhr[cat][sys]) catSysGhr[cat][sys] = new Set();
-                catSysGhr[cat][sys].add(name);
+                if (!catGhr[cat]) catGhr[cat] = new Set(); catGhr[cat].add(name);
+                addToNested2(catSysGhr, cat, sys, name);
+                if (!sysGhr[sys]) sysGhr[sys] = new Set(); sysGhr[sys].add(name);
+                addToNested2(sysCatGhr, sys, cat, name);
+                if (!pmGhr[pm]) pmGhr[pm] = new Set(); pmGhr[pm].add(name);
+                addToNested2(pmSysGhr, pm, sys, name);
+                addToNested3(pmSysCatGhr, pm, sys, cat, name);
               } else {
                 affNames.add(name);
-                if (!catAff[cat]) catAff[cat] = new Set();
-                catAff[cat].add(name);
-                if (!catSysAff[cat]) catSysAff[cat] = {};
-                if (!catSysAff[cat][sys]) catSysAff[cat][sys] = new Set();
-                catSysAff[cat][sys].add(name);
+                if (!catAff[cat]) catAff[cat] = new Set(); catAff[cat].add(name);
+                addToNested2(catSysAff, cat, sys, name);
+                if (!sysAff[sys]) sysAff[sys] = new Set(); sysAff[sys].add(name);
+                addToNested2(sysCatAff, sys, cat, name);
+                if (!pmAff[pm]) pmAff[pm] = new Set(); pmAff[pm].add(name);
+                addToNested2(pmSysAff, pm, sys, name);
+                addToNested3(pmSysCatAff, pm, sys, cat, name);
               }
             }
           });
+
           // Convert sets to counts
-          const catGhrCounts = {};
-          const catAffCounts = {};
-          const catSysGhrCounts = {};  // category → system → count
-          const catSysAffCounts = {};
-          for (const [k, v] of Object.entries(catGhr)) catGhrCounts[k] = v.size;
-          for (const [k, v] of Object.entries(catAff)) catAffCounts[k] = v.size;
-          for (const [cat, systems] of Object.entries(catSysGhr)) {
-            catSysGhrCounts[cat] = {};
-            for (const [sys, names] of Object.entries(systems)) catSysGhrCounts[cat][sys] = names.size;
-          }
-          for (const [cat, systems] of Object.entries(catSysAff)) {
-            catSysAffCounts[cat] = {};
-            for (const [sys, names] of Object.entries(systems)) catSysAffCounts[cat][sys] = names.size;
-          }
+          const toCount1 = (m) => Object.fromEntries(Object.entries(m).map(([k,v]) => [k, v.size]));
+          const toCount2 = (m) => Object.fromEntries(Object.entries(m).map(([k,v]) => [k, toCount1(v)]));
+          const toCount3 = (m) => Object.fromEntries(Object.entries(m).map(([k,v]) => [k, toCount2(v)]));
+
+          const catGhrCounts = toCount1(catGhr);
+          const catAffCounts = toCount1(catAff);
+          const catSysGhrCounts = toCount2(catSysGhr);
+          const catSysAffCounts = toCount2(catSysAff);
+          const sysGhrCounts = toCount1(sysGhr);
+          const sysAffCounts = toCount1(sysAff);
+          const sysCatGhrCounts = toCount2(sysCatGhr);
+          const sysCatAffCounts = toCount2(sysCatAff);
+          const pmGhrCounts = toCount1(pmGhr);
+          const pmAffCounts = toCount1(pmAff);
+          const pmSysGhrCounts = toCount2(pmSysGhr);
+          const pmSysAffCounts = toCount2(pmSysAff);
+          const pmSysCatGhrCounts = toCount3(pmSysCatGhr);
+          const pmSysCatAffCounts = toCount3(pmSysCatAff);
           // Pending headcount (future weeks only)
           const pendingGhrNames = new Set();
           const pendingAffNames = new Set();
@@ -5594,10 +5621,18 @@
             }
           });
 
-          return { ghr: ghrNames.size, aff: affNames.size, total: ghrNames.size + affNames.size,
-            catGhr: catGhrCounts, catAff: catAffCounts, catSysGhr: catSysGhrCounts, catSysAff: catSysAffCounts,
+          return {
+            ghr: ghrNames.size, aff: affNames.size, total: ghrNames.size + affNames.size,
+            catGhr: catGhrCounts, catAff: catAffCounts,
+            catSysGhr: catSysGhrCounts, catSysAff: catSysAffCounts,
+            sysGhr: sysGhrCounts, sysAff: sysAffCounts,
+            sysCatGhr: sysCatGhrCounts, sysCatAff: sysCatAffCounts,
+            pmGhr: pmGhrCounts, pmAff: pmAffCounts,
+            pmSysGhr: pmSysGhrCounts, pmSysAff: pmSysAffCounts,
+            pmSysCat: { ghr: pmSysCatGhrCounts, aff: pmSysCatAffCounts },
             pendingGhr: pendingGhrNames.size, pendingAff: pendingAffNames.size,
-            pendingTotal: pendingGhrNames.size + pendingAffNames.size };
+            pendingTotal: pendingGhrNames.size + pendingAffNames.size,
+          };
         });
         const weekHC = weekData.map(d => d.total);
 
@@ -5900,6 +5935,158 @@
         });
         const catTableBody = catTableBodyParts.join('');
 
+        // ── Account (System) view ──────────────────────────────────────────────
+        const allSystems = new Set();
+        weekData.forEach(wd => {
+          Object.keys(wd.sysGhr || {}).forEach(s => allSystems.add(s));
+          Object.keys(wd.sysAff || {}).forEach(s => allSystems.add(s));
+        });
+        const sortedSystems = [...allSystems].sort();
+
+        const buildSysRow = (sys) => {
+          const sysId = sys.replace(/[^a-zA-Z0-9]/g, '_');
+          const cats = new Set();
+          weekData.forEach(wd => {
+            Object.keys(wd.sysCatGhr?.[sys] || {}).forEach(c => cats.add(c));
+            Object.keys(wd.sysCatAff?.[sys] || {}).forEach(c => cats.add(c));
+          });
+          const hasCats = cats.size > 1;
+          const toggleAttr = hasCats ? `onclick="document.querySelectorAll('.sys-cat-${sysId}').forEach(r=>r.classList.toggle('hidden'))" style="cursor:pointer"` : '';
+          const chevron = hasCats ? `<span class="inline-block w-3 text-slate-400 mr-1">&#9654;</span>` : `<span class="inline-block w-3 mr-1"></span>`;
+          let cells = `<td class="px-3 py-1.5 border-b border-slate-100 font-medium text-slate-700 whitespace-nowrap text-xs">${chevron}${sys}</td>`;
+          weeks.forEach((w, i) => {
+            const g = wd => (wd.sysGhr?.[sys] || 0);
+            const a = wd => (wd.sysAff?.[sys] || 0);
+            const gv = weekData[i].sysGhr?.[sys] || 0;
+            const av = weekData[i].sysAff?.[sys] || 0;
+            const gPrev = i > 0 ? (weekData[i-1].sysGhr?.[sys] || 0) : null;
+            const aPrev = i > 0 ? (weekData[i-1].sysAff?.[sys] || 0) : null;
+            const isCurrent = i === currentWeekIdx;
+            cells += `<td class="px-2 py-1.5 border-b border-slate-100 text-center text-[10px] ${isCurrent ? 'bg-blue-50' : ''}">
+              <span class="text-blue-700 font-semibold">${gv}${deltaSpan(gv,gPrev)}</span>
+              <span class="text-slate-300 mx-0.5">/</span>
+              <span class="text-purple-700 font-semibold">${av}${deltaSpan(av,aPrev)}</span>
+            </td>`;
+          });
+          const avgG = rolling4Wk(i => weekData[i].sysGhr?.[sys] || 0);
+          const avgA = rolling4Wk(i => weekData[i].sysAff?.[sys] || 0);
+          const curG = weekData[currentWeekIdx >= 0 ? currentWeekIdx : lastActualIdx]?.sysGhr?.[sys] || 0;
+          const curA = weekData[currentWeekIdx >= 0 ? currentWeekIdx : lastActualIdx]?.sysAff?.[sys] || 0;
+          cells += `<td class="px-2 py-1.5 border-b border-slate-100 text-center text-[10px] bg-slate-50 border-l border-slate-200">
+            <span class="text-blue-700 font-semibold">${avgG ?? '—'}${avgG != null ? deltaSpan(curG, avgG) : ''}</span>
+            <span class="text-slate-300 mx-0.5">/</span>
+            <span class="text-purple-700 font-semibold">${avgA ?? '—'}${avgA != null ? deltaSpan(curA, avgA) : ''}</span>
+          </td>`;
+          let rows = `<tr class="hover:bg-slate-50" ${toggleAttr}>${cells}</tr>`;
+          if (hasCats) {
+            [...cats].sort().forEach(cat => {
+              let sc = `<td class="pl-8 pr-3 py-1 border-b border-slate-50 text-slate-500 whitespace-nowrap text-[10px]">${cat}</td>`;
+              weeks.forEach((w, i) => {
+                const gv = weekData[i].sysCatGhr?.[sys]?.[cat] || 0;
+                const av = weekData[i].sysCatAff?.[sys]?.[cat] || 0;
+                const gPrev = i > 0 ? (weekData[i-1].sysCatGhr?.[sys]?.[cat] || 0) : null;
+                const aPrev = i > 0 ? (weekData[i-1].sysCatAff?.[sys]?.[cat] || 0) : null;
+                const isCurrent = i === currentWeekIdx;
+                sc += `<td class="px-2 py-1 border-b border-slate-50 text-center text-[10px] ${isCurrent ? 'bg-blue-50/50' : ''}">
+                  <span class="text-blue-600">${gv}${deltaSpan(gv,gPrev)}</span>
+                  <span class="text-slate-200 mx-0.5">/</span>
+                  <span class="text-purple-600">${av}${deltaSpan(av,aPrev)}</span>
+                </td>`;
+              });
+              sc += `<td class="px-2 py-1 border-b border-slate-50 bg-slate-50 border-l border-slate-200"></td>`;
+              rows += `<tr class="sys-cat-${sysId} hidden bg-slate-25 hover:bg-slate-50">${sc}</tr>`;
+            });
+          }
+          return rows;
+        };
+        const sysTableTotalRow = (() => {
+          let cells = `<td class="px-3 py-1.5 border-b border-slate-200 font-bold text-slate-800 whitespace-nowrap text-xs"><span class="inline-block w-3 mr-1"></span>Total</td>`;
+          weeks.forEach((w, i) => {
+            const g = weekData[i].ghr, a = weekData[i].aff;
+            const gP = i > 0 ? weekData[i-1].ghr : null, aP = i > 0 ? weekData[i-1].aff : null;
+            const isCurrent = i === currentWeekIdx;
+            cells += `<td class="px-2 py-1.5 border-b border-slate-200 text-center text-[11px] font-bold ${isCurrent ? 'bg-blue-50' : ''}">
+              <span class="text-blue-700">${g}${deltaSpan(g,gP)}</span><span class="text-slate-300 mx-0.5">/</span><span class="text-purple-700">${a}${deltaSpan(a,aP)}</span></td>`;
+          });
+          const avgG = rolling4Wk(i => weekData[i].ghr), avgA = rolling4Wk(i => weekData[i].aff);
+          const curG = weekData[currentWeekIdx >= 0 ? currentWeekIdx : lastActualIdx]?.ghr || 0;
+          const curA = weekData[currentWeekIdx >= 0 ? currentWeekIdx : lastActualIdx]?.aff || 0;
+          cells += `<td class="px-2 py-1.5 border-b border-slate-200 text-center text-[11px] font-bold bg-slate-50 border-l border-slate-200">
+            <span class="text-blue-700">${avgG ?? '—'}${avgG != null ? deltaSpan(curG, avgG) : ''}</span><span class="text-slate-300 mx-0.5">/</span><span class="text-purple-700">${avgA ?? '—'}${avgA != null ? deltaSpan(curA, avgA) : ''}</span></td>`;
+          return `<tr class="bg-slate-50">${cells}</tr>`;
+        })();
+        const sysTableBody = sysTableTotalRow + sortedSystems.map(buildSysRow).join('');
+
+        // ── PM view ────────────────────────────────────────────────────────────
+        const allPMs = new Set();
+        weekData.forEach(wd => {
+          Object.keys(wd.pmGhr || {}).forEach(p => allPMs.add(p));
+          Object.keys(wd.pmAff || {}).forEach(p => allPMs.add(p));
+        });
+        const sortedPMs = [...allPMs].sort((a, b) => a === 'Unassigned' ? 1 : b === 'Unassigned' ? -1 : a.localeCompare(b));
+
+        const buildPMRow = (pm) => {
+          const pmId = pm.replace(/[^a-zA-Z0-9]/g, '_');
+          const pmSystems = new Set();
+          weekData.forEach(wd => {
+            Object.keys(wd.pmSysGhr?.[pm] || {}).forEach(s => pmSystems.add(s));
+            Object.keys(wd.pmSysAff?.[pm] || {}).forEach(s => pmSystems.add(s));
+          });
+          const hasSubs = pmSystems.size > 0;
+          const toggleAttr = hasSubs ? `onclick="document.querySelectorAll('.pm-sys-${pmId},.pm-sys-cat-${pmId}').forEach(r=>{if(r.classList.contains('pm-sys-${pmId}'))r.classList.toggle('hidden')})" style="cursor:pointer"` : '';
+          const chevron = hasSubs ? `<span class="inline-block w-3 text-slate-400 mr-1">&#9654;</span>` : `<span class="inline-block w-3 mr-1"></span>`;
+          let cells = `<td class="px-3 py-1.5 border-b border-slate-100 font-semibold text-slate-700 whitespace-nowrap text-xs">${chevron}${pm}</td>`;
+          weeks.forEach((w, i) => {
+            const gv = weekData[i].pmGhr?.[pm] || 0, av = weekData[i].pmAff?.[pm] || 0;
+            const gP = i > 0 ? (weekData[i-1].pmGhr?.[pm] || 0) : null, aP = i > 0 ? (weekData[i-1].pmAff?.[pm] || 0) : null;
+            const isCurrent = i === currentWeekIdx;
+            cells += `<td class="px-2 py-1.5 border-b border-slate-100 text-center text-[10px] ${isCurrent ? 'bg-blue-50' : ''}">
+              <span class="text-blue-700 font-semibold">${gv}${deltaSpan(gv,gP)}</span><span class="text-slate-300 mx-0.5">/</span><span class="text-purple-700 font-semibold">${av}${deltaSpan(av,aP)}</span></td>`;
+          });
+          const avgG = rolling4Wk(i => weekData[i].pmGhr?.[pm] || 0), avgA = rolling4Wk(i => weekData[i].pmAff?.[pm] || 0);
+          const curG = weekData[currentWeekIdx >= 0 ? currentWeekIdx : lastActualIdx]?.pmGhr?.[pm] || 0;
+          const curA = weekData[currentWeekIdx >= 0 ? currentWeekIdx : lastActualIdx]?.pmAff?.[pm] || 0;
+          cells += `<td class="px-2 py-1.5 border-b border-slate-100 text-center text-[10px] bg-slate-50 border-l border-slate-200">
+            <span class="text-blue-700 font-semibold">${avgG ?? '—'}${avgG != null ? deltaSpan(curG, avgG) : ''}</span><span class="text-slate-300 mx-0.5">/</span><span class="text-purple-700 font-semibold">${avgA ?? '—'}${avgA != null ? deltaSpan(curA, avgA) : ''}</span></td>`;
+          let rows = `<tr class="hover:bg-slate-50" ${toggleAttr}>${cells}</tr>`;
+          [...pmSystems].sort().forEach(sys => {
+            const sysId2 = (pm + '_' + sys).replace(/[^a-zA-Z0-9]/g, '_');
+            const pmSysCats = new Set();
+            weekData.forEach(wd => {
+              Object.keys(wd.pmSysCat?.ghr?.[pm]?.[sys] || {}).forEach(c => pmSysCats.add(c));
+              Object.keys(wd.pmSysCat?.aff?.[pm]?.[sys] || {}).forEach(c => pmSysCats.add(c));
+            });
+            const hasCats = pmSysCats.size > 1;
+            const sysToggle = hasCats ? `onclick="event.stopPropagation();document.querySelectorAll('.pm-sys-cat-${sysId2}').forEach(r=>r.classList.toggle('hidden'))" style="cursor:pointer"` : '';
+            const sysCh = hasCats ? `<span class="inline-block w-3 text-slate-300 mr-1">&#9654;</span>` : `<span class="inline-block w-3 mr-1"></span>`;
+            let sc = `<td class="pl-7 pr-3 py-1 border-b border-slate-50 text-slate-600 whitespace-nowrap text-[10px]">${sysCh}${sys}</td>`;
+            weeks.forEach((w, i) => {
+              const gv = weekData[i].pmSysGhr?.[pm]?.[sys] || 0, av = weekData[i].pmSysAff?.[pm]?.[sys] || 0;
+              const gP = i > 0 ? (weekData[i-1].pmSysGhr?.[pm]?.[sys] || 0) : null, aP = i > 0 ? (weekData[i-1].pmSysAff?.[pm]?.[sys] || 0) : null;
+              const isCurrent = i === currentWeekIdx;
+              sc += `<td class="px-2 py-1 border-b border-slate-50 text-center text-[10px] ${isCurrent ? 'bg-blue-50/50' : ''}">
+                <span class="text-blue-600">${gv}${deltaSpan(gv,gP)}</span><span class="text-slate-200 mx-0.5">/</span><span class="text-purple-600">${av}${deltaSpan(av,aP)}</span></td>`;
+            });
+            sc += `<td class="px-2 py-1 border-b border-slate-50 bg-slate-50 border-l border-slate-200"></td>`;
+            rows += `<tr class="pm-sys-${pmId} hidden hover:bg-slate-50" ${sysToggle}>${sc}</tr>`;
+            [...pmSysCats].sort().forEach(cat => {
+              let cc = `<td class="pl-12 pr-3 py-1 border-b border-slate-50 text-slate-400 whitespace-nowrap text-[10px]">${cat}</td>`;
+              weeks.forEach((w, i) => {
+                const gv = weekData[i].pmSysCat?.ghr?.[pm]?.[sys]?.[cat] || 0;
+                const av = weekData[i].pmSysCat?.aff?.[pm]?.[sys]?.[cat] || 0;
+                const isCurrent = i === currentWeekIdx;
+                cc += `<td class="px-2 py-1 border-b border-slate-50 text-center text-[10px] ${isCurrent ? 'bg-blue-50/30' : ''}">
+                  <span class="text-blue-500">${gv}</span><span class="text-slate-200 mx-0.5">/</span><span class="text-purple-500">${av}</span></td>`;
+              });
+              cc += `<td class="px-2 py-1 border-b border-slate-50 bg-slate-50 border-l border-slate-200"></td>`;
+              rows += `<tr class="pm-sys-cat-${sysId2} hidden hover:bg-slate-50">${cc}</tr>`;
+            });
+          });
+          return rows;
+        };
+        const pmTableTotalRow = sysTableTotalRow; // same total
+        const pmTableBody = pmTableTotalRow + sortedPMs.map(buildPMRow).join('');
+
         // Weekly summary rows: Total HC, GHR, Affiliate, Pipeline, Trend Projection
         const summaryRows = [
           { label: 'Total HC', color: 'slate-700', getData: i => weekData[i].total },
@@ -5938,16 +6125,26 @@
             <canvas id="trendChart" height="100"></canvas>
           </div>
           <div class="mt-6">
-            <h3 class="text-sm font-bold text-slate-600 mb-2">Category Breakdown <span class="font-normal text-slate-400 text-[10px] ml-2"><span class="text-blue-600">GHR</span> / <span class="text-purple-600">Affiliate</span></span></h3>
+            <div class="flex items-center justify-between mb-2">
+              <h3 class="text-sm font-bold text-slate-600">Breakdown <span class="font-normal text-slate-400 text-[10px] ml-2"><span class="text-blue-600">GHR</span> / <span class="text-purple-600">Affiliate</span></span></h3>
+              <div class="flex bg-slate-100 rounded-lg p-0.5 gap-0.5 text-[10px] font-semibold">
+                <button onclick="window.__trendView='category';document.getElementById('trendBreakdownBody').innerHTML=window.__trendCatBody;document.getElementById('trendBreakdownLabel').textContent='Category';this.closest('div').querySelectorAll('button').forEach(b=>b.classList.remove('bg-white','shadow-sm','text-slate-700'));this.classList.add('bg-white','shadow-sm','text-slate-700')"
+                  class="px-2.5 py-1 rounded-md bg-white shadow-sm text-slate-700 transition-colors">Category</button>
+                <button onclick="window.__trendView='account';document.getElementById('trendBreakdownBody').innerHTML=window.__trendSysBody;document.getElementById('trendBreakdownLabel').textContent='Account';this.closest('div').querySelectorAll('button').forEach(b=>b.classList.remove('bg-white','shadow-sm','text-slate-700'));this.classList.add('bg-white','shadow-sm','text-slate-700')"
+                  class="px-2.5 py-1 rounded-md text-slate-500 hover:text-slate-700 transition-colors">Account</button>
+                <button onclick="window.__trendView='pm';document.getElementById('trendBreakdownBody').innerHTML=window.__trendPMBody;document.getElementById('trendBreakdownLabel').textContent='PM';this.closest('div').querySelectorAll('button').forEach(b=>b.classList.remove('bg-white','shadow-sm','text-slate-700'));this.classList.add('bg-white','shadow-sm','text-slate-700')"
+                  class="px-2.5 py-1 rounded-md text-slate-500 hover:text-slate-700 transition-colors">PM</button>
+              </div>
+            </div>
             <div class="rounded-lg border border-slate-200 overflow-x-auto">
               <table class="w-full text-xs">
                 <thead>
                   <tr class="bg-slate-100 text-slate-500 uppercase tracking-wide text-[10px]">
-                    <th class="px-3 py-2 text-left font-semibold min-w-[160px]">Category</th>
+                    <th class="px-3 py-2 text-left font-semibold min-w-[160px]" id="trendBreakdownLabel">Category</th>
                     ${summaryTableHeaders}
                   </tr>
                 </thead>
-                <tbody>${catTableBody}</tbody>
+                <tbody id="trendBreakdownBody">${catTableBody}</tbody>
               </table>
             </div>
           </div>
@@ -5966,6 +6163,20 @@
             </div>
           </div>
         `;
+
+        // Store table bodies for toggle switching
+        window.__trendCatBody = catTableBody;
+        window.__trendSysBody = sysTableBody;
+        window.__trendPMBody = pmTableBody;
+        window.__trendView = window.__trendView || 'category';
+        // Restore previous toggle selection if re-rendering
+        if (window.__trendView === 'account') {
+          const el = document.getElementById('trendBreakdownBody');
+          if (el) { el.innerHTML = sysTableBody; document.getElementById('trendBreakdownLabel').textContent = 'Account'; }
+        } else if (window.__trendView === 'pm') {
+          const el = document.getElementById('trendBreakdownBody');
+          if (el) { el.innerHTML = pmTableBody; document.getElementById('trendBreakdownLabel').textContent = 'PM'; }
+        }
 
         const canvas = $('trendChart');
         if (canvas && typeof Chart !== 'undefined') {
