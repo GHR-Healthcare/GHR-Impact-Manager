@@ -6170,11 +6170,11 @@
             <div class="flex items-center gap-3">
               <span class="text-[10px] font-semibold text-slate-400 uppercase tracking-wide">Group By</span>
               <div class="flex bg-slate-100 rounded-lg p-0.5 gap-0.5 text-[10px] font-semibold" id="trendGroupByBtns">
-                <button onclick="window.__trendView='category';document.getElementById('trendBreakdownBody').innerHTML=window.__trendCatBody;document.getElementById('trendBreakdownLabel').textContent='Category';document.getElementById('trendGroupByBtns').querySelectorAll('button').forEach(b=>b.classList.remove('bg-white','shadow-sm','text-slate-700'));this.classList.add('bg-white','shadow-sm','text-slate-700')"
+                <button onclick="window.__trendView='category';document.getElementById('trendBreakdownBody').innerHTML=window.__trendCatBody;document.getElementById('trendBreakdownLabel').textContent='Category';document.getElementById('trendGroupByBtns').querySelectorAll('button').forEach(b=>b.classList.remove('bg-white','shadow-sm','text-slate-700'));this.classList.add('bg-white','shadow-sm','text-slate-700');window.updateTrendChart('category')"
                   class="px-2.5 py-1 rounded-md bg-white shadow-sm text-slate-700 transition-colors">Category</button>
-                <button onclick="window.__trendView='account';document.getElementById('trendBreakdownBody').innerHTML=window.__trendSysBody;document.getElementById('trendBreakdownLabel').textContent='Account';document.getElementById('trendGroupByBtns').querySelectorAll('button').forEach(b=>b.classList.remove('bg-white','shadow-sm','text-slate-700'));this.classList.add('bg-white','shadow-sm','text-slate-700')"
+                <button onclick="window.__trendView='account';document.getElementById('trendBreakdownBody').innerHTML=window.__trendSysBody;document.getElementById('trendBreakdownLabel').textContent='Account';document.getElementById('trendGroupByBtns').querySelectorAll('button').forEach(b=>b.classList.remove('bg-white','shadow-sm','text-slate-700'));this.classList.add('bg-white','shadow-sm','text-slate-700');window.updateTrendChart('account')"
                   class="px-2.5 py-1 rounded-md text-slate-500 hover:text-slate-700 transition-colors">Account</button>
-                <button onclick="window.__trendView='pm';document.getElementById('trendBreakdownBody').innerHTML=window.__trendPMBody;document.getElementById('trendBreakdownLabel').textContent='PM';document.getElementById('trendGroupByBtns').querySelectorAll('button').forEach(b=>b.classList.remove('bg-white','shadow-sm','text-slate-700'));this.classList.add('bg-white','shadow-sm','text-slate-700')"
+                <button onclick="window.__trendView='pm';document.getElementById('trendBreakdownBody').innerHTML=window.__trendPMBody;document.getElementById('trendBreakdownLabel').textContent='PM';document.getElementById('trendGroupByBtns').querySelectorAll('button').forEach(b=>b.classList.remove('bg-white','shadow-sm','text-slate-700'));this.classList.add('bg-white','shadow-sm','text-slate-700');window.updateTrendChart('pm')"
                   class="px-2.5 py-1 rounded-md text-slate-500 hover:text-slate-700 transition-colors">PM</button>
               </div>
               <button onclick="window.collapseAllTrend()" class="flex items-center gap-1 px-2.5 py-1 rounded-md text-[10px] font-semibold text-slate-500 hover:text-slate-700 hover:bg-slate-100 transition-colors border border-slate-200">
@@ -6243,6 +6243,36 @@
           const btns = document.getElementById('trendGroupByBtns');
           if (btns) { btns.querySelectorAll('button').forEach((b,i) => { b.classList.remove('bg-white','shadow-sm','text-slate-700'); if(i===2) b.classList.add('bg-white','shadow-sm','text-slate-700'); }); }
         }
+
+        // Per-system and per-PM chart datasets (used when Group By = Account or PM)
+        const TREND_COLORS = ['#3b82f6','#8b5cf6','#22c55e','#f59e0b','#ef4444','#06b6d4','#84cc16','#f97316','#ec4899','#6366f1','#14b8a6','#f43f5e'];
+        const sysChartDatasets = sortedSystems.map((sys, idx) => ({
+          label: sys,
+          data: weeks.map((w, i) => i <= lastActualIdx ? (weekData[i].sysGhr?.[sys] || 0) + (weekData[i].sysAff?.[sys] || 0) : null),
+          borderColor: TREND_COLORS[idx % TREND_COLORS.length],
+          backgroundColor: 'transparent',
+          fill: false, tension: 0.3, pointRadius: 4,
+        }));
+        const pmChartDatasets = sortedPMs.map((pm, idx) => ({
+          label: pm,
+          data: weeks.map((w, i) => i <= lastActualIdx ? (weekData[i].pmGhr?.[pm] || 0) + (weekData[i].pmAff?.[pm] || 0) : null),
+          borderColor: TREND_COLORS[idx % TREND_COLORS.length],
+          backgroundColor: 'transparent',
+          fill: false, tension: 0.3, pointRadius: 4,
+        }));
+        window.__trendChartDatasets = { account: sysChartDatasets, pm: pmChartDatasets };
+
+        window.updateTrendChart = function(view) {
+          if (!window.__trendChart || !window.__trendChartDatasets) return;
+          if (view === 'account') {
+            window.__trendChart.data.datasets = window.__trendChartDatasets.account;
+          } else if (view === 'pm') {
+            window.__trendChart.data.datasets = window.__trendChartDatasets.pm;
+          } else {
+            window.__trendChart.data.datasets = window.__trendChartDatasets.category;
+          }
+          window.__trendChart.update();
+        };
 
         const canvas = $('trendChart');
         if (canvas && typeof Chart !== 'undefined') {
@@ -6354,8 +6384,11 @@
               }
             }
           });
+          // Store category datasets reference and restore selected Group By view
+          window.__trendChartDatasets.category = window.__trendChart.data.datasets.slice();
+          if (window.__trendView === 'account') window.updateTrendChart('account');
+          else if (window.__trendView === 'pm') window.updateTrendChart('pm');
         }
-
 
         lucide.createIcons();
       },
