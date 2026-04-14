@@ -310,12 +310,22 @@
         </button>
       </div>
       
-      <div class="p-6 overflow-y-auto">
-        <h4 class="text-lg font-bold text-slate-800 mb-3 flex items-center gap-2">
-          <i data-lucide="building-2" class="w-5 h-5 text-blue-600"></i> Health System Mappings
-        </h4>
+      <!-- Tabs -->
+      <div class="border-b border-slate-200 px-6 pt-4 flex gap-1">
+        <button id="settingsTabSystems" onclick="switchSettingsTab('systems')"
+          class="px-4 py-2 text-sm font-semibold rounded-t-md border border-b-0 border-slate-200 bg-white text-blue-700 -mb-px z-10">
+          <i data-lucide="building-2" class="w-4 h-4 inline-block mr-1"></i> Health Systems
+        </button>
+        <button id="settingsTabPM" onclick="switchSettingsTab('pm')"
+          class="px-4 py-2 text-sm font-semibold rounded-t-md text-slate-500 hover:text-slate-700">
+          <i data-lucide="user-check" class="w-4 h-4 inline-block mr-1"></i> Program Managers
+        </button>
+      </div>
+
+      <!-- Health Systems Tab -->
+      <div id="settingsPanelSystems" class="p-6 overflow-y-auto">
         <p class="text-sm text-slate-500 mb-4">Map facility name keywords to normalized health system names. Keywords are matched case-insensitively.</p>
-        
+
         <div class="border rounded-lg overflow-hidden mb-4">
           <table class="w-full text-sm">
             <thead class="bg-slate-100">
@@ -331,7 +341,7 @@
             </tbody>
           </table>
         </div>
-        
+
         <div class="flex justify-between items-center">
           <div class="flex gap-2">
             <button onclick="addMappingRow()" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded text-sm font-medium flex items-center gap-1">
@@ -350,6 +360,32 @@
               <input type="file" accept=".json" onchange="importMappings(event)" class="hidden">
             </label>
           </div>
+        </div>
+      </div>
+
+      <!-- Program Managers Tab -->
+      <div id="settingsPanelPM" class="p-6 overflow-y-auto hidden">
+        <p class="text-sm text-slate-500 mb-4">Assign GHR Program Managers to facilities. Each PM can cover multiple facilities (comma-separated). Used to group headcount in the Trend tab PM view.</p>
+
+        <div class="border rounded-lg overflow-hidden mb-4">
+          <table class="w-full text-sm">
+            <thead class="bg-slate-100">
+              <tr>
+                <th class="text-left p-3 font-semibold text-slate-700 w-48">Program Manager</th>
+                <th class="text-left p-3 font-semibold text-slate-700">Facilities (comma-separated)</th>
+                <th class="w-16 p-3"></th>
+              </tr>
+            </thead>
+            <tbody id="pmMappingsTableBody" class="divide-y">
+              <!-- PM mappings loaded here -->
+            </tbody>
+          </table>
+        </div>
+
+        <div class="flex gap-2">
+          <button onclick="addPMRow()" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded text-sm font-medium flex items-center gap-1">
+            <i data-lucide="plus" class="w-4 h-4"></i> Add Program Manager
+          </button>
         </div>
       </div>
       
@@ -1070,7 +1106,10 @@
             
             // Fetch health system mappings from database
             try {
-                const mappingsResponse = await fetch(`${API_BASE_URL}/system-mappings`);
+                const [mappingsResponse, pmMappingsResponse] = await Promise.all([
+                    fetch(`${API_BASE_URL}/system-mappings`),
+                    fetch(`${API_BASE_URL}/pm-mappings`)
+                ]);
                 if (mappingsResponse.ok) {
                     const mappingsData = await mappingsResponse.json();
                     if (mappingsData.mappings && mappingsData.mappings.length > 0) {
@@ -1081,6 +1120,11 @@
                         }));
                         console.log('Loaded', CONSTANTS.HEALTH_SYSTEM_MAPPINGS.length, 'health system mappings from database');
                     }
+                }
+                if (pmMappingsResponse.ok) {
+                    const pmData = await pmMappingsResponse.json();
+                    window.store.state.pmMappings = pmData.mappings || [];
+                    console.log('Loaded', window.store.state.pmMappings.length, 'PM mappings from database');
                 }
             } catch (mappingsError) {
                 console.warn('Could not load mappings from database, using defaults');
@@ -1291,7 +1335,8 @@
                         r.startDate = parseLocalDate(r.startDate);
                         r.endDate = parseLocalDate(r.endDate);
                         r.healthSystem = Utils.getHealthSystem(r.facility, r.system);
-                        r.pm = r.pm || 'Unassigned';
+                        // PM is resolved later in View.trend() using pmMappings from store
+                        r.pm = null;
                     };
                     if (trendData.assignments) trendData.assignments.forEach(normalizeTrendRow);
                     if (trendData.pending) trendData.pending.forEach(normalizeTrendRow);
@@ -5420,6 +5465,18 @@
         const allAssignments = s.trendData?.assignments || [];
         const allPending = s.trendData?.pending || [];
 
+        // Build facility → PM lookup from saved PM mappings
+        const pmMappings = s.pmMappings || [];
+        const facilityToPM = {};
+        pmMappings.forEach(pm => {
+          const facs = Array.isArray(pm.facilities) ? pm.facilities : [];
+          facs.forEach(f => { if (f) facilityToPM[f.toLowerCase().trim()] = pm.pm_name; });
+        });
+        const resolvePM = (facility) => {
+          if (!facility) return 'Unassigned';
+          return facilityToPM[facility.toLowerCase().trim()] || 'Unassigned';
+        };
+
         if (!s.trendLoaded) {
           container.innerHTML = `<div class="p-6 text-slate-500 bg-slate-50 border border-slate-200 rounded flex items-center gap-3">
             <svg class="animate-spin h-5 w-5 text-blue-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg>
@@ -5565,7 +5622,7 @@
               const name = r.worker_name || '';
               const cat = normalizeCategory(r.category);
               const sys = r.healthSystem || 'Unknown';
-              const pm = r.pm || 'Unassigned';
+              const pm = resolvePM(r.facility);
               if (isGHRAgency(r.agency)) {
                 ghrNames.add(name);
                 if (!catGhr[cat]) catGhr[cat] = new Set(); catGhr[cat].add(name);
@@ -7344,38 +7401,65 @@
     
     let currentMappings = [];
     
+    let currentPMMappings = [];
+
+    window.switchSettingsTab = function(tab) {
+        const isSystems = tab === 'systems';
+        document.getElementById('settingsPanelSystems').classList.toggle('hidden', !isSystems);
+        document.getElementById('settingsPanelPM').classList.toggle('hidden', isSystems);
+        const sysBtn = document.getElementById('settingsTabSystems');
+        const pmBtn = document.getElementById('settingsTabPM');
+        if (isSystems) {
+            sysBtn.className = 'px-4 py-2 text-sm font-semibold rounded-t-md border border-b-0 border-slate-200 bg-white text-blue-700 -mb-px z-10';
+            pmBtn.className = 'px-4 py-2 text-sm font-semibold rounded-t-md text-slate-500 hover:text-slate-700';
+        } else {
+            pmBtn.className = 'px-4 py-2 text-sm font-semibold rounded-t-md border border-b-0 border-slate-200 bg-white text-blue-700 -mb-px z-10';
+            sysBtn.className = 'px-4 py-2 text-sm font-semibold rounded-t-md text-slate-500 hover:text-slate-700';
+        }
+        lucide.createIcons();
+    };
+
     window.openSettingsModal = async function() {
         document.getElementById('settingsModal').classList.remove('hidden');
+        switchSettingsTab('systems');
         lucide.createIcons();
-        
-        // Load mappings from database
+
+        // Load system mappings
         try {
             const response = await fetch(`${API_BASE_URL}/system-mappings`);
             if (response.ok) {
                 const data = await response.json();
                 currentMappings = data.mappings || [];
             } else {
-                // Fall back to CONSTANTS if API fails
                 currentMappings = CONSTANTS.HEALTH_SYSTEM_MAPPINGS.map((m, idx) => ({
-                    id: idx + 1,
-                    keywords: m.keywords,
-                    system_name: m.system,
-                    sort_order: idx,
-                    perdiem_breakout: !!m.perdiem_breakout
+                    id: idx + 1, keywords: m.keywords, system_name: m.system,
+                    sort_order: idx, perdiem_breakout: !!m.perdiem_breakout
                 }));
             }
         } catch (error) {
             console.warn('Could not load mappings from database, using defaults:', error);
             currentMappings = CONSTANTS.HEALTH_SYSTEM_MAPPINGS.map((m, idx) => ({
-                id: idx + 1,
-                keywords: m.keywords,
-                system_name: m.system,
-                sort_order: idx,
-                perdiem_breakout: !!m.perdiem_breakout
+                id: idx + 1, keywords: m.keywords, system_name: m.system,
+                sort_order: idx, perdiem_breakout: !!m.perdiem_breakout
             }));
         }
-        
+
+        // Load PM mappings
+        try {
+            const pmResponse = await fetch(`${API_BASE_URL}/pm-mappings`);
+            if (pmResponse.ok) {
+                const pmData = await pmResponse.json();
+                currentPMMappings = pmData.mappings || [];
+            } else {
+                currentPMMappings = [];
+            }
+        } catch (e) {
+            console.warn('Could not load PM mappings:', e);
+            currentPMMappings = [];
+        }
+
         renderMappingsTable();
+        renderPMMappingsTable();
     };
     
     window.closeSettingsModal = function() {
@@ -7421,7 +7505,7 @@
                                class="w-full border border-slate-300 rounded px-2 py-1.5 text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none">
                     </td>
                     <td class="p-2">
-                        <input type="text" value="${mapping.system_name || mapping.system || ''}" 
+                        <input type="text" value="${mapping.system_name || mapping.system || ''}"
                                onchange="updateMapping(${idx}, 'system_name', this.value)"
                                class="w-full border border-slate-300 rounded px-2 py-1.5 text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none">
                     </td>
@@ -7443,6 +7527,105 @@
         lucide.createIcons();
     }
     
+    function renderPMMappingsTable() {
+        const tbody = document.getElementById('pmMappingsTableBody');
+        if (!tbody) return;
+        tbody.innerHTML = currentPMMappings.map((pm, idx) => {
+            const facStr = Array.isArray(pm.facilities) ? pm.facilities.join(', ') : (pm.facilities || '');
+            return `
+                <tr class="hover:bg-slate-50" data-idx="${idx}">
+                    <td class="p-2">
+                        <div class="relative">
+                            <input type="text" value="${pm.pm_name || ''}"
+                                   id="pmNameInput_${idx}"
+                                   oninput="searchPMUsers(${idx}, this.value)"
+                                   onblur="setTimeout(()=>hidePMDropdown(${idx}), 200)"
+                                   placeholder="Search for a user..."
+                                   autocomplete="off"
+                                   class="w-full border border-slate-300 rounded px-2 py-1.5 text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none">
+                            <div id="pmDropdown_${idx}" class="hidden absolute z-50 left-0 right-0 top-full mt-0.5 bg-white border border-slate-200 rounded shadow-lg max-h-48 overflow-y-auto text-sm"></div>
+                        </div>
+                    </td>
+                    <td class="p-2">
+                        <input type="text" value="${facStr}"
+                               onchange="updatePMMapping(${idx}, 'facilities', this.value)"
+                               placeholder="e.g. HUP, Chester County Hospital, ..."
+                               class="w-full border border-slate-300 rounded px-2 py-1.5 text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none">
+                    </td>
+                    <td class="p-2 text-center">
+                        <button onclick="deletePMRow(${idx})" class="text-red-500 hover:text-red-700 p-1" title="Delete">
+                            <i data-lucide="trash-2" class="w-4 h-4"></i>
+                        </button>
+                    </td>
+                </tr>
+            `;
+        }).join('');
+        lucide.createIcons();
+    }
+
+    const pmSearchTimers = {};
+    window.searchPMUsers = async function(idx, query) {
+        clearTimeout(pmSearchTimers[idx]);
+        const dropdown = document.getElementById(`pmDropdown_${idx}`);
+        if (!dropdown) return;
+        if (query.length < 2) { dropdown.classList.add('hidden'); return; }
+
+        pmSearchTimers[idx] = setTimeout(async () => {
+            try {
+                const resp = await fetch(`${API_BASE_URL}/search-users?q=${encodeURIComponent(query)}`);
+                const data = await resp.json();
+                const users = data.users || [];
+                if (users.length === 0) { dropdown.classList.add('hidden'); return; }
+                dropdown.innerHTML = users.map(u => `
+                    <div class="px-3 py-2 hover:bg-blue-50 cursor-pointer flex flex-col"
+                         onmousedown="selectPMUser(${idx}, '${(u.displayName || '').replace(/'/g, "\\'")}')">
+                        <span class="font-medium text-slate-800">${u.displayName || ''}</span>
+                        ${u.jobTitle ? `<span class="text-xs text-slate-400">${u.jobTitle}${u.department ? ' · ' + u.department : ''}</span>` : ''}
+                    </div>
+                `).join('');
+                dropdown.classList.remove('hidden');
+            } catch (e) {
+                dropdown.classList.add('hidden');
+            }
+        }, 250);
+    };
+
+    window.selectPMUser = function(idx, displayName) {
+        const input = document.getElementById(`pmNameInput_${idx}`);
+        if (input) input.value = displayName;
+        updatePMMapping(idx, 'pm_name', displayName);
+        hidePMDropdown(idx);
+    };
+
+    window.hidePMDropdown = function(idx) {
+        const dropdown = document.getElementById(`pmDropdown_${idx}`);
+        if (dropdown) dropdown.classList.add('hidden');
+        // Also persist whatever is typed
+        const input = document.getElementById(`pmNameInput_${idx}`);
+        if (input) updatePMMapping(idx, 'pm_name', input.value);
+    };
+
+    window.updatePMMapping = function(idx, field, value) {
+        if (!currentPMMappings[idx]) return;
+        if (field === 'facilities') {
+            currentPMMappings[idx].facilities = value.split(',').map(f => f.trim()).filter(f => f);
+        } else {
+            currentPMMappings[idx][field] = value;
+        }
+    };
+
+    window.deletePMRow = function(idx) {
+        currentPMMappings.splice(idx, 1);
+        renderPMMappingsTable();
+    };
+
+    window.addPMRow = function() {
+        currentPMMappings.push({ id: null, pm_name: '', facilities: [], sort_order: currentPMMappings.length });
+        renderPMMappingsTable();
+        const tbody = document.getElementById('pmMappingsTableBody');
+        if (tbody) { const input = tbody.lastElementChild?.querySelector('input'); if (input) input.focus(); }
+    };
+
     window.updateMapping = function(idx, field, value) {
         if (currentMappings[idx]) {
             if (field === 'keywords') {
@@ -7540,32 +7723,42 @@
     
     window.saveSettings = async function() {
         try {
-            const response = await fetch(`${API_BASE_URL}/system-mappings`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ mappings: currentMappings })
-            });
-            
-            const responseData = await response.json();
-            
-            if (response.ok) {
-                // Update CONSTANTS with new mappings
+            // Save system mappings and PM mappings in parallel
+            const [sysResp, pmResp] = await Promise.all([
+                fetch(`${API_BASE_URL}/system-mappings`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ mappings: currentMappings })
+                }),
+                fetch(`${API_BASE_URL}/pm-mappings`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ mappings: currentPMMappings })
+                })
+            ]);
+
+            if (sysResp.ok && pmResp.ok) {
+                // Update CONSTANTS with new system mappings
                 CONSTANTS.HEALTH_SYSTEM_MAPPINGS = currentMappings.map(m => ({
                     keywords: Array.isArray(m.keywords) ? m.keywords : [m.keywords],
                     system: m.system_name || m.system,
                     perdiem_breakout: !!m.perdiem_breakout
                 }));
-                
+
+                // Update PM mappings in store for trend view
+                window.store.state.pmMappings = currentPMMappings;
+
                 window.showToast('Settings saved successfully', 'success');
                 closeSettingsModal();
-                
-                // Refresh the data to apply new mappings
+
+                // Refresh to apply new mappings
                 if (window.store && window.store.state.jobs.length > 0) {
                     window.showToast('Refreshing data to apply new mappings...', 'info');
                     await window.loadDataFromDatabase();
                 }
             } else {
-                throw new Error(responseData.error || `Server returned ${response.status}`);
+                const err = await (sysResp.ok ? pmResp : sysResp).json();
+                throw new Error(err.error || 'Save failed');
             }
         } catch (error) {
             console.error('Error saving settings:', error);
