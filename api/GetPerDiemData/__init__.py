@@ -252,7 +252,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                     'VNDLY' AS source_system,
                     [Work Site (Job)] AS facility_name,
                     [Health System] AS health_system,
-                    [Job Id] AS position_id,
+                    [JobSystemKey] AS position_id,
                     [Job Title] AS specialty,
                     [Job Quantity] AS total_positions,
                     [Open Positions] AS open_positions,

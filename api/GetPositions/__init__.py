@@ -86,7 +86,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
         cursor.execute('''
             SELECT 
                 'VNDLY' AS source_system,
-                RTRIM(LTRIM([Job Id])) AS position_id,
+                [JobSystemKey] AS position_id,
                 [Job Category] AS program,
                 COALESCE([Facility], [Health System]) AS facility,
                 [Job Title] AS specialty,
@@ -231,7 +231,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             placeholders = ','.join(['?' for _ in vndly_position_ids])
             cursor.execute(f'''
                 SELECT 
-                    RTRIM(LTRIM([Job Id])) AS job_id,
+                    [JobSystemKey] AS job_id,
                     [Full Name] AS candidate_name,
                     [Vendor Company Name] AS agency,
                     [Application Date] AS submission_date,
@@ -250,7 +250,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                     [Ready To Onboard Date] AS rto_date,
                     [Candidate ID] AS candidate_id
                 FROM dbo.STAGING_VNDLY_SUBMISSIONS
-                WHERE RTRIM(LTRIM([Job Id])) IN ({placeholders})
+                WHERE [JobSystemKey] IN ({placeholders})
             ''', vndly_position_ids)
             
             sub_columns = [column[0] for column in cursor.description]

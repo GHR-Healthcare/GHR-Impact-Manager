@@ -91,7 +91,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                     'VNDLY' AS source_system,
                     [Job Application System Id] AS submission_id,
                     [Health System] AS health_system,
-                    [Job Id] AS job_id,
+                    [JobSystemKey] AS job_id,
                     [Vendor Company Name] AS agency,
                     CONCAT([First Name], ' ', [Last Name]) AS worker_name,
                     [Full Name] AS full_name,
