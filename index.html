@@ -6254,6 +6254,9 @@
               <button id="trendYoYBtn" onclick="window.toggleTrendYoY()" class="flex items-center gap-1 px-2.5 py-1 rounded-md text-[10px] font-semibold text-slate-500 hover:text-slate-700 hover:bg-slate-100 transition-colors border border-slate-200">
                 <i data-lucide="calendar" class="w-3 h-3"></i> <span id="trendYoYLabel">Show Prior Year</span>
               </button>
+              <button id="trendFillRateBtn" onclick="window.toggleTrendFillRate()" class="flex items-center gap-1 px-2.5 py-1 rounded-md text-[10px] font-semibold text-slate-500 hover:text-slate-700 hover:bg-slate-100 transition-colors border border-slate-200">
+                <i data-lucide="percent" class="w-3 h-3"></i> <span id="trendFillRateLabel">Show Fill Rate</span>
+              </button>
             </div>
             <p class="text-xs text-slate-400">4-week lookback · 3-week projection · follows active filters</p>
           </div>
@@ -6376,17 +6379,20 @@
             buildSeriesPair(pm, i => (weekData[i].pmGhr?.[pm] || 0) + (weekData[i].pmAff?.[pm] || 0), TREND_COLORS[idx % TREND_COLORS.length], idx)
           ),
         ];
-        // Grouped so Total, GHR, and Affiliate each have their current + pipeline + projection
+        // Grouped so Total, GHR, and Affiliate each have their current + pipeline + pending + projection
         // sitting next to each other in the legend/tooltip. YoY lines insert inline via interleave.
         const categoryChartDatasets = [
           { label: 'Total Headcount', data: actualsData, borderColor: '#64748b', backgroundColor: 'rgba(100,116,139,0.08)', fill: true, tension: 0.3, pointRadius: 5 },
-          { label: 'Total Pipeline', data: pipelineData, borderColor: '#64748b', fill: false, tension: 0.3, pointRadius: 4, borderDash: [2, 2] },
-          { label: 'Total Projection', data: projectionData, borderColor: '#64748b', fill: false, tension: 0, pointRadius: 3, borderDash: [6, 4] },
+          { label: 'Total Pipeline', data: pipelineData, borderColor: '#22c55e', backgroundColor: 'rgba(34,197,94,0.08)', fill: false, tension: 0.3, pointRadius: 5 },
+          { label: 'Total Pending', data: pipelineWithPendingData, borderColor: '#22c55e', fill: false, tension: 0.3, pointRadius: 4, borderDash: [2, 2] },
+          { label: 'Total Projection', data: projectionData, borderColor: '#94a3b8', fill: false, tension: 0, pointRadius: 4, borderDash: [6, 4] },
           { label: 'GHR', data: ghrActualsData, borderColor: '#3b82f6', backgroundColor: 'rgba(59,130,246,0.1)', fill: false, tension: 0.3, pointRadius: 4 },
           { label: 'GHR Pipeline', data: ghrPipelineData, borderColor: '#3b82f6', fill: false, tension: 0.3, pointRadius: 3, borderDash: [2, 2] },
+          { label: 'GHR Pending', data: pendingGhrData, borderColor: '#3b82f6', fill: false, tension: 0.3, pointRadius: 3, borderDash: [4, 3] },
           { label: 'GHR Projection', data: ghrProjectionData, borderColor: '#3b82f6', fill: false, tension: 0, pointRadius: 3, borderDash: [6, 4] },
           { label: 'Affiliate', data: affActualsData, borderColor: '#8b5cf6', backgroundColor: 'rgba(139,92,246,0.1)', fill: false, tension: 0.3, pointRadius: 4 },
           { label: 'Affiliate Pipeline', data: affPipelineData, borderColor: '#8b5cf6', fill: false, tension: 0.3, pointRadius: 3, borderDash: [2, 2] },
+          { label: 'Affiliate Pending', data: pendingAffData, borderColor: '#8b5cf6', fill: false, tension: 0.3, pointRadius: 3, borderDash: [4, 3] },
           { label: 'Affiliate Projection', data: affProjectionData, borderColor: '#8b5cf6', fill: false, tension: 0, pointRadius: 3, borderDash: [6, 4] },
         ];
         window.__trendChartDatasets = { category: categoryChartDatasets, account: sysChartDatasets, pm: pmChartDatasets };
@@ -6541,15 +6547,72 @@
           return result;
         };
 
+        // Compute GHR fill rate per week (GHR / (GHR + Affiliate) * 100)
+        // Applied only for GHR-labeled lines when fill rate mode is on
+        const ghrFillRateActuals = weeks.map((w, i) => {
+          if (i > lastActualIdx) return null;
+          const g = weekData[i].ghr, a = weekData[i].aff;
+          return g + a > 0 ? Math.round(g / (g + a) * 1000) / 10 : null;
+        });
+        const ghrFillRatePipeline = weeks.map((w, i) => {
+          if (i < lastActualIdx) return null;
+          const g = weekData[i].ghr, a = weekData[i].aff;
+          return g + a > 0 ? Math.round(g / (g + a) * 1000) / 10 : null;
+        });
+        const ghrFillRatePending = weeks.map((w, i) => {
+          if (i < lastActualIdx) return null;
+          const g = weekData[i].ghr + (weekData[i].pendingGhr || 0);
+          const a = weekData[i].aff + (weekData[i].pendingAff || 0);
+          return g + a > 0 ? Math.round(g / (g + a) * 1000) / 10 : null;
+        });
+        const fillRateRegression = linearRegression(ghrFillRateActuals.map((y, x) => ({ x, y })).filter(p => p.y != null));
+        const ghrFillRateProjection = weeks.map((w, i) =>
+          i >= lastActualIdx ? Math.max(0, Math.min(100, Math.round((fillRateRegression.slope * i + fillRateRegression.intercept) * 10) / 10)) : null
+        );
+
+        const fillRateChartDatasets = [
+          { label: 'GHR Fill Rate', data: ghrFillRateActuals, borderColor: '#3b82f6', backgroundColor: 'rgba(59,130,246,0.1)', fill: true, tension: 0.3, pointRadius: 5 },
+          { label: 'GHR Fill Rate (Pipeline)', data: ghrFillRatePipeline, borderColor: '#3b82f6', fill: false, tension: 0.3, pointRadius: 4, borderDash: [2, 2] },
+          { label: 'GHR Fill Rate (Pending)', data: ghrFillRatePending, borderColor: '#3b82f6', fill: false, tension: 0.3, pointRadius: 4, borderDash: [4, 3] },
+          { label: 'GHR Fill Rate (Projection)', data: ghrFillRateProjection, borderColor: '#3b82f6', fill: false, tension: 0, pointRadius: 3, borderDash: [6, 4] },
+        ];
+
         window.updateTrendChart = function(view) {
           if (!window.__trendChart || !window.__trendChartDatasets) return;
-          let base;
-          if (view === 'account') base = window.__trendChartDatasets.account;
-          else if (view === 'pm') base = window.__trendChartDatasets.pm;
-          else base = window.__trendChartDatasets.category;
-          const yoy = window.__yoyVisible ? computeYoYDatasets(view) : [];
-          window.__trendChart.data.datasets = interleaveYoY(base, yoy);
+          let datasets;
+          if (window.__fillRateMode) {
+            datasets = fillRateChartDatasets;
+          } else {
+            let base;
+            if (view === 'account') base = window.__trendChartDatasets.account;
+            else if (view === 'pm') base = window.__trendChartDatasets.pm;
+            else base = window.__trendChartDatasets.category;
+            const yoy = window.__yoyVisible ? computeYoYDatasets(view) : [];
+            datasets = interleaveYoY(base, yoy);
+          }
+          window.__trendChart.data.datasets = datasets;
+          // Update y-axis title
+          const yScale = window.__trendChart.options?.scales?.y;
+          if (yScale) {
+            if (!yScale.title) yScale.title = { display: true, font: { size: 11 } };
+            yScale.title.text = window.__fillRateMode ? 'Fill Rate (%)' : 'Headcount';
+            yScale.min = window.__fillRateMode ? 0 : undefined;
+            yScale.max = window.__fillRateMode ? 100 : undefined;
+          }
           window.__trendChart.update();
+        };
+
+        window.toggleTrendFillRate = () => {
+          window.__fillRateMode = !window.__fillRateMode;
+          const btn = document.getElementById('trendFillRateBtn');
+          const lbl = document.getElementById('trendFillRateLabel');
+          if (lbl) lbl.textContent = window.__fillRateMode ? 'Show Headcount' : 'Show Fill Rate';
+          if (btn) {
+            btn.classList.toggle('bg-blue-50', window.__fillRateMode);
+            btn.classList.toggle('text-blue-700', window.__fillRateMode);
+            btn.classList.toggle('border-blue-200', window.__fillRateMode);
+          }
+          window.updateTrendChart(window.__trendView || 'category');
         };
 
         const canvas = $('trendChart');
@@ -6558,84 +6621,7 @@
             type: 'line',
             data: {
               labels,
-              datasets: [
-                {
-                  label: 'Total Headcount',
-                  data: actualsData,
-                  borderColor: '#64748b',
-                  backgroundColor: 'rgba(100,116,139,0.08)',
-                  fill: true,
-                  tension: 0.3,
-                  pointRadius: 5,
-                },
-                {
-                  label: 'GHR',
-                  data: ghrActualsData,
-                  borderColor: '#3b82f6',
-                  backgroundColor: 'rgba(59,130,246,0.1)',
-                  fill: false,
-                  tension: 0.3,
-                  pointRadius: 4,
-                },
-                {
-                  label: 'Affiliate',
-                  data: affActualsData,
-                  borderColor: '#8b5cf6',
-                  backgroundColor: 'rgba(139,92,246,0.1)',
-                  fill: false,
-                  tension: 0.3,
-                  pointRadius: 4,
-                },
-                {
-                  label: 'Pipeline (Confirmed)',
-                  data: pipelineData,
-                  borderColor: '#22c55e',
-                  backgroundColor: 'rgba(34,197,94,0.08)',
-                  fill: false,
-                  tension: 0.3,
-                  pointRadius: 5,
-                },
-                {
-                  label: 'GHR Pending',
-                  data: pendingGhrData,
-                  borderColor: '#3b82f6',
-                  backgroundColor: 'rgba(59,130,246,0.1)',
-                  borderDash: [4, 3],
-                  fill: false,
-                  tension: 0.3,
-                  pointRadius: 4,
-                },
-                {
-                  label: 'Affiliate Pending',
-                  data: pendingAffData,
-                  borderColor: '#8b5cf6',
-                  backgroundColor: 'rgba(139,92,246,0.1)',
-                  borderDash: [4, 3],
-                  fill: false,
-                  tension: 0.3,
-                  pointRadius: 4,
-                },
-                {
-                  label: 'Total Pending',
-                  data: pipelineWithPendingData,
-                  borderColor: '#22c55e',
-                  backgroundColor: 'rgba(34,197,94,0.08)',
-                  borderDash: [2, 2],
-                  fill: false,
-                  tension: 0.3,
-                  pointRadius: 5,
-                },
-                {
-                  label: 'Trend Projection',
-                  data: projectionData,
-                  borderColor: '#94a3b8',
-                  borderDash: [6, 4],
-                  fill: false,
-                  tension: 0,
-                  pointRadius: 4,
-                  pointStyle: 'circle',
-                }
-              ]
+              datasets: categoryChartDatasets,
             },
             options: {
               responsive: true,
@@ -6662,10 +6648,8 @@
               }
             }
           });
-          // Store category datasets reference and restore selected Group By view
-          window.__trendChartDatasets.category = window.__trendChart.data.datasets.slice();
-          if (window.__trendView === 'account') window.updateTrendChart('account');
-          else if (window.__trendView === 'pm') window.updateTrendChart('pm');
+          // Apply current view (account/pm/category) and any active overlays
+          window.updateTrendChart(window.__trendView || 'category');
         }
 
         lucide.createIcons();
