@@ -7808,16 +7808,11 @@
         const tbody = document.getElementById('pmMappingsTableBody');
         if (!tbody) return;
 
-        // Include facilities from every data source so mappings cover all possible values
-        // that might appear in trend/per-diem/stats data, not just open positions
+        // Use same facility source as the facility filter dropdown (open positions only)
         const s = window.store.state;
-        const knownFacilities = new Set();
-        (s.jobs || []).forEach(j => { if (j.facility) knownFacilities.add(j.facility); });
-        (s.trendData?.assignments || []).forEach(a => { if (a.facility) knownFacilities.add(a.facility); });
-        (s.perDiemData?.assignments || []).forEach(a => { if (a.facility) knownFacilities.add(a.facility); });
-        (s.perDiemData?.shifts || []).forEach(sh => { if (sh.facility) knownFacilities.add(sh.facility); });
-        (s.statsData?.onAssignment || []).forEach(a => { if (a.facility) knownFacilities.add(a.facility); });
-        (s.statsData?.upcoming || []).forEach(a => { if (a.facility) knownFacilities.add(a.facility); });
+        const knownFacilities = new Set(
+            (s.jobs || []).map(j => j.facility).filter(Boolean)
+        );
         // Always include facilities from saved mappings so they don't disappear if they drop out of data
         currentPMMappings.forEach(m => { if (m.facility) knownFacilities.add(m.facility); });
 
