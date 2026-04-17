@@ -6169,9 +6169,11 @@
               weeks.forEach((w, i) => {
                 const gv = weekData[i].pmSysCat?.ghr?.[pm]?.[sys]?.[cat] || 0;
                 const av = weekData[i].pmSysCat?.aff?.[pm]?.[sys]?.[cat] || 0;
+                const gP = i > 0 ? (weekData[i-1].pmSysCat?.ghr?.[pm]?.[sys]?.[cat] || 0) : null;
+                const aP = i > 0 ? (weekData[i-1].pmSysCat?.aff?.[pm]?.[sys]?.[cat] || 0) : null;
                 const isCurrent = i === currentWeekIdx;
                 cc += `<td class="px-2 py-1 border-b border-slate-50 text-center text-[10px] ${isCurrent ? 'bg-blue-50/30' : ''}">
-                  <span class="text-blue-500">${gv}</span><span class="text-slate-200 mx-0.5">/</span><span class="text-purple-500">${av}</span></td>`;
+                  <span class="text-blue-500">${gv}${deltaSpan(gv, gP)}</span><span class="text-slate-200 mx-0.5">/</span><span class="text-purple-500">${av}${deltaSpan(av, aP)}</span></td>`;
                 if (isCurrent) {
                   cc += `<td class="px-2 py-1 border-b border-slate-50 text-center text-[10px] bg-amber-50 border-l border-r border-amber-200">
                     <span class="text-blue-500">${pmscAvgG ?? '—'}</span><span class="text-slate-200 mx-0.5">/</span><span class="text-purple-500">${pmscAvgA ?? '—'}</span></td>`;
@@ -6324,25 +6326,45 @@
           },
         ];
 
+        // Helper: build solid actuals + dashed projection pair for a series
+        const buildSeriesPair = (label, getVal, color, idx) => {
+          const series = weeks.map((w, i) => getVal(i));
+          const actuals = series.map((v, i) => i <= lastActualIdx ? v : null);
+          const pipeline = series.map((v, i) => i >= lastActualIdx ? v : null);
+          // Linear regression on actuals for projection
+          const points = series.slice(0, lastActualIdx + 1).map((y, x) => ({ x, y })).filter(p => p.y != null);
+          const { slope, intercept } = linearRegression(points);
+          const projection = weeks.map((w, i) => i >= lastActualIdx ? Math.max(0, Math.round(slope * i + intercept)) : null);
+          return [
+            {
+              label,
+              data: actuals.map((v, i) => i >= lastActualIdx && i > lastActualIdx ? null : v),
+              borderColor: color,
+              backgroundColor: 'transparent',
+              fill: false, tension: 0.3, pointRadius: 3, borderWidth: 1.5,
+            },
+            {
+              label: `${label} (Pipeline)`,
+              data: pipeline,
+              borderColor: color,
+              backgroundColor: 'transparent',
+              fill: false, tension: 0.3, pointRadius: 3, borderWidth: 1.5, borderDash: [2, 2],
+              showLine: true,
+            },
+          ];
+        };
+
         const sysChartDatasets = [
           ...overlayDatasets,
-          ...sortedSystems.map((sys, idx) => ({
-            label: sys,
-            data: weeks.map((w, i) => i <= lastActualIdx ? (weekData[i].sysGhr?.[sys] || 0) + (weekData[i].sysAff?.[sys] || 0) : null),
-            borderColor: TREND_COLORS[idx % TREND_COLORS.length],
-            backgroundColor: 'transparent',
-            fill: false, tension: 0.3, pointRadius: 3, borderWidth: 1.5,
-          })),
+          ...sortedSystems.flatMap((sys, idx) =>
+            buildSeriesPair(sys, i => (weekData[i].sysGhr?.[sys] || 0) + (weekData[i].sysAff?.[sys] || 0), TREND_COLORS[idx % TREND_COLORS.length], idx)
+          ),
         ];
         const pmChartDatasets = [
           ...overlayDatasets,
-          ...sortedPMs.map((pm, idx) => ({
-            label: pm,
-            data: weeks.map((w, i) => i <= lastActualIdx ? (weekData[i].pmGhr?.[pm] || 0) + (weekData[i].pmAff?.[pm] || 0) : null),
-            borderColor: TREND_COLORS[idx % TREND_COLORS.length],
-            backgroundColor: 'transparent',
-            fill: false, tension: 0.3, pointRadius: 3, borderWidth: 1.5,
-          })),
+          ...sortedPMs.flatMap((pm, idx) =>
+            buildSeriesPair(pm, i => (weekData[i].pmGhr?.[pm] || 0) + (weekData[i].pmAff?.[pm] || 0), TREND_COLORS[idx % TREND_COLORS.length], idx)
+          ),
         ];
         const categoryChartDatasets = [
           { label: 'Total Headcount', data: actualsData, borderColor: '#64748b', backgroundColor: 'rgba(100,116,139,0.08)', fill: true, tension: 0.3, pointRadius: 5 },
@@ -7783,11 +7805,16 @@
         const tbody = document.getElementById('pmMappingsTableBody');
         if (!tbody) return;
 
-        // Use same facility source as the facility filter dropdown (open positions only)
+        // Include facilities from every data source so mappings cover all possible values
+        // that might appear in trend/per-diem/stats data, not just open positions
         const s = window.store.state;
-        const knownFacilities = new Set(
-            (s.jobs || []).map(j => j.facility).filter(Boolean)
-        );
+        const knownFacilities = new Set();
+        (s.jobs || []).forEach(j => { if (j.facility) knownFacilities.add(j.facility); });
+        (s.trendData?.assignments || []).forEach(a => { if (a.facility) knownFacilities.add(a.facility); });
+        (s.perDiemData?.assignments || []).forEach(a => { if (a.facility) knownFacilities.add(a.facility); });
+        (s.perDiemData?.shifts || []).forEach(sh => { if (sh.facility) knownFacilities.add(sh.facility); });
+        (s.statsData?.onAssignment || []).forEach(a => { if (a.facility) knownFacilities.add(a.facility); });
+        (s.statsData?.upcoming || []).forEach(a => { if (a.facility) knownFacilities.add(a.facility); });
         // Always include facilities from saved mappings so they don't disappear if they drop out of data
         currentPMMappings.forEach(m => { if (m.facility) knownFacilities.add(m.facility); });
 
