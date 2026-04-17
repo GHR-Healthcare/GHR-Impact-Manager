@@ -5461,12 +5461,39 @@
         // Build facility → PM lookup from saved PM mappings
         const pmMappings = s.pmMappings || [];
         const facilityToPM = {};
+        const pmMappingEntries = [];  // [{ key, pm }] for fuzzy matching
         pmMappings.forEach(m => {
-          if (m.facility) facilityToPM[m.facility.toLowerCase().trim()] = m.pm_name || 'Unassigned';
+          if (m.facility) {
+            const key = m.facility.toLowerCase().trim();
+            const pm = m.pm_name || 'Unassigned';
+            facilityToPM[key] = pm;
+            pmMappingEntries.push({ key, pm });
+          }
         });
-        const resolvePM = (facility) => {
-          if (!facility) return 'Unassigned';
-          return facilityToPM[facility.toLowerCase().trim()] || 'Unassigned';
+        const pmLookupCache = new Map();
+        const resolvePM = (facility, healthSystem) => {
+          if (!facility && !healthSystem) return 'Unassigned';
+          const cacheKey = `${facility || ''}||${healthSystem || ''}`;
+          if (pmLookupCache.has(cacheKey)) return pmLookupCache.get(cacheKey);
+          const fac = (facility || '').toLowerCase().trim();
+          let result = 'Unassigned';
+          if (fac && facilityToPM[fac]) {
+            result = facilityToPM[fac];
+          } else if (fac) {
+            // Fuzzy: mapping facility contained in trend facility, or vice versa
+            const match = pmMappingEntries.find(e => fac.includes(e.key) || e.key.includes(fac));
+            if (match) result = match.pm;
+          }
+          // Fall back to health-system-level PM if all mapped facilities in that system share one PM
+          if (result === 'Unassigned' && healthSystem) {
+            const sysLower = healthSystem.toLowerCase();
+            const sysPms = new Set(pmMappingEntries
+              .filter(e => e.key.includes(sysLower) || sysLower.includes(e.key))
+              .map(e => e.pm));
+            if (sysPms.size === 1) result = [...sysPms][0];
+          }
+          pmLookupCache.set(cacheKey, result);
+          return result;
         };
 
         if (!s.trendLoaded) {
@@ -6002,10 +6029,10 @@
           const hasCats = cats.size > 1;
           const toggleAttr = hasCats ? `onclick="document.querySelectorAll('.sys-cat-${sysId}').forEach(r=>r.classList.toggle('hidden'))" style="cursor:pointer"` : '';
           const chevron = hasCats ? `<span class="inline-block w-3 text-slate-400 mr-1">&#9654;</span>` : `<span class="inline-block w-3 mr-1"></span>`;
+          const avgG = rolling4Wk(i => weekData[i].sysGhr?.[sys] || 0);
+          const avgA = rolling4Wk(i => weekData[i].sysAff?.[sys] || 0);
           let cells = `<td class="px-3 py-1.5 border-b border-slate-100 font-medium text-slate-700 whitespace-nowrap text-xs">${chevron}${sys}</td>`;
           weeks.forEach((w, i) => {
-            const g = wd => (wd.sysGhr?.[sys] || 0);
-            const a = wd => (wd.sysAff?.[sys] || 0);
             const gv = weekData[i].sysGhr?.[sys] || 0;
             const av = weekData[i].sysAff?.[sys] || 0;
             const gPrev = i > 0 ? (weekData[i-1].sysGhr?.[sys] || 0) : null;
@@ -6016,19 +6043,19 @@
               <span class="text-slate-300 mx-0.5">/</span>
               <span class="text-purple-700 font-semibold">${av}${deltaSpan(av,aPrev)}</span>
             </td>`;
+            if (isCurrent) {
+              cells += `<td class="px-2 py-1.5 border-b border-slate-100 text-center text-[10px] bg-amber-50 border-l border-r border-amber-200">
+                <span class="text-blue-700 font-semibold">${avgG ?? '—'}</span>
+                <span class="text-slate-300 mx-0.5">/</span>
+                <span class="text-purple-700 font-semibold">${avgA ?? '—'}</span>
+              </td>`;
+            }
           });
-          const avgG = rolling4Wk(i => weekData[i].sysGhr?.[sys] || 0);
-          const avgA = rolling4Wk(i => weekData[i].sysAff?.[sys] || 0);
-          const curG = weekData[currentWeekIdx >= 0 ? currentWeekIdx : lastActualIdx]?.sysGhr?.[sys] || 0;
-          const curA = weekData[currentWeekIdx >= 0 ? currentWeekIdx : lastActualIdx]?.sysAff?.[sys] || 0;
-          cells += `<td class="px-2 py-1.5 border-b border-slate-100 text-center text-[10px] bg-slate-50 border-l border-slate-200">
-            <span class="text-blue-700 font-semibold">${avgG ?? '—'}${avgG != null ? deltaSpan(curG, avgG) : ''}</span>
-            <span class="text-slate-300 mx-0.5">/</span>
-            <span class="text-purple-700 font-semibold">${avgA ?? '—'}${avgA != null ? deltaSpan(curA, avgA) : ''}</span>
-          </td>`;
           let rows = `<tr class="hover:bg-slate-50" ${toggleAttr}>${cells}</tr>`;
           if (hasCats) {
             [...cats].sort().forEach(cat => {
+              const sAvgG = rolling4Wk(i => weekData[i].sysCatGhr?.[sys]?.[cat] || 0);
+              const sAvgA = rolling4Wk(i => weekData[i].sysCatAff?.[sys]?.[cat] || 0);
               let sc = `<td class="pl-8 pr-3 py-1 border-b border-slate-50 text-slate-500 whitespace-nowrap text-[10px]">${cat}</td>`;
               weeks.forEach((w, i) => {
                 const gv = weekData[i].sysCatGhr?.[sys]?.[cat] || 0;
@@ -6041,14 +6068,21 @@
                   <span class="text-slate-200 mx-0.5">/</span>
                   <span class="text-purple-600">${av}${deltaSpan(av,aPrev)}</span>
                 </td>`;
+                if (isCurrent) {
+                  sc += `<td class="px-2 py-1 border-b border-slate-50 text-center text-[10px] bg-amber-50 border-l border-r border-amber-200">
+                    <span class="text-blue-600">${sAvgG ?? '—'}</span>
+                    <span class="text-slate-200 mx-0.5">/</span>
+                    <span class="text-purple-600">${sAvgA ?? '—'}</span>
+                  </td>`;
+                }
               });
-              sc += `<td class="px-2 py-1 border-b border-slate-50 bg-slate-50 border-l border-slate-200"></td>`;
               rows += `<tr class="sys-cat-${sysId} hidden bg-slate-25 hover:bg-slate-50">${sc}</tr>`;
             });
           }
           return rows;
         };
         const sysTableTotalRow = (() => {
+          const avgG = rolling4Wk(i => weekData[i].ghr), avgA = rolling4Wk(i => weekData[i].aff);
           let cells = `<td class="px-3 py-1.5 border-b border-slate-200 font-bold text-slate-800 whitespace-nowrap text-xs"><span class="inline-block w-3 mr-1"></span>Total</td>`;
           weeks.forEach((w, i) => {
             const g = weekData[i].ghr, a = weekData[i].aff;
@@ -6056,12 +6090,11 @@
             const isCurrent = i === currentWeekIdx;
             cells += `<td class="px-2 py-1.5 border-b border-slate-200 text-center text-[11px] font-bold ${isCurrent ? 'bg-blue-50' : ''}">
               <span class="text-blue-700">${g}${deltaSpan(g,gP)}</span><span class="text-slate-300 mx-0.5">/</span><span class="text-purple-700">${a}${deltaSpan(a,aP)}</span></td>`;
+            if (isCurrent) {
+              cells += `<td class="px-2 py-1.5 border-b border-slate-200 text-center text-[11px] font-bold bg-amber-50 border-l border-r border-amber-200">
+                <span class="text-blue-700">${avgG ?? '—'}</span><span class="text-slate-300 mx-0.5">/</span><span class="text-purple-700">${avgA ?? '—'}</span></td>`;
+            }
           });
-          const avgG = rolling4Wk(i => weekData[i].ghr), avgA = rolling4Wk(i => weekData[i].aff);
-          const curG = weekData[currentWeekIdx >= 0 ? currentWeekIdx : lastActualIdx]?.ghr || 0;
-          const curA = weekData[currentWeekIdx >= 0 ? currentWeekIdx : lastActualIdx]?.aff || 0;
-          cells += `<td class="px-2 py-1.5 border-b border-slate-200 text-center text-[11px] font-bold bg-slate-50 border-l border-slate-200">
-            <span class="text-blue-700">${avgG ?? '—'}${avgG != null ? deltaSpan(curG, avgG) : ''}</span><span class="text-slate-300 mx-0.5">/</span><span class="text-purple-700">${avgA ?? '—'}${avgA != null ? deltaSpan(curA, avgA) : ''}</span></td>`;
           return `<tr class="bg-slate-50">${cells}</tr>`;
         })();
         const sysTableBody = sysTableTotalRow + sortedSystems.map(buildSysRow).join('');
@@ -6084,6 +6117,7 @@
           const hasSubs = pmSystems.size > 0;
           const toggleAttr = hasSubs ? `onclick="document.querySelectorAll('.pm-sys-${pmId},.pm-sys-cat-${pmId}').forEach(r=>{if(r.classList.contains('pm-sys-${pmId}'))r.classList.toggle('hidden')})" style="cursor:pointer"` : '';
           const chevron = hasSubs ? `<span class="inline-block w-3 text-slate-400 mr-1">&#9654;</span>` : `<span class="inline-block w-3 mr-1"></span>`;
+          const avgG = rolling4Wk(i => weekData[i].pmGhr?.[pm] || 0), avgA = rolling4Wk(i => weekData[i].pmAff?.[pm] || 0);
           let cells = `<td class="px-3 py-1.5 border-b border-slate-100 font-semibold text-slate-700 whitespace-nowrap text-xs">${chevron}${pm}</td>`;
           weeks.forEach((w, i) => {
             const gv = weekData[i].pmGhr?.[pm] || 0, av = weekData[i].pmAff?.[pm] || 0;
@@ -6091,12 +6125,11 @@
             const isCurrent = i === currentWeekIdx;
             cells += `<td class="px-2 py-1.5 border-b border-slate-100 text-center text-[10px] ${isCurrent ? 'bg-blue-50' : ''}">
               <span class="text-blue-700 font-semibold">${gv}${deltaSpan(gv,gP)}</span><span class="text-slate-300 mx-0.5">/</span><span class="text-purple-700 font-semibold">${av}${deltaSpan(av,aP)}</span></td>`;
+            if (isCurrent) {
+              cells += `<td class="px-2 py-1.5 border-b border-slate-100 text-center text-[10px] bg-amber-50 border-l border-r border-amber-200">
+                <span class="text-blue-700 font-semibold">${avgG ?? '—'}</span><span class="text-slate-300 mx-0.5">/</span><span class="text-purple-700 font-semibold">${avgA ?? '—'}</span></td>`;
+            }
           });
-          const avgG = rolling4Wk(i => weekData[i].pmGhr?.[pm] || 0), avgA = rolling4Wk(i => weekData[i].pmAff?.[pm] || 0);
-          const curG = weekData[currentWeekIdx >= 0 ? currentWeekIdx : lastActualIdx]?.pmGhr?.[pm] || 0;
-          const curA = weekData[currentWeekIdx >= 0 ? currentWeekIdx : lastActualIdx]?.pmAff?.[pm] || 0;
-          cells += `<td class="px-2 py-1.5 border-b border-slate-100 text-center text-[10px] bg-slate-50 border-l border-slate-200">
-            <span class="text-blue-700 font-semibold">${avgG ?? '—'}${avgG != null ? deltaSpan(curG, avgG) : ''}</span><span class="text-slate-300 mx-0.5">/</span><span class="text-purple-700 font-semibold">${avgA ?? '—'}${avgA != null ? deltaSpan(curA, avgA) : ''}</span></td>`;
           let rows = `<tr class="hover:bg-slate-50" ${toggleAttr}>${cells}</tr>`;
           [...pmSystems].sort().forEach(sys => {
             const sysId2 = (pm + '_' + sys).replace(/[^a-zA-Z0-9]/g, '_');
@@ -6108,6 +6141,8 @@
             const hasCats = pmSysCats.size > 1;
             const sysToggle = hasCats ? `onclick="event.stopPropagation();document.querySelectorAll('.pm-sys-cat-${sysId2}').forEach(r=>r.classList.toggle('hidden'))" style="cursor:pointer"` : '';
             const sysCh = hasCats ? `<span class="inline-block w-3 text-slate-300 mr-1">&#9654;</span>` : `<span class="inline-block w-3 mr-1"></span>`;
+            const pmsAvgG = rolling4Wk(i => weekData[i].pmSysGhr?.[pm]?.[sys] || 0);
+            const pmsAvgA = rolling4Wk(i => weekData[i].pmSysAff?.[pm]?.[sys] || 0);
             let sc = `<td class="pl-7 pr-3 py-1 border-b border-slate-50 text-slate-600 whitespace-nowrap text-[10px]">${sysCh}${sys}</td>`;
             weeks.forEach((w, i) => {
               const gv = weekData[i].pmSysGhr?.[pm]?.[sys] || 0, av = weekData[i].pmSysAff?.[pm]?.[sys] || 0;
@@ -6115,10 +6150,15 @@
               const isCurrent = i === currentWeekIdx;
               sc += `<td class="px-2 py-1 border-b border-slate-50 text-center text-[10px] ${isCurrent ? 'bg-blue-50/50' : ''}">
                 <span class="text-blue-600">${gv}${deltaSpan(gv,gP)}</span><span class="text-slate-200 mx-0.5">/</span><span class="text-purple-600">${av}${deltaSpan(av,aP)}</span></td>`;
+              if (isCurrent) {
+                sc += `<td class="px-2 py-1 border-b border-slate-50 text-center text-[10px] bg-amber-50 border-l border-r border-amber-200">
+                  <span class="text-blue-600">${pmsAvgG ?? '—'}</span><span class="text-slate-200 mx-0.5">/</span><span class="text-purple-600">${pmsAvgA ?? '—'}</span></td>`;
+              }
             });
-            sc += `<td class="px-2 py-1 border-b border-slate-50 bg-slate-50 border-l border-slate-200"></td>`;
             rows += `<tr class="pm-sys-${pmId} hidden hover:bg-slate-50" ${sysToggle}>${sc}</tr>`;
             [...pmSysCats].sort().forEach(cat => {
+              const pmscAvgG = rolling4Wk(i => weekData[i].pmSysCat?.ghr?.[pm]?.[sys]?.[cat] || 0);
+              const pmscAvgA = rolling4Wk(i => weekData[i].pmSysCat?.aff?.[pm]?.[sys]?.[cat] || 0);
               let cc = `<td class="pl-12 pr-3 py-1 border-b border-slate-50 text-slate-400 whitespace-nowrap text-[10px]">${cat}</td>`;
               weeks.forEach((w, i) => {
                 const gv = weekData[i].pmSysCat?.ghr?.[pm]?.[sys]?.[cat] || 0;
@@ -6126,8 +6166,11 @@
                 const isCurrent = i === currentWeekIdx;
                 cc += `<td class="px-2 py-1 border-b border-slate-50 text-center text-[10px] ${isCurrent ? 'bg-blue-50/30' : ''}">
                   <span class="text-blue-500">${gv}</span><span class="text-slate-200 mx-0.5">/</span><span class="text-purple-500">${av}</span></td>`;
+                if (isCurrent) {
+                  cc += `<td class="px-2 py-1 border-b border-slate-50 text-center text-[10px] bg-amber-50 border-l border-r border-amber-200">
+                    <span class="text-blue-500">${pmscAvgG ?? '—'}</span><span class="text-slate-200 mx-0.5">/</span><span class="text-purple-500">${pmscAvgA ?? '—'}</span></td>`;
+                }
               });
-              cc += `<td class="px-2 py-1 border-b border-slate-50 bg-slate-50 border-l border-slate-200"></td>`;
               rows += `<tr class="pm-sys-cat-${sysId2} hidden hover:bg-slate-50">${cc}</tr>`;
             });
           });
@@ -6246,21 +6289,60 @@
 
         // Per-system and per-PM chart datasets (used when Group By = Account or PM)
         const TREND_COLORS = ['#3b82f6','#8b5cf6','#22c55e','#f59e0b','#ef4444','#06b6d4','#84cc16','#f97316','#ec4899','#6366f1','#14b8a6','#f43f5e'];
-        const sysChartDatasets = sortedSystems.map((sys, idx) => ({
-          label: sys,
-          data: weeks.map((w, i) => i <= lastActualIdx ? (weekData[i].sysGhr?.[sys] || 0) + (weekData[i].sysAff?.[sys] || 0) : null),
-          borderColor: TREND_COLORS[idx % TREND_COLORS.length],
-          backgroundColor: 'transparent',
-          fill: false, tension: 0.3, pointRadius: 4,
-        }));
-        const pmChartDatasets = sortedPMs.map((pm, idx) => ({
-          label: pm,
-          data: weeks.map((w, i) => i <= lastActualIdx ? (weekData[i].pmGhr?.[pm] || 0) + (weekData[i].pmAff?.[pm] || 0) : null),
-          borderColor: TREND_COLORS[idx % TREND_COLORS.length],
-          backgroundColor: 'transparent',
-          fill: false, tension: 0.3, pointRadius: 4,
-        }));
-        window.__trendChartDatasets = { account: sysChartDatasets, pm: pmChartDatasets };
+
+        // Overlay lines shared across account/PM views: Total, Pipeline, Trend Projection
+        const overlayDatasets = [
+          {
+            label: 'Total Headcount',
+            data: actualsData,
+            borderColor: '#64748b',
+            backgroundColor: 'rgba(100,116,139,0.08)',
+            fill: true, tension: 0.3, pointRadius: 5, borderWidth: 2,
+          },
+          {
+            label: 'Pipeline (Confirmed)',
+            data: pipelineData,
+            borderColor: '#22c55e',
+            backgroundColor: 'rgba(34,197,94,0.08)',
+            fill: false, tension: 0.3, pointRadius: 5, borderWidth: 2,
+          },
+          {
+            label: 'Trend Projection',
+            data: projectionData,
+            borderColor: '#f97316',
+            borderDash: [6, 4],
+            fill: false, tension: 0, pointRadius: 4, borderWidth: 2,
+          },
+        ];
+
+        const sysChartDatasets = [
+          ...overlayDatasets,
+          ...sortedSystems.map((sys, idx) => ({
+            label: sys,
+            data: weeks.map((w, i) => i <= lastActualIdx ? (weekData[i].sysGhr?.[sys] || 0) + (weekData[i].sysAff?.[sys] || 0) : null),
+            borderColor: TREND_COLORS[idx % TREND_COLORS.length],
+            backgroundColor: 'transparent',
+            fill: false, tension: 0.3, pointRadius: 3, borderWidth: 1.5,
+          })),
+        ];
+        const pmChartDatasets = [
+          ...overlayDatasets,
+          ...sortedPMs.map((pm, idx) => ({
+            label: pm,
+            data: weeks.map((w, i) => i <= lastActualIdx ? (weekData[i].pmGhr?.[pm] || 0) + (weekData[i].pmAff?.[pm] || 0) : null),
+            borderColor: TREND_COLORS[idx % TREND_COLORS.length],
+            backgroundColor: 'transparent',
+            fill: false, tension: 0.3, pointRadius: 3, borderWidth: 1.5,
+          })),
+        ];
+        const categoryChartDatasets = [
+          { label: 'Total Headcount', data: actualsData, borderColor: '#64748b', backgroundColor: 'rgba(100,116,139,0.08)', fill: true, tension: 0.3, pointRadius: 5 },
+          { label: 'GHR', data: ghrActualsData, borderColor: '#3b82f6', backgroundColor: 'rgba(59,130,246,0.1)', fill: false, tension: 0.3, pointRadius: 4 },
+          { label: 'Affiliate', data: affActualsData, borderColor: '#8b5cf6', backgroundColor: 'rgba(139,92,246,0.1)', fill: false, tension: 0.3, pointRadius: 4 },
+          { label: 'Pipeline (Confirmed)', data: pipelineData, borderColor: '#22c55e', backgroundColor: 'rgba(34,197,94,0.08)', fill: false, tension: 0.3, pointRadius: 5 },
+          { label: 'Trend Projection', data: projectionData, borderColor: '#f97316', borderDash: [6, 4], fill: false, tension: 0, pointRadius: 4 },
+        ];
+        window.__trendChartDatasets = { category: categoryChartDatasets, account: sysChartDatasets, pm: pmChartDatasets };
 
         window.updateTrendChart = function(view) {
           if (!window.__trendChart || !window.__trendChartDatasets) return;
