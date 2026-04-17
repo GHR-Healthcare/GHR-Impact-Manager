@@ -5484,13 +5484,19 @@
             const match = pmMappingEntries.find(e => fac.includes(e.key) || e.key.includes(fac));
             if (match) result = match.pm;
           }
-          // Fall back to health-system-level PM if all mapped facilities in that system share one PM
+          // Fall back to health-system-level PM: use the most common PM among mapped
+          // facilities in that system (handles cases where mappings use full facility names
+          // that don't match the trend data's short/address-style facility strings)
           if (result === 'Unassigned' && healthSystem) {
             const sysLower = healthSystem.toLowerCase();
-            const sysPms = new Set(pmMappingEntries
-              .filter(e => e.key.includes(sysLower) || sysLower.includes(e.key))
-              .map(e => e.pm));
-            if (sysPms.size === 1) result = [...sysPms][0];
+            const sysPmCounts = {};
+            pmMappingEntries.forEach(e => {
+              if (e.key.includes(sysLower) || sysLower.includes(e.key)) {
+                sysPmCounts[e.pm] = (sysPmCounts[e.pm] || 0) + 1;
+              }
+            });
+            const topPm = Object.entries(sysPmCounts).sort((a, b) => b[1] - a[1])[0];
+            if (topPm) result = topPm[0];
           }
           pmLookupCache.set(cacheKey, result);
           return result;
@@ -5641,7 +5647,7 @@
               const name = r.worker_name || '';
               const cat = normalizeCategory(r.category);
               const sys = r.healthSystem || 'Unknown';
-              const pm = resolvePM(r.facility);
+              const pm = resolvePM(r.facility, r.healthSystem);
               if (isGHRAgency(r.agency)) {
                 ghrNames.add(name);
                 if (!catGhr[cat]) catGhr[cat] = new Set(); catGhr[cat].add(name);
