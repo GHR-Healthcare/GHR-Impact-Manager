@@ -5463,24 +5463,20 @@
         // fallback can match records to mappings regardless of facility-name phrasing
         const pmMappings = s.pmMappings || [];
         const facilityToPM = {};
-        const systemToPM = {};  // system name → PM (for health-system-level mappings)
         const pmMappingEntries = [];  // [{ key, pm, system }] for fuzzy matching
-        // Known health system names (so we can detect system-level mappings)
-        const knownSystemNames = new Set((CONSTANTS.HEALTH_SYSTEM_MAPPINGS || []).map(m => m.system));
         pmMappings.forEach(m => {
           if (m.facility) {
             const key = m.facility.toLowerCase().trim();
             const pm = m.pm_name || 'Unassigned';
             const mappedSys = Utils.getHealthSystem(m.facility, '') || '';
             facilityToPM[key] = pm;
-            // If the mapping's facility value is itself a known health system name, treat it
-            // as a system-level mapping (applies to all records in that system)
-            if (knownSystemNames.has(m.facility) || m.facility === mappedSys) {
-              systemToPM[m.facility] = pm;
-            }
             pmMappingEntries.push({ key, pm, system: mappedSys });
           }
         });
+
+        // Systems excluded from the PM view entirely (no PM coverage, but still shown
+        // in Category/Account views and other tabs like Financials)
+        const PM_EXCLUDED_SYSTEMS = new Set(['Jefferson', 'Sunrise Senior Living Management']);
         const pmLookupCache = new Map();
         const resolvePM = (facility, healthSystem) => {
           if (!facility && !healthSystem) return 'Unassigned';
@@ -5488,10 +5484,7 @@
           if (pmLookupCache.has(cacheKey)) return pmLookupCache.get(cacheKey);
           const fac = (facility || '').toLowerCase().trim();
           let result = 'Unassigned';
-          // Check system-level mapping first (most direct)
-          if (healthSystem && systemToPM[healthSystem]) {
-            result = systemToPM[healthSystem];
-          } else if (fac && facilityToPM[fac]) {
+          if (fac && facilityToPM[fac]) {
             result = facilityToPM[fac];
           } else if (fac) {
             // Fuzzy: mapping facility contained in trend facility, or vice versa
@@ -5662,24 +5655,29 @@
               const cat = normalizeCategory(r.category);
               const sys = r.healthSystem || 'Unknown';
               const pm = resolvePM(r.facility, r.healthSystem);
+              const includeInPM = !PM_EXCLUDED_SYSTEMS.has(sys);
               if (isGHRAgency(r.agency)) {
                 ghrNames.add(name);
                 if (!catGhr[cat]) catGhr[cat] = new Set(); catGhr[cat].add(name);
                 addToNested2(catSysGhr, cat, sys, name);
                 if (!sysGhr[sys]) sysGhr[sys] = new Set(); sysGhr[sys].add(name);
                 addToNested2(sysCatGhr, sys, cat, name);
-                if (!pmGhr[pm]) pmGhr[pm] = new Set(); pmGhr[pm].add(name);
-                addToNested2(pmSysGhr, pm, sys, name);
-                addToNested3(pmSysCatGhr, pm, sys, cat, name);
+                if (includeInPM) {
+                  if (!pmGhr[pm]) pmGhr[pm] = new Set(); pmGhr[pm].add(name);
+                  addToNested2(pmSysGhr, pm, sys, name);
+                  addToNested3(pmSysCatGhr, pm, sys, cat, name);
+                }
               } else {
                 affNames.add(name);
                 if (!catAff[cat]) catAff[cat] = new Set(); catAff[cat].add(name);
                 addToNested2(catSysAff, cat, sys, name);
                 if (!sysAff[sys]) sysAff[sys] = new Set(); sysAff[sys].add(name);
                 addToNested2(sysCatAff, sys, cat, name);
-                if (!pmAff[pm]) pmAff[pm] = new Set(); pmAff[pm].add(name);
-                addToNested2(pmSysAff, pm, sys, name);
-                addToNested3(pmSysCatAff, pm, sys, cat, name);
+                if (includeInPM) {
+                  if (!pmAff[pm]) pmAff[pm] = new Set(); pmAff[pm].add(name);
+                  addToNested2(pmSysAff, pm, sys, name);
+                  addToNested3(pmSysCatAff, pm, sys, cat, name);
+                }
               }
             }
           });
@@ -7819,50 +7817,27 @@
         const tbody = document.getElementById('pmMappingsTableBody');
         if (!tbody) return;
 
+        // Use same facility source as the facility filter dropdown (open positions only)
         const s = window.store.state;
-
-        // Collect all known health systems so they can be mapped even without open positions
-        const healthSystemsSet = new Set();
-        (CONSTANTS.HEALTH_SYSTEM_MAPPINGS || []).forEach(m => { if (m.system) healthSystemsSet.add(m.system); });
-        // Also include raw system values seen in any data source (for systems like Sunrise
-        // that don't have a keyword mapping and use raw DB values as the system name)
-        const collectRawSys = (r) => {
-            const raw = r.system || r.health_system;
-            if (raw && !raw.trim().endsWith(',')) healthSystemsSet.add(raw);
-        };
-        (s.trendData?.assignments || []).forEach(collectRawSys);
-        (s.statsData?.onAssignment || []).forEach(collectRawSys);
-        const healthSystemsSorted = [...healthSystemsSet].sort((a, b) => a.localeCompare(b));
-
-        // Use open positions facility list (unchanged)
         const knownFacilities = new Set(
             (s.jobs || []).map(j => j.facility).filter(Boolean)
         );
-        currentPMMappings.forEach(m => { if (m.facility && !healthSystemsSet.has(m.facility)) knownFacilities.add(m.facility); });
+        // Always include facilities from saved mappings so they don't disappear if they drop out of data
+        currentPMMappings.forEach(m => { if (m.facility) knownFacilities.add(m.facility); });
 
         const facilitiesSorted = [...knownFacilities].sort((a, b) => a.localeCompare(b));
-        // Combined list: health systems first, then facilities
-        const combined = [
-            ...healthSystemsSorted.map(s => ({ value: s, kind: 'system' })),
-            ...facilitiesSorted.map(f => ({ value: f, kind: 'facility' })),
-        ];
-        window.__pmFacilitiesList = combined.map(e => e.value);
-        window.__pmFacilitiesKinds = combined.map(e => e.kind);
+        window.__pmFacilitiesList = facilitiesSorted;
 
         // Build lookup from saved mappings
         const pmByFacility = {};
         currentPMMappings.forEach(m => { if (m.facility) pmByFacility[m.facility] = m.pm_name || ''; });
 
-        tbody.innerHTML = combined.map((entry, idx) => {
-            const pmName = (pmByFacility[entry.value] || '').replace(/"/g, '&quot;');
-            const facDisplay = entry.value.replace(/</g, '&lt;').replace(/>/g, '&gt;');
-            const rowBg = entry.kind === 'system' ? 'bg-blue-50/40 hover:bg-blue-50' : 'hover:bg-slate-50';
-            const badge = entry.kind === 'system'
-                ? '<span class="ml-2 text-[10px] font-semibold text-blue-700 bg-blue-100 px-1.5 py-0.5 rounded">System</span>'
-                : '';
+        tbody.innerHTML = facilitiesSorted.map((facility, idx) => {
+            const pmName = (pmByFacility[facility] || '').replace(/"/g, '&quot;');
+            const facDisplay = facility.replace(/</g, '&lt;').replace(/>/g, '&gt;');
             return `
-                <tr class="${rowBg}">
-                    <td class="p-3 text-slate-700">${facDisplay}${badge}</td>
+                <tr class="hover:bg-slate-50">
+                    <td class="p-3 text-slate-700">${facDisplay}</td>
                     <td class="p-2">
                         <div class="relative">
                             <input type="text" value="${pmName}"
