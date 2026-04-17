@@ -6338,30 +6338,20 @@
           },
         ];
 
-        // Helper: build solid actuals + dashed projection pair for a series
+        // Helper: build a single continuous series with segment-based style change
+        // at the actuals→pipeline boundary so the line stays connected visually
         const buildSeriesPair = (label, getVal, color, idx) => {
           const series = weeks.map((w, i) => getVal(i));
-          const actuals = series.map((v, i) => i <= lastActualIdx ? v : null);
-          const pipeline = series.map((v, i) => i >= lastActualIdx ? v : null);
-          // Linear regression on actuals for projection
-          const points = series.slice(0, lastActualIdx + 1).map((y, x) => ({ x, y })).filter(p => p.y != null);
-          const { slope, intercept } = linearRegression(points);
-          const projection = weeks.map((w, i) => i >= lastActualIdx ? Math.max(0, Math.round(slope * i + intercept)) : null);
           return [
             {
               label,
-              data: actuals.map((v, i) => i >= lastActualIdx && i > lastActualIdx ? null : v),
+              data: series,
               borderColor: color,
               backgroundColor: 'transparent',
               fill: false, tension: 0.3, pointRadius: 3, borderWidth: 1.5,
-            },
-            {
-              label: `${label} (Pipeline)`,
-              data: pipeline,
-              borderColor: color,
-              backgroundColor: 'transparent',
-              fill: false, tension: 0.3, pointRadius: 3, borderWidth: 1.5, borderDash: [2, 2],
-              showLine: true,
+              segment: {
+                borderDash: ctx => (ctx.p1DataIndex > lastActualIdx ? [2, 2] : undefined),
+              },
             },
           ];
         };
