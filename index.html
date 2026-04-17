@@ -6547,34 +6547,68 @@
           return result;
         };
 
-        // Compute GHR fill rate per week (GHR / (GHR + Affiliate) * 100)
-        // Applied only for GHR-labeled lines when fill rate mode is on
-        const ghrFillRateActuals = weeks.map((w, i) => {
-          if (i > lastActualIdx) return null;
-          const g = weekData[i].ghr, a = weekData[i].aff;
-          return g + a > 0 ? Math.round(g / (g + a) * 1000) / 10 : null;
+        // Fill rate calculations per week:
+        //   Total Fill Rate     = confirmed / (confirmed + pending)       → what % of the book is confirmed
+        //   GHR Fill Rate       = GHR / (GHR + Affiliate)                 → GHR's share of placements
+        //   Affiliate Fill Rate = Affiliate / (GHR + Affiliate)           → Affiliate's share (complement of GHR)
+        const pctActuals = (series, past) => weeks.map((w, i) => {
+          if (past && i > lastActualIdx) return null;
+          if (!past && i < lastActualIdx) return null;
+          const { num, den } = series(i);
+          return den > 0 ? Math.round(num / den * 1000) / 10 : null;
         });
-        const ghrFillRatePipeline = weeks.map((w, i) => {
-          if (i < lastActualIdx) return null;
-          const g = weekData[i].ghr, a = weekData[i].aff;
-          return g + a > 0 ? Math.round(g / (g + a) * 1000) / 10 : null;
-        });
-        const ghrFillRatePending = weeks.map((w, i) => {
-          if (i < lastActualIdx) return null;
+        const ghrShare = i => ({ num: weekData[i].ghr, den: weekData[i].ghr + weekData[i].aff });
+        const affShare = i => ({ num: weekData[i].aff, den: weekData[i].ghr + weekData[i].aff });
+        const totalBookConfirmed = i => {
+          const confirmed = weekData[i].total;
+          const pending = weekData[i].pendingTotal || 0;
+          return { num: confirmed, den: confirmed + pending };
+        };
+        const ghrWithPending = i => {
           const g = weekData[i].ghr + (weekData[i].pendingGhr || 0);
           const a = weekData[i].aff + (weekData[i].pendingAff || 0);
-          return g + a > 0 ? Math.round(g / (g + a) * 1000) / 10 : null;
-        });
-        const fillRateRegression = linearRegression(ghrFillRateActuals.map((y, x) => ({ x, y })).filter(p => p.y != null));
-        const ghrFillRateProjection = weeks.map((w, i) =>
-          i >= lastActualIdx ? Math.max(0, Math.min(100, Math.round((fillRateRegression.slope * i + fillRateRegression.intercept) * 10) / 10)) : null
-        );
+          return { num: g, den: g + a };
+        };
+        const affWithPending = i => {
+          const g = weekData[i].ghr + (weekData[i].pendingGhr || 0);
+          const a = weekData[i].aff + (weekData[i].pendingAff || 0);
+          return { num: a, den: g + a };
+        };
+        const projectSeries = (actualsArr) => {
+          const reg = linearRegression(actualsArr.map((y, x) => ({ x, y })).filter(p => p.y != null));
+          return weeks.map((w, i) =>
+            i >= lastActualIdx ? Math.max(0, Math.min(100, Math.round((reg.slope * i + reg.intercept) * 10) / 10)) : null
+          );
+        };
+
+        const totalFillActuals = pctActuals(i => ({ num: weekData[i].total, den: weekData[i].total }), true); // flat 100 past
+        const totalFillPipeline = pctActuals(i => ({ num: weekData[i].total, den: weekData[i].total }), false);
+        const totalFillPending = pctActuals(totalBookConfirmed, false);
+        const totalFillProjection = projectSeries(totalFillActuals);
+
+        const ghrFillActuals = pctActuals(ghrShare, true);
+        const ghrFillPipeline = pctActuals(ghrShare, false);
+        const ghrFillPending = pctActuals(ghrWithPending, false);
+        const ghrFillProjection = projectSeries(ghrFillActuals);
+
+        const affFillActuals = pctActuals(affShare, true);
+        const affFillPipeline = pctActuals(affShare, false);
+        const affFillPending = pctActuals(affWithPending, false);
+        const affFillProjection = projectSeries(affFillActuals);
 
         const fillRateChartDatasets = [
-          { label: 'GHR Fill Rate', data: ghrFillRateActuals, borderColor: '#3b82f6', backgroundColor: 'rgba(59,130,246,0.1)', fill: true, tension: 0.3, pointRadius: 5 },
-          { label: 'GHR Fill Rate (Pipeline)', data: ghrFillRatePipeline, borderColor: '#3b82f6', fill: false, tension: 0.3, pointRadius: 4, borderDash: [2, 2] },
-          { label: 'GHR Fill Rate (Pending)', data: ghrFillRatePending, borderColor: '#3b82f6', fill: false, tension: 0.3, pointRadius: 4, borderDash: [4, 3] },
-          { label: 'GHR Fill Rate (Projection)', data: ghrFillRateProjection, borderColor: '#3b82f6', fill: false, tension: 0, pointRadius: 3, borderDash: [6, 4] },
+          { label: 'Total Fill Rate', data: totalFillActuals, borderColor: '#64748b', backgroundColor: 'rgba(100,116,139,0.08)', fill: true, tension: 0.3, pointRadius: 5 },
+          { label: 'Total Fill Rate (Pipeline)', data: totalFillPipeline, borderColor: '#64748b', fill: false, tension: 0.3, pointRadius: 4, borderDash: [2, 2] },
+          { label: 'Total Fill Rate (Pending)', data: totalFillPending, borderColor: '#64748b', fill: false, tension: 0.3, pointRadius: 4, borderDash: [4, 3] },
+          { label: 'Total Fill Rate (Projection)', data: totalFillProjection, borderColor: '#64748b', fill: false, tension: 0, pointRadius: 3, borderDash: [6, 4] },
+          { label: 'GHR Fill Rate', data: ghrFillActuals, borderColor: '#3b82f6', backgroundColor: 'rgba(59,130,246,0.1)', fill: false, tension: 0.3, pointRadius: 5 },
+          { label: 'GHR Fill Rate (Pipeline)', data: ghrFillPipeline, borderColor: '#3b82f6', fill: false, tension: 0.3, pointRadius: 4, borderDash: [2, 2] },
+          { label: 'GHR Fill Rate (Pending)', data: ghrFillPending, borderColor: '#3b82f6', fill: false, tension: 0.3, pointRadius: 4, borderDash: [4, 3] },
+          { label: 'GHR Fill Rate (Projection)', data: ghrFillProjection, borderColor: '#3b82f6', fill: false, tension: 0, pointRadius: 3, borderDash: [6, 4] },
+          { label: 'Affiliate Fill Rate', data: affFillActuals, borderColor: '#8b5cf6', backgroundColor: 'rgba(139,92,246,0.1)', fill: false, tension: 0.3, pointRadius: 5 },
+          { label: 'Affiliate Fill Rate (Pipeline)', data: affFillPipeline, borderColor: '#8b5cf6', fill: false, tension: 0.3, pointRadius: 4, borderDash: [2, 2] },
+          { label: 'Affiliate Fill Rate (Pending)', data: affFillPending, borderColor: '#8b5cf6', fill: false, tension: 0.3, pointRadius: 4, borderDash: [4, 3] },
+          { label: 'Affiliate Fill Rate (Projection)', data: affFillProjection, borderColor: '#8b5cf6', fill: false, tension: 0, pointRadius: 3, borderDash: [6, 4] },
         ];
 
         window.updateTrendChart = function(view) {
