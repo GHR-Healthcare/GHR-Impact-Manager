@@ -5459,15 +5459,18 @@
         const allPending = s.trendData?.pending || [];
 
         // Build facility → PM lookup from saved PM mappings
+        // Also derive each mapping's canonical health system via getHealthSystem so the
+        // fallback can match records to mappings regardless of facility-name phrasing
         const pmMappings = s.pmMappings || [];
         const facilityToPM = {};
-        const pmMappingEntries = [];  // [{ key, pm }] for fuzzy matching
+        const pmMappingEntries = [];  // [{ key, pm, system }] for fuzzy matching
         pmMappings.forEach(m => {
           if (m.facility) {
             const key = m.facility.toLowerCase().trim();
             const pm = m.pm_name || 'Unassigned';
+            const mappedSys = Utils.getHealthSystem(m.facility, '') || '';
             facilityToPM[key] = pm;
-            pmMappingEntries.push({ key, pm });
+            pmMappingEntries.push({ key, pm, system: mappedSys });
           }
         });
         const pmLookupCache = new Map();
@@ -5484,14 +5487,14 @@
             const match = pmMappingEntries.find(e => fac.includes(e.key) || e.key.includes(fac));
             if (match) result = match.pm;
           }
-          // Fall back to health-system-level PM: use the most common PM among mapped
-          // facilities in that system (handles cases where mappings use full facility names
-          // that don't match the trend data's short/address-style facility strings)
+          // Fall back to health-system-level PM: match record's health system against each
+          // mapping's derived health system (via getHealthSystem on both sides), then use
+          // the most common PM among matching mappings. This handles name-format mismatches
+          // like "Holy Redeemer" (record) vs "Redeemer Health Meadowbrook" (mapping).
           if (result === 'Unassigned' && healthSystem) {
-            const sysLower = healthSystem.toLowerCase();
             const sysPmCounts = {};
             pmMappingEntries.forEach(e => {
-              if (e.key.includes(sysLower) || sysLower.includes(e.key)) {
+              if (e.system && e.system === healthSystem) {
                 sysPmCounts[e.pm] = (sysPmCounts[e.pm] || 0) + 1;
               }
             });
