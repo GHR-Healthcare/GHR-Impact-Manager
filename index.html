@@ -5780,6 +5780,14 @@
           return null;
         });
 
+        // GHR and Affiliate specific pipeline + projection (for grouped legend/tooltip)
+        const ghrPipelineData = weeks.map((w, i) => i >= lastActualIdx ? weekData[i].ghr : null);
+        const affPipelineData = weeks.map((w, i) => i >= lastActualIdx ? weekData[i].aff : null);
+        const ghrRegression = linearRegression(weeks.map((w, i) => i <= lastActualIdx ? { x: i, y: weekData[i].ghr } : null).filter(Boolean));
+        const affRegression = linearRegression(weeks.map((w, i) => i <= lastActualIdx ? { x: i, y: weekData[i].aff } : null).filter(Boolean));
+        const ghrProjectionData = weeks.map((w, i) => i >= lastActualIdx ? Math.max(0, Math.round(ghrRegression.slope * i + ghrRegression.intercept)) : null);
+        const affProjectionData = weeks.map((w, i) => i >= lastActualIdx ? Math.max(0, Math.round(affRegression.slope * i + affRegression.intercept)) : null);
+
         // Build category breakdown table: categories as rows, dates as columns
         // Each cell shows "GHR ±Δ / Aff ±Δ"
         const currentWeekIdx = weeks.findIndex(w => w.start <= today && w.end >= today);
@@ -6368,12 +6376,18 @@
             buildSeriesPair(pm, i => (weekData[i].pmGhr?.[pm] || 0) + (weekData[i].pmAff?.[pm] || 0), TREND_COLORS[idx % TREND_COLORS.length], idx)
           ),
         ];
+        // Grouped so Total, GHR, and Affiliate each have their current + pipeline + projection
+        // sitting next to each other in the legend/tooltip. YoY lines insert inline via interleave.
         const categoryChartDatasets = [
           { label: 'Total Headcount', data: actualsData, borderColor: '#64748b', backgroundColor: 'rgba(100,116,139,0.08)', fill: true, tension: 0.3, pointRadius: 5 },
+          { label: 'Total Pipeline', data: pipelineData, borderColor: '#64748b', fill: false, tension: 0.3, pointRadius: 4, borderDash: [2, 2] },
+          { label: 'Total Projection', data: projectionData, borderColor: '#64748b', fill: false, tension: 0, pointRadius: 3, borderDash: [6, 4] },
           { label: 'GHR', data: ghrActualsData, borderColor: '#3b82f6', backgroundColor: 'rgba(59,130,246,0.1)', fill: false, tension: 0.3, pointRadius: 4 },
+          { label: 'GHR Pipeline', data: ghrPipelineData, borderColor: '#3b82f6', fill: false, tension: 0.3, pointRadius: 3, borderDash: [2, 2] },
+          { label: 'GHR Projection', data: ghrProjectionData, borderColor: '#3b82f6', fill: false, tension: 0, pointRadius: 3, borderDash: [6, 4] },
           { label: 'Affiliate', data: affActualsData, borderColor: '#8b5cf6', backgroundColor: 'rgba(139,92,246,0.1)', fill: false, tension: 0.3, pointRadius: 4 },
-          { label: 'Pipeline (Confirmed)', data: pipelineData, borderColor: '#22c55e', backgroundColor: 'rgba(34,197,94,0.08)', fill: false, tension: 0.3, pointRadius: 5 },
-          { label: 'Trend Projection', data: projectionData, borderColor: '#f97316', borderDash: [6, 4], fill: false, tension: 0, pointRadius: 4 },
+          { label: 'Affiliate Pipeline', data: affPipelineData, borderColor: '#8b5cf6', fill: false, tension: 0.3, pointRadius: 3, borderDash: [2, 2] },
+          { label: 'Affiliate Projection', data: affProjectionData, borderColor: '#8b5cf6', fill: false, tension: 0, pointRadius: 3, borderDash: [6, 4] },
         ];
         window.__trendChartDatasets = { category: categoryChartDatasets, account: sysChartDatasets, pm: pmChartDatasets };
 
