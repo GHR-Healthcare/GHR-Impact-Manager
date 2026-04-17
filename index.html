@@ -6223,6 +6223,9 @@
               <button onclick="window.collapseAllTrend()" class="flex items-center gap-1 px-2.5 py-1 rounded-md text-[10px] font-semibold text-slate-500 hover:text-slate-700 hover:bg-slate-100 transition-colors border border-slate-200">
                 <i data-lucide="chevrons-up-down" class="w-3 h-3"></i> Collapse All
               </button>
+              <button id="trendYoYBtn" onclick="window.toggleTrendYoY()" class="flex items-center gap-1 px-2.5 py-1 rounded-md text-[10px] font-semibold text-slate-500 hover:text-slate-700 hover:bg-slate-100 transition-colors border border-slate-200">
+                <i data-lucide="calendar" class="w-3 h-3"></i> <span id="trendYoYLabel">Show Prior Year</span>
+              </button>
             </div>
             <p class="text-xs text-slate-400">4-week lookback · 3-week projection · follows active filters</p>
           </div>
@@ -6344,15 +6347,134 @@
         ];
         window.__trendChartDatasets = { category: categoryChartDatasets, account: sysChartDatasets, pm: pmChartDatasets };
 
+        // ── Prior-Year (YoY) overlay ─────────────────────────────────────────
+        // Compute prior-year week-start strings (52 weeks = 364 days back)
+        const priorWeekStarts = weeks.map(w => {
+          const d = new Date(w.start);
+          d.setDate(d.getDate() - 364);
+          const yyyy = d.getFullYear();
+          const mm = String(d.getMonth() + 1).padStart(2, '0');
+          const dd = String(d.getDate()).padStart(2, '0');
+          return `${yyyy}-${mm}-${dd}`;
+        });
+
+        // Apply same filters to YoY rows as the current view
+        const applyFiltersToYoY = (r) => {
+          const sys = Utils.getHealthSystem(r.facility, r.system);
+          if (s.filterSelection.systems.size > 0 && !s.filterSelection.systems.has(sys)) return false;
+          if (s.filterSelection.facilities.size > 0 && r.facility && !s.filterSelection.facilities.has(r.facility)) return false;
+          if (s.filterSelection.categories.size > 0) {
+            const nc = (r.category || '').toLowerCase();
+            const match = Array.from(s.filterSelection.categories).some(fc => {
+              const f = String(fc).toLowerCase();
+              return nc === f || nc.includes(f) || f.includes(nc) ||
+                (/nurs/i.test(nc) && /nurs/i.test(f)) ||
+                (/allied/i.test(nc) && /allied/i.test(f));
+            });
+            if (!match) return false;
+          }
+          return true;
+        };
+
+        const computeYoYDatasets = (view) => {
+          if (!window.__yoyData || !window.__yoyData.length) return [];
+          const filtered = window.__yoyData.filter(applyFiltersToYoY);
+          // Index by week_start -> by key (for sum)
+          const bucketByKey = (keyFn) => {
+            const out = {};
+            filtered.forEach(r => {
+              const k = keyFn(r);
+              if (!out[k]) out[k] = {};
+              if (!out[k][r.week_start]) out[k][r.week_start] = 0;
+              out[k][r.week_start] += r.headcount || 0;
+            });
+            return out;
+          };
+
+          if (view === 'category') {
+            const totalByWeek = {};
+            const ghrByWeek = {};
+            const affByWeek = {};
+            filtered.forEach(r => {
+              totalByWeek[r.week_start] = (totalByWeek[r.week_start] || 0) + (r.headcount || 0);
+              if (r.vendor_type === 'GHR') ghrByWeek[r.week_start] = (ghrByWeek[r.week_start] || 0) + (r.headcount || 0);
+              else affByWeek[r.week_start] = (affByWeek[r.week_start] || 0) + (r.headcount || 0);
+            });
+            return [
+              { label: 'Prior Year Total', data: priorWeekStarts.map(ws => totalByWeek[ws] ?? null), borderColor: '#94a3b8', borderDash: [4, 3], backgroundColor: 'transparent', fill: false, tension: 0.3, pointRadius: 2, borderWidth: 1.5 },
+              { label: 'Prior Year GHR', data: priorWeekStarts.map(ws => ghrByWeek[ws] ?? null), borderColor: '#93c5fd', borderDash: [4, 3], backgroundColor: 'transparent', fill: false, tension: 0.3, pointRadius: 2, borderWidth: 1.5 },
+              { label: 'Prior Year Affiliate', data: priorWeekStarts.map(ws => affByWeek[ws] ?? null), borderColor: '#c4b5fd', borderDash: [4, 3], backgroundColor: 'transparent', fill: false, tension: 0.3, pointRadius: 2, borderWidth: 1.5 },
+            ];
+          }
+
+          if (view === 'account') {
+            const bySys = bucketByKey(r => Utils.getHealthSystem(r.facility, r.system) || 'Unknown');
+            return sortedSystems.map((sys, idx) => ({
+              label: `${sys} (PY)`,
+              data: priorWeekStarts.map(ws => bySys[sys]?.[ws] ?? null),
+              borderColor: TREND_COLORS[idx % TREND_COLORS.length],
+              borderDash: [4, 3],
+              backgroundColor: 'transparent',
+              fill: false, tension: 0.3, pointRadius: 2, borderWidth: 1,
+            }));
+          }
+
+          if (view === 'pm') {
+            // Compute PM bucket using current pmMappings
+            const byPM = {};
+            filtered.forEach(r => {
+              const sysName = Utils.getHealthSystem(r.facility, r.system);
+              const pm = resolvePM(r.facility, sysName);
+              if (!byPM[pm]) byPM[pm] = {};
+              byPM[pm][r.week_start] = (byPM[pm][r.week_start] || 0) + (r.headcount || 0);
+            });
+            return sortedPMs.map((pm, idx) => ({
+              label: `${pm} (PY)`,
+              data: priorWeekStarts.map(ws => byPM[pm]?.[ws] ?? null),
+              borderColor: TREND_COLORS[idx % TREND_COLORS.length],
+              borderDash: [4, 3],
+              backgroundColor: 'transparent',
+              fill: false, tension: 0.3, pointRadius: 2, borderWidth: 1,
+            }));
+          }
+          return [];
+        };
+
+        window.toggleTrendYoY = async () => {
+          window.__yoyVisible = !window.__yoyVisible;
+          const btn = document.getElementById('trendYoYBtn');
+          const lbl = document.getElementById('trendYoYLabel');
+          if (window.__yoyVisible && !window.__yoyLoaded) {
+            if (lbl) lbl.textContent = 'Loading…';
+            try {
+              const resp = await fetch(`${API_BASE_URL}/yoy-trend-data`);
+              if (resp.ok) {
+                const data = await resp.json();
+                window.__yoyData = data.rows || [];
+                window.__yoyLoaded = true;
+              }
+            } catch (e) {
+              console.warn('Failed to load YoY data:', e);
+              window.__yoyVisible = false;
+            }
+          }
+          if (lbl) lbl.textContent = window.__yoyVisible ? 'Hide Prior Year' : 'Show Prior Year';
+          if (btn) {
+            btn.classList.toggle('bg-blue-50', window.__yoyVisible);
+            btn.classList.toggle('text-blue-700', window.__yoyVisible);
+            btn.classList.toggle('border-blue-200', window.__yoyVisible);
+          }
+          window.updateTrendChart(window.__trendView || 'category');
+        };
+
         window.updateTrendChart = function(view) {
           if (!window.__trendChart || !window.__trendChartDatasets) return;
-          if (view === 'account') {
-            window.__trendChart.data.datasets = window.__trendChartDatasets.account;
-          } else if (view === 'pm') {
-            window.__trendChart.data.datasets = window.__trendChartDatasets.pm;
-          } else {
-            window.__trendChart.data.datasets = window.__trendChartDatasets.category;
-          }
+          let base;
+          if (view === 'account') base = window.__trendChartDatasets.account;
+          else if (view === 'pm') base = window.__trendChartDatasets.pm;
+          else base = window.__trendChartDatasets.category;
+          const yoy = window.__yoyVisible ? computeYoYDatasets(view) : [];
+          window.__trendChart.data.datasets = [...base, ...yoy];
           window.__trendChart.update();
         };
 
