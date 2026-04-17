@@ -6246,9 +6246,6 @@
               <button id="trendYoYBtn" onclick="window.toggleTrendYoY()" class="flex items-center gap-1 px-2.5 py-1 rounded-md text-[10px] font-semibold text-slate-500 hover:text-slate-700 hover:bg-slate-100 transition-colors border border-slate-200">
                 <i data-lucide="calendar" class="w-3 h-3"></i> <span id="trendYoYLabel">Show Prior Year</span>
               </button>
-              <button id="trendHideTotalsBtn" onclick="window.toggleTrendTotals()" class="flex items-center gap-1 px-2.5 py-1 rounded-md text-[10px] font-semibold text-slate-500 hover:text-slate-700 hover:bg-slate-100 transition-colors border border-slate-200">
-                <i data-lucide="eye-off" class="w-3 h-3"></i> <span id="trendHideTotalsLabel">Hide Totals</span>
-              </button>
             </div>
             <p class="text-xs text-slate-400">4-week lookback · 3-week projection · follows active filters</p>
           </div>
@@ -6444,9 +6441,9 @@
               else affByWeek[r.week_start] = (affByWeek[r.week_start] || 0) + (r.headcount || 0);
             });
             return [
-              { label: 'Prior Year Total', data: priorWeekStarts.map(ws => totalByWeek[ws] ?? null), borderColor: '#94a3b8', borderDash: [4, 3], backgroundColor: 'transparent', fill: false, tension: 0.3, pointRadius: 2, borderWidth: 1.5 },
-              { label: 'Prior Year GHR', data: priorWeekStarts.map(ws => ghrByWeek[ws] ?? null), borderColor: '#93c5fd', borderDash: [4, 3], backgroundColor: 'transparent', fill: false, tension: 0.3, pointRadius: 2, borderWidth: 1.5 },
-              { label: 'Prior Year Affiliate', data: priorWeekStarts.map(ws => affByWeek[ws] ?? null), borderColor: '#c4b5fd', borderDash: [4, 3], backgroundColor: 'transparent', fill: false, tension: 0.3, pointRadius: 2, borderWidth: 1.5 },
+              { label: 'Total Headcount (PY)', data: priorWeekStarts.map(ws => totalByWeek[ws] ?? null), borderColor: '#94a3b8', borderDash: [4, 3], backgroundColor: 'transparent', fill: false, tension: 0.3, pointRadius: 2, borderWidth: 1.5 },
+              { label: 'GHR (PY)', data: priorWeekStarts.map(ws => ghrByWeek[ws] ?? null), borderColor: '#93c5fd', borderDash: [4, 3], backgroundColor: 'transparent', fill: false, tension: 0.3, pointRadius: 2, borderWidth: 1.5 },
+              { label: 'Affiliate (PY)', data: priorWeekStarts.map(ws => affByWeek[ws] ?? null), borderColor: '#c4b5fd', borderDash: [4, 3], backgroundColor: 'transparent', fill: false, tension: 0.3, pointRadius: 2, borderWidth: 1.5 },
             ];
           }
 
@@ -6510,9 +6507,6 @@
           window.updateTrendChart(window.__trendView || 'category');
         };
 
-        // Labels considered "Totals" (hidden when toggle is on) - they dwarf per-entity lines
-        const TOTAL_LABELS = new Set(['Total Headcount', 'Pipeline (Confirmed)', 'Trend Projection', 'Prior Year Total']);
-
         // Interleave YoY datasets next to their current-year counterparts by label match
         const interleaveYoY = (base, yoy) => {
           if (!yoy || yoy.length === 0) return base;
@@ -6550,25 +6544,8 @@
           else if (view === 'pm') base = window.__trendChartDatasets.pm;
           else base = window.__trendChartDatasets.category;
           const yoy = window.__yoyVisible ? computeYoYDatasets(view) : [];
-          let datasets = interleaveYoY(base, yoy);
-          if (window.__hideTotals) {
-            datasets = datasets.filter(d => !TOTAL_LABELS.has(d.label));
-          }
-          window.__trendChart.data.datasets = datasets;
+          window.__trendChart.data.datasets = interleaveYoY(base, yoy);
           window.__trendChart.update();
-        };
-
-        window.toggleTrendTotals = () => {
-          window.__hideTotals = !window.__hideTotals;
-          const btn = document.getElementById('trendHideTotalsBtn');
-          const lbl = document.getElementById('trendHideTotalsLabel');
-          if (lbl) lbl.textContent = window.__hideTotals ? 'Show Totals' : 'Hide Totals';
-          if (btn) {
-            btn.classList.toggle('bg-blue-50', window.__hideTotals);
-            btn.classList.toggle('text-blue-700', window.__hideTotals);
-            btn.classList.toggle('border-blue-200', window.__hideTotals);
-          }
-          window.updateTrendChart(window.__trendView || 'category');
         };
 
         const canvas = $('trendChart');
