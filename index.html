@@ -6282,7 +6282,6 @@
           { label: 'GHR Pending', color: 'amber-600', getData: i => i >= lastActualIdx ? weekData[i].ghr + weekData[i].pendingGhr : null },
           { label: 'Affiliate Pending', color: 'yellow-600', getData: i => i >= lastActualIdx ? weekData[i].aff + weekData[i].pendingAff : null },
           { label: 'Total Pending', color: 'orange-600', getData: i => i >= lastActualIdx ? weekData[i].total + weekData[i].pendingTotal : null },
-          { label: 'Trend Projection', color: 'slate-500', getData: i => projectionData[i] },
         ];
         const summaryTableBody = summaryRows.map(r => {
           const avg = rolling4Wk(r.getData);
@@ -6407,13 +6406,6 @@
             backgroundColor: 'rgba(34,197,94,0.08)',
             fill: false, tension: 0.3, pointRadius: 5, borderWidth: 2,
           },
-          {
-            label: 'Trend Projection',
-            data: projectionData,
-            borderColor: '#f97316',
-            borderDash: [14, 6],
-            fill: false, tension: 0, pointRadius: 4, borderWidth: 2,
-          },
         ];
 
         // Helper: build a single continuous series with segment-based style change
@@ -6456,15 +6448,12 @@
           { label: 'Total Headcount', data: actualsData, borderColor: '#64748b', backgroundColor: 'rgba(100,116,139,0.08)', fill: true, tension: 0.3, pointRadius: 5 },
           { label: 'Total Pipeline', data: pipelineData, borderColor: '#64748b', fill: false, tension: 0.3, pointRadius: 4, borderDash: DASH_PIPELINE },
           { label: 'Total Pending', data: pipelineWithPendingData, borderColor: '#64748b', fill: false, tension: 0.3, pointRadius: 4, borderDash: DASH_PENDING },
-          { label: 'Total Projection', data: projectionData, borderColor: '#64748b', fill: false, tension: 0, pointRadius: 4, borderDash: DASH_PROJECTION, borderWidth: 2 },
           { label: 'GHR', data: ghrActualsData, borderColor: '#3b82f6', backgroundColor: 'rgba(59,130,246,0.1)', fill: false, tension: 0.3, pointRadius: 4 },
           { label: 'GHR Pipeline', data: ghrPipelineData, borderColor: '#3b82f6', fill: false, tension: 0.3, pointRadius: 3, borderDash: DASH_PIPELINE },
           { label: 'GHR Pending', data: pendingGhrData, borderColor: '#3b82f6', fill: false, tension: 0.3, pointRadius: 3, borderDash: DASH_PENDING },
-          { label: 'GHR Projection', data: ghrProjectionData, borderColor: '#3b82f6', fill: false, tension: 0, pointRadius: 3, borderDash: DASH_PROJECTION, borderWidth: 2 },
           { label: 'Affiliate', data: affActualsData, borderColor: '#8b5cf6', backgroundColor: 'rgba(139,92,246,0.1)', fill: false, tension: 0.3, pointRadius: 4 },
           { label: 'Affiliate Pipeline', data: affPipelineData, borderColor: '#8b5cf6', fill: false, tension: 0.3, pointRadius: 3, borderDash: DASH_PIPELINE },
           { label: 'Affiliate Pending', data: pendingAffData, borderColor: '#8b5cf6', fill: false, tension: 0.3, pointRadius: 3, borderDash: DASH_PENDING },
-          { label: 'Affiliate Projection', data: affProjectionData, borderColor: '#8b5cf6', fill: false, tension: 0, pointRadius: 3, borderDash: DASH_PROJECTION, borderWidth: 2 },
         ];
         window.__trendChartDatasets = { category: categoryChartDatasets, account: sysChartDatasets, pm: pmChartDatasets };
 
@@ -6667,15 +6656,12 @@
           { label: 'Total Fill Rate', data: totalFillActuals, borderColor: '#64748b', backgroundColor: 'rgba(100,116,139,0.08)', fill: true, tension: 0.3, pointRadius: 5 },
           { label: 'Total Fill Rate (Pipeline)', data: totalFillPipeline, borderColor: '#64748b', fill: false, tension: 0.3, pointRadius: 4, borderDash: DASH_PIPELINE },
           { label: 'Total Fill Rate (Pending)', data: totalFillPending, borderColor: '#64748b', fill: false, tension: 0.3, pointRadius: 4, borderDash: DASH_PENDING },
-          { label: 'Total Fill Rate (Projection)', data: totalFillProjection, borderColor: '#64748b', fill: false, tension: 0, pointRadius: 3, borderDash: DASH_PROJECTION, borderWidth: 2 },
           { label: 'GHR Fill Rate', data: ghrFillActuals, borderColor: '#3b82f6', backgroundColor: 'rgba(59,130,246,0.1)', fill: false, tension: 0.3, pointRadius: 5 },
           { label: 'GHR Fill Rate (Pipeline)', data: ghrFillPipeline, borderColor: '#3b82f6', fill: false, tension: 0.3, pointRadius: 4, borderDash: DASH_PIPELINE },
           { label: 'GHR Fill Rate (Pending)', data: ghrFillPending, borderColor: '#3b82f6', fill: false, tension: 0.3, pointRadius: 4, borderDash: DASH_PENDING },
-          { label: 'GHR Fill Rate (Projection)', data: ghrFillProjection, borderColor: '#3b82f6', fill: false, tension: 0, pointRadius: 3, borderDash: DASH_PROJECTION, borderWidth: 2 },
           { label: 'Affiliate Fill Rate', data: affFillActuals, borderColor: '#8b5cf6', backgroundColor: 'rgba(139,92,246,0.1)', fill: false, tension: 0.3, pointRadius: 5 },
           { label: 'Affiliate Fill Rate (Pipeline)', data: affFillPipeline, borderColor: '#8b5cf6', fill: false, tension: 0.3, pointRadius: 4, borderDash: DASH_PIPELINE },
           { label: 'Affiliate Fill Rate (Pending)', data: affFillPending, borderColor: '#8b5cf6', fill: false, tension: 0.3, pointRadius: 4, borderDash: DASH_PENDING },
-          { label: 'Affiliate Fill Rate (Projection)', data: affFillProjection, borderColor: '#8b5cf6', fill: false, tension: 0, pointRadius: 3, borderDash: DASH_PROJECTION, borderWidth: 2 },
         ];
 
         window.updateTrendChart = function(view) {
@@ -6740,8 +6726,8 @@
           const svgLine = (ds, hidden) => {
             const dashAttr = (ds.borderDash && ds.borderDash.length) ? ` stroke-dasharray="${ds.borderDash.join(',')}"` : '';
             const width = Math.max(2, ds.borderWidth || 2);
-            return `<svg width="32" height="6" viewBox="0 0 32 6" style="display:block;opacity:${hidden ? 0.35 : 1};flex-shrink:0">
-              <line x1="0" y1="3" x2="32" y2="3" stroke="${ds.borderColor}" stroke-width="${width}"${dashAttr}/>
+            return `<svg width="56" height="6" viewBox="0 0 56 6" style="display:block;opacity:${hidden ? 0.35 : 1};flex-shrink:0">
+              <line x1="0" y1="3" x2="56" y2="3" stroke="${ds.borderColor}" stroke-width="${width}"${dashAttr}/>
             </svg>`;
           };
 
@@ -6776,9 +6762,9 @@
             parsed.forEach(p => { if (p.group) (byGroup[p.group] ||= []).push(p); });
             const rows = groupOrder.filter(g => byGroup[g]).map(g => {
               const cells = byGroup[g].map(p => btn(p, p.variant)).join('');
-              return `<div class="flex items-center justify-center gap-2 flex-wrap">
+              return `<div class="flex items-center justify-center gap-4 flex-wrap">
                 <span class="font-semibold text-slate-700 text-[11px] min-w-[58px] text-right">${g}</span>
-                <div class="flex flex-wrap items-center gap-0.5">${cells}</div>
+                <div class="flex flex-wrap items-center gap-5">${cells}</div>
               </div>`;
             });
             const ungrouped = parsed.filter(p => !p.group);
