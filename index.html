@@ -6776,16 +6776,16 @@
             parsed.forEach(p => { if (p.group) (byGroup[p.group] ||= []).push(p); });
             const rows = groupOrder.filter(g => byGroup[g]).map(g => {
               const cells = byGroup[g].map(p => btn(p, p.variant)).join('');
-              return `<div class="flex items-center gap-2 flex-wrap">
-                <span class="font-semibold text-slate-700 text-[11px] min-w-[58px]">${g}</span>
+              return `<div class="flex items-center justify-center gap-2 flex-wrap">
+                <span class="font-semibold text-slate-700 text-[11px] min-w-[58px] text-right">${g}</span>
                 <div class="flex flex-wrap items-center gap-0.5">${cells}</div>
               </div>`;
             });
             const ungrouped = parsed.filter(p => !p.group);
             if (ungrouped.length) {
-              rows.push(`<div class="flex flex-wrap items-center gap-0.5 pt-1 border-t border-slate-100">${ungrouped.map(p => btn(p)).join('')}</div>`);
+              rows.push(`<div class="flex flex-wrap items-center justify-center gap-0.5 pt-1 border-t border-slate-100">${ungrouped.map(p => btn(p)).join('')}</div>`);
             }
-            container.innerHTML = `<div class="flex flex-col gap-1 w-full">${rows.join('')}</div>`;
+            container.innerHTML = `<div class="flex flex-col gap-1 w-full items-center">${rows.join('')}</div>`;
           }
 
           container.querySelectorAll('button[data-idx]').forEach(b => {
