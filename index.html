@@ -6454,9 +6454,9 @@
         const DASH_PROJECTION = [14, 6];
         const categoryChartDatasets = [
           { label: 'Total Headcount', data: actualsData, borderColor: '#64748b', backgroundColor: 'rgba(100,116,139,0.08)', fill: true, tension: 0.3, pointRadius: 5 },
-          { label: 'Total Pipeline', data: pipelineData, borderColor: '#22c55e', backgroundColor: 'rgba(34,197,94,0.08)', fill: false, tension: 0.3, pointRadius: 5 },
-          { label: 'Total Pending', data: pipelineWithPendingData, borderColor: '#22c55e', fill: false, tension: 0.3, pointRadius: 4, borderDash: DASH_PENDING },
-          { label: 'Total Projection', data: projectionData, borderColor: '#94a3b8', fill: false, tension: 0, pointRadius: 4, borderDash: DASH_PROJECTION, borderWidth: 2 },
+          { label: 'Total Pipeline', data: pipelineData, borderColor: '#64748b', fill: false, tension: 0.3, pointRadius: 4, borderDash: DASH_PIPELINE },
+          { label: 'Total Pending', data: pipelineWithPendingData, borderColor: '#64748b', fill: false, tension: 0.3, pointRadius: 4, borderDash: DASH_PENDING },
+          { label: 'Total Projection', data: projectionData, borderColor: '#64748b', fill: false, tension: 0, pointRadius: 4, borderDash: DASH_PROJECTION, borderWidth: 2 },
           { label: 'GHR', data: ghrActualsData, borderColor: '#3b82f6', backgroundColor: 'rgba(59,130,246,0.1)', fill: false, tension: 0.3, pointRadius: 4 },
           { label: 'GHR Pipeline', data: ghrPipelineData, borderColor: '#3b82f6', fill: false, tension: 0.3, pointRadius: 3, borderDash: DASH_PIPELINE },
           { label: 'GHR Pending', data: pendingGhrData, borderColor: '#3b82f6', fill: false, tension: 0.3, pointRadius: 3, borderDash: DASH_PENDING },
