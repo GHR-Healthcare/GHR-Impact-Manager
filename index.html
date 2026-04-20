@@ -5773,11 +5773,21 @@
           return i >= lastActualIdx ? weekHC[i] : null;
         });
 
-        // Pending data (future weeks only) — anchored to adjacent confirmed lines so they connect visually
-        const pendingGhrData = weeks.map((w, i) => i >= lastActualIdx ? weekData[i].ghr + weekData[i].pendingGhr : null);
-        const pendingAffData = weeks.map((w, i) => i >= lastActualIdx ? weekData[i].aff + weekData[i].pendingAff : null);
+        // Pending data — anchored at current week's actual value so the line visually emerges
+        // from the actuals endpoint. Future weeks add pending on top of confirmed.
+        const pendingGhrData = weeks.map((w, i) => {
+          if (i < lastActualIdx) return null;
+          if (i === lastActualIdx) return weekData[i].ghr;
+          return weekData[i].ghr + weekData[i].pendingGhr;
+        });
+        const pendingAffData = weeks.map((w, i) => {
+          if (i < lastActualIdx) return null;
+          if (i === lastActualIdx) return weekData[i].aff;
+          return weekData[i].aff + weekData[i].pendingAff;
+        });
         const pipelineWithPendingData = weeks.map((w, i) => {
           if (i < lastActualIdx) return null;
+          if (i === lastActualIdx) return weekData[i].total;
           return weekData[i].total + weekData[i].pendingTotal;
         });
 
@@ -6717,7 +6727,25 @@
               responsive: true,
               interaction: { mode: 'index', intersect: false },
               plugins: {
-                legend: { position: 'top', labels: { boxWidth: 12, font: { size: 11 } } },
+                legend: {
+                  position: 'top',
+                  labels: {
+                    font: { size: 11 },
+                    usePointStyle: true,
+                    boxWidth: 30,
+                    boxHeight: 0,
+                    generateLabels: (chart) => chart.data.datasets.map((ds, i) => ({
+                      text: ds.label,
+                      fillStyle: 'transparent',
+                      strokeStyle: ds.borderColor,
+                      lineWidth: ds.borderWidth || 2,
+                      lineDash: ds.borderDash || [],
+                      pointStyle: 'line',
+                      hidden: !chart.isDatasetVisible(i),
+                      datasetIndex: i,
+                    })),
+                  }
+                },
                 tooltip: {
                   callbacks: {
                     label: ctx => {
