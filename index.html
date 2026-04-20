@@ -6732,13 +6732,13 @@
                   labels: {
                     font: { size: 11 },
                     usePointStyle: true,
-                    boxWidth: 30,
-                    boxHeight: 0,
+                    boxWidth: 32,
+                    boxHeight: 2,
                     generateLabels: (chart) => chart.data.datasets.map((ds, i) => ({
                       text: ds.label,
-                      fillStyle: 'transparent',
+                      fillStyle: ds.borderColor,
                       strokeStyle: ds.borderColor,
-                      lineWidth: ds.borderWidth || 2,
+                      lineWidth: Math.max(2, ds.borderWidth || 2),
                       lineDash: ds.borderDash || [],
                       pointStyle: 'line',
                       hidden: !chart.isDatasetVisible(i),
