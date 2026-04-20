@@ -5803,13 +5803,46 @@
           return out;
         };
 
-        const projectionData = buildProjection(i => weekHC[i]);
+        // Share of pending candidates expected to convert to active starts
+        const PENDING_CONVERSION = 0.7;
+
+        // Blend Holt's forecast with forward visibility (pipeline + converted pending).
+        // Pipeline weight decays with distance from current week: 75% at +1, 50% at +2,
+        // 25% at +3, 0% at +4 — so near-term reflects what we already know, far-term
+        // defers to the trend.
+        const buildBlendedProjection = (getActualVal, getPipelineVal, getPendingVal, opts = {}) => {
+          const base = buildProjection(getActualVal, opts);
+          const { min = 0, max = Infinity, decimals = 0 } = opts;
+          const mult = Math.pow(10, decimals);
+          return base.map((v, i) => {
+            if (i <= lastActualIdx || v == null) return v;
+            const h = i - lastActualIdx;
+            const pipelineExpected = (getPipelineVal(i) || 0) + PENDING_CONVERSION * (getPendingVal?.(i) || 0);
+            const w = Math.max(0, 1 - 0.25 * h);
+            const blended = w * pipelineExpected + (1 - w) * v;
+            return Math.round(Math.max(min, Math.min(max, blended)) * mult) / mult;
+          });
+        };
+
+        const projectionData = buildBlendedProjection(
+          i => weekHC[i],
+          i => weekData[i].total,
+          i => weekData[i].pendingTotal || 0
+        );
 
         // GHR and Affiliate specific pipeline + projection (for grouped legend/tooltip)
         const ghrPipelineData = weeks.map((w, i) => i >= lastActualIdx ? weekData[i].ghr : null);
         const affPipelineData = weeks.map((w, i) => i >= lastActualIdx ? weekData[i].aff : null);
-        const ghrProjectionData = buildProjection(i => weekData[i].ghr);
-        const affProjectionData = buildProjection(i => weekData[i].aff);
+        const ghrProjectionData = buildBlendedProjection(
+          i => weekData[i].ghr,
+          i => weekData[i].ghr,
+          i => weekData[i].pendingGhr || 0
+        );
+        const affProjectionData = buildBlendedProjection(
+          i => weekData[i].aff,
+          i => weekData[i].aff,
+          i => weekData[i].pendingAff || 0
+        );
 
         // Build category breakdown table: categories as rows, dates as columns
         // Each cell shows "GHR ±Δ / Aff ±Δ"
