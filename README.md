@@ -2,6 +2,11 @@
 
 ## Version History
 
+**1.6.0** - Holt's forecast + clearer projection styling
+- Swapped projection formula from linear regression to Holt's exponential smoothing (weights recent weeks, reacts to trend changes)
+- Projection line now anchors at the last actual value so it connects seamlessly to the actuals line
+- Pipeline / Pending / Projection dashed patterns are now visually distinct (fine dots / dash-dot / long dashes)
+
 **1.5.0** - Trend Tab with Headcount Projection
 - New Trend tab with 4-week lookback and 4-week forward projection
 - Line chart showing Actual HC, Pipeline (confirmed), and linear trend projection

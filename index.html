@@ -5570,7 +5570,7 @@
           weeks.push({ start, end });
         }
 
-        // Linear regression helper
+        // Linear regression helper (kept for reference/backward compat)
         function linearRegression(points) {
           const n = points.length;
           if (n < 2) return { slope: 0, intercept: points.length ? points[0].y : 0 };
@@ -5582,6 +5582,21 @@
           const slope = denom !== 0 ? (n * sumXY - sumX * sumY) / denom : 0;
           const intercept = (sumY - slope * sumX) / n;
           return { slope, intercept };
+        }
+
+        // Holt's linear exponential smoothing — tracks level + trend with recency decay.
+        // alpha smooths the level, beta smooths the trend (both 0..1; higher = more reactive).
+        function holtSmooth(values, alpha = 0.6, beta = 0.3) {
+          if (!values || values.length === 0) return { level: 0, trend: 0 };
+          if (values.length === 1) return { level: values[0], trend: 0 };
+          let level = values[0];
+          let trend = values[1] - values[0];
+          for (let i = 1; i < values.length; i++) {
+            const prevLevel = level;
+            level = alpha * values[i] + (1 - alpha) * (level + trend);
+            trend = beta * (level - prevLevel) + (1 - beta) * trend;
+          }
+          return { level, trend };
         }
 
         // Helper: is this a GHR agency?
@@ -5766,27 +5781,35 @@
           return weekData[i].total + weekData[i].pendingTotal;
         });
 
-        // Linear regression on all actual weeks
-        const regressionPoints = weeks
-          .map((w, i) => i <= lastActualIdx ? { x: i, y: weekHC[i] } : null)
-          .filter(Boolean);
-        const { slope, intercept } = linearRegression(regressionPoints);
-
-        const projectionData = weeks.map((w, i) => {
-          // Anchor projection at last actuals point, extend through future weeks
-          if (i >= lastActualIdx) {
-            return Math.max(0, Math.round(slope * i + intercept));
+        // Projection helper — uses Holt's smoothing on past values, anchors to last actual
+        // so the projection line connects seamlessly to the actuals line.
+        const buildProjection = (getVal, { min = 0, max = Infinity, decimals = 0 } = {}) => {
+          const past = [];
+          for (let i = 0; i <= lastActualIdx; i++) {
+            const v = getVal(i);
+            if (v != null) past.push(v);
           }
-          return null;
-        });
+          const out = weeks.map(() => null);
+          if (past.length === 0) return out;
+          const lastVal = past[past.length - 1];
+          const mult = Math.pow(10, decimals);
+          out[lastActualIdx] = Math.round(lastVal * mult) / mult;
+          const { level, trend } = holtSmooth(past);
+          for (let h = 1; lastActualIdx + h < weeks.length; h++) {
+            const raw = level + h * trend;
+            const clamped = Math.max(min, Math.min(max, raw));
+            out[lastActualIdx + h] = Math.round(clamped * mult) / mult;
+          }
+          return out;
+        };
+
+        const projectionData = buildProjection(i => weekHC[i]);
 
         // GHR and Affiliate specific pipeline + projection (for grouped legend/tooltip)
         const ghrPipelineData = weeks.map((w, i) => i >= lastActualIdx ? weekData[i].ghr : null);
         const affPipelineData = weeks.map((w, i) => i >= lastActualIdx ? weekData[i].aff : null);
-        const ghrRegression = linearRegression(weeks.map((w, i) => i <= lastActualIdx ? { x: i, y: weekData[i].ghr } : null).filter(Boolean));
-        const affRegression = linearRegression(weeks.map((w, i) => i <= lastActualIdx ? { x: i, y: weekData[i].aff } : null).filter(Boolean));
-        const ghrProjectionData = weeks.map((w, i) => i >= lastActualIdx ? Math.max(0, Math.round(ghrRegression.slope * i + ghrRegression.intercept)) : null);
-        const affProjectionData = weeks.map((w, i) => i >= lastActualIdx ? Math.max(0, Math.round(affRegression.slope * i + affRegression.intercept)) : null);
+        const ghrProjectionData = buildProjection(i => weekData[i].ghr);
+        const affProjectionData = buildProjection(i => weekData[i].aff);
 
         // Build category breakdown table: categories as rows, dates as columns
         // Each cell shows "GHR ±Δ / Aff ±Δ"
@@ -6344,7 +6367,7 @@
             label: 'Trend Projection',
             data: projectionData,
             borderColor: '#f97316',
-            borderDash: [6, 4],
+            borderDash: [14, 6],
             fill: false, tension: 0, pointRadius: 4, borderWidth: 2,
           },
         ];
@@ -6361,7 +6384,7 @@
               backgroundColor: 'transparent',
               fill: false, tension: 0.3, pointRadius: 3, borderWidth: 1.5,
               segment: {
-                borderDash: ctx => (ctx.p1DataIndex > lastActualIdx ? [2, 2] : undefined),
+                borderDash: ctx => (ctx.p1DataIndex > lastActualIdx ? [2, 3] : undefined),
               },
             },
           ];
@@ -6381,19 +6404,23 @@
         ];
         // Grouped so Total, GHR, and Affiliate each have their current + pipeline + pending + projection
         // sitting next to each other in the legend/tooltip. YoY lines insert inline via interleave.
+        // Dash patterns: pipeline = fine dots, pending = dash-dot, projection = long dashes.
+        const DASH_PIPELINE = [2, 3];
+        const DASH_PENDING = [9, 3, 3, 3];
+        const DASH_PROJECTION = [14, 6];
         const categoryChartDatasets = [
           { label: 'Total Headcount', data: actualsData, borderColor: '#64748b', backgroundColor: 'rgba(100,116,139,0.08)', fill: true, tension: 0.3, pointRadius: 5 },
           { label: 'Total Pipeline', data: pipelineData, borderColor: '#22c55e', backgroundColor: 'rgba(34,197,94,0.08)', fill: false, tension: 0.3, pointRadius: 5 },
-          { label: 'Total Pending', data: pipelineWithPendingData, borderColor: '#22c55e', fill: false, tension: 0.3, pointRadius: 4, borderDash: [2, 2] },
-          { label: 'Total Projection', data: projectionData, borderColor: '#94a3b8', fill: false, tension: 0, pointRadius: 4, borderDash: [6, 4] },
+          { label: 'Total Pending', data: pipelineWithPendingData, borderColor: '#22c55e', fill: false, tension: 0.3, pointRadius: 4, borderDash: DASH_PENDING },
+          { label: 'Total Projection', data: projectionData, borderColor: '#94a3b8', fill: false, tension: 0, pointRadius: 4, borderDash: DASH_PROJECTION, borderWidth: 2 },
           { label: 'GHR', data: ghrActualsData, borderColor: '#3b82f6', backgroundColor: 'rgba(59,130,246,0.1)', fill: false, tension: 0.3, pointRadius: 4 },
-          { label: 'GHR Pipeline', data: ghrPipelineData, borderColor: '#3b82f6', fill: false, tension: 0.3, pointRadius: 3, borderDash: [2, 2] },
-          { label: 'GHR Pending', data: pendingGhrData, borderColor: '#3b82f6', fill: false, tension: 0.3, pointRadius: 3, borderDash: [4, 3] },
-          { label: 'GHR Projection', data: ghrProjectionData, borderColor: '#3b82f6', fill: false, tension: 0, pointRadius: 3, borderDash: [6, 4] },
+          { label: 'GHR Pipeline', data: ghrPipelineData, borderColor: '#3b82f6', fill: false, tension: 0.3, pointRadius: 3, borderDash: DASH_PIPELINE },
+          { label: 'GHR Pending', data: pendingGhrData, borderColor: '#3b82f6', fill: false, tension: 0.3, pointRadius: 3, borderDash: DASH_PENDING },
+          { label: 'GHR Projection', data: ghrProjectionData, borderColor: '#3b82f6', fill: false, tension: 0, pointRadius: 3, borderDash: DASH_PROJECTION, borderWidth: 2 },
           { label: 'Affiliate', data: affActualsData, borderColor: '#8b5cf6', backgroundColor: 'rgba(139,92,246,0.1)', fill: false, tension: 0.3, pointRadius: 4 },
-          { label: 'Affiliate Pipeline', data: affPipelineData, borderColor: '#8b5cf6', fill: false, tension: 0.3, pointRadius: 3, borderDash: [2, 2] },
-          { label: 'Affiliate Pending', data: pendingAffData, borderColor: '#8b5cf6', fill: false, tension: 0.3, pointRadius: 3, borderDash: [4, 3] },
-          { label: 'Affiliate Projection', data: affProjectionData, borderColor: '#8b5cf6', fill: false, tension: 0, pointRadius: 3, borderDash: [6, 4] },
+          { label: 'Affiliate Pipeline', data: affPipelineData, borderColor: '#8b5cf6', fill: false, tension: 0.3, pointRadius: 3, borderDash: DASH_PIPELINE },
+          { label: 'Affiliate Pending', data: pendingAffData, borderColor: '#8b5cf6', fill: false, tension: 0.3, pointRadius: 3, borderDash: DASH_PENDING },
+          { label: 'Affiliate Projection', data: affProjectionData, borderColor: '#8b5cf6', fill: false, tension: 0, pointRadius: 3, borderDash: DASH_PROJECTION, borderWidth: 2 },
         ];
         window.__trendChartDatasets = { category: categoryChartDatasets, account: sysChartDatasets, pm: pmChartDatasets };
 
@@ -6574,12 +6601,8 @@
           const a = weekData[i].aff + (weekData[i].pendingAff || 0);
           return { num: a, den: g + a };
         };
-        const projectSeries = (actualsArr) => {
-          const reg = linearRegression(actualsArr.map((y, x) => ({ x, y })).filter(p => p.y != null));
-          return weeks.map((w, i) =>
-            i >= lastActualIdx ? Math.max(0, Math.min(100, Math.round((reg.slope * i + reg.intercept) * 10) / 10)) : null
-          );
-        };
+        const projectSeries = (actualsArr) =>
+          buildProjection(i => actualsArr[i], { min: 0, max: 100, decimals: 1 });
 
         const totalFillActuals = pctActuals(i => ({ num: weekData[i].total, den: weekData[i].total }), true); // flat 100 past
         const totalFillPipeline = pctActuals(i => ({ num: weekData[i].total, den: weekData[i].total }), false);
@@ -6598,17 +6621,17 @@
 
         const fillRateChartDatasets = [
           { label: 'Total Fill Rate', data: totalFillActuals, borderColor: '#64748b', backgroundColor: 'rgba(100,116,139,0.08)', fill: true, tension: 0.3, pointRadius: 5 },
-          { label: 'Total Fill Rate (Pipeline)', data: totalFillPipeline, borderColor: '#64748b', fill: false, tension: 0.3, pointRadius: 4, borderDash: [2, 2] },
-          { label: 'Total Fill Rate (Pending)', data: totalFillPending, borderColor: '#64748b', fill: false, tension: 0.3, pointRadius: 4, borderDash: [4, 3] },
-          { label: 'Total Fill Rate (Projection)', data: totalFillProjection, borderColor: '#64748b', fill: false, tension: 0, pointRadius: 3, borderDash: [6, 4] },
+          { label: 'Total Fill Rate (Pipeline)', data: totalFillPipeline, borderColor: '#64748b', fill: false, tension: 0.3, pointRadius: 4, borderDash: DASH_PIPELINE },
+          { label: 'Total Fill Rate (Pending)', data: totalFillPending, borderColor: '#64748b', fill: false, tension: 0.3, pointRadius: 4, borderDash: DASH_PENDING },
+          { label: 'Total Fill Rate (Projection)', data: totalFillProjection, borderColor: '#64748b', fill: false, tension: 0, pointRadius: 3, borderDash: DASH_PROJECTION, borderWidth: 2 },
           { label: 'GHR Fill Rate', data: ghrFillActuals, borderColor: '#3b82f6', backgroundColor: 'rgba(59,130,246,0.1)', fill: false, tension: 0.3, pointRadius: 5 },
-          { label: 'GHR Fill Rate (Pipeline)', data: ghrFillPipeline, borderColor: '#3b82f6', fill: false, tension: 0.3, pointRadius: 4, borderDash: [2, 2] },
-          { label: 'GHR Fill Rate (Pending)', data: ghrFillPending, borderColor: '#3b82f6', fill: false, tension: 0.3, pointRadius: 4, borderDash: [4, 3] },
-          { label: 'GHR Fill Rate (Projection)', data: ghrFillProjection, borderColor: '#3b82f6', fill: false, tension: 0, pointRadius: 3, borderDash: [6, 4] },
+          { label: 'GHR Fill Rate (Pipeline)', data: ghrFillPipeline, borderColor: '#3b82f6', fill: false, tension: 0.3, pointRadius: 4, borderDash: DASH_PIPELINE },
+          { label: 'GHR Fill Rate (Pending)', data: ghrFillPending, borderColor: '#3b82f6', fill: false, tension: 0.3, pointRadius: 4, borderDash: DASH_PENDING },
+          { label: 'GHR Fill Rate (Projection)', data: ghrFillProjection, borderColor: '#3b82f6', fill: false, tension: 0, pointRadius: 3, borderDash: DASH_PROJECTION, borderWidth: 2 },
           { label: 'Affiliate Fill Rate', data: affFillActuals, borderColor: '#8b5cf6', backgroundColor: 'rgba(139,92,246,0.1)', fill: false, tension: 0.3, pointRadius: 5 },
-          { label: 'Affiliate Fill Rate (Pipeline)', data: affFillPipeline, borderColor: '#8b5cf6', fill: false, tension: 0.3, pointRadius: 4, borderDash: [2, 2] },
-          { label: 'Affiliate Fill Rate (Pending)', data: affFillPending, borderColor: '#8b5cf6', fill: false, tension: 0.3, pointRadius: 4, borderDash: [4, 3] },
-          { label: 'Affiliate Fill Rate (Projection)', data: affFillProjection, borderColor: '#8b5cf6', fill: false, tension: 0, pointRadius: 3, borderDash: [6, 4] },
+          { label: 'Affiliate Fill Rate (Pipeline)', data: affFillPipeline, borderColor: '#8b5cf6', fill: false, tension: 0.3, pointRadius: 4, borderDash: DASH_PIPELINE },
+          { label: 'Affiliate Fill Rate (Pending)', data: affFillPending, borderColor: '#8b5cf6', fill: false, tension: 0.3, pointRadius: 4, borderDash: DASH_PENDING },
+          { label: 'Affiliate Fill Rate (Projection)', data: affFillProjection, borderColor: '#8b5cf6', fill: false, tension: 0, pointRadius: 3, borderDash: DASH_PROJECTION, borderWidth: 2 },
         ];
 
         window.updateTrendChart = function(view) {
