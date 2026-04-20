@@ -6717,27 +6717,80 @@
           renderTrendLegend();
         };
 
-        // Custom legend: line segment stacked above the label so the dash pattern is clearly visible.
+        // Custom legend: for Total/GHR/Affiliate datasets, stack as rows with group label +
+        // sub-items for each variant (Headcount/Pipeline/Pending/Projection). Falls back to
+        // flat layout for views without that grouping (account/PM per-system lines).
         const renderTrendLegend = () => {
           const container = document.getElementById('trendChartLegend');
           if (!container || !window.__trendChart) return;
           const chart = window.__trendChart;
-          const items = chart.data.datasets.map((ds, i) => {
-            const hidden = !chart.isDatasetVisible(i);
+          const datasets = chart.data.datasets;
+
+          const parseLabel = (label) => {
+            for (const g of ['Total', 'GHR', 'Affiliate']) {
+              if (label === g || label === `${g} Headcount` || label === `${g} Fill Rate`) return { group: g, variant: 'Headcount' };
+              if (label === `${g} Pipeline` || label === `${g} Fill Rate (Pipeline)`) return { group: g, variant: 'Pipeline' };
+              if (label === `${g} Pending` || label === `${g} Fill Rate (Pending)`) return { group: g, variant: 'Pending' };
+              if (label === `${g} Projection` || label === `${g} Fill Rate (Projection)`) return { group: g, variant: 'Projection' };
+              if (label === `${g} (PY)` || label === `${g} Headcount (PY)` || label === `${g} Fill Rate (PY)`) return { group: g, variant: 'Prior Year' };
+            }
+            return { group: null, variant: label };
+          };
+
+          const svgLine = (ds, hidden) => {
             const dashAttr = (ds.borderDash && ds.borderDash.length) ? ` stroke-dasharray="${ds.borderDash.join(',')}"` : '';
             const width = Math.max(2, ds.borderWidth || 2);
-            const opacity = hidden ? 0.35 : 1;
-            return `<button type="button" data-idx="${i}" class="flex flex-col items-center gap-0.5 px-1 py-0.5 hover:bg-slate-50 rounded" style="opacity:${opacity}">
-              <svg width="44" height="6" viewBox="0 0 44 6" style="display:block">
-                <line x1="0" y1="3" x2="44" y2="3" stroke="${ds.borderColor}" stroke-width="${width}"${dashAttr}/>
-              </svg>
-              <span class="whitespace-nowrap ${hidden ? 'line-through text-slate-400' : ''}">${ds.label}</span>
+            return `<svg width="32" height="6" viewBox="0 0 32 6" style="display:block;opacity:${hidden ? 0.35 : 1};flex-shrink:0">
+              <line x1="0" y1="3" x2="32" y2="3" stroke="${ds.borderColor}" stroke-width="${width}"${dashAttr}/>
+            </svg>`;
+          };
+
+          const parsed = datasets.map((ds, i) => ({
+            ds, i,
+            hidden: !chart.isDatasetVisible(i),
+            ...parseLabel(ds.label),
+          }));
+
+          const groupedCount = parsed.filter(p => p.group).length;
+          const useGrouped = groupedCount >= parsed.length * 0.5;
+
+          const btn = (p, textOverride) => {
+            const text = textOverride || p.ds.label;
+            return `<button type="button" data-idx="${p.i}" class="flex items-center gap-1.5 px-1.5 py-0.5 hover:bg-slate-50 rounded" style="opacity:${p.hidden ? 0.45 : 1}">
+              ${svgLine(p.ds, p.hidden)}
+              <span class="whitespace-nowrap ${p.hidden ? 'line-through text-slate-400' : ''}">${text}</span>
             </button>`;
-          });
-          container.innerHTML = items.join('');
-          container.querySelectorAll('button[data-idx]').forEach(btn => {
-            btn.onclick = () => {
-              const idx = parseInt(btn.dataset.idx, 10);
+          };
+
+          if (!useGrouped) {
+            container.innerHTML = parsed.map(p => {
+              const hidden = p.hidden;
+              return `<button type="button" data-idx="${p.i}" class="flex flex-col items-center gap-0.5 px-1 py-0.5 hover:bg-slate-50 rounded" style="opacity:${hidden ? 0.45 : 1}">
+                ${svgLine(p.ds, hidden)}
+                <span class="whitespace-nowrap ${hidden ? 'line-through text-slate-400' : ''}">${p.ds.label}</span>
+              </button>`;
+            }).join('');
+          } else {
+            const groupOrder = ['Total', 'GHR', 'Affiliate'];
+            const byGroup = {};
+            parsed.forEach(p => { if (p.group) (byGroup[p.group] ||= []).push(p); });
+            const rows = groupOrder.filter(g => byGroup[g]).map(g => {
+              const cells = byGroup[g].map(p => btn(p, p.variant)).join('');
+              return `<div class="flex items-center gap-2 flex-wrap">
+                <span class="font-semibold text-slate-700 text-[11px] min-w-[58px]">${g}</span>
+                <div class="flex flex-wrap items-center gap-0.5">${cells}</div>
+              </div>`;
+            });
+            const ungrouped = parsed.filter(p => !p.group);
+            if (ungrouped.length) {
+              rows.push(`<div class="flex flex-wrap items-center gap-0.5 pt-1 border-t border-slate-100">${ungrouped.map(p => btn(p)).join('')}</div>`);
+            }
+            container.innerHTML = `<div class="flex flex-col gap-1 w-full">${rows.join('')}</div>`;
+          }
+
+          container.querySelectorAll('button[data-idx]').forEach(b => {
+            b.onclick = () => {
+              const idx = parseInt(b.dataset.idx, 10);
               chart.setDatasetVisibility(idx, !chart.isDatasetVisible(idx));
               chart.update();
               renderTrendLegend();
