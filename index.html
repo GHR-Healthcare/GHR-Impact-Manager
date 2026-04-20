@@ -6239,7 +6239,7 @@
           { label: 'GHR Pending', color: 'amber-600', getData: i => i >= lastActualIdx ? weekData[i].ghr + weekData[i].pendingGhr : null },
           { label: 'Affiliate Pending', color: 'yellow-600', getData: i => i >= lastActualIdx ? weekData[i].aff + weekData[i].pendingAff : null },
           { label: 'Total Pending', color: 'orange-600', getData: i => i >= lastActualIdx ? weekData[i].total + weekData[i].pendingTotal : null },
-          { label: 'Trend Projection', color: 'slate-500', getData: i => i >= lastActualIdx ? Math.max(0, Math.round(slope * i + intercept)) : null },
+          { label: 'Trend Projection', color: 'slate-500', getData: i => projectionData[i] },
         ];
         const summaryTableBody = summaryRows.map(r => {
           const avg = rolling4Wk(r.getData);
