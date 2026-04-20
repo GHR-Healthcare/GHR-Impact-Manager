@@ -6330,6 +6330,7 @@
             <h2 class="text-lg font-bold text-slate-700">Headcount Trend</h2>
           </div>
           <div class="bg-white rounded-xl border border-slate-200 p-4 shadow-sm">
+            <div id="trendChartLegend" class="flex flex-wrap justify-center gap-x-5 gap-y-2 mb-3 text-[11px] text-slate-600"></div>
             <canvas id="trendChart" height="100"></canvas>
           </div>
           <div class="mt-6">
@@ -6713,7 +6714,37 @@
             btn.classList.toggle('border-blue-200', window.__fillRateMode);
           }
           window.updateTrendChart(window.__trendView || 'category');
+          renderTrendLegend();
         };
+
+        // Custom legend: line segment stacked above the label so the dash pattern is clearly visible.
+        const renderTrendLegend = () => {
+          const container = document.getElementById('trendChartLegend');
+          if (!container || !window.__trendChart) return;
+          const chart = window.__trendChart;
+          const items = chart.data.datasets.map((ds, i) => {
+            const hidden = !chart.isDatasetVisible(i);
+            const dashAttr = (ds.borderDash && ds.borderDash.length) ? ` stroke-dasharray="${ds.borderDash.join(',')}"` : '';
+            const width = Math.max(2, ds.borderWidth || 2);
+            const opacity = hidden ? 0.35 : 1;
+            return `<button type="button" data-idx="${i}" class="flex flex-col items-center gap-0.5 px-1 py-0.5 hover:bg-slate-50 rounded" style="opacity:${opacity}">
+              <svg width="44" height="6" viewBox="0 0 44 6" style="display:block">
+                <line x1="0" y1="3" x2="44" y2="3" stroke="${ds.borderColor}" stroke-width="${width}"${dashAttr}/>
+              </svg>
+              <span class="whitespace-nowrap ${hidden ? 'line-through text-slate-400' : ''}">${ds.label}</span>
+            </button>`;
+          });
+          container.innerHTML = items.join('');
+          container.querySelectorAll('button[data-idx]').forEach(btn => {
+            btn.onclick = () => {
+              const idx = parseInt(btn.dataset.idx, 10);
+              chart.setDatasetVisibility(idx, !chart.isDatasetVisible(idx));
+              chart.update();
+              renderTrendLegend();
+            };
+          });
+        };
+        window.__renderTrendLegend = renderTrendLegend;
 
         const canvas = $('trendChart');
         if (canvas && typeof Chart !== 'undefined') {
@@ -6727,25 +6758,7 @@
               responsive: true,
               interaction: { mode: 'index', intersect: false },
               plugins: {
-                legend: {
-                  position: 'top',
-                  labels: {
-                    font: { size: 11 },
-                    usePointStyle: true,
-                    boxWidth: 32,
-                    boxHeight: 2,
-                    generateLabels: (chart) => chart.data.datasets.map((ds, i) => ({
-                      text: ds.label,
-                      fillStyle: ds.borderColor,
-                      strokeStyle: ds.borderColor,
-                      lineWidth: Math.max(2, ds.borderWidth || 2),
-                      lineDash: ds.borderDash || [],
-                      pointStyle: 'line',
-                      hidden: !chart.isDatasetVisible(i),
-                      datasetIndex: i,
-                    })),
-                  }
-                },
+                legend: { display: false },
                 tooltip: {
                   callbacks: {
                     label: ctx => {
@@ -6768,6 +6781,7 @@
           });
           // Apply current view (account/pm/category) and any active overlays
           window.updateTrendChart(window.__trendView || 'category');
+          renderTrendLegend();
         }
 
         lucide.createIcons();
