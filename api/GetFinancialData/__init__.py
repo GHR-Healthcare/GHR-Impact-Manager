@@ -142,6 +142,10 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                     WHERE [Work Date] >= {date_from}
                         AND [Work Date] < {date_to}
                         AND [Health System] IS NOT NULL
+                        -- B4 data-entry bug: Sunrise shifts appear under both "Main" and
+                        -- "(California)" labels (same facilities in VA/NC, not CA), causing
+                        -- a 2x inflation. Drop the mislabeled rows until B4 team fixes.
+                        AND [Health System] <> 'Sunrise Senior Living Management (California)'
                 )
                 SELECT
                     'B4' AS source_system,

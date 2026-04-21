@@ -52,6 +52,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                     END AS is_ghr
                 FROM dhc.B4HealthESR
                 WHERE [Health System] IS NOT NULL
+                    AND [Health System] <> 'Sunrise Senior Living Management (California)'
                     AND TRY_CAST([Hours] AS DECIMAL(10,2)) > 0
                     AND [WWE] >= DATEADD(WEEK, -13, GETDATE())
                     AND (

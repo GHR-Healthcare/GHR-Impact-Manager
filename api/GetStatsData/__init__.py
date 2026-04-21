@@ -49,6 +49,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                     AND (End_Date IS NULL OR End_Date >= GETDATE())
                     AND Health_System NOT LIKE '%Richmond University%'
                     AND Health_System NOT LIKE '%Redeemer%'
+                    AND Health_System <> 'Sunrise Senior Living Management (California)'
             ''')
 
             columns = [column[0] for column in cursor.description]
@@ -86,6 +87,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                     AND Start_Date <= DATEADD(day, 30, GETDATE())
                     AND Health_System NOT LIKE '%Richmond University%'
                     AND Health_System NOT LIKE '%Redeemer%'
+                    AND Health_System <> 'Sunrise Senior Living Management (California)'
             ''')
             
             columns = [column[0] for column in cursor.description]

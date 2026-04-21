@@ -54,6 +54,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                     WHERE Contract_Status = 'Closed And Awarded'
                         AND Start_Date IS NOT NULL
                         AND Start_Date >= DATEADD(WEEK, -62, GETDATE())
+                        AND Health_System <> 'Sunrise Senior Living Management (California)'
 
                     UNION ALL
 

@@ -43,6 +43,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                 WHERE Contract_Status = 'Closed And Awarded'
                     AND Start_Date IS NOT NULL
                     AND (End_Date IS NULL OR End_Date >= DATEADD(WEEK, -4, GETDATE()))
+                    AND Health_System <> 'Sunrise Senior Living Management (California)'
             ''')
 
             columns = [column[0] for column in cursor.description]
@@ -110,6 +111,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                 WHERE Contract_Status = 'With Requests'
                     AND Start_Date IS NOT NULL
                     AND Start_Date >= DATEADD(WEEK, -1, GETDATE())
+                    AND Health_System <> 'Sunrise Senior Living Management (California)'
             ''')
             columns = [column[0] for column in cursor.description]
             for row in cursor.fetchall():

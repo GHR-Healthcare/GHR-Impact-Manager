@@ -72,6 +72,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                 WHERE Contract_Status = 'Closed And Awarded'
                     AND Program LIKE '%Per Diem%'
                     AND Start_Date IS NOT NULL
+                    AND Health_System <> 'Sunrise Senior Living Management (California)'
             ''')
 
             columns = [column[0] for column in cursor.description]
@@ -103,6 +104,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                         AND Contract_Status = 'Closed And Awarded'
                         AND Last_Name IS NOT NULL
                         AND First_Name IS NOT NULL
+                        AND Health_System <> 'Sunrise Senior Living Management (California)'
                 )
                 SELECT DISTINCT
                     'B4' AS source_system,
@@ -116,6 +118,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                     ON w.employee_name = e.[Employee]
                     AND w.Health_System = e.[Health System]
                 WHERE e.[Health System] IS NOT NULL
+                    AND e.[Health System] <> 'Sunrise Senior Living Management (California)'
                     AND e.[Work Date] >= {date_from}
                     AND e.[Work Date] < {date_to}
                     AND e.[Program] LIKE '%Per Diem%'
