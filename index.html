@@ -928,6 +928,7 @@
         { keywords: ['tower'], system: 'Tower Health' },
         { keywords: ['temple', 'jeanes'], system: 'Temple Health' },
         { keywords: ['trinity', 'mercy', 'st. mary', 'nazareth', 'st. francis'], system: 'Trinity Health' },
+        { keywords: ['sunrise'], system: 'Sunrise Senior Living', hidden: true },
       ],
       
       TEAM_MEMBERS: [
@@ -4740,8 +4741,7 @@
         const transitionedSystems = new Set(['RUMC', 'Holy Redeemer', 'Cooper']);
 
         // Systems excluded from per diem tab entirely
-        // Hidden systems (from Settings) + Sunrise (per-diem-specific exclusion)
-        const isExcludedFromPerDiem = (sys) => Utils.isHiddenHealthSystem(sys) || /sunrise/i.test(sys || '');
+        const isExcludedFromPerDiem = (sys) => Utils.isHiddenHealthSystem(sys);
 
         // For transitioned systems, only drop B4 rows that VNDLY *also* has
         // (same worker, same date for shifts; same worker for assignments).
@@ -5293,7 +5293,7 @@
         // on the same date. Preserves pre-transition B4 data for systems
         // that have partially transitioned (e.g. Cooper as of 2026-04-13).
         const transitionedSystems = new Set(['RUMC', 'Holy Redeemer', 'Cooper']);
-        const isExcludedSystem = (sys) => Utils.isHiddenHealthSystem(sys) || /sunrise/i.test(sys || '');
+        const isExcludedSystem = (sys) => Utils.isHiddenHealthSystem(sys);
         const hoursDateKey = d => d ? d.toISOString().slice(0, 10) : '';
         const vndlyHoursKeys = new Set(
           rows
