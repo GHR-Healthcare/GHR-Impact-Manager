@@ -148,14 +148,11 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                     CAST(p.dateBegin AS DATE) AS dateBegin,
                     CAST(p.dateEnd AS DATE) AS dateEnd,
                     p.status,
-                    LTRIM(RTRIM(ISNULL(recr.firstName,'') + ' ' + ISNULL(recr.lastName,''))) AS recruiter,
-                    LTRIM(RTRIM(ISNULL(am.firstName,'')   + ' ' + ISNULL(am.lastName,'')))   AS account_manager
+                    p.customText12 AS recruiter,
+                    p.customText11 AS account_manager
                 FROM dbo.View_Placement p
                 LEFT JOIN dbo.View_Candidate c          ON p.candidateID = c.candidateID
                 LEFT JOIN dbo.View_ClientCorporation cc ON p.clientCorporationID = cc.clientCorporationID
-                LEFT JOIN dbo.View_CorporateUser recr   ON c.ownerID = recr.corporateUserID
-                LEFT JOIN dbo.View_JobOrder jo          ON p.jobOrderID = jo.jobOrderID
-                LEFT JOIN dbo.View_CorporateUser am     ON jo.ownerID = am.corporateUserID
                 WHERE p.isDeleted = 0
                     AND p.status IN ('Approved', 'Onboarding', 'Cleared', 'Pending Start', 'Started')
                     AND p.dateBegin IS NOT NULL
