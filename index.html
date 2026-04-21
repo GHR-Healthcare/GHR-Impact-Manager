@@ -7303,6 +7303,8 @@
               <td class="px-3 py-2 text-xs"><span class="px-2 py-0.5 rounded text-[10px] font-semibold ${a.source === 'VNDLY' ? 'bg-indigo-100 text-indigo-700' : 'bg-emerald-100 text-emerald-700'}">${a.source || '—'}</span></td>
               <td class="px-3 py-2 text-xs text-slate-600">${a.facility || '—'}</td>
               <td class="px-3 py-2 text-xs text-slate-600">${b.client_name || '—'}</td>
+              <td class="px-3 py-2 text-xs text-slate-600">${b.recruiter || '—'}</td>
+              <td class="px-3 py-2 text-xs text-slate-600">${b.account_manager || '—'}</td>
               <td class="px-3 py-2 text-xs ${sCls}">${fmtDate(a.startDate)}</td>
               <td class="px-3 py-2 text-xs ${sCls}">${fmtDate(b.dateBegin)}</td>
               <td class="px-3 py-2 text-xs ${eCls}">${fmtDate(a.endDate)}</td>
@@ -7330,6 +7332,8 @@
           <tr class="hover:bg-slate-50 border-b border-slate-100">
             <td class="px-3 py-2 text-xs font-medium text-slate-800">${r.worker_name || '—'}</td>
             <td class="px-3 py-2 text-xs text-slate-600">${r.client_name || '—'}</td>
+            <td class="px-3 py-2 text-xs text-slate-600">${r.recruiter || '—'}</td>
+            <td class="px-3 py-2 text-xs text-slate-600">${r.account_manager || '—'}</td>
             <td class="px-3 py-2 text-xs text-slate-700">${fmtDate(r.dateBegin)}</td>
             <td class="px-3 py-2 text-xs text-slate-700">${fmtDate(r.dateEnd)}</td>
             <td class="px-3 py-2 text-xs text-slate-500">${r.status || '—'}</td>
@@ -7374,6 +7378,8 @@
                     <th class="px-3 py-2 text-left">Source</th>
                     <th class="px-3 py-2 text-left">Facility</th>
                     <th class="px-3 py-2 text-left">Client (Bullhorn)</th>
+                    <th class="px-3 py-2 text-left">Recruiter</th>
+                    <th class="px-3 py-2 text-left">Account Mgr</th>
                     <th class="px-3 py-2 text-left">Start (B4/VNDLY)</th>
                     <th class="px-3 py-2 text-left">Start (Bullhorn)</th>
                     <th class="px-3 py-2 text-left">End (B4/VNDLY)</th>
@@ -7382,7 +7388,7 @@
                     <th class="px-3 py-2 text-right"></th>
                   </tr>
                 </thead>
-                <tbody>${fMismatches.length === 0 ? '<tr><td colspan="11" class="px-3 py-6 text-center text-slate-400 text-xs">No date mismatches 🎉</td></tr>' : fMismatches.map(mismatchRow).join('')}</tbody>
+                <tbody>${fMismatches.length === 0 ? '<tr><td colspan="13" class="px-3 py-6 text-center text-slate-400 text-xs">No date mismatches 🎉</td></tr>' : fMismatches.map(mismatchRow).join('')}</tbody>
               </table>
             </div>
           </section>
@@ -7420,13 +7426,15 @@
                   <tr>
                     <th class="px-3 py-2 text-left">Worker</th>
                     <th class="px-3 py-2 text-left">Client (Bullhorn)</th>
+                    <th class="px-3 py-2 text-left">Recruiter</th>
+                    <th class="px-3 py-2 text-left">Account Mgr</th>
                     <th class="px-3 py-2 text-left">Start</th>
                     <th class="px-3 py-2 text-left">End</th>
                     <th class="px-3 py-2 text-left">Status</th>
                     <th class="px-3 py-2 text-right"></th>
                   </tr>
                 </thead>
-                <tbody>${fMissingB4V.length === 0 ? '<tr><td colspan="6" class="px-3 py-6 text-center text-slate-400 text-xs">Nothing missing in B4/VNDLY</td></tr>' : fMissingB4V.map(missingB4VRow).join('')}</tbody>
+                <tbody>${fMissingB4V.length === 0 ? '<tr><td colspan="8" class="px-3 py-6 text-center text-slate-400 text-xs">Nothing missing in B4/VNDLY</td></tr>' : fMissingB4V.map(missingB4VRow).join('')}</tbody>
               </table>
             </div>
           </section>

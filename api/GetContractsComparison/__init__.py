@@ -147,10 +147,15 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                     cc.name AS client_name,
                     CAST(p.dateBegin AS DATE) AS dateBegin,
                     CAST(p.dateEnd AS DATE) AS dateEnd,
-                    p.status
+                    p.status,
+                    LTRIM(RTRIM(ISNULL(recr.firstName,'') + ' ' + ISNULL(recr.lastName,''))) AS recruiter,
+                    LTRIM(RTRIM(ISNULL(am.firstName,'')   + ' ' + ISNULL(am.lastName,''))) AS account_manager
                 FROM dbo.View_Placement p
-                LEFT JOIN dbo.View_Candidate c ON p.candidateID = c.candidateID
+                LEFT JOIN dbo.View_Candidate c          ON p.candidateID = c.candidateID
                 LEFT JOIN dbo.View_ClientCorporation cc ON p.clientCorporationID = cc.clientCorporationID
+                LEFT JOIN dbo.View_CorporateUser recr   ON p.ownerID = recr.userID
+                LEFT JOIN dbo.View_JobOrder jo          ON p.jobOrderID = jo.jobOrderID
+                LEFT JOIN dbo.View_CorporateUser am     ON jo.ownerID = am.userID
                 WHERE p.isDeleted = 0
                     AND p.status IN ('Approved', 'Onboarding', 'Cleared', 'Pending Start', 'Started')
                     AND p.dateBegin IS NOT NULL
@@ -158,7 +163,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                     AND (p.dateEnd IS NULL OR p.dateEnd >= DATEADD(DAY, -30, GETDATE()))
             ''')
             for row in bh_cursor.fetchall():
-                pid, first, last, client, db, de, status = row
+                pid, first, last, client, db, de, status, recruiter, am = row
                 bh_records.append({
                     'placementID': pid,
                     'worker_name': f"{first or ''} {last or ''}".strip(),
@@ -166,7 +171,9 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                     'client_name': client or '',
                     'dateBegin': format_date(db),
                     'dateEnd': format_date(de),
-                    'status': status or ''
+                    'status': status or '',
+                    'recruiter': (recruiter or '').strip(),
+                    'account_manager': (am or '').strip(),
                 })
             bh_conn.close()
         except Exception as e:
