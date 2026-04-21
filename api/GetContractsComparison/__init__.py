@@ -149,13 +149,20 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                     CAST(p.dateEnd AS DATE) AS dateEnd,
                     p.status,
                     LTRIM(RTRIM(ISNULL(recr.firstName,'') + ' ' + ISNULL(recr.lastName,''))) AS recruiter,
-                    LTRIM(RTRIM(ISNULL(am.firstName,'')   + ' ' + ISNULL(am.lastName,''))) AS account_manager
+                    ams.account_managers
                 FROM dbo.View_Placement p
                 LEFT JOIN dbo.View_Candidate c          ON p.candidateID = c.candidateID
                 LEFT JOIN dbo.View_ClientCorporation cc ON p.clientCorporationID = cc.clientCorporationID
-                LEFT JOIN dbo.View_CorporateUser recr   ON p.ownerID = recr.userID
-                LEFT JOIN dbo.View_JobOrder jo          ON p.jobOrderID = jo.jobOrderID
-                LEFT JOIN dbo.View_CorporateUser am     ON jo.ownerID = am.userID
+                LEFT JOIN dbo.View_CorporateUser recr   ON c.ownerID = recr.corporateUserID
+                LEFT JOIN (
+                    SELECT
+                        ccuo.clientCorporationID,
+                        STRING_AGG(LTRIM(RTRIM(ISNULL(u.firstName,'') + ' ' + ISNULL(u.lastName,''))), ', ') AS account_managers
+                    FROM dbo.ClientCorporationUserOwners ccuo
+                    LEFT JOIN dbo.View_CorporateUser u ON ccuo.userID = u.corporateUserID
+                    WHERE ccuo.isDeleted = 0
+                    GROUP BY ccuo.clientCorporationID
+                ) ams ON p.clientCorporationID = ams.clientCorporationID
                 WHERE p.isDeleted = 0
                     AND p.status IN ('Approved', 'Onboarding', 'Cleared', 'Pending Start', 'Started')
                     AND p.dateBegin IS NOT NULL
