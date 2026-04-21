@@ -2,6 +2,12 @@ import azure.functions as func
 import pyodbc
 import os
 import json
+from datetime import datetime
+
+
+# Max days between start dates for an assignment/placement to still be considered
+# the same contract (anything further apart is treated as two separate contracts).
+MATCH_THRESHOLD_DAYS = 60
 
 
 def normalize_name(first, last):
@@ -23,6 +29,20 @@ def format_date(d):
 def date_key(s):
     """First 10 chars of an ISO date string (YYYY-MM-DD) for comparison."""
     return (s or '')[:10]
+
+
+def days_between(s1, s2):
+    """Absolute days between two ISO date strings. Returns large number if either missing."""
+    k1 = date_key(s1)
+    k2 = date_key(s2)
+    if not k1 or not k2:
+        return 10 ** 9
+    try:
+        d1 = datetime.strptime(k1, '%Y-%m-%d')
+        d2 = datetime.strptime(k2, '%Y-%m-%d')
+        return abs((d1 - d2).days)
+    except Exception:
+        return 10 ** 9
 
 
 def main(req: func.HttpRequest) -> func.HttpResponse:
@@ -56,6 +76,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                 FROM dhc.B4HealthOrder
                 WHERE Contract_Status = 'Closed And Awarded'
                     AND Start_Date IS NOT NULL
+                    AND Start_Date >= DATEADD(YEAR, -2, GETDATE())
                     AND (End_Date IS NULL OR End_Date >= DATEADD(DAY, -30, GETDATE()))
             ''')
             for row in pos_cursor.fetchall():
@@ -83,6 +104,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                 FROM dbo.STAGING_VNDLY_WORKORDERS
                 WHERE [Current Status] = 'Active'
                     AND [Start Date] IS NOT NULL
+                    AND [Start Date] >= DATEADD(YEAR, -2, GETDATE())
                     AND ([End Date] IS NULL OR [End Date] >= DATEADD(DAY, -30, GETDATE()))
             ''')
             for row in pos_cursor.fetchall():
@@ -130,7 +152,9 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                 LEFT JOIN dbo.View_Candidate c ON p.candidateID = c.candidateID
                 LEFT JOIN dbo.View_ClientCorporation cc ON p.clientCorporationID = cc.clientCorporationID
                 WHERE p.isDeleted = 0
-                    AND p.status NOT IN ('Cancellation', 'Archive')
+                    AND p.status NOT IN ('Cancellation', 'Archive', 'Completed')
+                    AND p.dateBegin IS NOT NULL
+                    AND p.dateBegin >= DATEADD(YEAR, -2, GETDATE())
                     AND (p.dateEnd IS NULL OR p.dateEnd >= DATEADD(DAY, -30, GETDATE()))
             ''')
             for row in bh_cursor.fetchall():
@@ -156,8 +180,10 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             )
 
         # ===========================================================
-        # Match by normalized name; pick best Bullhorn record per
-        # assignment by start-date proximity when multiple candidates.
+        # Match by normalized name; within a name group, greedy-pair
+        # assignments to Bullhorn placements by start-date proximity.
+        # Pairs more than MATCH_THRESHOLD_DAYS apart are NOT paired —
+        # they fall through to the "missing" buckets on each side.
         # ===========================================================
         assignments_by_name = {}
         for r in assignment_records:
@@ -174,59 +200,62 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
         date_mismatches = []
         missing_in_bullhorn = []
         missing_in_b4vndly = []
-        matches = []  # exact date matches (useful count)
-
+        matches = []
         matched_bh_ids = set()
 
-        for name, a_list in assignments_by_name.items():
+        all_names = set(assignments_by_name.keys()) | set(bullhorn_by_name.keys())
+
+        for name in all_names:
+            a_list = assignments_by_name.get(name, [])
             b_list = bullhorn_by_name.get(name, [])
+
             if not b_list:
                 missing_in_bullhorn.extend(a_list)
                 continue
+            if not a_list:
+                missing_in_b4vndly.extend(b_list)
+                continue
 
-            # Sort both by startDate for best pairing
-            for a in a_list:
-                a_sd = date_key(a.get('startDate'))
+            # Score every pairing by start-date distance
+            pairs = []
+            for i, a in enumerate(a_list):
+                for j, b in enumerate(b_list):
+                    dist = days_between(a.get('startDate'), b.get('dateBegin'))
+                    pairs.append((dist, i, j))
+            pairs.sort(key=lambda t: t[0])
 
-                def start_distance(b):
-                    return abs((date_key(b.get('dateBegin')) or '0000-00-00').__hash__() -
-                               (a_sd or '0000-00-00').__hash__())
-
-                # Pick the bullhorn record closest by startDate that hasn't been matched
-                candidates = [b for b in b_list if b['placementID'] not in matched_bh_ids]
-                if not candidates:
-                    # All already claimed — treat as missing
-                    missing_in_bullhorn.append(a)
+            used_a = set()
+            used_b = set()
+            for dist, i, j in pairs:
+                if dist > MATCH_THRESHOLD_DAYS:
+                    break
+                if i in used_a or j in used_b:
                     continue
-
-                # Prefer exact start-date match, else closest by string compare
-                best = None
-                for b in candidates:
-                    if date_key(b.get('dateBegin')) == a_sd:
-                        best = b
-                        break
-                if best is None:
-                    best = candidates[0]
-                matched_bh_ids.add(best['placementID'])
-
-                start_match = date_key(a.get('startDate')) == date_key(best.get('dateBegin'))
-                end_match = date_key(a.get('endDate')) == date_key(best.get('dateEnd'))
-
+                a = a_list[i]
+                b = b_list[j]
+                start_match = date_key(a.get('startDate')) == date_key(b.get('dateBegin'))
+                end_match = date_key(a.get('endDate')) == date_key(b.get('dateEnd'))
                 pair = {
                     'worker_name': a['worker_name'],
                     'assignment': a,
-                    'bullhorn': best,
+                    'bullhorn': b,
                     'start_match': start_match,
                     'end_match': end_match,
+                    'start_distance_days': dist,
                 }
                 if start_match and end_match:
                     matches.append(pair)
                 else:
                     date_mismatches.append(pair)
+                used_a.add(i)
+                used_b.add(j)
+                matched_bh_ids.add(b['placementID'])
 
-        for name, b_list in bullhorn_by_name.items():
-            for b in b_list:
-                if b['placementID'] not in matched_bh_ids:
+            for i, a in enumerate(a_list):
+                if i not in used_a:
+                    missing_in_bullhorn.append(a)
+            for j, b in enumerate(b_list):
+                if j not in used_b:
                     missing_in_b4vndly.append(b)
 
         return func.HttpResponse(

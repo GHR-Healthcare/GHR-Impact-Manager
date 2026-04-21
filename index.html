@@ -1083,22 +1083,28 @@
     }
     
     /**
-     * Load contracts comparison data (lazy — only fetched when user opens the Contracts tab)
+     * Load contracts comparison data + reviewed row keys (lazy)
      */
     window.loadContractsData = async function(forceRefresh = false) {
         const s = window.store.state;
         if (s.contractsLoading) return;
         if (s.contractsLoaded && !forceRefresh) return;
         s.contractsLoading = true;
-        // Reset loaded flag on refresh so spinner shows
         if (forceRefresh) { s.contractsLoaded = false; window.store.dispatch('REFRESH_UI'); }
         try {
-            const resp = await fetch(`${API_BASE_URL}/contracts-comparison`);
-            const body = await resp.json();
-            if (!resp.ok) {
-                s.contractsData = { error: body.error || `HTTP ${resp.status}` };
+            const [cResp, rResp] = await Promise.all([
+                fetch(`${API_BASE_URL}/contracts-comparison`),
+                fetch(`${API_BASE_URL}/reviewed-contracts`),
+            ]);
+            const body = await cResp.json();
+            if (!cResp.ok) {
+                s.contractsData = { error: body.error || `HTTP ${cResp.status}` };
             } else {
                 s.contractsData = body;
+            }
+            if (rResp.ok) {
+                const rBody = await rResp.json();
+                s.reviewedContractsKeys = new Set(rBody.keys || []);
             }
         } catch (e) {
             s.contractsData = { error: e.message || String(e) };
@@ -1107,6 +1113,34 @@
             s.contractsLoaded = true;
             if (s.view === 'contracts') window.store.dispatch('REFRESH_UI');
         }
+    };
+
+    window.toggleContractReviewed = async function(key, markReviewed) {
+        const s = window.store.state;
+        // Optimistic UI update
+        if (markReviewed) s.reviewedContractsKeys.add(key);
+        else s.reviewedContractsKeys.delete(key);
+        if (s.view === 'contracts') window.store.dispatch('REFRESH_UI');
+        try {
+            const userEmail = (window.USER_EMAIL || 'mjones@ghrhealthcare.com');
+            await fetch(`${API_BASE_URL}/reviewed-contracts`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ action: markReviewed ? 'add' : 'remove', key, user: userEmail })
+            });
+        } catch (e) {
+            // Revert on failure
+            if (markReviewed) s.reviewedContractsKeys.delete(key);
+            else s.reviewedContractsKeys.add(key);
+            if (s.view === 'contracts') window.store.dispatch('REFRESH_UI');
+            window.showToast?.('Failed to save review state', 'error');
+        }
+    };
+
+    window.toggleShowReviewed = function() {
+        const s = window.store.state;
+        s.showReviewedContracts = !s.showReviewedContracts;
+        if (s.view === 'contracts') window.store.dispatch('REFRESH_UI');
     };
 
     /**
@@ -7222,9 +7256,24 @@
           return sysFilter.has(hs);
         };
 
-        const fMismatches = mismatches.filter(m => sysOk(m.assignment?.system));
-        const fMissingBH = missingInBH.filter(r => sysOk(r.system));
-        const fMissingB4V = missingInB4V.filter(r => sysOk(r.client_name));
+        // ── Row key helpers — must stay consistent with DB storage ────────────
+        const assignmentKey = (r) => `assign:${r.source}:${((r.worker_name || '').toLowerCase().trim())}:${(r.startDate || '').slice(0,10)}:${(r.facility || '').toLowerCase().trim()}`;
+        const bullhornKey = (r) => `bh:${r.placementID}`;
+        const mismatchKey = (m) => `mismatch:${m.bullhorn?.placementID || ''}:${assignmentKey(m.assignment || {})}`;
+
+        const reviewed = s.reviewedContractsKeys || new Set();
+        const showReviewed = !!s.showReviewedContracts;
+
+        // Filter by system and (unless showing reviewed) reviewed state
+        const fMismatches = mismatches.filter(m => sysOk(m.assignment?.system) && (showReviewed || !reviewed.has(mismatchKey(m))));
+        const fMissingBH = missingInBH.filter(r => sysOk(r.system) && (showReviewed || !reviewed.has(assignmentKey(r))));
+        const fMissingB4V = missingInB4V.filter(r => sysOk(r.client_name) && (showReviewed || !reviewed.has(bullhornKey(r))));
+
+        // Count how many are hidden due to reviewed
+        const hiddenMismatches = mismatches.filter(m => sysOk(m.assignment?.system) && reviewed.has(mismatchKey(m))).length;
+        const hiddenMissingBH = missingInBH.filter(r => sysOk(r.system) && reviewed.has(assignmentKey(r))).length;
+        const hiddenMissingB4V = missingInB4V.filter(r => sysOk(r.client_name) && reviewed.has(bullhornKey(r))).length;
+        const totalHidden = hiddenMismatches + hiddenMissingBH + hiddenMissingB4V;
 
         const kpiCard = (label, value, color) => `
           <div class="bg-white rounded-lg border border-slate-200 p-3 shadow-sm">
@@ -7233,6 +7282,15 @@
           </div>
         `;
 
+        const reviewBtn = (key) => {
+          const isReviewed = reviewed.has(key);
+          const escKey = key.replace(/'/g, "\\'");
+          if (isReviewed) {
+            return `<button onclick="window.toggleContractReviewed('${escKey}', false)" title="Un-review" class="text-[10px] px-2 py-0.5 rounded bg-emerald-100 text-emerald-700 hover:bg-emerald-200 font-semibold whitespace-nowrap">✓ Reviewed</button>`;
+          }
+          return `<button onclick="window.toggleContractReviewed('${escKey}', true)" title="Mark reviewed to hide" class="text-[10px] px-2 py-0.5 rounded bg-slate-100 text-slate-500 hover:bg-emerald-100 hover:text-emerald-700 font-semibold whitespace-nowrap">✓ Review</button>`;
+        };
+
         const mismatchRow = (m) => {
           const a = m.assignment || {};
           const b = m.bullhorn || {};
@@ -7240,14 +7298,17 @@
           const eCls = m.end_match ? 'text-slate-700' : 'text-red-600 font-semibold';
           return `
             <tr class="hover:bg-slate-50 border-b border-slate-100">
-              <td class="px-3 py-2 text-xs font-medium text-slate-800">${m.worker_name || '—'}</td>
+              <td class="px-3 py-2 text-xs font-medium text-slate-800">${a.worker_name || m.worker_name || '—'}</td>
+              <td class="px-3 py-2 text-xs font-medium text-slate-800">${b.worker_name || '—'}</td>
               <td class="px-3 py-2 text-xs"><span class="px-2 py-0.5 rounded text-[10px] font-semibold ${a.source === 'VNDLY' ? 'bg-indigo-100 text-indigo-700' : 'bg-emerald-100 text-emerald-700'}">${a.source || '—'}</span></td>
               <td class="px-3 py-2 text-xs text-slate-600">${a.facility || '—'}</td>
+              <td class="px-3 py-2 text-xs text-slate-600">${b.client_name || '—'}</td>
               <td class="px-3 py-2 text-xs ${sCls}">${fmtDate(a.startDate)}</td>
               <td class="px-3 py-2 text-xs ${sCls}">${fmtDate(b.dateBegin)}</td>
               <td class="px-3 py-2 text-xs ${eCls}">${fmtDate(a.endDate)}</td>
               <td class="px-3 py-2 text-xs ${eCls}">${fmtDate(b.dateEnd)}</td>
               <td class="px-3 py-2 text-xs text-slate-500">${b.status || '—'}</td>
+              <td class="px-3 py-2 text-xs text-right">${reviewBtn(mismatchKey(m))}</td>
             </tr>
           `;
         };
@@ -7261,6 +7322,7 @@
             <td class="px-3 py-2 text-xs text-slate-700">${fmtDate(r.startDate)}</td>
             <td class="px-3 py-2 text-xs text-slate-700">${fmtDate(r.endDate)}</td>
             <td class="px-3 py-2 text-xs text-slate-500">${r.status || '—'}</td>
+            <td class="px-3 py-2 text-xs text-right">${reviewBtn(assignmentKey(r))}</td>
           </tr>
         `;
 
@@ -7271,6 +7333,7 @@
             <td class="px-3 py-2 text-xs text-slate-700">${fmtDate(r.dateBegin)}</td>
             <td class="px-3 py-2 text-xs text-slate-700">${fmtDate(r.dateEnd)}</td>
             <td class="px-3 py-2 text-xs text-slate-500">${r.status || '—'}</td>
+            <td class="px-3 py-2 text-xs text-right">${reviewBtn(bullhornKey(r))}</td>
           </tr>
         `;
 
@@ -7280,9 +7343,14 @@
               <h2 class="text-lg font-bold text-slate-700">Contracts Comparison</h2>
               <p class="text-xs text-slate-400">Bullhorn placements vs B4/VNDLY assignments · matched by normalized first + last name · active rows only</p>
             </div>
-            <button onclick="window.loadContractsData(true)" class="text-xs text-slate-500 hover:text-slate-700 flex items-center gap-1 px-3 py-1.5 rounded border border-slate-200 hover:bg-slate-50">
-              <i data-lucide="refresh-cw" class="w-3 h-3"></i> Refresh
-            </button>
+            <div class="flex items-center gap-2">
+              ${totalHidden > 0 ? `<button onclick="window.toggleShowReviewed()" class="text-xs text-slate-500 hover:text-slate-700 flex items-center gap-1 px-3 py-1.5 rounded border border-slate-200 hover:bg-slate-50">
+                <i data-lucide="${showReviewed ? 'eye-off' : 'eye'}" class="w-3 h-3"></i> ${showReviewed ? 'Hide' : 'Show'} reviewed (${totalHidden})
+              </button>` : ''}
+              <button onclick="window.loadContractsData(true)" class="text-xs text-slate-500 hover:text-slate-700 flex items-center gap-1 px-3 py-1.5 rounded border border-slate-200 hover:bg-slate-50">
+                <i data-lucide="refresh-cw" class="w-3 h-3"></i> Refresh
+              </button>
+            </div>
           </div>
 
           <div class="grid grid-cols-2 md:grid-cols-5 gap-3 mb-6">
@@ -7301,17 +7369,20 @@
               <table class="w-full text-xs">
                 <thead class="bg-slate-100 text-slate-500 uppercase tracking-wide text-[10px]">
                   <tr>
-                    <th class="px-3 py-2 text-left">Worker</th>
+                    <th class="px-3 py-2 text-left">Name (B4/VNDLY)</th>
+                    <th class="px-3 py-2 text-left">Name (Bullhorn)</th>
                     <th class="px-3 py-2 text-left">Source</th>
                     <th class="px-3 py-2 text-left">Facility</th>
+                    <th class="px-3 py-2 text-left">Client (Bullhorn)</th>
                     <th class="px-3 py-2 text-left">Start (B4/VNDLY)</th>
                     <th class="px-3 py-2 text-left">Start (Bullhorn)</th>
                     <th class="px-3 py-2 text-left">End (B4/VNDLY)</th>
                     <th class="px-3 py-2 text-left">End (Bullhorn)</th>
                     <th class="px-3 py-2 text-left">BH Status</th>
+                    <th class="px-3 py-2 text-right"></th>
                   </tr>
                 </thead>
-                <tbody>${fMismatches.length === 0 ? '<tr><td colspan="8" class="px-3 py-6 text-center text-slate-400 text-xs">No date mismatches 🎉</td></tr>' : fMismatches.map(mismatchRow).join('')}</tbody>
+                <tbody>${fMismatches.length === 0 ? '<tr><td colspan="11" class="px-3 py-6 text-center text-slate-400 text-xs">No date mismatches 🎉</td></tr>' : fMismatches.map(mismatchRow).join('')}</tbody>
               </table>
             </div>
           </section>
@@ -7331,9 +7402,10 @@
                     <th class="px-3 py-2 text-left">Start</th>
                     <th class="px-3 py-2 text-left">End</th>
                     <th class="px-3 py-2 text-left">Status</th>
+                    <th class="px-3 py-2 text-right"></th>
                   </tr>
                 </thead>
-                <tbody>${fMissingBH.length === 0 ? '<tr><td colspan="7" class="px-3 py-6 text-center text-slate-400 text-xs">Nothing missing in Bullhorn</td></tr>' : fMissingBH.map(missingBHRow).join('')}</tbody>
+                <tbody>${fMissingBH.length === 0 ? '<tr><td colspan="8" class="px-3 py-6 text-center text-slate-400 text-xs">Nothing missing in Bullhorn</td></tr>' : fMissingBH.map(missingBHRow).join('')}</tbody>
               </table>
             </div>
           </section>
@@ -7351,9 +7423,10 @@
                     <th class="px-3 py-2 text-left">Start</th>
                     <th class="px-3 py-2 text-left">End</th>
                     <th class="px-3 py-2 text-left">Status</th>
+                    <th class="px-3 py-2 text-right"></th>
                   </tr>
                 </thead>
-                <tbody>${fMissingB4V.length === 0 ? '<tr><td colspan="5" class="px-3 py-6 text-center text-slate-400 text-xs">Nothing missing in B4/VNDLY</td></tr>' : fMissingB4V.map(missingB4VRow).join('')}</tbody>
+                <tbody>${fMissingB4V.length === 0 ? '<tr><td colspan="6" class="px-3 py-6 text-center text-slate-400 text-xs">Nothing missing in B4/VNDLY</td></tr>' : fMissingB4V.map(missingB4VRow).join('')}</tbody>
               </table>
             </div>
           </section>
@@ -7381,6 +7454,8 @@
         contractsData: null,
         contractsLoaded: false,
         contractsLoading: false,
+        reviewedContractsKeys: new Set(),
+        showReviewedContracts: false,
         perDiemSubTab: 'overview',
         perDiemFromMonth: null,
         perDiemToMonth: null,
