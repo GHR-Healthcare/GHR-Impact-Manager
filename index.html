@@ -428,6 +428,10 @@
                 class="px-4 py-1.5 text-xs font-bold rounded-md transition-colors text-slate-500 hover:text-slate-700 flex items-center gap-1.5">
           <i data-lucide="file-clock" class="w-3.5 h-3.5"></i> Pending
         </button>
+        <button onclick="store.dispatch('SET_VIEW','contracts')" id="btnViewContracts"
+                class="px-4 py-1.5 text-xs font-bold rounded-md transition-colors text-slate-500 hover:text-slate-700 flex items-center gap-1.5">
+          <i data-lucide="file-diff" class="w-3.5 h-3.5"></i> Contracts
+        </button>
       </div>
       <button onclick="exportTravelAgingReport()" id="btnTravelAgingReport"
               class="px-4 py-1.5 text-xs font-bold rounded-lg transition-colors bg-purple-600 hover:bg-purple-700 text-white shadow-sm flex items-center gap-1.5">
@@ -512,6 +516,12 @@
     <div id="pendingViewWrapper" class="hidden flex flex-col h-full overflow-hidden bg-white shadow-lg rounded-lg border border-slate-200">
       <div class="flex-1 overflow-y-auto scroller p-6">
         <div id="pendingContent" class="space-y-6"></div>
+      </div>
+    </div>
+
+    <div id="contractsViewWrapper" class="hidden flex flex-col h-full overflow-hidden bg-white shadow-lg rounded-lg border border-slate-200">
+      <div class="flex-1 overflow-y-auto scroller p-6">
+        <div id="contractsContent" class="space-y-6"></div>
       </div>
     </div>
   </div>
@@ -1072,6 +1082,33 @@
         return testJobs;
     }
     
+    /**
+     * Load contracts comparison data (lazy — only fetched when user opens the Contracts tab)
+     */
+    window.loadContractsData = async function(forceRefresh = false) {
+        const s = window.store.state;
+        if (s.contractsLoading) return;
+        if (s.contractsLoaded && !forceRefresh) return;
+        s.contractsLoading = true;
+        // Reset loaded flag on refresh so spinner shows
+        if (forceRefresh) { s.contractsLoaded = false; window.store.dispatch('REFRESH_UI'); }
+        try {
+            const resp = await fetch(`${API_BASE_URL}/contracts-comparison`);
+            const body = await resp.json();
+            if (!resp.ok) {
+                s.contractsData = { error: body.error || `HTTP ${resp.status}` };
+            } else {
+                s.contractsData = body;
+            }
+        } catch (e) {
+            s.contractsData = { error: e.message || String(e) };
+        } finally {
+            s.contractsLoading = false;
+            s.contractsLoaded = true;
+            if (s.view === 'contracts') window.store.dispatch('REFRESH_UI');
+        }
+    };
+
     /**
      * Load position data from database via API
      */
@@ -3407,6 +3444,7 @@
         $('perDiemViewWrapper')?.classList.toggle('hidden', view !== 'perdiem');
         $('trendViewWrapper')?.classList.toggle('hidden', view !== 'trend');
         $('pendingViewWrapper')?.classList.toggle('hidden', view !== 'pending');
+        $('contractsViewWrapper')?.classList.toggle('hidden', view !== 'contracts');
 
         // Use visibility to hide KPI and legend on other tabs (preserves layout)
         const kpiEl = $('kpiContainer');
@@ -3416,7 +3454,7 @@
           kpiEl.style.visibility = kpiViews.has(view) ? 'visible' : 'hidden';
           kpiEl.style.display = kpiViews.has(view) ? '' : 'none';
         }
-        if (legendEl) legendEl.style.visibility = (view === 'stats' || view === 'financials' || view === 'perdiem' || view === 'trend' || view === 'pending') ? 'hidden' : 'visible';
+        if (legendEl) legendEl.style.visibility = (view === 'stats' || view === 'financials' || view === 'perdiem' || view === 'trend' || view === 'pending' || view === 'contracts') ? 'hidden' : 'visible';
 
         const btnList = $('btnViewList');
         const btnHot = $('btnViewHot');
@@ -3436,6 +3474,8 @@
         if (btnTrend) btnTrend.className = view === 'trend' ? activeClass : inactiveClass;
         const btnPending = $('btnViewPending');
         if (btnPending) btnPending.className = view === 'pending' ? activeClass : inactiveClass;
+        const btnContracts = $('btnViewContracts');
+        if (btnContracts) btnContracts.className = view === 'contracts' ? activeClass : inactiveClass;
       },
 
       main() {
@@ -3447,6 +3487,7 @@
         else if (v === 'perdiem') this.perDiem();
         else if (v === 'trend') this.trend();
         else if (v === 'pending') this.pending();
+        else if (v === 'contracts') this.contracts();
         lucide.createIcons();
       },
 
@@ -7137,6 +7178,188 @@
         });
 
         lucide.createIcons();
+      },
+
+      contracts() {
+        const container = $('contractsContent');
+        if (!container) return;
+        const s = window.store.state;
+
+        if (!s.contractsLoaded) {
+          container.innerHTML = `<div class="p-6 text-slate-500 bg-slate-50 border border-slate-200 rounded flex items-center gap-3">
+            <svg class="animate-spin h-5 w-5 text-blue-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg>
+            Loading contracts comparison (Bullhorn vs B4/VNDLY)...
+          </div>`;
+          return;
+        }
+
+        const data = s.contractsData || {};
+        if (data.error) {
+          container.innerHTML = `<div class="p-4 bg-red-50 border border-red-200 rounded text-red-700 text-sm">
+            <div class="font-semibold mb-1">Failed to load contracts comparison</div>
+            <div class="text-xs font-mono">${data.error}</div>
+          </div>`;
+          return;
+        }
+
+        const counts = data.counts || {};
+        const mismatches = data.date_mismatches || [];
+        const missingInBH = data.missing_in_bullhorn || [];
+        const missingInB4V = data.missing_in_b4vndly || [];
+
+        const fmtDate = (d) => {
+          if (!d) return '—';
+          const dt = new Date(d);
+          if (isNaN(dt)) return '—';
+          return dt.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+        };
+
+        // Apply global system filter
+        const sysFilter = s.filterSelection.systems;
+        const sysOk = (healthSystemOrClient) => {
+          if (sysFilter.size === 0) return true;
+          const hs = Utils.getHealthSystem(null, healthSystemOrClient || '');
+          return sysFilter.has(hs);
+        };
+
+        const fMismatches = mismatches.filter(m => sysOk(m.assignment?.system));
+        const fMissingBH = missingInBH.filter(r => sysOk(r.system));
+        const fMissingB4V = missingInB4V.filter(r => sysOk(r.client_name));
+
+        const kpiCard = (label, value, color) => `
+          <div class="bg-white rounded-lg border border-slate-200 p-3 shadow-sm">
+            <div class="text-[10px] uppercase tracking-wide text-slate-400 font-semibold">${label}</div>
+            <div class="text-2xl font-bold text-${color} mt-0.5">${value.toLocaleString()}</div>
+          </div>
+        `;
+
+        const mismatchRow = (m) => {
+          const a = m.assignment || {};
+          const b = m.bullhorn || {};
+          const sCls = m.start_match ? 'text-slate-700' : 'text-red-600 font-semibold';
+          const eCls = m.end_match ? 'text-slate-700' : 'text-red-600 font-semibold';
+          return `
+            <tr class="hover:bg-slate-50 border-b border-slate-100">
+              <td class="px-3 py-2 text-xs font-medium text-slate-800">${m.worker_name || '—'}</td>
+              <td class="px-3 py-2 text-xs"><span class="px-2 py-0.5 rounded text-[10px] font-semibold ${a.source === 'VNDLY' ? 'bg-indigo-100 text-indigo-700' : 'bg-emerald-100 text-emerald-700'}">${a.source || '—'}</span></td>
+              <td class="px-3 py-2 text-xs text-slate-600">${a.facility || '—'}</td>
+              <td class="px-3 py-2 text-xs ${sCls}">${fmtDate(a.startDate)}</td>
+              <td class="px-3 py-2 text-xs ${sCls}">${fmtDate(b.dateBegin)}</td>
+              <td class="px-3 py-2 text-xs ${eCls}">${fmtDate(a.endDate)}</td>
+              <td class="px-3 py-2 text-xs ${eCls}">${fmtDate(b.dateEnd)}</td>
+              <td class="px-3 py-2 text-xs text-slate-500">${b.status || '—'}</td>
+            </tr>
+          `;
+        };
+
+        const missingBHRow = (r) => `
+          <tr class="hover:bg-slate-50 border-b border-slate-100">
+            <td class="px-3 py-2 text-xs font-medium text-slate-800">${r.worker_name || '—'}</td>
+            <td class="px-3 py-2 text-xs"><span class="px-2 py-0.5 rounded text-[10px] font-semibold ${r.source === 'VNDLY' ? 'bg-indigo-100 text-indigo-700' : 'bg-emerald-100 text-emerald-700'}">${r.source || '—'}</span></td>
+            <td class="px-3 py-2 text-xs text-slate-600">${r.facility || '—'}</td>
+            <td class="px-3 py-2 text-xs text-slate-600">${r.system || '—'}</td>
+            <td class="px-3 py-2 text-xs text-slate-700">${fmtDate(r.startDate)}</td>
+            <td class="px-3 py-2 text-xs text-slate-700">${fmtDate(r.endDate)}</td>
+            <td class="px-3 py-2 text-xs text-slate-500">${r.status || '—'}</td>
+          </tr>
+        `;
+
+        const missingB4VRow = (r) => `
+          <tr class="hover:bg-slate-50 border-b border-slate-100">
+            <td class="px-3 py-2 text-xs font-medium text-slate-800">${r.worker_name || '—'}</td>
+            <td class="px-3 py-2 text-xs text-slate-600">${r.client_name || '—'}</td>
+            <td class="px-3 py-2 text-xs text-slate-700">${fmtDate(r.dateBegin)}</td>
+            <td class="px-3 py-2 text-xs text-slate-700">${fmtDate(r.dateEnd)}</td>
+            <td class="px-3 py-2 text-xs text-slate-500">${r.status || '—'}</td>
+          </tr>
+        `;
+
+        container.innerHTML = `
+          <div class="flex items-center justify-between mb-4">
+            <div>
+              <h2 class="text-lg font-bold text-slate-700">Contracts Comparison</h2>
+              <p class="text-xs text-slate-400">Bullhorn placements vs B4/VNDLY assignments · matched by normalized first + last name · active rows only</p>
+            </div>
+            <button onclick="window.loadContractsData(true)" class="text-xs text-slate-500 hover:text-slate-700 flex items-center gap-1 px-3 py-1.5 rounded border border-slate-200 hover:bg-slate-50">
+              <i data-lucide="refresh-cw" class="w-3 h-3"></i> Refresh
+            </button>
+          </div>
+
+          <div class="grid grid-cols-2 md:grid-cols-5 gap-3 mb-6">
+            ${kpiCard('Bullhorn Placements', counts.bullhorn_total || 0, 'slate-700')}
+            ${kpiCard('B4/VNDLY Assignments', counts.assignments_total || 0, 'slate-700')}
+            ${kpiCard('Exact Matches', counts.exact_matches || 0, 'emerald-600')}
+            ${kpiCard('Date Mismatches', fMismatches.length, 'amber-600')}
+            ${kpiCard('Missing Somewhere', fMissingBH.length + fMissingB4V.length, 'red-600')}
+          </div>
+
+          <section class="mb-8">
+            <h3 class="text-sm font-bold text-amber-700 mb-2 flex items-center gap-2">
+              <i data-lucide="alert-triangle" class="w-4 h-4"></i> Date Mismatches <span class="text-slate-400 font-normal">(${fMismatches.length})</span>
+            </h3>
+            <div class="border border-slate-200 rounded-lg overflow-x-auto bg-white shadow-sm">
+              <table class="w-full text-xs">
+                <thead class="bg-slate-100 text-slate-500 uppercase tracking-wide text-[10px]">
+                  <tr>
+                    <th class="px-3 py-2 text-left">Worker</th>
+                    <th class="px-3 py-2 text-left">Source</th>
+                    <th class="px-3 py-2 text-left">Facility</th>
+                    <th class="px-3 py-2 text-left">Start (B4/VNDLY)</th>
+                    <th class="px-3 py-2 text-left">Start (Bullhorn)</th>
+                    <th class="px-3 py-2 text-left">End (B4/VNDLY)</th>
+                    <th class="px-3 py-2 text-left">End (Bullhorn)</th>
+                    <th class="px-3 py-2 text-left">BH Status</th>
+                  </tr>
+                </thead>
+                <tbody>${fMismatches.length === 0 ? '<tr><td colspan="8" class="px-3 py-6 text-center text-slate-400 text-xs">No date mismatches 🎉</td></tr>' : fMismatches.map(mismatchRow).join('')}</tbody>
+              </table>
+            </div>
+          </section>
+
+          <section class="mb-8">
+            <h3 class="text-sm font-bold text-red-700 mb-2 flex items-center gap-2">
+              <i data-lucide="x-circle" class="w-4 h-4"></i> In B4/VNDLY but Missing in Bullhorn <span class="text-slate-400 font-normal">(${fMissingBH.length})</span>
+            </h3>
+            <div class="border border-slate-200 rounded-lg overflow-x-auto bg-white shadow-sm">
+              <table class="w-full text-xs">
+                <thead class="bg-slate-100 text-slate-500 uppercase tracking-wide text-[10px]">
+                  <tr>
+                    <th class="px-3 py-2 text-left">Worker</th>
+                    <th class="px-3 py-2 text-left">Source</th>
+                    <th class="px-3 py-2 text-left">Facility</th>
+                    <th class="px-3 py-2 text-left">System</th>
+                    <th class="px-3 py-2 text-left">Start</th>
+                    <th class="px-3 py-2 text-left">End</th>
+                    <th class="px-3 py-2 text-left">Status</th>
+                  </tr>
+                </thead>
+                <tbody>${fMissingBH.length === 0 ? '<tr><td colspan="7" class="px-3 py-6 text-center text-slate-400 text-xs">Nothing missing in Bullhorn</td></tr>' : fMissingBH.map(missingBHRow).join('')}</tbody>
+              </table>
+            </div>
+          </section>
+
+          <section>
+            <h3 class="text-sm font-bold text-red-700 mb-2 flex items-center gap-2">
+              <i data-lucide="x-circle" class="w-4 h-4"></i> In Bullhorn but Missing in B4/VNDLY <span class="text-slate-400 font-normal">(${fMissingB4V.length})</span>
+            </h3>
+            <div class="border border-slate-200 rounded-lg overflow-x-auto bg-white shadow-sm">
+              <table class="w-full text-xs">
+                <thead class="bg-slate-100 text-slate-500 uppercase tracking-wide text-[10px]">
+                  <tr>
+                    <th class="px-3 py-2 text-left">Worker</th>
+                    <th class="px-3 py-2 text-left">Client (Bullhorn)</th>
+                    <th class="px-3 py-2 text-left">Start</th>
+                    <th class="px-3 py-2 text-left">End</th>
+                    <th class="px-3 py-2 text-left">Status</th>
+                  </tr>
+                </thead>
+                <tbody>${fMissingB4V.length === 0 ? '<tr><td colspan="5" class="px-3 py-6 text-center text-slate-400 text-xs">Nothing missing in B4/VNDLY</td></tr>' : fMissingB4V.map(missingB4VRow).join('')}</tbody>
+              </table>
+            </div>
+          </section>
+        `;
+
+        lucide.createIcons();
       }
     };
 
@@ -7155,6 +7378,9 @@
         hoursLoaded: false,
         pendingData: { submissions: [] },
         pendingLoaded: false,
+        contractsData: null,
+        contractsLoaded: false,
+        contractsLoading: false,
         perDiemSubTab: 'overview',
         perDiemFromMonth: null,
         perDiemToMonth: null,
@@ -7351,6 +7577,10 @@
               s.view = payload;
               View.viewToggle();
               View.main();
+              // Lazy-load contracts data on first view
+              if (payload === 'contracts' && !s.contractsLoaded && !s.contractsLoading) {
+                window.loadContractsData();
+              }
               break;
             }
 
