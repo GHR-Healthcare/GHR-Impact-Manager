@@ -258,6 +258,23 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                 if j not in used_b:
                     missing_in_b4vndly.append(b)
 
+        # Deterministic ordering so refreshes don't reshuffle rows
+        date_mismatches.sort(key=lambda m: (
+            (m.get('worker_name') or '').lower(),
+            date_key(m.get('assignment', {}).get('startDate')),
+            m.get('bullhorn', {}).get('placementID') or 0,
+        ))
+        missing_in_bullhorn.sort(key=lambda r: (
+            (r.get('worker_name') or '').lower(),
+            date_key(r.get('startDate')),
+            r.get('source') or '',
+        ))
+        missing_in_b4vndly.sort(key=lambda r: (
+            (r.get('worker_name') or '').lower(),
+            date_key(r.get('dateBegin')),
+            r.get('placementID') or 0,
+        ))
+
         return func.HttpResponse(
             json.dumps({
                 'date_mismatches': date_mismatches,
