@@ -1111,7 +1111,8 @@
                         CONSTANTS.HEALTH_SYSTEM_MAPPINGS = mappingsData.mappings.map(m => ({
                             keywords: Array.isArray(m.keywords) ? m.keywords : m.keywords.split(',').map(k => k.trim()),
                             system: m.system_name,
-                            perdiem_breakout: !!m.perdiem_breakout
+                            perdiem_breakout: !!m.perdiem_breakout,
+                            hidden: !!m.hidden
                         }));
                         console.log('Loaded', CONSTANTS.HEALTH_SYSTEM_MAPPINGS.length, 'health system mappings from database');
                     }
