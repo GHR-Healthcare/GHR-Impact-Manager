@@ -152,7 +152,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                 LEFT JOIN dbo.View_Candidate c ON p.candidateID = c.candidateID
                 LEFT JOIN dbo.View_ClientCorporation cc ON p.clientCorporationID = cc.clientCorporationID
                 WHERE p.isDeleted = 0
-                    AND p.status NOT IN ('Cancellation', 'Archive', 'Completed')
+                    AND p.status IN ('Approved', 'Onboarding', 'Cleared', 'Pending Start', 'Started')
                     AND p.dateBegin IS NOT NULL
                     AND p.dateBegin >= DATEADD(YEAR, -2, GETDATE())
                     AND (p.dateEnd IS NULL OR p.dateEnd >= DATEADD(DAY, -30, GETDATE()))
