@@ -137,8 +137,9 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             print(f"Error loading B4 per diem shifts: {e}")
 
         # ============================================================
-        # VNDLY - Active Per Diem Assignments (from Work Orders)
-        # Filter by Labor Type directly
+        # VNDLY - Per Diem Assignments (from Work Orders)
+        # Include historical work orders so weeks in the past still report
+        # Active Headcount. Frontend filters by date-range overlap per week.
         # ============================================================
         try:
             cursor.execute('''
@@ -154,9 +155,9 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                     NULL AS account_manager,
                     [Resource Manager] AS hiring_manager
                 FROM dbo.STAGING_VNDLY_WORKORDERS
-                WHERE [Current Status] = 'Active'
-                    AND [Start Date] IS NOT NULL
+                WHERE [Start Date] IS NOT NULL
                     AND [Labor Type] LIKE '%Per Diem%'
+                    AND ([Current Status] IS NULL OR [Current Status] NOT IN ('Cancelled', 'Rejected', 'Draft'))
             ''')
 
             columns = [column[0] for column in cursor.description]
