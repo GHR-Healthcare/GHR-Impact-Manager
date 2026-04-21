@@ -145,8 +145,8 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                     c.firstName,
                     c.lastName,
                     cc.name AS client_name,
-                    p.dateBegin,
-                    p.dateEnd,
+                    CAST(p.dateBegin AS DATE) AS dateBegin,
+                    CAST(p.dateEnd AS DATE) AS dateEnd,
                     p.status
                 FROM dbo.View_Placement p
                 LEFT JOIN dbo.View_Candidate c ON p.candidateID = c.candidateID
