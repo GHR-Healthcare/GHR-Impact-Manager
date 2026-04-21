@@ -25,7 +25,8 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             # Get all mappings
             cursor.execute('''
                 SELECT id, keywords, system_name, sort_order,
-                       CASE WHEN perdiem_breakout = 1 THEN 1 ELSE 0 END AS perdiem_breakout
+                       CASE WHEN perdiem_breakout = 1 THEN 1 ELSE 0 END AS perdiem_breakout,
+                       CASE WHEN hidden = 1 THEN 1 ELSE 0 END AS hidden
                 FROM dbo.system_mappings
                 ORDER BY sort_order, id
             ''')
@@ -73,11 +74,12 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                     keywords_str = str(keywords)
                 
                 perdiem_breakout = 1 if mapping.get('perdiem_breakout') else 0
+                hidden = 1 if mapping.get('hidden') else 0
 
                 cursor.execute('''
-                    INSERT INTO dbo.system_mappings (keywords, system_name, sort_order, perdiem_breakout)
-                    VALUES (?, ?, ?, ?)
-                ''', keywords_str, system_name, idx, perdiem_breakout)
+                    INSERT INTO dbo.system_mappings (keywords, system_name, sort_order, perdiem_breakout, hidden)
+                    VALUES (?, ?, ?, ?, ?)
+                ''', keywords_str, system_name, idx, perdiem_breakout, hidden)
             
             conn.commit()
             conn.close()

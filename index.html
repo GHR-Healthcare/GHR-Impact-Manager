@@ -333,6 +333,7 @@
                 <th class="text-left p-3 font-semibold text-slate-700">Keywords (comma-separated)</th>
                 <th class="text-left p-3 font-semibold text-slate-700 w-48">Health System</th>
                 <th class="text-center p-3 font-semibold text-slate-700 w-36" title="Break out per diem metrics by facility instead of rolling up to system level">Per Diem Breakout</th>
+                <th class="text-center p-3 font-semibold text-slate-700 w-20" title="Hide this health system from all tabs and filters">Hide</th>
                 <th class="w-16 p-3"></th>
               </tr>
             </thead>
@@ -1857,6 +1858,23 @@
       },
 
       /**
+       * Check if a health system is flagged 'hidden' in the mappings.
+       * Hidden systems are excluded from every tab and the filter dropdowns.
+       */
+      isHiddenHealthSystem(sys) {
+        if (!sys) return false;
+        const s = String(sys).toLowerCase();
+        for (const m of CONSTANTS.HEALTH_SYSTEM_MAPPINGS) {
+          if (!m.hidden) continue;
+          if ((m.system || '').toLowerCase() === s) return true;
+          for (const kw of (m.keywords || [])) {
+            if (s.includes(String(kw).toLowerCase())) return true;
+          }
+        }
+        return false;
+      },
+
+      /**
        * Check if a record matches any of the selected health systems
        * More robust matching that checks healthSystem, raw system value, and facility keywords
        */
@@ -3278,6 +3296,11 @@
               Utils.matchesStatsCategoryFilter(r.specialty, s.filterSelection.categories);
             const facOk = s.filterSelection.facilities.size === 0 || s.filterSelection.facilities.has(r.facility);
             if (catOk && facOk) validSystems.add(r.healthSystem);
+          });
+
+          // Hide systems flagged as hidden in Settings
+          [...validSystems].forEach(sys => {
+            if (Utils.isHiddenHealthSystem(sys)) validSystems.delete(sys);
           });
 
           // Remove invalid selections
@@ -4717,7 +4740,8 @@
         const transitionedSystems = new Set(['RUMC', 'Holy Redeemer', 'Cooper']);
 
         // Systems excluded from per diem tab entirely
-        const isExcludedFromPerDiem = (sys) => /sunrise/i.test(sys || '');
+        // Hidden systems (from Settings) + Sunrise (per-diem-specific exclusion)
+        const isExcludedFromPerDiem = (sys) => Utils.isHiddenHealthSystem(sys) || /sunrise/i.test(sys || '');
 
         // For transitioned systems, only drop B4 rows that VNDLY *also* has
         // (same worker, same date for shifts; same worker for assignments).
@@ -5269,7 +5293,7 @@
         // on the same date. Preserves pre-transition B4 data for systems
         // that have partially transitioned (e.g. Cooper as of 2026-04-13).
         const transitionedSystems = new Set(['RUMC', 'Holy Redeemer', 'Cooper']);
-        const isExcludedSystem = (sys) => /sunrise/i.test(sys || '');
+        const isExcludedSystem = (sys) => Utils.isHiddenHealthSystem(sys) || /sunrise/i.test(sys || '');
         const hoursDateKey = d => d ? d.toISOString().slice(0, 10) : '';
         const vndlyHoursKeys = new Set(
           rows
@@ -7954,7 +7978,7 @@
             } else {
                 currentMappings = CONSTANTS.HEALTH_SYSTEM_MAPPINGS.map((m, idx) => ({
                     id: idx + 1, keywords: m.keywords, system_name: m.system,
-                    sort_order: idx, perdiem_breakout: !!m.perdiem_breakout
+                    sort_order: idx, perdiem_breakout: !!m.perdiem_breakout, hidden: !!m.hidden
                 }));
             }
         } catch (error) {
@@ -8035,6 +8059,12 @@
                                onchange="updateMapping(${idx}, 'perdiem_breakout', this.checked)"
                                class="w-4 h-4 accent-blue-600 cursor-pointer"
                                title="Show per diem metrics broken out by facility">
+                    </td>
+                    <td class="p-2 text-center">
+                        <input type="checkbox" ${mapping.hidden ? 'checked' : ''}
+                               onchange="updateMapping(${idx}, 'hidden', this.checked)"
+                               class="w-4 h-4 accent-red-600 cursor-pointer"
+                               title="Hide this system from all tabs and filters">
                     </td>
                     <td class="p-2 text-center">
                         <button onclick="deleteMapping(${idx})" class="text-red-500 hover:text-red-700 p-1" title="Delete">
@@ -8183,7 +8213,8 @@
                 keywords: [...m.keywords],
                 system_name: m.system,
                 sort_order: idx,
-                perdiem_breakout: !!m.perdiem_breakout
+                perdiem_breakout: !!m.perdiem_breakout,
+                hidden: !!m.hidden
             }));
             renderMappingsTable();
             window.showToast('Mappings reset to defaults (not saved yet)', 'info');
@@ -8258,7 +8289,8 @@
                 CONSTANTS.HEALTH_SYSTEM_MAPPINGS = currentMappings.map(m => ({
                     keywords: Array.isArray(m.keywords) ? m.keywords : [m.keywords],
                     system: m.system_name || m.system,
-                    perdiem_breakout: !!m.perdiem_breakout
+                    perdiem_breakout: !!m.perdiem_breakout,
+                    hidden: !!m.hidden
                 }));
 
                 // Update PM mappings in store for trend view
