@@ -4719,15 +4719,39 @@
         // Systems excluded from per diem tab entirely
         const isExcludedFromPerDiem = (sys) => /sunrise/i.test(sys || '');
 
-        const dedupedAssignments = assignments.filter(a =>
-          !isExcludedFromPerDiem(a.healthSystem) &&
-          !(a.source_system === 'B4' && transitionedSystems.has(a.healthSystem))
+        // For transitioned systems, only drop B4 rows that VNDLY *also* has
+        // (same worker, same date for shifts; same worker for assignments).
+        // This preserves pre-transition B4 data while still deduping the
+        // transition-week overlap window.
+        const vndlyAssignmentKeys = new Set(
+          assignments
+            .filter(a => a.source_system === 'VNDLY' && transitionedSystems.has(a.healthSystem))
+            .map(a => `${a.healthSystem}|${a.worker_name}`)
+        );
+        const vndlyShiftKeys = new Set(
+          shifts
+            .filter(sh => sh.source_system === 'VNDLY' && transitionedSystems.has(sh.healthSystem) && sh.shift_date)
+            .map(sh => `${sh.healthSystem}|${sh.worker_name}|${sh.shift_date.toISOString().slice(0, 10)}`)
         );
 
-        const dedupedShifts = shifts.filter(sh =>
-          !isExcludedFromPerDiem(sh.healthSystem) &&
-          !(sh.source_system === 'B4' && transitionedSystems.has(sh.healthSystem))
-        );
+        const dedupedAssignments = assignments.filter(a => {
+          if (isExcludedFromPerDiem(a.healthSystem)) return false;
+          if (a.source_system === 'B4' && transitionedSystems.has(a.healthSystem)) {
+            return !vndlyAssignmentKeys.has(`${a.healthSystem}|${a.worker_name}`);
+          }
+          return true;
+        });
+
+        const dedupedShifts = shifts.filter(sh => {
+          if (isExcludedFromPerDiem(sh.healthSystem)) return false;
+          if (sh.source_system === 'B4' && transitionedSystems.has(sh.healthSystem)) {
+            const key = sh.shift_date
+              ? `${sh.healthSystem}|${sh.worker_name}|${sh.shift_date.toISOString().slice(0, 10)}`
+              : null;
+            return !key || !vndlyShiftKeys.has(key);
+          }
+          return true;
+        });
 
         // Category filter helper for per diem: match agency against selected job-program categories
         // "Nursing" categories → exclude Allied agencies; "Allied" categories → only Allied agencies
