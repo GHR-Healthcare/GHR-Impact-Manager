@@ -127,8 +127,8 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                     p.dateEnd,
                     p.status
                 FROM dbo.View_Placement p
-                LEFT JOIN dbo.View_Candidate c ON p.candidateID = c.id
-                LEFT JOIN dbo.View_ClientCorporation cc ON p.clientCorporationID = cc.id
+                LEFT JOIN dbo.View_Candidate c ON p.candidateID = c.candidateID
+                LEFT JOIN dbo.View_ClientCorporation cc ON p.clientCorporationID = cc.clientCorporationID
                 WHERE p.isDeleted = 0
                     AND p.status NOT IN ('Cancellation', 'Archive')
                     AND (p.dateEnd IS NULL OR p.dateEnd >= DATEADD(DAY, -30, GETDATE()))
