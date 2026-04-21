@@ -2158,6 +2158,12 @@
       }, 50);
     };
 
+    window.toggleFinancialShowHidden = () => {
+      window.store.state.financialShowHidden = !window.store.state.financialShowHidden;
+      View.financials();
+      lucide?.createIcons?.();
+    };
+
     window.updateFinancialDateRange = async () => {
       const fromEl = document.getElementById('finFromMonth');
       const toEl = document.getElementById('finToMonth');
@@ -4201,10 +4207,12 @@
           return;
         }
 
-        // Apply global filters (system, facility, category)
+        // Apply global filters (system, facility, category) + hidden-system exclusion
         const fs = window.store.state.filterSelection;
+        const showHidden = !!window.store.state.financialShowHidden;
         const filteredData = rawData.filter(r => {
           const sys = Utils.getHealthSystem(null, r.health_system) || r.health_system || 'Unknown';
+          if (!showHidden && Utils.isHiddenHealthSystem(sys)) return false;
           if (fs.systems.size > 0 && !fs.systems.has(sys)) return false;
           if (fs.facilities.size > 0 && r.facility && !fs.facilities.has(r.facility)) return false;
           if (fs.categories.size > 0 && r.category) {
@@ -4373,6 +4381,12 @@
                   ${pickerMonths.map(m => `<option value="${m}" ${m === storedTo ? 'selected' : ''}>${monthLabel(m)}</option>`).join('')}
                 </select>
               </div>
+              <button onclick="window.toggleFinancialShowHidden()"
+                      class="${showHidden ? 'bg-amber-50 text-amber-700 border-amber-300' : 'bg-white text-slate-600 border-slate-300'} hover:bg-amber-50 border px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 shadow-sm"
+                      title="Toggle display of hidden systems in financial data">
+                <i data-lucide="${showHidden ? 'eye' : 'eye-off'}" class="w-3.5 h-3.5"></i>
+                ${showHidden ? 'Hiding: Off' : 'Hiding: On'}
+              </button>
               <button onclick="window.exportFinancialPDF()" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-bold flex items-center gap-2 shadow-sm">
                 <i data-lucide="file-text" class="w-4 h-4"></i> Export PDF
               </button>
@@ -7133,6 +7147,7 @@
         financialData: [],
         financialFromMonth: null,
         financialToMonth: null,
+        financialShowHidden: false,
         perDiemData: { assignments: [], shifts: [] },
         perDiemLoaded: false,
         hoursData: { rows: [] },
