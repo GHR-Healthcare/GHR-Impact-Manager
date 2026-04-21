@@ -76,7 +76,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                         [Contractor Last Name],
                         [Billing Cycle End Date],
                         [Health System],
-                        [Default Work Site Name] AS facility,
+                        [Work Site Name] AS facility,
                         [Labor Type] AS category,
                         [Vendor Company Name],
                         [Item Date],
@@ -119,6 +119,8 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                 vndly_data.append(row_dict)
         except Exception as e:
             print(f"Error loading VNDLY financial data: {e}")
+            import traceback
+            traceback.print_exc()
 
         # ============================================================
         # B4Health - Monthly billings and headcounts from ESR data
