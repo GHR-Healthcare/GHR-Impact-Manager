@@ -5265,13 +5265,25 @@
           return;
         }
 
-        // Exclude B4 data for systems that have transitioned to VNDLY (same logic as overview)
+        // Dedup overlap: only drop a B4 row if VNDLY has the same worker
+        // on the same date. Preserves pre-transition B4 data for systems
+        // that have partially transitioned (e.g. Cooper as of 2026-04-13).
         const transitionedSystems = new Set(['RUMC', 'Holy Redeemer', 'Cooper']);
         const isExcludedSystem = (sys) => /sunrise/i.test(sys || '');
-        const deduped = rows.filter(r =>
-          !(r.source_system === 'B4' && transitionedSystems.has(r.healthSystem)) &&
-          !isExcludedSystem(r.healthSystem)
+        const hoursDateKey = d => d ? d.toISOString().slice(0, 10) : '';
+        const vndlyHoursKeys = new Set(
+          rows
+            .filter(r => r.source_system === 'VNDLY' && transitionedSystems.has(r.healthSystem) && r.item_date)
+            .map(r => `${r.healthSystem}|${r.contractor_name}|${hoursDateKey(r.item_date)}`)
         );
+        const deduped = rows.filter(r => {
+          if (isExcludedSystem(r.healthSystem)) return false;
+          if (r.source_system === 'B4' && transitionedSystems.has(r.healthSystem)) {
+            const key = r.item_date ? `${r.healthSystem}|${r.contractor_name}|${hoursDateKey(r.item_date)}` : null;
+            return !key || !vndlyHoursKeys.has(key);
+          }
+          return true;
+        });
 
         // Apply system/facility filters from global filter
         const fs = s.filterSelection;
@@ -5541,11 +5553,21 @@
           return;
         }
 
-        // Exclude B4 records for systems that have fully transitioned to VNDLY (prevents double-counting)
+        // Dedup overlap: only drop a B4 assignment if VNDLY has the same
+        // worker in the same system. Preserves pre-transition B4 data for
+        // systems that have partially transitioned (e.g. Cooper 2026-04-13).
         const transitionedSystems = new Set(['RUMC', 'Holy Redeemer', 'Cooper']);
-        const deduped = allAssignments.filter(r =>
-          !(r.source_system === 'B4' && transitionedSystems.has(r.healthSystem))
+        const vndlyAssignmentKeys = new Set(
+          allAssignments
+            .filter(r => r.source_system === 'VNDLY' && transitionedSystems.has(r.healthSystem))
+            .map(r => `${r.healthSystem}|${r.worker_name}`)
         );
+        const deduped = allAssignments.filter(r => {
+          if (r.source_system === 'B4' && transitionedSystems.has(r.healthSystem)) {
+            return !vndlyAssignmentKeys.has(`${r.healthSystem}|${r.worker_name}`);
+          }
+          return true;
+        });
 
         // Category filter: match normalized category against selected filter values
         const selectedCats = s.filterSelection.categories;
