@@ -2,6 +2,12 @@
 
 ## Version History
 
+**1.6.1** - Pending tab summary redesign + detail table width fix
+- Pending summary table now groups Submitted / Offer Pending / RTO columns visually with color-coded headers and a legend
+- Added 3-week outlook columns to the summary, bucketing GHR/Affiliate pending candidates by expected RTO date
+- Totals row across all systems
+- Detail table now fills the full container width (switched wrapper to `overflow-x-auto` + `min-w-full`)
+
 **1.6.0** - Holt's forecast + clearer projection styling
 - Swapped projection formula from linear regression to Holt's exponential smoothing (weights recent weeks, reacts to trend changes)
 - Projection line now anchors at the last actual value so it connects seamlessly to the actuals line
