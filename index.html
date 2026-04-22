@@ -5884,6 +5884,34 @@
         // Helper: is this a GHR agency?
         const isGHRAgency = (agency) => /ghr|planet\s*healthcare/i.test(agency || '');
 
+        // Drill-through: clicking a future-week cell in the breakdown tables navigates to
+        // Pending tab pre-filtered by category + agency + (optional) system. Category matching
+        // is fuzzy — we extract keyword groups from the trend category string and require
+        // each group to match one of the candidate's position/care_type/program fields.
+        window.__trendDrillToPending = (categoryLabel, system, agency) => {
+          const cat = (categoryLabel || '').toLowerCase();
+          const groups = [];
+          // Family: Nursing vs Allied vs Advanced Practices etc.
+          if (/nurs/.test(cat)) groups.push(['nurs', 'rn', 'lpn']);
+          else if (/allied/.test(cat)) groups.push(['allied', 'tech', 'therap', 'lab', 'radiolog', 'ultrasound']);
+          else if (/advanced\s*practice/.test(cat)) groups.push(['nurse practitioner', 'np', 'physician assistant', 'pa', 'crna', 'anesthe']);
+          else if (/physician/.test(cat)) groups.push(['physician', 'md', 'doctor']);
+          else if (/information\s*technology/.test(cat) || cat === 'it') groups.push(['analyst', 'architect', 'engineer', 'developer', 'technology', 'it ']);
+          else if (/non.?clinical/.test(cat)) groups.push(['accountant', 'manager', 'remote', 'navigator', 'non-clinical', 'nonclinical']);
+          // Modifier: Per Diem / Travel / Local Contract / Contract
+          if (/per\s*diem/.test(cat)) groups.push(['per diem', 'per-diem']);
+          else if (/travel/.test(cat)) groups.push(['travel']);
+          else if (/local\s*contract/.test(cat)) groups.push(['local contract']);
+          else if (/contract/.test(cat)) groups.push(['contract']);
+          window.__pendingDrill = {
+            categoryLabel,
+            categoryKeywords: groups.length ? groups : null,
+            system: system || null,
+            agency: agency || null,
+          };
+          window.store.dispatch('SET_VIEW', 'pending');
+        };
+
         // Normalize category names across B4 (Program) and VNDLY (Labor Type)
         // Strip "- 48" / "– 48" suffixes, normalize "Allied Health" → "Allied"
         const normalizeCategory = (cat) => {
@@ -6212,10 +6240,18 @@
             const gPrev = i > 0 ? (weekData[i - 1].catGhr?.[cat] || 0) : null;
             const aPrev = i > 0 ? (weekData[i - 1].catAff?.[cat] || 0) : null;
             const isCurrent = i === currentWeekIdx;
+            const isFuture = i > currentWeekIdx;
+            const catEsc = cat.replace(/'/g, "\\'");
+            const ghrSpan = isFuture
+              ? `<span class="text-blue-700 font-semibold cursor-pointer hover:underline" onclick="event.stopPropagation();window.__trendDrillToPending('${catEsc}',null,'GHR')">${g}${deltaSpan(g, gPrev)}</span>`
+              : `<span class="text-blue-700 font-semibold">${g}${deltaSpan(g, gPrev)}</span>`;
+            const affSpan = isFuture
+              ? `<span class="text-purple-700 font-semibold cursor-pointer hover:underline" onclick="event.stopPropagation();window.__trendDrillToPending('${catEsc}',null,'Affiliate')">${a}${deltaSpan(a, aPrev)}</span>`
+              : `<span class="text-purple-700 font-semibold">${a}${deltaSpan(a, aPrev)}</span>`;
             cells += `<td class="px-2 py-1.5 border-b border-slate-100 text-center text-[10px] ${isCurrent ? 'bg-blue-50' : ''}">
-              <span class="text-blue-700 font-semibold">${g}${deltaSpan(g, gPrev)}</span>
+              ${ghrSpan}
               <span class="text-slate-300 mx-0.5">/</span>
-              <span class="text-purple-700 font-semibold">${a}${deltaSpan(a, aPrev)}</span>
+              ${affSpan}
             </td>`;
             if (isCurrent) {
               cells += `<td class="px-2 py-1.5 border-b border-slate-100 text-center text-[10px] bg-amber-50 border-l border-r border-amber-200">
@@ -6240,10 +6276,19 @@
                 const gPrev = i > 0 ? (weekData[i - 1].catSysGhr?.[cat]?.[sys] || 0) : null;
                 const aPrev = i > 0 ? (weekData[i - 1].catSysAff?.[cat]?.[sys] || 0) : null;
                 const isCurrent = i === currentWeekIdx;
+                const isFuture = i > currentWeekIdx;
+                const catEsc = cat.replace(/'/g, "\\'");
+                const sysEsc = sys.replace(/'/g, "\\'");
+                const ghrSpan = isFuture
+                  ? `<span class="text-blue-600 cursor-pointer hover:underline" onclick="event.stopPropagation();window.__trendDrillToPending('${catEsc}','${sysEsc}','GHR')">${g}${deltaSpan(g, gPrev)}</span>`
+                  : `<span class="text-blue-600">${g}${deltaSpan(g, gPrev)}</span>`;
+                const affSpan = isFuture
+                  ? `<span class="text-purple-600 cursor-pointer hover:underline" onclick="event.stopPropagation();window.__trendDrillToPending('${catEsc}','${sysEsc}','Affiliate')">${a}${deltaSpan(a, aPrev)}</span>`
+                  : `<span class="text-purple-600">${a}${deltaSpan(a, aPrev)}</span>`;
                 sysCells += `<td class="px-2 py-1 border-b border-slate-50 text-center text-[10px] ${isCurrent ? 'bg-blue-50/50' : ''}">
-                  <span class="text-blue-600">${g}${deltaSpan(g, gPrev)}</span>
+                  ${ghrSpan}
                   <span class="text-slate-200 mx-0.5">/</span>
-                  <span class="text-purple-600">${a}${deltaSpan(a, aPrev)}</span>
+                  ${affSpan}
                 </td>`;
                 if (isCurrent) {
                   sysCells += `<td class="px-2 py-1 border-b border-slate-50 text-center text-[10px] bg-amber-50 border-l border-r border-amber-200">
@@ -7123,10 +7168,25 @@
 
         const allSubs = s.pendingData?.submissions || [];
 
-        // Apply global filters
+        // Drill-through context from Trend tab click (category + optional system + agency)
+        const drill = window.__pendingDrill || null;
+        const drillCatMatch = (r) => {
+          if (!drill || !drill.categoryKeywords) return true;
+          const fields = [r.position_type, r.care_type, r.program]
+            .filter(Boolean).map(v => String(v).toLowerCase());
+          return drill.categoryKeywords.every(group =>
+            fields.some(f => group.some(kw => f.includes(kw)))
+          );
+        };
+
+        // Apply global filters + drill-through filters
         const filtered = allSubs.filter(r => {
           const sysMatch = s.filterSelection.systems.size === 0 || s.filterSelection.systems.has(r.healthSystem);
-          return sysMatch;
+          if (!sysMatch) return false;
+          if (drill && drill.system && r.healthSystem !== drill.system) return false;
+          if (drill && drill.agency && (drill.agency === 'GHR') !== !!r.is_ghr) return false;
+          if (!drillCatMatch(r)) return false;
+          return true;
         });
 
         // Status color helpers
@@ -7273,6 +7333,24 @@
           View.pending();
           lucide.createIcons();
         };
+        window.__clearPendingDrill = () => {
+          window.__pendingDrill = null;
+          View.pending();
+          lucide.createIcons();
+        };
+
+        const drillBanner = drill ? `
+          <div class="flex items-center justify-between bg-blue-50 border border-blue-200 rounded-lg px-3 py-2 mb-4 text-xs">
+            <div class="flex items-center gap-2 text-blue-700">
+              <i data-lucide="filter" class="w-3.5 h-3.5"></i>
+              <span>Filtered from Trend &rarr;</span>
+              ${drill.categoryLabel ? `<span class="font-semibold">${drill.categoryLabel}</span>` : ''}
+              ${drill.agency ? `<span class="px-1.5 py-0.5 rounded ${drill.agency === 'GHR' ? 'bg-blue-100 text-blue-700' : 'bg-purple-100 text-purple-700'} font-semibold">${drill.agency}</span>` : ''}
+              ${drill.system ? `<span class="font-semibold">@ ${drill.system}</span>` : ''}
+            </div>
+            <button onclick="window.__clearPendingDrill()" class="text-blue-600 hover:text-blue-800 font-semibold">Clear &times;</button>
+          </div>
+        ` : '';
 
         container.innerHTML = `
           <div class="flex items-center justify-between mb-4">
@@ -7282,6 +7360,7 @@
               <span class="text-xs font-semibold text-slate-600">${colFiltered.length} records</span>
             </div>
           </div>
+          ${drillBanner}
           <div class="mb-6">
             <h3 class="text-sm font-bold text-slate-600 mb-2">By Health System <span class="font-normal text-slate-400 text-[10px] ml-2"><span class="text-blue-600">GHR</span> / <span class="text-purple-600">Affiliate</span></span></h3>
             <div class="rounded-lg border border-slate-200 overflow-hidden">
