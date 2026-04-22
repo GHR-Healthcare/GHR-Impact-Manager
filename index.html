@@ -6807,10 +6807,13 @@
 
         // Projected revenue: actual for past, headcount × $/worker for future.
         // Anchors at lastCompleteIdx with the actual value so the line connects.
+        // For weeks past the lastCompleteIdx but before the current week (the
+        // "billing still settling" gap), use actualsData (real headcount) since
+        // pipelineWithPendingData is null for past weeks.
         const revenueProjectedData = weeks.map((w, i) => {
           if (i < lastCompleteIdx) return null;
           if (i === lastCompleteIdx) return rawRevenueTotal[i];
-          const expectedHc = pipelineWithPendingData[i] || 0;
+          const expectedHc = pipelineWithPendingData[i] ?? actualsData[i] ?? 0;
           return expectedHc > 0 && avgPerWorkerPerWeek > 0
             ? Math.round(expectedHc * avgPerWorkerPerWeek)
             : null;
