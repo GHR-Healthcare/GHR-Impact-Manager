@@ -2,6 +2,12 @@
 
 ## Version History
 
+**1.7.1** - Pending $ KPIs + richer revenue tooltip
+- Pending tab has a new 4-card KPI row: pipeline weekly run rate with Δ vs 4-wk actual avg, next-3-wk expected $, last complete week actual, baseline avg
+- Pipeline $ computed as `bill_rate × weekly_hours` on pending + assignment workorders (B4 uses Awarded_Rate/Hours_per_Peek, VNDLY uses Bill Rate with 36hr/wk default)
+- Trend chart revenue tooltip now shows week-over-week Δ% and a GHR/Affiliate split line
+- Fixed GetTrendData reading stale `B4HealthESR2` — switched to the live `B4HealthESR` table
+
 **1.7.0** - Revenue line on Trend chart
 - Trend chart now overlays actual weekly revenue on a secondary y-axis (gold line, $ formatting)
 - Revenue sourced from B4HealthESR2 Bill Total + STAGING_VNDLY_SPEND Client Amount, grouped by Sun-Sat week

@@ -7198,9 +7198,28 @@
                       const val = ctx.parsed.y;
                       if (val == null) return null;
                       if (ctx.dataset.label === 'Revenue') {
-                        return `${ctx.dataset.label}: $${(val / 1000).toFixed(1)}k`;
+                        const i = ctx.dataIndex;
+                        const arr = ctx.dataset.data || [];
+                        const prev = i > 0 ? arr[i - 1] : null;
+                        let delta = '';
+                        if (prev != null && prev > 0) {
+                          const pct = ((val - prev) / prev) * 100;
+                          const up = pct >= 0;
+                          delta = ` (${up ? '▲' : '▼'} ${Math.abs(pct).toFixed(0)}%)`;
+                        }
+                        return `${ctx.dataset.label}: $${(val / 1000).toFixed(1)}k${delta}`;
                       }
                       return `${ctx.dataset.label}: ${val}`;
+                    },
+                    afterBody: (items) => {
+                      if (!items || !items.length) return;
+                      const i = items[0].dataIndex;
+                      const revItem = items.find(it => it.dataset.label === 'Revenue');
+                      if (!revItem || revItem.parsed.y == null) return;
+                      const g = (revenueGhrData && revenueGhrData[i]) || 0;
+                      const a = (revenueAffData && revenueAffData[i]) || 0;
+                      if (!g && !a) return;
+                      return ['', `GHR: $${(g/1000).toFixed(1)}k · Affiliate: $${(a/1000).toFixed(1)}k`];
                     }
                   }
                 }
