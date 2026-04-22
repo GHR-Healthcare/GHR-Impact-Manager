@@ -6783,6 +6783,31 @@
         const revenueGhrData = trimTail(rawRevenueGhr);
         const revenueAffData = trimTail(rawRevenueAff);
 
+        // ── Calibrated $/worker/week from recent complete weeks ──
+        // Sum revenue and headcount across the last few fully-billed weeks,
+        // take the ratio. Robust against bill-rate data quality issues because
+        // it's derived from ground-truth actuals.
+        const calibSamples = [];
+        for (let i = 0; i <= lastCompleteIdx; i++) {
+          const rev = rawRevenueTotal[i] || 0;
+          const hc = actualsData[i] || 0;
+          if (rev > 0 && hc > 0) calibSamples.push(rev / hc);
+        }
+        const avgPerWorkerPerWeek = calibSamples.length
+          ? calibSamples.slice(-4).reduce((a, b) => a + b, 0) / Math.min(4, calibSamples.length)
+          : 0;
+
+        // Projected revenue: actual for past, headcount × $/worker for future.
+        // Anchors at lastCompleteIdx with the actual value so the line connects.
+        const revenueProjectedData = weeks.map((w, i) => {
+          if (i < lastCompleteIdx) return null;
+          if (i === lastCompleteIdx) return rawRevenueTotal[i];
+          const expectedHc = pipelineWithPendingData[i] || 0;
+          return expectedHc > 0 && avgPerWorkerPerWeek > 0
+            ? Math.round(expectedHc * avgPerWorkerPerWeek)
+            : null;
+        });
+
         // Overlay lines shared across account/PM views: Total, Pipeline, Trend Projection
         const overlayDatasets = [
           {
@@ -6848,6 +6873,7 @@
           { label: 'Affiliate Pipeline', data: affPipelineData, borderColor: '#8b5cf6', fill: false, tension: 0.3, pointRadius: 3, borderDash: DASH_PIPELINE },
           { label: 'Affiliate Pending', data: pendingAffData, borderColor: '#8b5cf6', fill: false, tension: 0.3, pointRadius: 3, borderDash: DASH_PENDING },
           { label: 'Revenue', data: revenueTotalData, borderColor: '#d97706', backgroundColor: 'rgba(217,119,6,0.08)', fill: false, tension: 0.3, pointRadius: 4, borderWidth: 2, yAxisID: 'y1' },
+          { label: 'Revenue (projected)', data: revenueProjectedData, borderColor: '#d97706', fill: false, tension: 0.3, pointRadius: 3, borderWidth: 2, borderDash: DASH_PENDING, yAxisID: 'y1' },
         ];
         window.__trendChartDatasets = { category: categoryChartDatasets, account: sysChartDatasets, pm: pmChartDatasets };
 
@@ -7438,16 +7464,11 @@
           bySystem[sys].outlook[wi][bk][isGhr ? 'g' : 'a']++;
         });
 
-        // ── Pipeline $ KPIs — expected weekly revenue from pending work ──
-        // Formula: bill_rate × weekly_hours. VNDLY has no explicit weekly_hours
-        // field, so fall back to 36 hours/week (standard travel shift).
-        const VNDLY_DEFAULT_HOURS = 36;
-        const recordWeeklyDollars = (r) => {
-          const rate = Number(r.bill_rate) || 0;
-          if (!rate) return 0;
-          const hours = Number(r.weekly_hours) || VNDLY_DEFAULT_HOURS;
-          return rate * hours;
-        };
+        // ── Pipeline $ KPIs — calibrated approach ──
+        // Rather than compute rate × hours per record (unreliable due to
+        // bill_rate data quality + cross-source inconsistency), derive a
+        // $/worker/week ratio from recent ACTUAL billing data and multiply
+        // by expected headcount. Uses the same calibration as the Trend tab.
         const passesPendingFilters = (r) => {
           const sys = r.healthSystem || 'Unknown';
           if (s.filterSelection.systems.size > 0 && !s.filterSelection.systems.has(sys)) return false;
@@ -7457,49 +7478,79 @@
           if (!trendCatMatch(r)) return false;
           return true;
         };
-        // Total pipeline weekly run rate: sum of weekly $ across all active+
-        // pending workorders with a future-or-current startDate. Dedupes by
-        // worker+system to match the way the outlook table counts.
-        const pipelineSeen = new Set();
-        let pipelineWeekly$ = 0;
-        let next3WkWeekly$ = 0;
+
+        // Baseline revenue + headcount from recent complete billing weeks.
+        // We compute $/worker/week locally (instead of reading from the trend
+        // view) because the Pending tab can be visited standalone.
+        const weeklyRevRows = s.trendData?.weekly_revenue || [];
+        const filterWeeklyRev = (r) => {
+          const sys = Utils.getHealthSystem(null, r.system);
+          if (s.filterSelection.systems.size > 0 && !s.filterSelection.systems.has(sys)) return false;
+          if (drill && drill.system && sys !== drill.system) return false;
+          if (drill && drill.agency && (drill.agency === 'GHR') !== (r.vendor_type === 'GHR')) return false;
+          return true;
+        };
+        const pendingGetSunday = (d) => {
+          const dt = new Date(d);
+          return new Date(dt.getFullYear(), dt.getMonth(), dt.getDate() - dt.getDay());
+        };
+        const pendingToday = new Date(); pendingToday.setHours(0,0,0,0);
+        const pendingCurSun = pendingGetSunday(pendingToday);
+        const recentWeekKeys = [];
+        for (let i = 1; i <= 4; i++) {
+          const ws = new Date(pendingCurSun); ws.setDate(ws.getDate() - i * 7);
+          recentWeekKeys.push(`${ws.getFullYear()}-${String(ws.getMonth()+1).padStart(2,'0')}-${String(ws.getDate()).padStart(2,'0')}`);
+        }
+        const recentRevByKey = new Map();
+        weeklyRevRows.forEach(r => {
+          if (!filterWeeklyRev(r)) return;
+          recentRevByKey.set(r.week_start, (recentRevByKey.get(r.week_start) || 0) + r.revenue);
+        });
+        // Use the last 4 weeks, auto-trimming the tail (current incomplete week)
+        const filledRecent = recentWeekKeys.map(k => recentRevByKey.get(k) || 0);
+        const lastWeekActual$ = filledRecent[0] || 0;
+        const baseline4WkAvg = filledRecent.reduce((a, b) => a + b, 0) / 4;
+
+        // Distinct active headcount during the last complete week, using the
+        // same filter rules — this is the denominator for $/worker/week.
+        const lastWeekStart = new Date(pendingCurSun); lastWeekStart.setDate(lastWeekStart.getDate() - 7);
+        const lastWeekEnd = new Date(lastWeekStart); lastWeekEnd.setDate(lastWeekEnd.getDate() + 6);
+        const activeWorkersLastWeek = new Set();
+        trendAssignments.forEach(r => {
+          if (!r.startDate) return;
+          if (!passesPendingFilters(r)) return;
+          const sd = new Date(r.startDate); sd.setHours(0,0,0,0);
+          const ed = r.endDate ? new Date(r.endDate) : null;
+          if (ed) ed.setHours(0,0,0,0);
+          if (sd <= lastWeekEnd && (!ed || ed >= lastWeekStart)) {
+            activeWorkersLastWeek.add(`${r.healthSystem}|${(r.worker_name || '').toLowerCase()}`);
+          }
+        });
+        const avgRevPerWorker = activeWorkersLastWeek.size && lastWeekActual$
+          ? lastWeekActual$ / activeWorkersLastWeek.size
+          : 0;
+
+        // Pipeline headcount: distinct workers with a workorder starting this
+        // week or later (anything currently pipelining that will bill soon).
+        const pipelineWorkers = new Set();
+        const next3WkWorkers = new Set();
         const next3WkEnd = (() => { const e = new Date(outlookWeeks[2].end); e.setHours(0,0,0,0); return e; })();
         [...trendAssignments, ...trendPending].forEach(r => {
           if (!r.startDate) return;
           const sd = new Date(r.startDate);
           if (isNaN(sd.getTime())) return;
           sd.setHours(0, 0, 0, 0);
-          if (sd < currentSunday) return; // already started before this week — it's captured in actual revenue
+          if (sd < pendingCurSun) return;
           if (!passesPendingFilters(r)) return;
-          const bk = trendStatusBucket(r.status);
-          if (!bk) return;
+          if (!trendStatusBucket(r.status)) return;
           const key = `${r.healthSystem}|${(r.worker_name || '').toLowerCase()}`;
-          if (pipelineSeen.has(key)) return;
-          pipelineSeen.add(key);
-          const wk$ = recordWeeklyDollars(r);
-          pipelineWeekly$ += wk$;
-          if (sd <= next3WkEnd) next3WkWeekly$ += wk$;
+          pipelineWorkers.add(key);
+          if (sd <= next3WkEnd) next3WkWorkers.add(key);
         });
 
-        // Baseline for up/down: avg of last 4 complete billing weeks from the
-        // weekly_revenue series we already pulled. Use the same system filter.
-        const weeklyRevRows = s.trendData?.weekly_revenue || [];
-        const recentWeekKeys = [];
-        for (let i = 1; i <= 4; i++) {
-          const ws = new Date(currentSunday); ws.setDate(ws.getDate() - i * 7);
-          recentWeekKeys.push(`${ws.getFullYear()}-${String(ws.getMonth()+1).padStart(2,'0')}-${String(ws.getDate()).padStart(2,'0')}`);
-        }
-        const recentRevByKey = new Map();
-        weeklyRevRows.forEach(r => {
-          const sys = Utils.getHealthSystem(null, r.system);
-          if (s.filterSelection.systems.size > 0 && !s.filterSelection.systems.has(sys)) return;
-          if (drill && drill.system && sys !== drill.system) return;
-          if (drill && drill.agency && (drill.agency === 'GHR') !== (r.vendor_type === 'GHR')) return;
-          recentRevByKey.set(r.week_start, (recentRevByKey.get(r.week_start) || 0) + r.revenue);
-        });
-        const baseline4WkAvg = recentWeekKeys.reduce((s, k) => s + (recentRevByKey.get(k) || 0), 0) / 4;
+        const pipelineWeekly$ = avgRevPerWorker * pipelineWorkers.size;
+        const next3WkWeekly$ = avgRevPerWorker * next3WkWorkers.size;
         const lastWeekKey = recentWeekKeys[0];
-        const lastWeekActual$ = recentRevByKey.get(lastWeekKey) || 0;
 
         const ghrAff = (g, a) => `<span class="text-blue-700 font-semibold">${g}</span> <span class="text-slate-300">/</span> <span class="text-purple-700 font-semibold">${a}</span>`;
         const ghrAffDim = (g, a) => {
@@ -7730,7 +7781,7 @@
             ${kpiCard(
               'Next 3 Wks Expected',
               fmtDollars(next3WkWeekly$),
-              `<span class="text-slate-400">weekly $ of starts landing in outlook window</span>`
+              `<span class="text-slate-400">${next3WkWorkers.size} workers starting in outlook window</span>`
             )}
             ${kpiCard(
               'Last Complete Week',
@@ -7738,9 +7789,9 @@
               `<span class="text-slate-400">${lastWeekKey} · actual billings</span>`
             )}
             ${kpiCard(
-              '4-Wk Avg Actual',
-              fmtDollars(baseline4WkAvg),
-              `<span class="text-slate-400">run-rate baseline for up/down comparison</span>`
+              '$/Worker/Week',
+              fmtDollars(avgRevPerWorker),
+              `<span class="text-slate-400">calibrated from last week's actuals · used for pipeline $ projections</span>`
             )}
           </div>
           <div class="mb-6">
