@@ -38,6 +38,8 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                     Program AS category,
                     Account_Manager AS pm,
                     Contract_Status AS status,
+                    TRY_CAST(Awarded_Rate AS DECIMAL(10,2)) AS bill_rate,
+                    TRY_CAST(Hours_per_Peek AS DECIMAL(10,2)) AS weekly_hours,
                     Start_Date AS startDate,
                     End_Date AS endDate
                 FROM dhc.B4HealthOrder
@@ -73,6 +75,8 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                     [Labor Type] AS category,
                     [Resource Manager] AS pm,
                     [Current Status] AS status,
+                    TRY_CAST([Bill Rate] AS DECIMAL(10,2)) AS bill_rate,
+                    NULL AS weekly_hours,
                     [Start Date] AS startDate,
                     [End Date] AS endDate
                 FROM dbo.STAGING_VNDLY_WORKORDERS
@@ -108,6 +112,8 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                     Program AS category,
                     Account_Manager AS pm,
                     Contract_Status AS status,
+                    TRY_CAST(Awarded_Rate AS DECIMAL(10,2)) AS bill_rate,
+                    TRY_CAST(Hours_per_Peek AS DECIMAL(10,2)) AS weekly_hours,
                     Start_Date AS startDate,
                     End_Date AS endDate
                 FROM dhc.B4HealthOrder
@@ -142,6 +148,8 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                     [Labor Type] AS category,
                     [Resource Manager] AS pm,
                     [Current Status] AS status,
+                    TRY_CAST([Bill Rate] AS DECIMAL(10,2)) AS bill_rate,
+                    NULL AS weekly_hours,
                     [Start Date] AS startDate,
                     [End Date] AS endDate
                 FROM dbo.STAGING_VNDLY_WORKORDERS
