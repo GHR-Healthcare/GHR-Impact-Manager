@@ -2,6 +2,12 @@
 
 ## Version History
 
+**1.6.3** - Pending outlook rewired to match Trend tab deltas
+- Outlook counts now come from workorder start dates (Trend tab data source) instead of submission RTO dates, so numbers line up with the +/- deltas shown on the Trend breakdown
+- Workers deduped per system+status+week to match Trend's distinct-headcount logic
+- Tab order: Trend and Pending are now adjacent; Financials moved one right
+- API change: `/api/GetTrendData` now returns the `status` column on assignments and pending rows
+
 **1.6.2** - Pending 3-week outlook split by status
 - Each outlook week now has 3 sub-columns (Submitted / Offer Pending / RTO), color-coded to match the pipeline groups
 - Expected-start date falls back to VNDLY's Ready-to-Onboard date when RTO is empty

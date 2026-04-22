@@ -37,6 +37,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                     Care_Type AS specialty,
                     Program AS category,
                     Account_Manager AS pm,
+                    Contract_Status AS status,
                     Start_Date AS startDate,
                     End_Date AS endDate
                 FROM dhc.B4HealthOrder
@@ -71,6 +72,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                     [Job Title] AS specialty,
                     [Labor Type] AS category,
                     [Resource Manager] AS pm,
+                    [Current Status] AS status,
                     [Start Date] AS startDate,
                     [End Date] AS endDate
                 FROM dbo.STAGING_VNDLY_WORKORDERS
@@ -105,6 +107,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                     Care_Type AS specialty,
                     Program AS category,
                     Account_Manager AS pm,
+                    Contract_Status AS status,
                     Start_Date AS startDate,
                     End_Date AS endDate
                 FROM dhc.B4HealthOrder
@@ -138,6 +141,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                     [Job Title] AS specialty,
                     [Labor Type] AS category,
                     [Resource Manager] AS pm,
+                    [Current Status] AS status,
                     [Start Date] AS startDate,
                     [End Date] AS endDate
                 FROM dbo.STAGING_VNDLY_WORKORDERS

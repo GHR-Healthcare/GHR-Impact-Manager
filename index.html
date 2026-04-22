@@ -420,13 +420,13 @@
                 class="px-4 py-1.5 text-xs font-bold rounded-md transition-colors text-slate-500 hover:text-slate-700 flex items-center gap-1.5">
           <i data-lucide="trending-up" class="w-3.5 h-3.5"></i> Trend
         </button>
-        <button onclick="store.dispatch('SET_VIEW','financials')" id="btnViewFinancials"
-                class="px-4 py-1.5 text-xs font-bold rounded-md transition-colors text-slate-500 hover:text-slate-700 flex items-center gap-1.5">
-          <i data-lucide="dollar-sign" class="w-3.5 h-3.5"></i> Financials
-        </button>
         <button onclick="store.dispatch('SET_VIEW','pending')" id="btnViewPending"
                 class="px-4 py-1.5 text-xs font-bold rounded-md transition-colors text-slate-500 hover:text-slate-700 flex items-center gap-1.5">
           <i data-lucide="file-clock" class="w-3.5 h-3.5"></i> Pending
+        </button>
+        <button onclick="store.dispatch('SET_VIEW','financials')" id="btnViewFinancials"
+                class="px-4 py-1.5 text-xs font-bold rounded-md transition-colors text-slate-500 hover:text-slate-700 flex items-center gap-1.5">
+          <i data-lucide="dollar-sign" class="w-3.5 h-3.5"></i> Financials
         </button>
         <button onclick="store.dispatch('SET_VIEW','contracts')" id="btnViewContracts"
                 class="px-4 py-1.5 text-xs font-bold rounded-md transition-colors text-slate-500 hover:text-slate-700 flex items-center gap-1.5">
@@ -7240,16 +7240,6 @@
           });
         }
 
-        // Expected-start date: prefer RTO, fall back to VNDLY's Ready To Onboard Date
-        const expectedStart = (r) => {
-          const raw = r.rto || r.ready_to_onboard_date;
-          if (!raw) return null;
-          const dt = new Date(raw);
-          if (isNaN(dt.getTime())) return null;
-          dt.setHours(0, 0, 0, 0);
-          return dt;
-        };
-
         // Group by health system for summary table
         const bySystem = {};
         const newBucket = () => ({
@@ -7269,16 +7259,63 @@
           if (bk === 'sub') { if (isGhr) bySystem[sys].ghrSub++; else bySystem[sys].affSub++; }
           else if (bk === 'off') { if (isGhr) bySystem[sys].ghrOffer++; else bySystem[sys].affOffer++; }
           else if (bk === 'rto') { if (isGhr) bySystem[sys].ghrRto++; else bySystem[sys].affRto++; }
+        });
 
-          // Outlook bucket by expected-start date + status
-          const sd = expectedStart(r);
-          if (!sd || !bk) return;
-          for (let wi = 0; wi < outlookWeeks.length; wi++) {
-            if (sd >= outlookWeeks[wi].start && sd <= outlookWeeks[wi].end) {
-              bySystem[sys].outlook[wi][bk][isGhr ? 'g' : 'a']++;
-              break;
-            }
+        // ── Outlook: driven by trendData (workorders with startDate) so the
+        // numbers line up with the +/- deltas shown on the Trend tab. Each
+        // outlook week shows distinct-worker counts of upcoming starts,
+        // bucketed by workorder status into Sub / Off / RTO.
+        const trendAssignments = s.trendData?.assignments || [];
+        const trendPending = s.trendData?.pending || [];
+        const trendStatusBucket = (status) => {
+          const st = (status || '').toLowerCase();
+          if (st === 'with requests' || st === 'applied') return 'sub';
+          if (st === 'offer released') return 'off';
+          if (st === 'verification in progress') return 'rto';
+          // Confirmed workorders (locked-in, awaiting start)
+          if (st === 'closed and awarded' || st === 'active') return 'rto';
+          return null;
+        };
+        const isGHRAgencyLocal = (agency) => /ghr|planet\s*healthcare/i.test(agency || '');
+        const trendCatMatch = (r) => {
+          if (!drill || !drill.categoryKeywords) return true;
+          const fields = [r.category, r.specialty].filter(Boolean).map(v => String(v).toLowerCase());
+          return drill.categoryKeywords.every(group =>
+            fields.some(f => group.some(kw => f.includes(kw)))
+          );
+        };
+        const outlookSeen = [new Set(), new Set(), new Set()]; // dedupe worker+sys per week
+        [...trendAssignments, ...trendPending].forEach(r => {
+          if (!r.startDate) return;
+          const sd = new Date(r.startDate);
+          if (isNaN(sd.getTime())) return;
+          sd.setHours(0, 0, 0, 0);
+          // Determine outlook week index
+          let wi = -1;
+          for (let i = 0; i < outlookWeeks.length; i++) {
+            if (sd >= outlookWeeks[i].start && sd <= outlookWeeks[i].end) { wi = i; break; }
           }
+          if (wi < 0) return;
+
+          // Apply global system filter + drill-through filters
+          const sys = r.healthSystem || 'Unknown';
+          if (s.filterSelection.systems.size > 0 && !s.filterSelection.systems.has(sys)) return;
+          if (drill && drill.system && sys !== drill.system) return;
+          const isGhr = isGHRAgencyLocal(r.agency);
+          if (drill && drill.agency && (drill.agency === 'GHR') !== isGhr) return;
+          if (!trendCatMatch(r)) return;
+
+          const bk = trendStatusBucket(r.status);
+          if (!bk) return;
+
+          // Dedupe by worker+system within a week so the same worker with
+          // multiple workorders isn't double-counted (matches Trend tab).
+          const key = `${sys}|${(r.worker_name || '').toLowerCase()}|${bk}`;
+          if (outlookSeen[wi].has(key)) return;
+          outlookSeen[wi].add(key);
+
+          if (!bySystem[sys]) bySystem[sys] = newBucket();
+          bySystem[sys].outlook[wi][bk][isGhr ? 'g' : 'a']++;
         });
 
         const ghrAff = (g, a) => `<span class="text-blue-700 font-semibold">${g}</span> <span class="text-slate-300">/</span> <span class="text-purple-700 font-semibold">${a}</span>`;
@@ -7287,30 +7324,43 @@
           return ghrAff(g, a);
         };
 
-        // Render the 9 outlook sub-cells (3 weeks × 3 statuses) for one row
+        // Build the full 4-week list: current pipeline (as "Now") + 3 outlook weeks
+        const allWeeks = [
+          { start: currentSunday, end: (() => { const e = new Date(currentSunday); e.setDate(e.getDate() + 6); return e; })(), label: 'Now', isCurrent: true },
+          ...outlookWeeks.map(w => ({ ...w, isCurrent: false }))
+        ];
+
+        // Render the sub-cells for one row (4 weeks × 3 statuses)
         const bucketBg = { sub: 'bg-amber-50/60', off: 'bg-blue-50/60', rto: 'bg-emerald-50/60' };
         const bucketBgTot = { sub: 'bg-amber-100', off: 'bg-blue-100', rto: 'bg-emerald-100' };
-        const renderOutlookCells = (outlook, isTotalsRow) => {
+        const renderWeekCells = (d, isTotalsRow) => {
           const bgMap = isTotalsRow ? bucketBgTot : bucketBg;
           const cells = [];
-          for (let wi = 0; wi < outlookWeeks.length; wi++) {
+          allWeeks.forEach((w, wi) => {
             ['sub', 'off', 'rto'].forEach((bk, bi) => {
-              const leftBorder = bi === 0 ? (isTotalsRow ? 'border-l border-slate-300' : 'border-l border-slate-200') : '';
-              const d = outlook[wi][bk];
-              cells.push(`<td class="px-2 py-2 text-[11px] text-center ${bgMap[bk]} ${leftBorder}">${ghrAffDim(d.g, d.a)}</td>`);
+              const leftBorder = bi === 0 && wi > 0 ? (isTotalsRow ? 'border-l border-slate-300' : 'border-l border-slate-200') : '';
+              let g, a;
+              if (w.isCurrent) {
+                // "Now" column draws from the submissions aggregation
+                if (bk === 'sub') { g = d.ghrSub; a = d.affSub; }
+                else if (bk === 'off') { g = d.ghrOffer; a = d.affOffer; }
+                else { g = d.ghrRto; a = d.affRto; }
+              } else {
+                const oi = wi - 1; // outlook index (skip the "Now" entry)
+                const c = d.outlook[oi][bk];
+                g = c.g; a = c.a;
+              }
+              cells.push(`<td class="px-2 py-2 text-[11px] text-center ${bgMap[bk]} ${leftBorder}">${ghrAffDim(g, a)}</td>`);
             });
-          }
+          });
           return cells.join('');
         };
 
         const systemSummaryRows = Object.entries(bySystem).sort((a, b) => (b[1].ghr + b[1].aff) - (a[1].ghr + a[1].aff)).map(([sys, d]) =>
           `<tr class="hover:bg-slate-50 border-b border-slate-100">
             <td class="px-3 py-2 text-xs font-medium text-slate-700">${sys}</td>
-            <td class="px-3 py-2 text-xs text-center bg-amber-50/60">${ghrAff(d.ghrSub, d.affSub)}</td>
-            <td class="px-3 py-2 text-xs text-center bg-blue-50/60">${ghrAff(d.ghrOffer, d.affOffer)}</td>
-            <td class="px-3 py-2 text-xs text-center bg-emerald-50/60">${ghrAff(d.ghrRto, d.affRto)}</td>
+            ${renderWeekCells(d, false)}
             <td class="px-3 py-2 text-xs text-center font-semibold border-l border-slate-200">${ghrAff(d.ghr, d.aff)}</td>
-            ${renderOutlookCells(d.outlook, false)}
           </tr>`
         ).join('');
 
@@ -7331,11 +7381,8 @@
         const summaryTotalsRow = Object.keys(bySystem).length ? `
           <tr class="bg-slate-100 border-t-2 border-slate-300 font-bold">
             <td class="px-3 py-2 text-xs text-slate-700">All Systems</td>
-            <td class="px-3 py-2 text-xs text-center bg-amber-100">${ghrAff(tot.ghrSub, tot.affSub)}</td>
-            <td class="px-3 py-2 text-xs text-center bg-blue-100">${ghrAff(tot.ghrOffer, tot.affOffer)}</td>
-            <td class="px-3 py-2 text-xs text-center bg-emerald-100">${ghrAff(tot.ghrRto, tot.affRto)}</td>
+            ${renderWeekCells(tot, true)}
             <td class="px-3 py-2 text-xs text-center border-l border-slate-300">${ghrAff(tot.ghr, tot.aff)}</td>
-            ${renderOutlookCells(tot.outlook, true)}
           </tr>
         ` : '';
 
@@ -7475,7 +7522,7 @@
                 <span class="flex items-center gap-1"><span class="inline-block w-3 h-3 rounded-sm bg-amber-200 border border-amber-300"></span>Submitted</span>
                 <span class="flex items-center gap-1"><span class="inline-block w-3 h-3 rounded-sm bg-blue-200 border border-blue-300"></span>Offer Pending</span>
                 <span class="flex items-center gap-1"><span class="inline-block w-3 h-3 rounded-sm bg-emerald-200 border border-emerald-300"></span>RTO / Verifying</span>
-                <span class="text-slate-400">· Outlook uses RTO / Ready-to-Onboard date</span>
+                <span class="text-slate-400">· Now = current pipeline · Future weeks = expected new starts (matches Trend tab)</span>
               </div>
             </div>
             <div class="rounded-lg border border-slate-200 overflow-x-auto w-full">
@@ -7483,16 +7530,12 @@
                 <thead>
                   <tr class="bg-slate-100 text-slate-500 uppercase tracking-wide text-[10px] border-b border-slate-200">
                     <th class="px-3 py-2 text-left font-semibold" rowspan="2">System</th>
-                    <th class="px-3 py-2 text-center font-semibold text-slate-600 bg-slate-50" colspan="3">Current Pipeline</th>
+                    ${allWeeks.map((w, wi) => `<th class="px-2 py-2 text-center font-semibold bg-slate-50 ${wi > 0 ? 'border-l border-slate-200' : ''} ${w.isCurrent ? 'text-blue-700' : 'text-slate-600'}" colspan="3">${w.isCurrent ? 'Now' : 'Wk of ' + w.label}</th>`).join('')}
                     <th class="px-3 py-2 text-center font-semibold text-slate-600 border-l border-slate-200" rowspan="2">Total</th>
-                    ${outlookWeeks.map(w => `<th class="px-2 py-2 text-center font-semibold text-slate-600 bg-slate-50 border-l border-slate-200" colspan="3">Wk of ${w.label}</th>`).join('')}
                   </tr>
                   <tr class="bg-slate-100 text-slate-500 uppercase tracking-wide text-[10px]">
-                    <th class="px-3 py-2 text-center font-semibold text-amber-700 bg-amber-50">Submitted</th>
-                    <th class="px-3 py-2 text-center font-semibold text-blue-700 bg-blue-50">Offer Pending</th>
-                    <th class="px-3 py-2 text-center font-semibold text-emerald-700 bg-emerald-50">RTO / Verifying</th>
-                    ${outlookWeeks.map(() => `
-                      <th class="px-2 py-1.5 text-center font-semibold text-amber-700 bg-amber-50 border-l border-slate-200" title="Submitted">Sub</th>
+                    ${allWeeks.map((w, wi) => `
+                      <th class="px-2 py-1.5 text-center font-semibold text-amber-700 bg-amber-50 ${wi > 0 ? 'border-l border-slate-200' : ''}" title="Submitted">Sub</th>
                       <th class="px-2 py-1.5 text-center font-semibold text-blue-700 bg-blue-50" title="Offer Pending">Off</th>
                       <th class="px-2 py-1.5 text-center font-semibold text-emerald-700 bg-emerald-50" title="RTO / Verifying">RTO</th>
                     `).join('')}
