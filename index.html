@@ -7190,9 +7190,32 @@
           return null;
         };
 
+        // Stale-record filter: a record's most recent milestone (submission,
+        // offer, RTO) must be within the last 60 days. Records lingering past
+        // that window are almost certainly abandoned — the source system just
+        // never got a terminal-status update.
+        const STALE_DAYS = 60;
+        const nowMs = Date.now();
+        const parseMs = (d) => {
+          if (!d) return null;
+          const t = new Date(d).getTime();
+          return isNaN(t) ? null : t;
+        };
+        const latestMilestoneMs = (r) => {
+          const ms = [
+            parseMs(r.submission_date),
+            parseMs(r.offer_date),
+            parseMs(r.ready_to_onboard_date),
+            parseMs(r.rto),
+          ].filter(x => x !== null);
+          return ms.length ? Math.max(...ms) : null;
+        };
+
         // Apply global filters + drill-through filters + active-pipeline only
         const filtered = allSubs.filter(r => {
           if (!statusBucket(r.status)) return false;
+          const lm = latestMilestoneMs(r);
+          if (lm !== null && (nowMs - lm) / 86400000 > STALE_DAYS) return false;
           const sysMatch = s.filterSelection.systems.size === 0 || s.filterSelection.systems.has(r.healthSystem);
           if (!sysMatch) return false;
           if (drill && drill.system && r.healthSystem !== drill.system) return false;
@@ -7510,7 +7533,7 @@
           <div class="flex items-center justify-between mb-4">
             <h2 class="text-lg font-bold text-slate-700">Pending Submissions</h2>
             <div class="flex items-center gap-3">
-              <span class="text-xs text-slate-400">Last 6 months</span>
+              <span class="text-xs text-slate-400" title="Records with no milestone activity in the last ${STALE_DAYS} days are hidden as stale">Active pipeline (≤ ${STALE_DAYS}d since last activity)</span>
               <span class="text-xs font-semibold text-slate-600">${colFiltered.length} records</span>
             </div>
           </div>
