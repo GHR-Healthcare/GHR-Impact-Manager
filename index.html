@@ -6747,22 +6747,41 @@
           else entry.aff += r.revenue;
         });
         // Revenue series aligned to the weeks array. Only past-or-current weeks
-        // have data (no forward projection of revenue yet); future weeks = null.
-        const revenueTotalData = weeks.map((w, i) => {
+        // have raw data; future weeks = null.
+        const rawRevenueTotal = weeks.map((w, i) => {
           if (i > currentWeekIdx) return null;
           const entry = revenueByWeek.get(fmtWeekKey(w.start));
           return entry ? entry.ghr + entry.aff : 0;
         });
-        const revenueGhrData = weeks.map((w, i) => {
+        const rawRevenueGhr = weeks.map((w, i) => {
           if (i > currentWeekIdx) return null;
           const entry = revenueByWeek.get(fmtWeekKey(w.start));
           return entry ? entry.ghr : 0;
         });
-        const revenueAffData = weeks.map((w, i) => {
+        const rawRevenueAff = weeks.map((w, i) => {
           if (i > currentWeekIdx) return null;
           const entry = revenueByWeek.get(fmtWeekKey(w.start));
           return entry ? entry.aff : 0;
         });
+
+        // Billing lag: B4 ESR + VNDLY SPEND lag 1-3 weeks behind Work Date / Item
+        // Date, so the most recent weeks usually read low or zero. Walk back from
+        // the current week and null out any tail week whose revenue is < 30% of
+        // the preceding week — that's the "incomplete billing" boundary.
+        const lastCompleteIdx = (() => {
+          let idx = currentWeekIdx;
+          while (idx >= 1) {
+            const cur = rawRevenueTotal[idx] || 0;
+            const prev = rawRevenueTotal[idx - 1] || 0;
+            if (prev > 0 && cur < prev * 0.3) { idx--; continue; }
+            break;
+          }
+          return idx;
+        })();
+        const trimTail = (arr) => arr.map((v, i) => (i > lastCompleteIdx ? null : v));
+        const revenueTotalData = trimTail(rawRevenueTotal);
+        const revenueGhrData = trimTail(rawRevenueGhr);
+        const revenueAffData = trimTail(rawRevenueAff);
 
         // Overlay lines shared across account/PM views: Total, Pipeline, Trend Projection
         const overlayDatasets = [

@@ -161,7 +161,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             print(f"Error loading VNDLY pending: {e}")
 
         # ============================================================
-        # Weekly actual revenue — B4 (from B4HealthESR2 Bill Total)
+        # Weekly actual revenue — B4 (from B4HealthESR Bill Total)
         # ============================================================
         weekly_revenue = []
         try:
@@ -172,11 +172,11 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                         23) AS week_start,
                     [Health System] AS system,
                     CASE
-                        WHEN [Agency Name] LIKE '%GHR%' OR [Agency Name] LIKE '%Planet Healthcare%'
+                        WHEN [Agency Name] LIKE 'GHR%' OR [Agency Name] LIKE '%Planet Healthcare%'
                         THEN 'GHR' ELSE 'Affiliate'
                     END AS vendor_type,
                     SUM(ISNULL(TRY_CAST([Bill Total] AS DECIMAL(18,2)), 0)) AS revenue
-                FROM dhc.B4HealthESR2
+                FROM dhc.B4HealthESR
                 WHERE [Work Date] IS NOT NULL
                     AND CAST([Work Date] AS DATE) >= DATEADD(WEEK, -8, GETDATE())
                     AND [Health System] IS NOT NULL
@@ -185,7 +185,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                     DATEADD(DAY, 1 - DATEPART(WEEKDAY, CAST([Work Date] AS DATE)), CAST([Work Date] AS DATE)),
                     [Health System],
                     CASE
-                        WHEN [Agency Name] LIKE '%GHR%' OR [Agency Name] LIKE '%Planet Healthcare%'
+                        WHEN [Agency Name] LIKE 'GHR%' OR [Agency Name] LIKE '%Planet Healthcare%'
                         THEN 'GHR' ELSE 'Affiliate'
                     END
             ''')
