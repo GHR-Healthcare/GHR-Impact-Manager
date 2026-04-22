@@ -6764,16 +6764,24 @@
           return entry ? entry.aff : 0;
         });
 
-        // Billing lag: B4 ESR + VNDLY SPEND lag 1-3 weeks behind Work Date / Item
-        // Date, so the most recent weeks usually read low or zero. Walk back from
-        // the current week and null out any tail week whose revenue is < 30% of
-        // the preceding week — that's the "incomplete billing" boundary.
+        // Billing lag: B4 ESR + VNDLY SPEND lag 1-3 weeks behind Work Date /
+        // Item Date, so the most recent weeks usually read low or partial.
+        // Walk back from the current week and trim any tail week whose revenue
+        // is under 85% of the MEDIAN of the four preceding fully-billed weeks.
+        // Median baseline is more robust than a single-prior-week ratio —
+        // catches partial-week dips even when the prior week is also partial.
         const lastCompleteIdx = (() => {
           let idx = currentWeekIdx;
           while (idx >= 1) {
+            const priorVals = [];
+            for (let j = Math.max(0, idx - 4); j < idx; j++) {
+              if (rawRevenueTotal[j] > 0) priorVals.push(rawRevenueTotal[j]);
+            }
+            if (priorVals.length === 0) break;
+            priorVals.sort((a, b) => a - b);
+            const median = priorVals[Math.floor(priorVals.length / 2)];
             const cur = rawRevenueTotal[idx] || 0;
-            const prev = rawRevenueTotal[idx - 1] || 0;
-            if (prev > 0 && cur < prev * 0.3) { idx--; continue; }
+            if (median > 0 && cur < median * 0.85) { idx--; continue; }
             break;
           }
           return idx;
@@ -7223,29 +7231,43 @@
                     label: ctx => {
                       const val = ctx.parsed.y;
                       if (val == null) return null;
-                      if (ctx.dataset.label === 'Revenue') {
-                        const i = ctx.dataIndex;
-                        const arr = ctx.dataset.data || [];
-                        const prev = i > 0 ? arr[i - 1] : null;
+                      const isRevenue = (ctx.dataset.label || '').startsWith('Revenue');
+                      if (isRevenue) {
+                        const fmt = (v) => {
+                          if (Math.abs(v) >= 1e6) return '$' + (v / 1e6).toFixed(2) + 'M';
+                          if (Math.abs(v) >= 1e3) return '$' + (v / 1e3).toFixed(1) + 'k';
+                          return '$' + v.toFixed(0);
+                        };
+                        // Week-over-week delta for the actual revenue line only
                         let delta = '';
-                        if (prev != null && prev > 0) {
-                          const pct = ((val - prev) / prev) * 100;
-                          const up = pct >= 0;
-                          delta = ` (${up ? '▲' : '▼'} ${Math.abs(pct).toFixed(0)}%)`;
+                        if (ctx.dataset.label === 'Revenue') {
+                          const i = ctx.dataIndex;
+                          const arr = ctx.dataset.data || [];
+                          const prev = i > 0 ? arr[i - 1] : null;
+                          if (prev != null && prev > 0) {
+                            const pct = ((val - prev) / prev) * 100;
+                            const up = pct >= 0;
+                            delta = ` (${up ? '▲' : '▼'} ${Math.abs(pct).toFixed(0)}%)`;
+                          }
                         }
-                        return `${ctx.dataset.label}: $${(val / 1000).toFixed(1)}k${delta}`;
+                        return `${ctx.dataset.label}: ${fmt(val)}${delta}`;
                       }
                       return `${ctx.dataset.label}: ${val}`;
                     },
                     afterBody: (items) => {
                       if (!items || !items.length) return;
                       const i = items[0].dataIndex;
+                      const fmt = (v) => {
+                        if (Math.abs(v) >= 1e6) return '$' + (v / 1e6).toFixed(2) + 'M';
+                        if (Math.abs(v) >= 1e3) return '$' + (v / 1e3).toFixed(1) + 'k';
+                        return '$' + v.toFixed(0);
+                      };
                       const revItem = items.find(it => it.dataset.label === 'Revenue');
                       if (!revItem || revItem.parsed.y == null) return;
                       const g = (revenueGhrData && revenueGhrData[i]) || 0;
                       const a = (revenueAffData && revenueAffData[i]) || 0;
                       if (!g && !a) return;
-                      return ['', `GHR: $${(g/1000).toFixed(1)}k · Affiliate: $${(a/1000).toFixed(1)}k`];
+                      return ['', `GHR: ${fmt(g)} · Affiliate: ${fmt(a)}`];
                     }
                   }
                 }
