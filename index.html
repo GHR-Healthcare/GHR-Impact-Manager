@@ -7284,15 +7284,15 @@
           </div>
           <div class="mb-6">
             <h3 class="text-sm font-bold text-slate-600 mb-2">By Health System <span class="font-normal text-slate-400 text-[10px] ml-2"><span class="text-blue-600">GHR</span> / <span class="text-purple-600">Affiliate</span></span></h3>
-            <div class="inline-block rounded-lg border border-slate-200 overflow-hidden">
-              <table class="text-xs">
+            <div class="rounded-lg border border-slate-200 overflow-hidden">
+              <table class="w-full text-xs">
                 <thead>
                   <tr class="bg-slate-100 text-slate-500 uppercase tracking-wide text-[10px]">
-                    <th class="px-4 py-2 text-left font-semibold">System</th>
-                    <th class="px-4 py-2 text-center font-semibold text-amber-600">Submitted</th>
-                    <th class="px-4 py-2 text-center font-semibold text-blue-600">Offer Pending</th>
-                    <th class="px-4 py-2 text-center font-semibold text-emerald-600">RTO / Verifying</th>
-                    <th class="px-4 py-2 text-center font-semibold text-slate-600">Total</th>
+                    <th class="px-3 py-2 text-left font-semibold">System</th>
+                    <th class="px-3 py-2 text-center font-semibold text-amber-600">Submitted</th>
+                    <th class="px-3 py-2 text-center font-semibold text-blue-600">Offer Pending</th>
+                    <th class="px-3 py-2 text-center font-semibold text-emerald-600">RTO / Verifying</th>
+                    <th class="px-3 py-2 text-center font-semibold text-slate-600">Total</th>
                   </tr>
                 </thead>
                 <tbody>${systemSummaryRows}</tbody>
@@ -7302,19 +7302,6 @@
 
           <h3 class="text-sm font-bold text-slate-600 mb-2">Detail</h3>
           <div class="rounded-lg border border-slate-200 overflow-x-auto">
-            <style>
-              #pendingDetailTable { table-layout: fixed; width: 100%; }
-              #pendingDetailTable th:nth-child(1), #pendingDetailTable td:nth-child(1) { width: 60px; }
-              #pendingDetailTable th:nth-child(2), #pendingDetailTable td:nth-child(2) { width: 100px; }
-              #pendingDetailTable th:nth-child(3), #pendingDetailTable td:nth-child(3) { width: 18%; }
-              #pendingDetailTable th:nth-child(4), #pendingDetailTable td:nth-child(4) { width: 14%; }
-              #pendingDetailTable th:nth-child(5), #pendingDetailTable td:nth-child(5) { width: 14%; }
-              #pendingDetailTable th:nth-child(6), #pendingDetailTable td:nth-child(6) { width: 100px; }
-              #pendingDetailTable th:nth-child(7), #pendingDetailTable td:nth-child(7) { width: 90px; }
-              #pendingDetailTable th:nth-child(8), #pendingDetailTable td:nth-child(8) { width: 80px; }
-              #pendingDetailTable th:nth-child(9), #pendingDetailTable td:nth-child(9) { width: 70px; }
-              #pendingDetailTable td { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-            </style>
             <table id="pendingDetailTable" class="w-full text-xs">
               <thead>
                 <tr class="bg-slate-100 text-slate-500 uppercase tracking-wide text-[10px]">
