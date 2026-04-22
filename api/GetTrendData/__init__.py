@@ -160,12 +160,94 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
         except Exception as e:
             print(f"Error loading VNDLY pending: {e}")
 
+        # ============================================================
+        # Weekly actual revenue — B4 (from B4HealthESR2 Bill Total)
+        # ============================================================
+        weekly_revenue = []
+        try:
+            cursor.execute('''
+                SELECT
+                    CONVERT(VARCHAR(10),
+                        DATEADD(DAY, 1 - DATEPART(WEEKDAY, CAST([Work Date] AS DATE)), CAST([Work Date] AS DATE)),
+                        23) AS week_start,
+                    [Health System] AS system,
+                    CASE
+                        WHEN [Agency Name] LIKE '%GHR%' OR [Agency Name] LIKE '%Planet Healthcare%'
+                        THEN 'GHR' ELSE 'Affiliate'
+                    END AS vendor_type,
+                    SUM(ISNULL(TRY_CAST([Bill Total] AS DECIMAL(18,2)), 0)) AS revenue
+                FROM dhc.B4HealthESR2
+                WHERE [Work Date] IS NOT NULL
+                    AND CAST([Work Date] AS DATE) >= DATEADD(WEEK, -8, GETDATE())
+                    AND [Health System] IS NOT NULL
+                    AND [Health System] <> 'Sunrise Senior Living Management (California)'
+                GROUP BY
+                    DATEADD(DAY, 1 - DATEPART(WEEKDAY, CAST([Work Date] AS DATE)), CAST([Work Date] AS DATE)),
+                    [Health System],
+                    CASE
+                        WHEN [Agency Name] LIKE '%GHR%' OR [Agency Name] LIKE '%Planet Healthcare%'
+                        THEN 'GHR' ELSE 'Affiliate'
+                    END
+            ''')
+            for row in cursor.fetchall():
+                weekly_revenue.append({
+                    'source_system': 'B4',
+                    'week_start': row[0],
+                    'system': row[1],
+                    'vendor_type': row[2],
+                    'revenue': float(row[3] or 0),
+                })
+        except Exception as e:
+            print(f"Error loading B4 weekly revenue: {e}")
+
+        # ============================================================
+        # Weekly actual revenue — VNDLY (from STAGING_VNDLY_SPEND Client Amount)
+        # ============================================================
+        try:
+            cursor.execute('''
+                SELECT
+                    CONVERT(VARCHAR(10),
+                        DATEADD(DAY, 1 - DATEPART(WEEKDAY, CAST([Item Date] AS DATE)), CAST([Item Date] AS DATE)),
+                        23) AS week_start,
+                    [Health System] AS system,
+                    CASE
+                        WHEN [Vendor Company Name] LIKE '%GHR%' OR [Vendor Company Name] LIKE '%Planet Healthcare%'
+                        THEN 'GHR' ELSE 'Affiliate'
+                    END AS vendor_type,
+                    SUM(ISNULL(TRY_CAST([Client Amount] AS DECIMAL(18,2)), 0)) AS revenue
+                FROM dbo.STAGING_VNDLY_SPEND
+                WHERE [Item Date] IS NOT NULL
+                    AND CAST([Item Date] AS DATE) >= DATEADD(WEEK, -8, GETDATE())
+                    AND [Health System] IS NOT NULL
+                GROUP BY
+                    DATEADD(DAY, 1 - DATEPART(WEEKDAY, CAST([Item Date] AS DATE)), CAST([Item Date] AS DATE)),
+                    [Health System],
+                    CASE
+                        WHEN [Vendor Company Name] LIKE '%GHR%' OR [Vendor Company Name] LIKE '%Planet Healthcare%'
+                        THEN 'GHR' ELSE 'Affiliate'
+                    END
+            ''')
+            for row in cursor.fetchall():
+                weekly_revenue.append({
+                    'source_system': 'VNDLY',
+                    'week_start': row[0],
+                    'system': row[1],
+                    'vendor_type': row[2],
+                    'revenue': float(row[3] or 0),
+                })
+        except Exception as e:
+            print(f"Error loading VNDLY weekly revenue: {e}")
+
         conn.close()
 
-        print(f"Returning {len(assignments)} trend assignments, {len(pending)} pending")
+        print(f"Returning {len(assignments)} trend assignments, {len(pending)} pending, {len(weekly_revenue)} weekly revenue rows")
 
         return func.HttpResponse(
-            json.dumps({'assignments': assignments, 'pending': pending}, default=str),
+            json.dumps({
+                'assignments': assignments,
+                'pending': pending,
+                'weekly_revenue': weekly_revenue,
+            }, default=str),
             mimetype="application/json",
             status_code=200
         )

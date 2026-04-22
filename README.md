@@ -2,6 +2,12 @@
 
 ## Version History
 
+**1.7.0** - Revenue line on Trend chart
+- Trend chart now overlays actual weekly revenue on a secondary y-axis (gold line, $ formatting)
+- Revenue sourced from B4HealthESR2 Bill Total + STAGING_VNDLY_SPEND Client Amount, grouped by Sun-Sat week
+- Honors the current system filter; transitioned systems dedupe (VNDLY wins when both report same week)
+- Pending tab stale-record filter: records with no milestone activity in 60 days are hidden
+
 **1.6.3** - Pending outlook rewired to match Trend tab deltas
 - Outlook counts now come from workorder start dates (Trend tab data source) instead of submission RTO dates, so numbers line up with the +/- deltas shown on the Trend breakdown
 - Workers deduped per system+status+week to match Trend's distinct-headcount logic

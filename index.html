@@ -6717,6 +6717,53 @@
         // Per-system and per-PM chart datasets (used when Group By = Account or PM)
         const TREND_COLORS = ['#3b82f6','#8b5cf6','#22c55e','#f59e0b','#ef4444','#06b6d4','#84cc16','#f97316','#ec4899','#6366f1','#14b8a6','#f43f5e'];
 
+        // ── Weekly actual revenue (from trend data's weekly_revenue rows) ──
+        // Applies current system filter only; revenue isn't tagged by category
+        // so category/specialty filters can't narrow it further.
+        const weeklyRevenueRows = s.trendData?.weekly_revenue || [];
+        const fmtWeekKey = (d) => {
+          const y = d.getFullYear();
+          const m = String(d.getMonth() + 1).padStart(2, '0');
+          const dd = String(d.getDate()).padStart(2, '0');
+          return `${y}-${m}-${dd}`;
+        };
+        // Dedup B4 vs VNDLY for transitioned systems — prefer VNDLY when both
+        // report the same week (VNDLY SPEND is authoritative post-transition).
+        const vndlyRevenueWeeks = new Set(
+          weeklyRevenueRows
+            .filter(r => r.source_system === 'VNDLY')
+            .map(r => `${Utils.getHealthSystem(null, r.system)}|${r.week_start}`)
+        );
+        const revenueByWeek = new Map();  // week_start → {ghr, aff}
+        weeklyRevenueRows.forEach(r => {
+          const sys = Utils.getHealthSystem(null, r.system);
+          if (s.filterSelection.systems.size > 0 && !s.filterSelection.systems.has(sys)) return;
+          if (r.source_system === 'B4' && transitionedSystems.has(sys)) {
+            if (vndlyRevenueWeeks.has(`${sys}|${r.week_start}`)) return;
+          }
+          if (!revenueByWeek.has(r.week_start)) revenueByWeek.set(r.week_start, { ghr: 0, aff: 0 });
+          const entry = revenueByWeek.get(r.week_start);
+          if (r.vendor_type === 'GHR') entry.ghr += r.revenue;
+          else entry.aff += r.revenue;
+        });
+        // Revenue series aligned to the weeks array. Only past-or-current weeks
+        // have data (no forward projection of revenue yet); future weeks = null.
+        const revenueTotalData = weeks.map((w, i) => {
+          if (i > currentWeekIdx) return null;
+          const entry = revenueByWeek.get(fmtWeekKey(w.start));
+          return entry ? entry.ghr + entry.aff : 0;
+        });
+        const revenueGhrData = weeks.map((w, i) => {
+          if (i > currentWeekIdx) return null;
+          const entry = revenueByWeek.get(fmtWeekKey(w.start));
+          return entry ? entry.ghr : 0;
+        });
+        const revenueAffData = weeks.map((w, i) => {
+          if (i > currentWeekIdx) return null;
+          const entry = revenueByWeek.get(fmtWeekKey(w.start));
+          return entry ? entry.aff : 0;
+        });
+
         // Overlay lines shared across account/PM views: Total, Pipeline, Trend Projection
         const overlayDatasets = [
           {
@@ -6781,6 +6828,7 @@
           { label: 'Affiliate', data: affActualsData, borderColor: '#8b5cf6', backgroundColor: 'rgba(139,92,246,0.1)', fill: false, tension: 0.3, pointRadius: 4 },
           { label: 'Affiliate Pipeline', data: affPipelineData, borderColor: '#8b5cf6', fill: false, tension: 0.3, pointRadius: 3, borderDash: DASH_PIPELINE },
           { label: 'Affiliate Pending', data: pendingAffData, borderColor: '#8b5cf6', fill: false, tension: 0.3, pointRadius: 3, borderDash: DASH_PENDING },
+          { label: 'Revenue', data: revenueTotalData, borderColor: '#d97706', backgroundColor: 'rgba(217,119,6,0.08)', fill: false, tension: 0.3, pointRadius: 4, borderWidth: 2, yAxisID: 'y1' },
         ];
         window.__trendChartDatasets = { category: categoryChartDatasets, account: sysChartDatasets, pm: pmChartDatasets };
 
@@ -7130,6 +7178,9 @@
                     label: ctx => {
                       const val = ctx.parsed.y;
                       if (val == null) return null;
+                      if (ctx.dataset.label === 'Revenue') {
+                        return `${ctx.dataset.label}: $${(val / 1000).toFixed(1)}k`;
+                      }
                       return `${ctx.dataset.label}: ${val}`;
                     }
                   }
@@ -7137,9 +7188,17 @@
               },
               scales: {
                 y: {
+                  position: 'left',
                   beginAtZero: false,
                   ticks: { font: { size: 11 } },
                   title: { display: true, text: 'Headcount', font: { size: 11 } }
+                },
+                y1: {
+                  position: 'right',
+                  beginAtZero: true,
+                  grid: { drawOnChartArea: false },
+                  ticks: { font: { size: 11 }, callback: v => '$' + (v / 1000).toFixed(0) + 'k' },
+                  title: { display: true, text: 'Revenue', font: { size: 11 } }
                 },
                 x: { ticks: { font: { size: 11 }, maxRotation: 30 } }
               }
