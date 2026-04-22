@@ -2,6 +2,10 @@
 
 ## Version History
 
+**1.6.2** - Pending 3-week outlook split by status
+- Each outlook week now has 3 sub-columns (Submitted / Offer Pending / RTO), color-coded to match the pipeline groups
+- Expected-start date falls back to VNDLY's Ready-to-Onboard date when RTO is empty
+
 **1.6.1** - Pending tab summary redesign + detail table width fix
 - Pending summary table now groups Submitted / Offer Pending / RTO columns visually with color-coded headers and a legend
 - Added 3-week outlook columns to the summary, bucketing GHR/Affiliate pending candidates by expected RTO date
