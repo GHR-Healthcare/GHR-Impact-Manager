@@ -6191,7 +6191,7 @@
 
         const summaryTableHeaders = weeks.map((w, i) => {
           const isCurrent = i === currentWeekIdx;
-          const avgCol = isCurrent ? `<th class="px-2 py-2 text-center font-semibold bg-amber-50 text-amber-700 border-l border-r border-amber-200">4-Wk Avg</th>` : '';
+          const avgCol = isCurrent ? `<th class="px-2 py-2 text-center font-semibold trend-avg-col bg-amber-50 text-amber-700 border-l border-r border-amber-200">4-Wk Avg</th>` : '';
           return `<th class="px-2 py-2 text-center font-semibold ${isCurrent ? 'bg-blue-50 text-blue-700' : ''}">${fmtWeekEnd(w.end)}</th>${avgCol}`;
         }).join('');
 
@@ -6661,11 +6661,11 @@
               </button>
             </div>
           </div>
+          <div class="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-4" id="trendKpiTiles"></div>
           <div class="bg-white rounded-xl border border-slate-200 p-4 shadow-sm">
             <div id="trendChartLegend" class="flex flex-wrap justify-center gap-x-5 gap-y-2 mb-3 text-[11px] text-slate-600"></div>
             <canvas id="trendChart" height="100"></canvas>
           </div>
-          <div class="grid grid-cols-2 lg:grid-cols-4 gap-3 mt-4" id="trendKpiTiles"></div>
           <div class="mt-6">
             <div class="flex items-center gap-2 mb-2">
               <h3 class="text-sm font-bold text-slate-600" id="trendBreakdownLabel">Category</h3>
