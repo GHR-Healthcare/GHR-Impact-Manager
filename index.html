@@ -6927,12 +6927,16 @@
         const DASH_PROJECTION = [14, 6];
         const categoryChartDatasets = [
           { label: 'Total Headcount', data: actualsData, borderColor: '#64748b', backgroundColor: 'rgba(100,116,139,0.08)', fill: true, tension: 0.3, pointRadius: 5 },
+          { label: 'Total Pipeline', data: pipelineData, borderColor: '#64748b', fill: false, tension: 0.3, pointRadius: 4, borderDash: DASH_PIPELINE, hideFromLegend: true },
           { label: 'Total Unconfirmed', data: pipelineWithPendingData, borderColor: '#64748b', fill: false, tension: 0.3, pointRadius: 4, borderDash: DASH_PENDING },
           { label: 'GHR', data: ghrActualsData, borderColor: '#3b82f6', backgroundColor: 'rgba(59,130,246,0.1)', fill: false, tension: 0.3, pointRadius: 4 },
+          { label: 'GHR Pipeline', data: ghrPipelineData, borderColor: '#3b82f6', fill: false, tension: 0.3, pointRadius: 3, borderDash: DASH_PIPELINE, hideFromLegend: true },
           { label: 'GHR Unconfirmed', data: pendingGhrData, borderColor: '#3b82f6', fill: false, tension: 0.3, pointRadius: 3, borderDash: DASH_PENDING },
           { label: 'Affiliate', data: affActualsData, borderColor: '#8b5cf6', backgroundColor: 'rgba(139,92,246,0.1)', fill: false, tension: 0.3, pointRadius: 4 },
+          { label: 'Affiliate Pipeline', data: affPipelineData, borderColor: '#8b5cf6', fill: false, tension: 0.3, pointRadius: 3, borderDash: DASH_PIPELINE, hideFromLegend: true },
           { label: 'Affiliate Unconfirmed', data: pendingAffData, borderColor: '#8b5cf6', fill: false, tension: 0.3, pointRadius: 3, borderDash: DASH_PENDING },
           { label: 'Revenue', data: revenueTotalData, borderColor: '#d97706', backgroundColor: 'rgba(217,119,6,0.08)', fill: false, tension: 0.3, pointRadius: 4, borderWidth: 2, yAxisID: 'y1' },
+          { label: 'Revenue (projected)', data: revenueProjectedData, borderColor: '#d97706', fill: false, tension: 0.3, pointRadius: 3, borderWidth: 2, borderDash: DASH_PENDING, yAxisID: 'y1', hideFromLegend: true },
         ];
         window.__trendChartDatasets = { category: categoryChartDatasets, account: sysChartDatasets, pm: pmChartDatasets };
 
@@ -7141,10 +7145,13 @@
 
         const fillRateChartDatasets = [
           { label: 'Total Fill Rate', data: totalFillActuals, borderColor: '#64748b', backgroundColor: 'rgba(100,116,139,0.08)', fill: true, tension: 0.3, pointRadius: 5 },
+          { label: 'Total Fill Rate (Pipeline)', data: totalFillPipeline, borderColor: '#64748b', fill: false, tension: 0.3, pointRadius: 4, borderDash: DASH_PIPELINE, hideFromLegend: true },
           { label: 'Total Fill Rate (Unconfirmed)', data: totalFillPending, borderColor: '#64748b', fill: false, tension: 0.3, pointRadius: 4, borderDash: DASH_PENDING },
           { label: 'GHR Fill Rate', data: ghrFillActuals, borderColor: '#3b82f6', backgroundColor: 'rgba(59,130,246,0.1)', fill: false, tension: 0.3, pointRadius: 5 },
+          { label: 'GHR Fill Rate (Pipeline)', data: ghrFillPipeline, borderColor: '#3b82f6', fill: false, tension: 0.3, pointRadius: 4, borderDash: DASH_PIPELINE, hideFromLegend: true },
           { label: 'GHR Fill Rate (Unconfirmed)', data: ghrFillPending, borderColor: '#3b82f6', fill: false, tension: 0.3, pointRadius: 4, borderDash: DASH_PENDING },
           { label: 'Affiliate Fill Rate', data: affFillActuals, borderColor: '#8b5cf6', backgroundColor: 'rgba(139,92,246,0.1)', fill: false, tension: 0.3, pointRadius: 5 },
+          { label: 'Affiliate Fill Rate (Pipeline)', data: affFillPipeline, borderColor: '#8b5cf6', fill: false, tension: 0.3, pointRadius: 4, borderDash: DASH_PIPELINE, hideFromLegend: true },
           { label: 'Affiliate Fill Rate (Unconfirmed)', data: affFillPending, borderColor: '#8b5cf6', fill: false, tension: 0.3, pointRadius: 4, borderDash: DASH_PENDING },
         ];
 
@@ -7194,7 +7201,14 @@
           const container = document.getElementById('trendChartLegend');
           if (!container || !window.__trendChart) return;
           const chart = window.__trendChart;
-          const datasets = chart.data.datasets;
+          // Filter out datasets flagged hideFromLegend (e.g. Pipeline lines,
+          // Revenue projection) — they're drawn on the chart as dotted
+          // continuations of the parent series so they don't need a separate
+          // legend entry. Preserve ORIGINAL indices so toggle clicks still
+          // target the right dataset in the chart.
+          const datasets = chart.data.datasets
+            .map((ds, origIdx) => ({ ds, origIdx }))
+            .filter(({ ds }) => !ds.hideFromLegend);
 
           const parseLabel = (label) => {
             for (const g of ['Total', 'GHR', 'Affiliate']) {
@@ -7213,9 +7227,9 @@
             </svg>`;
           };
 
-          const parsed = datasets.map((ds, i) => ({
-            ds, i,
-            hidden: !chart.isDatasetVisible(i),
+          const parsed = datasets.map(({ ds, origIdx }) => ({
+            ds, i: origIdx,
+            hidden: !chart.isDatasetVisible(origIdx),
             ...parseLabel(ds.label),
           }));
 
