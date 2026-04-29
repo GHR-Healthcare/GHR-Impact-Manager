@@ -51,11 +51,12 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
 
         # Use $search for flexible prefix matching across displayName and other fields.
         # $count=true is required when using ConsistencyLevel: eventual.
+        # Pull 25 to leave headroom for filtering out shared mailboxes etc.
         params = urllib.parse.urlencode({
             '$search': f'"displayName:{query}"',
             '$count': 'true',
             '$select': 'id,displayName,mail,jobTitle,department',
-            '$top': '10',
+            '$top': '25',
         })
         graph_url = f'https://graph.microsoft.com/v1.0/users?{params}'
 
@@ -65,16 +66,22 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
 
         with urllib.request.urlopen(graph_req, timeout=10) as resp:
             data = json.loads(resp.read())
-            users = [
-                {
+            users = []
+            for u in data.get('value', []):
+                display_name = u.get('displayName') or ''
+                # Filter out shared mailboxes / service accounts — M365 tenants
+                # commonly mark these with "(Shared)" in displayName.
+                if '(shared)' in display_name.lower():
+                    continue
+                users.append({
                     'id': u.get('id', ''),
-                    'displayName': u.get('displayName', ''),
+                    'displayName': display_name,
                     'mail': u.get('mail', ''),
                     'jobTitle': u.get('jobTitle', ''),
                     'department': u.get('department', ''),
-                }
-                for u in data.get('value', [])
-            ]
+                })
+                if len(users) >= 10:
+                    break
 
         return func.HttpResponse(
             json.dumps({'users': users}),
