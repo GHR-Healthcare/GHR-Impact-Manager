@@ -4426,51 +4426,45 @@
           return true;
         });
 
-        // Service-line classifier: maps category text → 'nursing' / 'allied' / 'other'
-        const classifyServiceLine = (cat) => {
-          const c = (cat || '').toLowerCase().trim();
-          if (!c) return 'other';
-          if (/nurs|^rn$|^lpn$|\bcna\b|nurse practitioner|\bnp\b|crna|midwif/.test(c)) return 'nursing';
-          if (/allied|\btech\b|therap|lab|radiolog|ultrasound|\bct\b|\bmri\b|echo|respirator|pharm|sonograph|cardiolog|imaging|surg(ical)?\s*tech|patient\s*service|medical\s*assistant/.test(c)) return 'allied';
-          return 'other';
-        };
+        // Service line is now classified server-side (GetFinancialData CASE WHEN)
+        // and arrives on each row as r.service_line. We bucket per system per
+        // line so each system row can be expanded to show the breakdown.
+        const SERVICE_LINES = ['Nursing', 'Allied', 'Locums', 'Non-Clinical', 'Other'];
 
-        // Aggregate data: { month: { system: { ghrBilling, affBilling, ghrHeadcount, affHeadcount } } }
-        // Plus parallel month-level totals broken out by service line.
+        // Aggregate data: { month: { system: { ghrBilling, affBilling, ghrHeadcount, affHeadcount,
+        //                                       byLine: { Nursing: {...}, Allied: {...}, ... } } } }
         const monthMap = {};
-        const monthSlMap = {};  // month → 'nursing'|'allied' → { ghrBilling, affBilling, ... }
         const newSlBucket = () => ({ ghrBilling: 0, affBilling: 0, ghrHeadcount: 0, affHeadcount: 0 });
+        const newSysBucket = () => {
+          const b = { ghrBilling: 0, affBilling: 0, ghrHeadcount: 0, affHeadcount: 0, byLine: {} };
+          SERVICE_LINES.forEach(sl => { b.byLine[sl] = newSlBucket(); });
+          return b;
+        };
         const systemSet = new Set();
         const monthSet = new Set();
 
         filteredData.forEach(r => {
           const m = r.month;
           const sys = Utils.getHealthSystem(null, r.health_system) || r.health_system || 'Unknown';
+          const sl = SERVICE_LINES.includes(r.service_line) ? r.service_line : 'Other';
           monthSet.add(m);
           systemSet.add(sys);
           if (!monthMap[m]) monthMap[m] = {};
-          if (!monthMap[m][sys]) monthMap[m][sys] = { ghrBilling: 0, affBilling: 0, ghrHeadcount: 0, affHeadcount: 0 };
+          if (!monthMap[m][sys]) monthMap[m][sys] = newSysBucket();
+
+          const sysBucket = monthMap[m][sys];
+          const lineBucket = sysBucket.byLine[sl];
 
           if (r.vendor_type === 'GHR') {
-            monthMap[m][sys].ghrBilling += r.estimated_billing || 0;
-            monthMap[m][sys].ghrHeadcount += r.headcount || 0;
+            sysBucket.ghrBilling += r.estimated_billing || 0;
+            sysBucket.ghrHeadcount += r.headcount || 0;
+            lineBucket.ghrBilling += r.estimated_billing || 0;
+            lineBucket.ghrHeadcount += r.headcount || 0;
           } else {
-            monthMap[m][sys].affBilling += r.estimated_billing || 0;
-            monthMap[m][sys].affHeadcount += r.headcount || 0;
-          }
-
-          // Service-line bucket (Nursing / Allied)
-          const sl = classifyServiceLine(r.category);
-          if (sl === 'nursing' || sl === 'allied') {
-            if (!monthSlMap[m]) monthSlMap[m] = { nursing: newSlBucket(), allied: newSlBucket() };
-            const b = monthSlMap[m][sl];
-            if (r.vendor_type === 'GHR') {
-              b.ghrBilling += r.estimated_billing || 0;
-              b.ghrHeadcount += r.headcount || 0;
-            } else {
-              b.affBilling += r.estimated_billing || 0;
-              b.affHeadcount += r.headcount || 0;
-            }
+            sysBucket.affBilling += r.estimated_billing || 0;
+            sysBucket.affHeadcount += r.headcount || 0;
+            lineBucket.affBilling += r.estimated_billing || 0;
+            lineBucket.affHeadcount += r.headcount || 0;
           }
         });
 
@@ -4521,8 +4515,29 @@
           })
         );
 
-        // Helper: build a financial data table
+        // Track expand state per system per table (window-scoped so it
+        // survives re-renders triggered by filters/date-range changes).
+        if (!window.__finExpanded) window.__finExpanded = {};
+        const tableKey = (title) => 'fin_' + title.replace(/[^a-z0-9]/gi, '_').toLowerCase();
+        window.__toggleFinSystem = (tk, sys) => {
+          if (!window.__finExpanded[tk]) window.__finExpanded[tk] = {};
+          window.__finExpanded[tk][sys] = !window.__finExpanded[tk][sys];
+          View.financials();
+          lucide.createIcons();
+        };
+        window.__toggleFinTotalsExpand = (tk) => {
+          if (!window.__finExpanded[tk]) window.__finExpanded[tk] = {};
+          window.__finExpanded[tk].__totals = !window.__finExpanded[tk].__totals;
+          View.financials();
+          lucide.createIcons();
+        };
+
+        // Helper: build a financial data table with per-system service-line drilldown
         const buildTable = (title, titleColor, bgColor, getValueFn, formatFn, getTotalFn) => {
+          const tk = tableKey(title);
+          const expandedMap = window.__finExpanded[tk] || {};
+          const totalsExpanded = !!expandedMap.__totals;
+
           let t = `
             <div class="mb-1">
               <h5 class="font-bold text-sm ${titleColor} mb-2">${title}</h5>
@@ -4530,26 +4545,57 @@
                 <table class="w-full text-xs">
                   <thead>
                     <tr class="border-b-2 border-slate-300">
-                      <th class="text-left py-1.5 px-2 font-bold text-slate-600 sticky left-0 ${bgColor} min-w-[140px]"></th>
+                      <th class="text-left py-1.5 px-2 font-bold text-slate-600 sticky left-0 ${bgColor} min-w-[180px]"></th>
                       ${months.map(m => `<th class="text-right py-1.5 px-2 font-bold text-slate-500 min-w-[75px]">${monthLabel(m)}</th>`).join('')}
                     </tr>
                   </thead>
                   <tbody>`;
 
           activeSystems.forEach(sys => {
-            t += `<tr class="border-b border-slate-100 hover:bg-slate-50">
-              <td class="py-1 px-2 font-medium text-slate-700 sticky left-0 ${bgColor} text-xs">${sys}</td>
+            const expanded = !!expandedMap[sys];
+            const chevron = expanded ? 'chevron-down' : 'chevron-right';
+            t += `<tr class="border-b border-slate-100 hover:bg-slate-50 cursor-pointer" onclick="window.__toggleFinSystem('${tk}', ${JSON.stringify(sys)})">
+              <td class="py-1 px-2 font-medium text-slate-700 sticky left-0 ${bgColor} text-xs">
+                <span class="inline-flex items-center gap-1">
+                  <i data-lucide="${chevron}" class="w-3 h-3 text-slate-400"></i>${sys}
+                </span>
+              </td>
               ${months.map(m => {
                 const d = monthMap[m]?.[sys];
                 const val = d ? getValueFn(d) : 0;
                 return `<td class="py-1 px-2 text-right text-slate-700">${formatFn(val)}</td>`;
               }).join('')}
             </tr>`;
+
+            // Drilldown rows (one per non-empty service line) — only when expanded
+            if (expanded) {
+              SERVICE_LINES.forEach(sl => {
+                // Hide service lines with all-zero values across the displayed months
+                const hasAny = months.some(m => {
+                  const d = monthMap[m]?.[sys]?.byLine?.[sl];
+                  return d && (getTotalFn ? getTotalFn(d) : getValueFn(d)) > 0;
+                });
+                if (!hasAny) return;
+                t += `<tr class="border-b border-slate-50 bg-slate-50/30">
+                  <td class="py-0.5 px-2 pl-8 text-slate-500 sticky left-0 ${bgColor} text-[11px] italic">↳ ${sl}</td>
+                  ${months.map(m => {
+                    const d = monthMap[m]?.[sys]?.byLine?.[sl];
+                    const val = d ? (getTotalFn ? getTotalFn(d) : getValueFn(d)) : 0;
+                    return `<td class="py-0.5 px-2 text-right text-slate-500 text-[11px] italic">${formatFn(val)}</td>`;
+                  }).join('')}
+                </tr>`;
+              });
+            }
           });
 
-          // Total row
-          t += `<tr class="border-t-2 border-slate-400 font-bold">
-            <td class="py-1.5 px-2 text-slate-800 sticky left-0 ${bgColor}">Total</td>
+          // Total row (clickable to expand the same way as system rows)
+          const totalsChevron = totalsExpanded ? 'chevron-down' : 'chevron-right';
+          t += `<tr class="border-t-2 border-slate-400 font-bold cursor-pointer hover:bg-slate-50" onclick="window.__toggleFinTotalsExpand('${tk}')">
+            <td class="py-1.5 px-2 text-slate-800 sticky left-0 ${bgColor}">
+              <span class="inline-flex items-center gap-1">
+                <i data-lucide="${totalsChevron}" class="w-3 h-3 text-slate-500"></i>Total
+              </span>
+            </td>
             ${months.map(m => {
               let total = 0;
               activeSystems.forEach(sys => {
@@ -4560,18 +4606,31 @@
             }).join('')}
           </tr>`;
 
-          // Nursing / Allied service-line subtotals (drawn under the Total row)
-          ['nursing', 'allied'].forEach(sl => {
-            const label = sl === 'nursing' ? 'Nursing' : 'Allied';
-            t += `<tr class="border-b border-slate-100 bg-slate-50/40">
-              <td class="py-1 px-2 pl-6 text-slate-600 sticky left-0 ${bgColor} text-xs italic">↳ ${label}</td>
-              ${months.map(m => {
-                const d = monthSlMap[m]?.[sl];
-                const val = d ? (getTotalFn ? getTotalFn(d) : getValueFn(d)) : 0;
-                return `<td class="py-1 px-2 text-right text-slate-600 text-xs italic">${formatFn(val)}</td>`;
-              }).join('')}
-            </tr>`;
-          });
+          // Grand-total drilldown by service line (sums every system's per-line bucket)
+          if (totalsExpanded) {
+            SERVICE_LINES.forEach(sl => {
+              const hasAny = months.some(m => {
+                let v = 0;
+                activeSystems.forEach(sys => {
+                  const d = monthMap[m]?.[sys]?.byLine?.[sl];
+                  if (d) v += getTotalFn ? getTotalFn(d) : getValueFn(d);
+                });
+                return v > 0;
+              });
+              if (!hasAny) return;
+              t += `<tr class="border-b border-slate-100 bg-slate-50/40">
+                <td class="py-1 px-2 pl-8 text-slate-600 sticky left-0 ${bgColor} text-xs italic">↳ ${sl}</td>
+                ${months.map(m => {
+                  let val = 0;
+                  activeSystems.forEach(sys => {
+                    const d = monthMap[m]?.[sys]?.byLine?.[sl];
+                    if (d) val += getTotalFn ? getTotalFn(d) : getValueFn(d);
+                  });
+                  return `<td class="py-1 px-2 text-right text-slate-600 text-xs italic">${formatFn(val)}</td>`;
+                }).join('')}
+              </tr>`;
+            });
+          }
 
           t += `</tbody></table></div></div>`;
           return t;

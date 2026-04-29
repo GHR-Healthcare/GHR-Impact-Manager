@@ -93,6 +93,13 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                     facility,
                     category,
                     CASE
+                        WHEN category IN ('Nursing', 'Per Diem Nursing') THEN 'Nursing'
+                        WHEN category IN ('Allied', 'Per Diem Allied') THEN 'Allied'
+                        WHEN category = 'Physicians' THEN 'Locums'
+                        WHEN category = 'Non-Clinical' THEN 'Non-Clinical'
+                        ELSE 'Other'
+                    END AS service_line,
+                    CASE
                         WHEN [Vendor Company Name] LIKE '%GHR%' OR [Vendor Company Name] LIKE '%Planet Healthcare%'
                         THEN 'GHR' ELSE 'Affiliate'
                     END AS vendor_type,
@@ -104,6 +111,13 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                     [Health System],
                     facility,
                     category,
+                    CASE
+                        WHEN category IN ('Nursing', 'Per Diem Nursing') THEN 'Nursing'
+                        WHEN category IN ('Allied', 'Per Diem Allied') THEN 'Allied'
+                        WHEN category = 'Physicians' THEN 'Locums'
+                        WHEN category = 'Non-Clinical' THEN 'Non-Clinical'
+                        ELSE 'Other'
+                    END,
                     CASE
                         WHEN [Vendor Company Name] LIKE '%GHR%' OR [Vendor Company Name] LIKE '%Planet Healthcare%'
                         THEN 'GHR' ELSE 'Affiliate'
@@ -136,6 +150,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                         [Health System],
                         [Facility Name] AS facility,
                         [Care Type] AS category,
+                        [Program] AS program,
                         [Agency Name],
                         [Bill Total]
                     FROM dhc.B4HealthESR
@@ -154,6 +169,13 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                     facility,
                     category,
                     CASE
+                        WHEN program LIKE '%Nursing%' THEN 'Nursing'
+                        WHEN program LIKE '%Allied%' OR program LIKE '%Pharmacy%' THEN 'Allied'
+                        WHEN program LIKE '%Physician%' OR program LIKE '%Advanced Practices%' THEN 'Locums'
+                        WHEN program = 'Non-Clinical' OR program LIKE '%Information Technology%' THEN 'Non-Clinical'
+                        ELSE 'Other'
+                    END AS service_line,
+                    CASE
                         WHEN [Agency Name] LIKE 'GHR%' OR [Agency Name] LIKE '%Planet Healthcare%'
                         THEN 'GHR' ELSE 'Affiliate'
                     END AS vendor_type,
@@ -165,6 +187,13 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                     [Health System],
                     facility,
                     category,
+                    CASE
+                        WHEN program LIKE '%Nursing%' THEN 'Nursing'
+                        WHEN program LIKE '%Allied%' OR program LIKE '%Pharmacy%' THEN 'Allied'
+                        WHEN program LIKE '%Physician%' OR program LIKE '%Advanced Practices%' THEN 'Locums'
+                        WHEN program = 'Non-Clinical' OR program LIKE '%Information Technology%' THEN 'Non-Clinical'
+                        ELSE 'Other'
+                    END,
                     CASE
                         WHEN [Agency Name] LIKE 'GHR%' OR [Agency Name] LIKE '%Planet Healthcare%'
                         THEN 'GHR' ELSE 'Affiliate'
