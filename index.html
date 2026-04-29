@@ -411,17 +411,13 @@
                 class="px-4 py-1.5 text-xs font-bold rounded-md transition-colors text-slate-500 hover:text-slate-700 flex items-center gap-1.5">
           <i data-lucide="flame" class="w-3.5 h-3.5"></i> Hot Jobs
         </button>
-        <button onclick="store.dispatch('SET_VIEW','stats')" id="btnViewStats"
+        <button onclick="store.dispatch('SET_VIEW','trend')" id="btnViewTrend"
                 class="px-4 py-1.5 text-xs font-bold rounded-md transition-colors text-slate-500 hover:text-slate-700 flex items-center gap-1.5">
-          <i data-lucide="bar-chart-3" class="w-3.5 h-3.5"></i> Stats
+          <i data-lucide="trending-up" class="w-3.5 h-3.5"></i> Trend
         </button>
         <button onclick="store.dispatch('SET_VIEW','perdiem')" id="btnViewPerDiem"
                 class="px-4 py-1.5 text-xs font-bold rounded-md transition-colors text-slate-500 hover:text-slate-700 flex items-center gap-1.5">
           <i data-lucide="clock" class="w-3.5 h-3.5"></i> Per Diem
-        </button>
-        <button onclick="store.dispatch('SET_VIEW','trend')" id="btnViewTrend"
-                class="px-4 py-1.5 text-xs font-bold rounded-md transition-colors text-slate-500 hover:text-slate-700 flex items-center gap-1.5">
-          <i data-lucide="trending-up" class="w-3.5 h-3.5"></i> Trend
         </button>
         <button onclick="store.dispatch('SET_VIEW','pending')" id="btnViewPending"
                 class="px-4 py-1.5 text-xs font-bold rounded-md transition-colors text-slate-500 hover:text-slate-700 flex items-center gap-1.5">
@@ -3652,6 +3648,7 @@
 
       getFilteredJobs(s) {
         return s.jobs.filter(j => {
+          if (Utils.isHiddenHealthSystem(j.healthSystem)) return false;
           const sysMatch = s.filterSelection.systems.size === 0 || s.filterSelection.systems.has(j.healthSystem);
           const facMatch = s.filterSelection.facilities.size === 0 || s.filterSelection.facilities.has(j.facility);
           const specMatch = s.filterSelection.specialties.size === 0 || s.filterSelection.specialties.has(Utils.cleanFilterText(j.specialty));
@@ -4429,8 +4426,20 @@
           return true;
         });
 
+        // Service-line classifier: maps category text → 'nursing' / 'allied' / 'other'
+        const classifyServiceLine = (cat) => {
+          const c = (cat || '').toLowerCase().trim();
+          if (!c) return 'other';
+          if (/nurs|^rn$|^lpn$|\bcna\b|nurse practitioner|\bnp\b|crna|midwif/.test(c)) return 'nursing';
+          if (/allied|\btech\b|therap|lab|radiolog|ultrasound|\bct\b|\bmri\b|echo|respirator|pharm|sonograph|cardiolog|imaging|surg(ical)?\s*tech|patient\s*service|medical\s*assistant/.test(c)) return 'allied';
+          return 'other';
+        };
+
         // Aggregate data: { month: { system: { ghrBilling, affBilling, ghrHeadcount, affHeadcount } } }
+        // Plus parallel month-level totals broken out by service line.
         const monthMap = {};
+        const monthSlMap = {};  // month → 'nursing'|'allied' → { ghrBilling, affBilling, ... }
+        const newSlBucket = () => ({ ghrBilling: 0, affBilling: 0, ghrHeadcount: 0, affHeadcount: 0 });
         const systemSet = new Set();
         const monthSet = new Set();
 
@@ -4448,6 +4457,20 @@
           } else {
             monthMap[m][sys].affBilling += r.estimated_billing || 0;
             monthMap[m][sys].affHeadcount += r.headcount || 0;
+          }
+
+          // Service-line bucket (Nursing / Allied)
+          const sl = classifyServiceLine(r.category);
+          if (sl === 'nursing' || sl === 'allied') {
+            if (!monthSlMap[m]) monthSlMap[m] = { nursing: newSlBucket(), allied: newSlBucket() };
+            const b = monthSlMap[m][sl];
+            if (r.vendor_type === 'GHR') {
+              b.ghrBilling += r.estimated_billing || 0;
+              b.ghrHeadcount += r.headcount || 0;
+            } else {
+              b.affBilling += r.estimated_billing || 0;
+              b.affHeadcount += r.headcount || 0;
+            }
           }
         });
 
@@ -4536,6 +4559,19 @@
               return `<td class="py-1.5 px-2 text-right text-slate-800">${formatFn(total)}</td>`;
             }).join('')}
           </tr>`;
+
+          // Nursing / Allied service-line subtotals (drawn under the Total row)
+          ['nursing', 'allied'].forEach(sl => {
+            const label = sl === 'nursing' ? 'Nursing' : 'Allied';
+            t += `<tr class="border-b border-slate-100 bg-slate-50/40">
+              <td class="py-1 px-2 pl-6 text-slate-600 sticky left-0 ${bgColor} text-xs italic">↳ ${label}</td>
+              ${months.map(m => {
+                const d = monthSlMap[m]?.[sl];
+                const val = d ? (getTotalFn ? getTotalFn(d) : getValueFn(d)) : 0;
+                return `<td class="py-1 px-2 text-right text-slate-600 text-xs italic">${formatFn(val)}</td>`;
+              }).join('')}
+            </tr>`;
+          });
 
           t += `</tbody></table></div></div>`;
           return t;
@@ -5823,8 +5859,9 @@
           return false;
         };
 
-        // Apply global filters
+        // Apply global filters (and hide-flagged systems, except in Financials)
         const filterRow = (r) => {
+          if (Utils.isHiddenHealthSystem(r.healthSystem)) return false;
           const sysMatch = s.filterSelection.systems.size === 0 || s.filterSelection.systems.has(r.healthSystem);
           const facMatch = s.filterSelection.facilities.size === 0 || s.filterSelection.facilities.has(r.facility);
           const catMatch = matchesTrendCategory(r.category);
@@ -7426,6 +7463,7 @@
 
         // Apply global filters + drill-through filters + active-pipeline only
         const filtered = allSubs.filter(r => {
+          if (Utils.isHiddenHealthSystem(r.healthSystem)) return false;
           if (!statusBucket(r.status)) return false;
           const lm = latestMilestoneMs(r);
           if (lm !== null && (nowMs - lm) / 86400000 > STALE_DAYS) return false;
@@ -8191,7 +8229,7 @@
         financialData: [],
         financialFromMonth: null,
         financialToMonth: null,
-        financialShowHidden: false,
+        financialShowHidden: true,
         perDiemData: { assignments: [], shifts: [] },
         perDiemLoaded: false,
         hoursData: { rows: [] },
