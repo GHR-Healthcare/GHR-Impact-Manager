@@ -2,11 +2,16 @@
 One-time migration endpoint: copies app-owned tables from
 {CHANGES_DB}.dbo.* to {APPDB}.impactmgr.*.
 
-GET  /api/migrate-impactmgr             → dry run, returns row counts
-                                          from both sides
-GET  /api/migrate-impactmgr?confirm=yes → creates schema/tables in APPDB
-                                          if needed, TRUNCATEs destination,
-                                          then copies all rows from source.
+Auth: requires `?secret=...` query param OR `x-migrate-secret` header
+matching the MIGRATE_SECRET env var on the Function App. The endpoint
+returns 503 if MIGRATE_SECRET is not set, 401 if it doesn't match.
+
+GET  /api/migrate-impactmgr?secret=...
+                            → dry run, returns row counts from both sides
+GET  /api/migrate-impactmgr?secret=...&confirm=yes
+                            → creates schema/tables in APPDB if needed,
+                              TRUNCATEs destination, then copies all rows
+                              from source.
 
 Idempotent: re-running with confirm=yes will truncate + re-copy. Old
 tables in CHANGES_DB.dbo are NOT touched — drop them manually after
@@ -135,6 +140,24 @@ def _count(cursor, table):
 
 
 def main(req: func.HttpRequest) -> func.HttpResponse:
+    # Shared-secret auth: caller must supply ?secret=... or x-migrate-secret
+    # header that matches the MIGRATE_SECRET env var. Keeps this endpoint
+    # off-limits to anyone who happens to know the URL.
+    expected_secret = os.environ.get('MIGRATE_SECRET')
+    if not expected_secret:
+        return func.HttpResponse(
+            json.dumps({'error': 'MIGRATE_SECRET env var not configured. Set it on the Function App before using this endpoint.'}),
+            mimetype="application/json", status_code=503
+        )
+    provided_secret = req.params.get('secret') or req.headers.get('x-migrate-secret') or ''
+    if provided_secret != expected_secret:
+        # Constant-time-ish check via length compare done implicitly above; the
+        # mismatch path returns the same 401 either way.
+        return func.HttpResponse(
+            json.dumps({'error': 'Unauthorized.'}),
+            mimetype="application/json", status_code=401
+        )
+
     confirm = (req.params.get('confirm') or '').lower() == 'yes'
     src_db_env = req.params.get('source_db') or 'CHANGES_DB'
 

@@ -18,8 +18,9 @@ Read-only external tables (`dhc.B4HealthOrder`, `dhc.B4HealthESR`, `dbo.STAGING_
 
 1. **Create the database** in Azure (SSMS, Azure Portal, or `CREATE DATABASE ghrappdb`). Same server as the existing `CHANGES_DB`. Same SQL user (`DB_USER`) needs `db_owner` on the new database.
 
-2. **Add env var to the Function App configuration**:
+2. **Add env vars to the Function App configuration**:
    - `APPDB=ghrappdb`
+   - `MIGRATE_SECRET=<some long random string>` — required to call the migration endpoint. Use a password generator; no one needs to memorize it.
 
    Do NOT remove `CHANGES_DB` yet — the migration endpoint still needs it as the source.
 
@@ -27,13 +28,15 @@ Read-only external tables (`dhc.B4HealthOrder`, `dhc.B4HealthESR`, `dbo.STAGING_
 
 4. **Dry-run the migration** to confirm the source/destination row counts:
    ```
-   GET https://<your-app>/api/migrate-impactmgr
+   GET https://<your-app>/api/migrate-impactmgr?secret=<MIGRATE_SECRET>
    ```
+   (Or pass via header: `x-migrate-secret: <MIGRATE_SECRET>`.)
+
    Returns JSON listing each table with `src_count` (rows in `CHANGES_DB.dbo.*`) and `dst_count_before` (rows in `ghrappdb.impactmgr.*`, will be `0` on first run).
 
 5. **Run the migration for real**:
    ```
-   GET https://<your-app>/api/migrate-impactmgr?confirm=yes
+   GET https://<your-app>/api/migrate-impactmgr?secret=<MIGRATE_SECRET>&confirm=yes
    ```
    This:
    - Creates the `impactmgr` schema in `ghrappdb` if missing
