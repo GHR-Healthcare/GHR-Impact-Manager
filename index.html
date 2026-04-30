@@ -488,12 +488,6 @@
       <div id="hotJobsContainer" class="flex-1 overflow-y-auto scroller p-6"></div>
     </div>
 
-    <div id="statsViewWrapper" class="hidden flex flex-col h-full overflow-hidden bg-white shadow-lg rounded-lg border border-slate-200">
-      <div class="flex-1 overflow-y-auto scroller p-6">
-        <div id="statsContent" class="space-y-6"></div>
-      </div>
-    </div>
-
     <div id="financialsViewWrapper" class="hidden flex flex-col h-full overflow-hidden bg-white shadow-lg rounded-lg border border-slate-200">
       <div class="flex-1 overflow-y-auto scroller p-6">
         <div id="financialsContent" class="space-y-6"></div>
@@ -3594,7 +3588,6 @@
         const view = window.store.state.view;
         $('listViewWrapper')?.classList.toggle('hidden', view !== 'list');
         $('hotJobsViewWrapper')?.classList.toggle('hidden', view !== 'hotjobs');
-        $('statsViewWrapper')?.classList.toggle('hidden', view !== 'stats');
         $('financialsViewWrapper')?.classList.toggle('hidden', view !== 'financials');
         $('perDiemViewWrapper')?.classList.toggle('hidden', view !== 'perdiem');
         $('trendViewWrapper')?.classList.toggle('hidden', view !== 'trend');
@@ -3609,11 +3602,10 @@
           kpiEl.style.visibility = kpiViews.has(view) ? 'visible' : 'hidden';
           kpiEl.style.display = kpiViews.has(view) ? '' : 'none';
         }
-        if (legendEl) legendEl.style.visibility = (view === 'stats' || view === 'financials' || view === 'perdiem' || view === 'trend' || view === 'pending' || view === 'contracts') ? 'hidden' : 'visible';
+        if (legendEl) legendEl.style.visibility = (view === 'financials' || view === 'perdiem' || view === 'trend' || view === 'pending' || view === 'contracts') ? 'hidden' : 'visible';
 
         const btnList = $('btnViewList');
         const btnHot = $('btnViewHot');
-        const btnStats = $('btnViewStats');
         const btnFinancials = $('btnViewFinancials');
         const btnPerDiem = $('btnViewPerDiem');
         const btnTrend = $('btnViewTrend');
@@ -3623,7 +3615,6 @@
 
         if (btnList) btnList.className = view === 'list' ? activeClass : inactiveClass;
         if (btnHot) btnHot.className = view === 'hotjobs' ? activeClass : inactiveClass;
-        if (btnStats) btnStats.className = view === 'stats' ? activeClass : inactiveClass;
         if (btnFinancials) btnFinancials.className = view === 'financials' ? activeClass : inactiveClass;
         if (btnPerDiem) btnPerDiem.className = view === 'perdiem' ? activeClass : inactiveClass;
         if (btnTrend) btnTrend.className = view === 'trend' ? activeClass : inactiveClass;
@@ -3637,7 +3628,6 @@
         const v = window.store.state.view;
         if (v === 'list') this.list();
         else if (v === 'hotjobs') this.hotJobs();
-        else if (v === 'stats') this.stats();
         else if (v === 'financials') this.financials();
         else if (v === 'perdiem') this.perDiem();
         else if (v === 'trend') this.trend();
@@ -4281,115 +4271,6 @@
           <div class="flex items-center gap-2"><div class="w-3 h-3 rounded-full bg-red-800"></div> 16+ Days</div>
           <div class="flex items-center gap-2"><div class="w-3 h-3 rounded-full border border-slate-500 bg-white"></div> Perm</div>
         `;
-      },
-
-      stats() {
-        const s = window.store.state;
-        const container = $('statsContent');
-        if (!container) return;
-
-        if (!s.statsData || (!s.statsData.onAssignment?.length && !s.statsData.upcoming?.length)) {
-          container.innerHTML = `<div class="p-6 text-slate-500 bg-slate-50 border border-slate-200 rounded">No stats sheets found. Import a file that includes “On Assignment / Active” and optional “New Upcoming / Starts”.</div>`;
-          return;
-        }
-
-        const buckets = [];
-        for (let i = 0; i < 4; i++) {
-          const end = new Date(); end.setDate(end.getDate() - (i * 7)); end.setHours(23, 59, 59, 999);
-          const start = new Date(end); start.setDate(start.getDate() - 6); start.setHours(0, 0, 0, 0);
-          const labelDate = start.toLocaleDateString('en-US', { month: 'numeric', day: 'numeric', year: '2-digit' });
-          buckets.push({ label: `Week of ${labelDate}`, start, end });
-        }
-
-        const metrics = buckets.map(bucket => {
-          const activeAssignments = (s.statsData.onAssignment || []).filter(r => {
-            const sysMatch = Utils.matchesSelectedSystems(r, s.filterSelection.systems);
-            const facMatch = s.filterSelection.facilities.size === 0 || (r.facility && s.filterSelection.facilities.has(r.facility));
-            const specMatch = s.filterSelection.specialties.size === 0 || (r.specialty && s.filterSelection.specialties.has(Utils.cleanFilterText(r.specialty)));
-            const catMatch = Utils.matchesStatsCategoryFilter(r.specialty, s.filterSelection.categories);
-            if (!(sysMatch && facMatch && specMatch && catMatch)) return false;
-            return r.startDate <= bucket.end && (!r.endDate || r.endDate >= bucket.start);
-          });
-
-          const totalOnAssg = activeAssignments.length;
-          const ghrGroup = activeAssignments.filter(r => {
-            const agLower = String(r.agency || '').toLowerCase();
-            return agLower.includes('ghr') || agLower.includes('planet healthcare');
-          });
-          const ghrCount = ghrGroup.length;
-          const agencyCount = totalOnAssg - ghrCount;
-          const fulfillment = totalOnAssg > 0 ? ((ghrCount / totalOnAssg) * 100).toFixed(1) : 0;
-
-          const filteredUpcoming = (s.statsData.upcoming || []).filter(r => {
-            const sysMatch = Utils.matchesSelectedSystems(r, s.filterSelection.systems);
-            const facMatch = s.filterSelection.facilities.size === 0 || (r.facility && s.filterSelection.facilities.has(r.facility));
-            const specMatch = s.filterSelection.specialties.size === 0 || (r.specialty && s.filterSelection.specialties.has(Utils.cleanFilterText(r.specialty)));
-            const catMatch = Utils.matchesStatsCategoryFilter(r.specialty, s.filterSelection.categories);
-            return sysMatch && facMatch && specMatch && catMatch;
-          });
-
-          const allRows = [...activeAssignments, ...filteredUpcoming];
-          const newStarts = allRows.filter(r => r.startDate >= bucket.start && r.startDate <= bucket.end).length;
-
-          return { label: bucket.label, totalOnAssg, ghrCount, agencyCount, fulfillment, newStarts };
-        });
-
-        container.innerHTML = `
-          <div class="grid grid-cols-5 gap-4 mb-8">
-            <div class="col-span-1 bg-slate-100 p-4 rounded-l-lg flex flex-col justify-center border-y border-l border-slate-200 font-bold text-slate-600 text-sm">
-              <div class="h-10 flex items-center">Metric</div>
-              <div class="h-10 flex items-center border-t border-slate-200">Total On Assignment</div>
-              <div class="h-10 flex items-center border-t border-slate-200 text-blue-600">GHR On Assignment</div>
-              <div class="h-10 flex items-center border-t border-slate-200 text-purple-600">Agency On Assignment</div>
-              <div class="h-10 flex items-center border-t border-slate-200">GHR Fulfillment %</div>
-              <div class="h-10 flex items-center border-t border-slate-200 text-emerald-600">New Starts</div>
-            </div>
-            ${metrics.map(m => `
-              <div class="col-span-1 bg-white p-4 border-y border-r border-slate-200 text-center text-sm">
-                <div class="h-10 flex items-center justify-center font-bold text-slate-800 bg-slate-50 -mx-4 -mt-4 mb-4 border-b">${m.label}</div>
-                <div class="h-10 flex items-center justify-center font-bold text-slate-800">${m.totalOnAssg}</div>
-                <div class="h-10 flex items-center justify-center font-medium text-blue-600 border-t border-slate-100">${m.ghrCount}</div>
-                <div class="h-10 flex items-center justify-center font-medium text-purple-600 border-t border-slate-100">${m.agencyCount}</div>
-                <div class="h-10 flex items-center justify-center font-bold text-slate-700 border-t border-slate-100">${m.fulfillment}%</div>
-                <div class="h-10 flex items-center justify-center font-bold text-emerald-600 border-t border-slate-100">${m.newStarts}</div>
-              </div>
-            `).join('')}
-          </div>
-
-          <div class="bg-white p-4 rounded-lg shadow-sm border border-slate-200">
-            <h4 class="font-bold text-slate-700 mb-4">4-Week Trend Analysis</h4>
-            <div class="h-64"><canvas id="statsTrendChart"></canvas></div>
-          </div>
-        `;
-
-        const chartData = [...metrics].reverse();
-        const ctx = $('statsTrendChart')?.getContext?.('2d');
-        if (!ctx) return;
-
-        if (window.__statsTrendChart) {
-          try { window.__statsTrendChart.destroy(); } catch {}
-          window.__statsTrendChart = null;
-        }
-
-        window.__statsTrendChart = new Chart(ctx, {
-          type: 'line',
-          data: {
-            labels: chartData.map(m => m.label),
-            datasets: [
-              { label: 'Total On Assignment', data: chartData.map(m => m.totalOnAssg), borderColor: '#475569', tension: 0.3 },
-              { label: 'GHR Count', data: chartData.map(m => m.ghrCount), borderColor: '#2563EB', tension: 0.3 },
-              { label: 'New Starts', data: chartData.map(m => m.newStarts), borderColor: '#10B981', borderDash: [5, 5], tension: 0.1 }
-            ]
-          },
-          options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            plugins: { legend: { position: 'bottom' } },
-            scales: { y: { beginAtZero: true } }
-          }
-        });
-
-        lucide.createIcons();
       },
 
       financials() {
