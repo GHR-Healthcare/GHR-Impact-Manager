@@ -4,39 +4,46 @@ import os
 import json
 
 
+def ensure_schema(cursor):
+    cursor.execute("""
+        IF NOT EXISTS (SELECT 1 FROM sys.schemas WHERE name = 'impactmgr')
+            EXEC('CREATE SCHEMA impactmgr')
+    """)
+    cursor.execute("""
+        IF NOT EXISTS (
+            SELECT 1 FROM sys.tables
+            WHERE name = 'reviewed_contracts_rows' AND schema_id = SCHEMA_ID('impactmgr')
+        )
+        CREATE TABLE impactmgr.reviewed_contracts_rows (
+            id          INT IDENTITY(1,1) PRIMARY KEY,
+            row_key     NVARCHAR(500) NOT NULL UNIQUE,
+            reviewed_by NVARCHAR(200) NULL,
+            reviewed_at DATETIME2 DEFAULT SYSUTCDATETIME()
+        )
+    """)
+
+
 def main(req: func.HttpRequest) -> func.HttpResponse:
     """
     GET  → returns { keys: [...] } of all reviewed contract row keys
     POST { action: 'add' | 'remove', key: '...', user?: '...' }
+    Storage: ghrappdb.impactmgr.reviewed_contracts_rows
     """
     try:
         conn = pyodbc.connect(
             f"DRIVER={{ODBC Driver 17 for SQL Server}};"
             f"SERVER={os.environ['DB_HOST']};"
-            f"DATABASE={os.environ['CHANGES_DB']};"
+            f"DATABASE={os.environ['APPDB']};"
             f"UID={os.environ['DB_USER']};"
             f"PWD={os.environ['DB_PASSWORD']};"
             f"TrustServerCertificate=yes"
         )
         cursor = conn.cursor()
-
-        # Auto-create table
-        cursor.execute("""
-            IF NOT EXISTS (
-                SELECT 1 FROM INFORMATION_SCHEMA.TABLES
-                WHERE TABLE_NAME = 'reviewed_contracts_rows'
-            )
-            CREATE TABLE dbo.reviewed_contracts_rows (
-                id          INT IDENTITY(1,1) PRIMARY KEY,
-                row_key     NVARCHAR(500) NOT NULL UNIQUE,
-                reviewed_by NVARCHAR(200) NULL,
-                reviewed_at DATETIME2 DEFAULT SYSUTCDATETIME()
-            )
-        """)
+        ensure_schema(cursor)
         conn.commit()
 
         if req.method == 'GET':
-            cursor.execute('SELECT row_key FROM dbo.reviewed_contracts_rows')
+            cursor.execute('SELECT row_key FROM impactmgr.reviewed_contracts_rows')
             keys = [row[0] for row in cursor.fetchall()]
             conn.close()
             return func.HttpResponse(
@@ -65,14 +72,13 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                 )
 
             if action == 'add':
-                # Insert if not exists
                 cursor.execute("""
-                    IF NOT EXISTS (SELECT 1 FROM dbo.reviewed_contracts_rows WHERE row_key = ?)
-                        INSERT INTO dbo.reviewed_contracts_rows (row_key, reviewed_by) VALUES (?, ?)
+                    IF NOT EXISTS (SELECT 1 FROM impactmgr.reviewed_contracts_rows WHERE row_key = ?)
+                        INSERT INTO impactmgr.reviewed_contracts_rows (row_key, reviewed_by) VALUES (?, ?)
                 """, key, key, user)
                 conn.commit()
             elif action == 'remove':
-                cursor.execute('DELETE FROM dbo.reviewed_contracts_rows WHERE row_key = ?', key)
+                cursor.execute('DELETE FROM impactmgr.reviewed_contracts_rows WHERE row_key = ?', key)
                 conn.commit()
             else:
                 conn.close()
