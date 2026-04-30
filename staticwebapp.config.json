@@ -12,10 +12,6 @@
   },
   "routes": [
     {
-      "route": "/api/migrate-impactmgr",
-      "allowedRoles": ["anonymous"]
-    },
-    {
       "route": "/api/*",
       "allowedRoles": ["authenticated"]
     },
