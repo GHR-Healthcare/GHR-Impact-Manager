@@ -143,8 +143,36 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
         # ============================================================
         try:
             cursor.execute(f'''
-                WITH DeduplicatedESR AS (
+                -- Transitioned-system dedupe: for systems where the contract has
+                -- migrated B4 → VNDLY (Cooper, RUMC, Holy Redeemer), the same
+                -- worker can appear in BOTH B4 ESR and VNDLY SPEND for the same
+                -- date during/after the cutover. B4 stores names "Last, First"
+                -- and VNDLY stores "First Last", so a naive worker_name dedupe
+                -- never matches. We normalize both to lower-case "first last"
+                -- and drop B4 rows whose key matches a VNDLY row.
+                WITH VNDLYTransitionedKeys AS (
                     SELECT DISTINCT
+                        CASE
+                            WHEN [Health System] LIKE '%Cooper%'   THEN 'cooper'
+                            WHEN [Health System] LIKE '%RUMC%'
+                              OR [Health System] LIKE '%Richmond%' THEN 'rumc'
+                            WHEN [Health System] LIKE '%Redeemer%' THEN 'redeemer'
+                            ELSE NULL
+                        END AS sys_canon,
+                        LOWER(LTRIM(RTRIM(
+                            CONCAT([Contractor First Name], ' ', [Contractor Last Name])
+                        ))) AS norm_worker,
+                        CAST([Item Date] AS DATE) AS work_day
+                    FROM dbo.STAGING_VNDLY_SPEND
+                    WHERE [Item Date] >= {date_from}
+                        AND [Item Date] < {date_to}
+                        AND ([Health System] LIKE '%Cooper%'
+                          OR [Health System] LIKE '%RUMC%'
+                          OR [Health System] LIKE '%Richmond%'
+                          OR [Health System] LIKE '%Redeemer%')
+                ),
+                B4WithKey AS (
+                    SELECT
                         [Employee],
                         [Work Date],
                         [Health System],
@@ -152,7 +180,25 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                         [Care Type] AS category,
                         [Program] AS program,
                         [Agency Name],
-                        [Bill Total]
+                        [Bill Total],
+                        CASE
+                            WHEN [Health System] LIKE '%Cooper%'   THEN 'cooper'
+                            WHEN [Health System] LIKE '%RUMC%'
+                              OR [Health System] LIKE '%Richmond%' THEN 'rumc'
+                            WHEN [Health System] LIKE '%Redeemer%' THEN 'redeemer'
+                            ELSE NULL
+                        END AS sys_canon,
+                        -- Normalize "Last, First" → "first last"; otherwise lower the existing string
+                        LOWER(LTRIM(RTRIM(
+                            CASE
+                                WHEN CHARINDEX(',', [Employee]) > 0
+                                THEN
+                                    LTRIM(RTRIM(SUBSTRING([Employee], CHARINDEX(',', [Employee]) + 1, 200)))
+                                    + ' '
+                                    + LTRIM(RTRIM(SUBSTRING([Employee], 1, CHARINDEX(',', [Employee]) - 1)))
+                                ELSE [Employee]
+                            END
+                        ))) AS norm_worker
                     FROM dhc.B4HealthESR
                     WHERE [Work Date] >= {date_from}
                         AND [Work Date] < {date_to}
@@ -161,6 +207,28 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                         -- "(California)" labels (same facilities in VA/NC, not CA), causing
                         -- a 2x inflation. Drop the mislabeled rows until B4 team fixes.
                         AND [Health System] <> 'Sunrise Senior Living Management (California)'
+                ),
+                B4Filtered AS (
+                    SELECT b.* FROM B4WithKey b
+                    WHERE b.sys_canon IS NULL  -- not a transitioned system, keep as-is
+                       OR NOT EXISTS (
+                           SELECT 1 FROM VNDLYTransitionedKeys v
+                           WHERE v.sys_canon  = b.sys_canon
+                             AND v.norm_worker = b.norm_worker
+                             AND v.work_day    = CAST(b.[Work Date] AS DATE)
+                       )
+                ),
+                DeduplicatedESR AS (
+                    SELECT DISTINCT
+                        [Employee],
+                        [Work Date],
+                        [Health System],
+                        facility,
+                        category,
+                        program,
+                        [Agency Name],
+                        [Bill Total]
+                    FROM B4Filtered
                 )
                 SELECT
                     'B4' AS source_system,

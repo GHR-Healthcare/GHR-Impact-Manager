@@ -2062,6 +2062,27 @@
         return false;
       },
 
+      /*
+       * normalizeWorkerName — canonicalize worker names so the same person
+       * dedupes consistently across data sources.
+       *
+       * B4 stores names as "Last, First", VNDLY stores them as "First Last".
+       * Without this, transition-period dedup keys never match across the
+       * two systems and we end up double-counting Cooper / RUMC / Redeemer
+       * workers who appear in both feeds.
+       *
+       * Returns lowercase "first last", trimmed, with collapsed whitespace.
+       */
+      normalizeWorkerName(name) {
+        if (!name) return '';
+        let n = String(name).trim().toLowerCase();
+        if (n.indexOf(',') !== -1) {
+          const parts = n.split(',', 2);
+          n = parts[1].trim() + ' ' + parts[0].trim();
+        }
+        return n.replace(/\s+/g, ' ').trim();
+      },
+
       /**
        * Check if a record matches any of the selected health systems
        * More robust matching that checks healthSystem, raw system value, and facility keywords
@@ -4939,22 +4960,24 @@
         // For transitioned systems, only drop B4 rows that VNDLY *also* has
         // (same worker, same date for shifts; same worker for assignments).
         // This preserves pre-transition B4 data while still deduping the
-        // transition-week overlap window.
+        // transition-week overlap window. Names are normalized because B4
+        // stores "Last, First" and VNDLY stores "First Last".
+        const nw = Utils.normalizeWorkerName;
         const vndlyAssignmentKeys = new Set(
           assignments
             .filter(a => a.source_system === 'VNDLY' && transitionedSystems.has(a.healthSystem))
-            .map(a => `${a.healthSystem}|${a.worker_name}`)
+            .map(a => `${a.healthSystem}|${nw(a.worker_name)}`)
         );
         const vndlyShiftKeys = new Set(
           shifts
             .filter(sh => sh.source_system === 'VNDLY' && transitionedSystems.has(sh.healthSystem) && sh.shift_date)
-            .map(sh => `${sh.healthSystem}|${sh.worker_name}|${sh.shift_date.toISOString().slice(0, 10)}`)
+            .map(sh => `${sh.healthSystem}|${nw(sh.worker_name)}|${sh.shift_date.toISOString().slice(0, 10)}`)
         );
 
         const dedupedAssignments = assignments.filter(a => {
           if (isExcludedFromPerDiem(a.healthSystem)) return false;
           if (a.source_system === 'B4' && transitionedSystems.has(a.healthSystem)) {
-            return !vndlyAssignmentKeys.has(`${a.healthSystem}|${a.worker_name}`);
+            return !vndlyAssignmentKeys.has(`${a.healthSystem}|${nw(a.worker_name)}`);
           }
           return true;
         });
@@ -4963,7 +4986,7 @@
           if (isExcludedFromPerDiem(sh.healthSystem)) return false;
           if (sh.source_system === 'B4' && transitionedSystems.has(sh.healthSystem)) {
             const key = sh.shift_date
-              ? `${sh.healthSystem}|${sh.worker_name}|${sh.shift_date.toISOString().slice(0, 10)}`
+              ? `${sh.healthSystem}|${nw(sh.worker_name)}|${sh.shift_date.toISOString().slice(0, 10)}`
               : null;
             return !key || !vndlyShiftKeys.has(key);
           }
@@ -5488,15 +5511,16 @@
         const transitionedSystems = new Set(['RUMC', 'Holy Redeemer', 'Cooper']);
         const isExcludedSystem = (sys) => Utils.isHiddenHealthSystem(sys);
         const hoursDateKey = d => d ? d.toISOString().slice(0, 10) : '';
+        const nwH = Utils.normalizeWorkerName;
         const vndlyHoursKeys = new Set(
           rows
             .filter(r => r.source_system === 'VNDLY' && transitionedSystems.has(r.healthSystem) && r.item_date)
-            .map(r => `${r.healthSystem}|${r.contractor_name}|${hoursDateKey(r.item_date)}`)
+            .map(r => `${r.healthSystem}|${nwH(r.contractor_name)}|${hoursDateKey(r.item_date)}`)
         );
         const deduped = rows.filter(r => {
           if (isExcludedSystem(r.healthSystem)) return false;
           if (r.source_system === 'B4' && transitionedSystems.has(r.healthSystem)) {
-            const key = r.item_date ? `${r.healthSystem}|${r.contractor_name}|${hoursDateKey(r.item_date)}` : null;
+            const key = r.item_date ? `${r.healthSystem}|${nwH(r.contractor_name)}|${hoursDateKey(r.item_date)}` : null;
             return !key || !vndlyHoursKeys.has(key);
           }
           return true;
@@ -5774,14 +5798,15 @@
         // worker in the same system. Preserves pre-transition B4 data for
         // systems that have partially transitioned (e.g. Cooper 2026-04-13).
         const transitionedSystems = new Set(['RUMC', 'Holy Redeemer', 'Cooper']);
+        const nwT = Utils.normalizeWorkerName;
         const vndlyAssignmentKeys = new Set(
           allAssignments
             .filter(r => r.source_system === 'VNDLY' && transitionedSystems.has(r.healthSystem))
-            .map(r => `${r.healthSystem}|${r.worker_name}`)
+            .map(r => `${r.healthSystem}|${nwT(r.worker_name)}`)
         );
         const deduped = allAssignments.filter(r => {
           if (r.source_system === 'B4' && transitionedSystems.has(r.healthSystem)) {
-            return !vndlyAssignmentKeys.has(`${r.healthSystem}|${r.worker_name}`);
+            return !vndlyAssignmentKeys.has(`${r.healthSystem}|${nwT(r.worker_name)}`);
           }
           return true;
         });
