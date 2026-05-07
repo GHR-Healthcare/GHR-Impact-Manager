@@ -7719,13 +7719,21 @@
         if (!window.__pendingFilters) window.__pendingFilters = {};
         const pf = window.__pendingFilters;
 
+        // Privacy Mode: hide candidate names sourced from non-GHR (affiliate) vendors
+        const displayWorker = (r) => {
+          const name = r.worker_name || r.full_name || '';
+          if (!name) return '—';
+          if (s.redactMode && !r.is_ghr) return Utils.redactName(name);
+          return name;
+        };
+
         // Collect unique values for each filterable column
         const cols = [
           { key: 'source_system', label: 'Source', get: r => r.source_system || '—' },
           { key: 'agency_type', label: 'Agency', get: r => r.is_ghr ? 'GHR' : 'Affiliate' },
           { key: 'healthSystem', label: 'System', get: r => r.healthSystem || '—' },
           { key: 'facility', label: 'Facility', get: r => r.facility || '—' },
-          { key: 'worker', label: 'Worker', get: r => r.worker_name || r.full_name || '—' },
+          { key: 'worker', label: 'Worker', get: r => displayWorker(r) },
           { key: 'position', label: 'Position', get: r => r.position_type || r.care_type || '—' },
           { key: 'status', label: 'Status', get: r => r.status || '—' },
           { key: 'submitted', label: 'Submitted', get: r => fmtDate(r.submission_date) },
@@ -7782,7 +7790,7 @@
             <td class="px-3 py-2 text-xs">${agencyBadge}</td>
             <td class="px-3 py-2 text-xs font-medium text-slate-700">${r.healthSystem || '—'}</td>
             <td class="px-3 py-2 text-xs text-slate-600">${r.facility || '—'}</td>
-            <td class="px-3 py-2 text-xs text-slate-700 font-medium">${r.worker_name || r.full_name || '—'}</td>
+            <td class="px-3 py-2 text-xs text-slate-700 font-medium">${displayWorker(r)}</td>
             <td class="px-3 py-2 text-xs text-slate-600">${r.position_type || r.care_type || '—'}</td>
             <td class="px-3 py-2 text-xs"><span class="inline-block px-2 py-0.5 rounded text-[10px] font-bold ${statusColor(r.status)}">${r.status}</span></td>
             <td class="px-3 py-2 text-xs text-slate-500">${fmtDate(r.submission_date)}</td>
