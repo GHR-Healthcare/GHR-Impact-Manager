@@ -72,7 +72,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             pos_cursor.execute('''
                 SELECT
                     First_Name, Last_Name, Facility, Health_System,
-                    Start_Date, End_Date, Contract_Status
+                    Start_Date, End_Date, Contract_Status, Agency
                 FROM dhc.B4HealthOrder
                 WHERE Contract_Status = 'Closed And Awarded'
                     AND Start_Date IS NOT NULL
@@ -80,13 +80,14 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                     AND (End_Date IS NULL OR End_Date >= DATEADD(DAY, -30, GETDATE()))
             ''')
             for row in pos_cursor.fetchall():
-                first, last, facility, system, sd, ed, status = row
+                first, last, facility, system, sd, ed, status, agency = row
                 assignment_records.append({
                     'source': 'B4',
                     'worker_name': f"{first or ''} {last or ''}".strip(),
                     'normalized_name': normalize_name(first, last),
                     'facility': facility or '',
                     'system': system or '',
+                    'agency': agency or '',
                     'startDate': format_date(sd),
                     'endDate': format_date(ed),
                     'status': status or ''
@@ -100,7 +101,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                 SELECT
                     [Contractor First Name], [Contractor Last Name],
                     [Default Work Site Name], [Health System],
-                    [Start Date], [End Date], [Current Status]
+                    [Start Date], [End Date], [Current Status], [Vendor Name]
                 FROM dbo.STAGING_VNDLY_WORKORDERS
                 WHERE [Current Status] = 'Active'
                     AND [Start Date] IS NOT NULL
@@ -108,13 +109,14 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                     AND ([End Date] IS NULL OR [End Date] >= DATEADD(DAY, -30, GETDATE()))
             ''')
             for row in pos_cursor.fetchall():
-                first, last, facility, system, sd, ed, status = row
+                first, last, facility, system, sd, ed, status, agency = row
                 assignment_records.append({
                     'source': 'VNDLY',
                     'worker_name': f"{first or ''} {last or ''}".strip(),
                     'normalized_name': normalize_name(first, last),
                     'facility': facility or '',
                     'system': system or '',
+                    'agency': agency or '',
                     'startDate': format_date(sd),
                     'endDate': format_date(ed),
                     'status': status or ''

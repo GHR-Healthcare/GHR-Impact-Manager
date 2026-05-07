@@ -1164,6 +1164,18 @@
         };
         const esc = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
 
+        // Privacy Mode: redact B4/VNDLY worker names from non-GHR vendors in export too
+        const isGhrAg = (a) => {
+            const x = String(a || '').toLowerCase();
+            return x.includes('ghr') || x.includes('planet healthcare');
+        };
+        const exportWorker = (r) => {
+            const name = r.worker_name || '';
+            if (!name) return '';
+            if (s.redactMode && !isGhrAg(r.agency)) return Utils.redactName(name);
+            return name;
+        };
+
         const headers = [
             'Category', 'Name (B4/VNDLY)', 'Name (Bullhorn)', 'Source', 'Facility',
             'Client (Bullhorn)', 'Recruiter', 'Account Manager',
@@ -1181,7 +1193,7 @@
             const b = m.bullhorn || {};
             rows.push([
                 esc('Date Mismatch'),
-                esc(a.worker_name || m.worker_name),
+                esc(exportWorker(a) || m.worker_name),
                 esc(b.worker_name),
                 esc(a.source),
                 esc(a.facility),
@@ -1204,7 +1216,7 @@
             if (isReviewed && !showReviewed) return;
             rows.push([
                 esc('Missing in Bullhorn'),
-                esc(r.worker_name),
+                esc(exportWorker(r)),
                 esc(''),
                 esc(r.source),
                 esc(r.facility),
@@ -2563,16 +2575,24 @@
           <td class="py-1.5 px-3 text-slate-400">${r.source_system || '-'}</td>
         </tr>`).join('') || '<tr><td colspan="7" class="py-4 text-center text-slate-400">No records found</td></tr>';
       } else {
+      const isGhrAg = (a) => {
+        const x = String(a || '').toLowerCase();
+        return x.includes('ghr') || x.includes('planet healthcare');
+      };
+      const redactMode = !!window.store.state.redactMode;
       tbody.innerHTML = rows.map((r, i) => {
         const mgr = assignmentMap.get(normName(r.worker_name)) || {};
         const dateCell = mode === 'activeHC'
           ? `${fmtDate(r.startDate)} – ${r.endDate ? fmtDate(r.endDate) : 'ongoing'}`
           : fmtDate(r.shift_date);
+        const hideIdentity = redactMode && !isGhrAg(r.agency);
+        const workerCell = hideIdentity ? Utils.redactName(r.worker_name) : (r.worker_name || '-');
+        const agencyCell = hideIdentity ? 'Vendor' : (r.agency || '-');
         return `
         <tr class="${i % 2 === 0 ? 'bg-white' : 'bg-slate-50'} border-b border-slate-100">
-          <td class="py-1.5 px-3 font-medium text-slate-700">${r.worker_name || '-'}</td>
+          <td class="py-1.5 px-3 font-medium text-slate-700">${workerCell}</td>
           <td class="py-1.5 px-3 text-slate-600">${dateCell}</td>
-          <td class="py-1.5 px-3 text-slate-600">${r.agency || '-'}</td>
+          <td class="py-1.5 px-3 text-slate-600">${agencyCell}</td>
           <td class="py-1.5 px-3 text-slate-500">${mgr.account_manager || '-'}</td>
           <td class="py-1.5 px-3 text-slate-500">${mgr.hiring_manager || '-'}</td>
           <td class="py-1.5 px-3 text-slate-400">${r.source_system || '-'}</td>
@@ -8040,6 +8060,18 @@
           return `<button onclick="window.toggleContractReviewed('${escKey}', true)" title="Mark reviewed to hide" class="text-[10px] px-2 py-0.5 rounded bg-slate-100 text-slate-500 hover:bg-emerald-100 hover:text-emerald-700 font-semibold whitespace-nowrap">✓ Review</button>`;
         };
 
+        // Privacy Mode: redact B4/VNDLY worker names sourced from non-GHR vendors.
+        // Bullhorn names are always GHR's own (Bullhorn = our ATS) so never redacted.
+        const isGhrAg = (a) => {
+          const x = String(a || '').toLowerCase();
+          return x.includes('ghr') || x.includes('planet healthcare');
+        };
+        const redactWorker = (r) => {
+          if (!s.redactMode) return r.worker_name || '—';
+          if (isGhrAg(r.agency)) return r.worker_name || '—';
+          return r.worker_name ? Utils.redactName(r.worker_name) : '—';
+        };
+
         const mismatchRow = (m) => {
           const a = m.assignment || {};
           const b = m.bullhorn || {};
@@ -8047,7 +8079,7 @@
           const eCls = m.end_match ? 'text-slate-700' : 'text-red-600 font-semibold';
           return `
             <tr class="hover:bg-slate-50 border-b border-slate-100">
-              <td class="px-3 py-2 text-xs font-medium text-slate-800">${a.worker_name || m.worker_name || '—'}</td>
+              <td class="px-3 py-2 text-xs font-medium text-slate-800">${redactWorker(a) || m.worker_name || '—'}</td>
               <td class="px-3 py-2 text-xs font-medium text-slate-800">${b.worker_name || '—'}</td>
               <td class="px-3 py-2 text-xs"><span class="px-2 py-0.5 rounded text-[10px] font-semibold ${a.source === 'VNDLY' ? 'bg-indigo-100 text-indigo-700' : 'bg-emerald-100 text-emerald-700'}">${a.source || '—'}</span></td>
               <td class="px-3 py-2 text-xs text-slate-600">${a.facility || '—'}</td>
@@ -8066,7 +8098,7 @@
 
         const missingBHRow = (r) => `
           <tr class="hover:bg-slate-50 border-b border-slate-100">
-            <td class="px-3 py-2 text-xs font-medium text-slate-800">${r.worker_name || '—'}</td>
+            <td class="px-3 py-2 text-xs font-medium text-slate-800">${redactWorker(r)}</td>
             <td class="px-3 py-2 text-xs"><span class="px-2 py-0.5 rounded text-[10px] font-semibold ${r.source === 'VNDLY' ? 'bg-indigo-100 text-indigo-700' : 'bg-emerald-100 text-emerald-700'}">${r.source || '—'}</span></td>
             <td class="px-3 py-2 text-xs text-slate-600">${r.facility || '—'}</td>
             <td class="px-3 py-2 text-xs text-slate-600">${r.system || '—'}</td>
