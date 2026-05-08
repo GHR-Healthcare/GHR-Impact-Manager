@@ -48,7 +48,9 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             # to_month is inclusive, so we go to the first day of the next month
             date_to = f"DATEADD(MONTH, 1, '{to_month}-01')"
         else:
-            date_to = "DATEFROMPARTS(YEAR(GETDATE()), MONTH(GETDATE()), 1)"
+            # Include the current (in-progress) month so the latest billing
+            # cycles show up immediately rather than waiting until next month.
+            date_to = "DATEADD(MONTH, 1, DATEFROMPARTS(YEAR(GETDATE()), MONTH(GETDATE()), 1))"
 
         conn = pyodbc.connect(
             f"DRIVER={{ODBC Driver 17 for SQL Server}};"
@@ -87,6 +89,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                         [Labor Type] AS category,
                         [Vendor Company Name],
                         [Item Date],
+                        [Hours],
                         [Client Amount]
                     FROM dbo.STAGING_VNDLY_SPEND
                     WHERE [Billing Cycle Start Date] >= {date_from}
@@ -111,7 +114,8 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                         THEN 'GHR' ELSE 'Affiliate'
                     END AS vendor_type,
                     COUNT(DISTINCT CONCAT([Contractor First Name], ' ', [Contractor Last Name])) AS headcount,
-                    SUM(ISNULL(TRY_CAST([Client Amount] AS DECIMAL(18,2)), 0)) AS estimated_billing
+                    SUM(ISNULL(TRY_CAST([Client Amount] AS DECIMAL(18,2)), 0)) AS estimated_billing,
+                    SUM(ISNULL(TRY_CAST([Hours] AS DECIMAL(18,2)), 0)) AS hours_worked
                 FROM DeduplicatedSpend
                 GROUP BY
                     FORMAT(DATEFROMPARTS(YEAR([Billing Cycle Start Date]), MONTH([Billing Cycle Start Date]), 1), 'yyyy-MM'),
@@ -137,6 +141,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                 row_dict = dict(zip(columns, row))
                 row_dict['estimated_billing'] = float(row_dict['estimated_billing'] or 0)
                 row_dict['headcount'] = int(row_dict['headcount'] or 0)
+                row_dict['hours_worked'] = float(row_dict.get('hours_worked') or 0)
                 vndly_data.append(row_dict)
         except Exception as e:
             print(f"Error loading VNDLY financial data: {e}")
@@ -196,6 +201,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                         [Program] AS program,
                         [Agency Name],
                         [Bill Total],
+                        [Hours],
                         CASE
                             WHEN [Health System] LIKE '%Cooper%'   THEN 'cooper'
                             WHEN [Health System] LIKE '%RUMC%'
@@ -243,7 +249,8 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                         category,
                         program,
                         [Agency Name],
-                        [Bill Total]
+                        [Bill Total],
+                        [Hours]
                     FROM B4Filtered
                 )
                 SELECT
@@ -264,7 +271,8 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                         THEN 'GHR' ELSE 'Affiliate'
                     END AS vendor_type,
                     COUNT(DISTINCT [Employee]) AS headcount,
-                    SUM(ISNULL(TRY_CAST([Bill Total] AS DECIMAL(18,2)), 0)) AS estimated_billing
+                    SUM(ISNULL(TRY_CAST([Bill Total] AS DECIMAL(18,2)), 0)) AS estimated_billing,
+                    SUM(ISNULL(TRY_CAST([Hours] AS DECIMAL(18,2)), 0)) AS hours_worked
                 FROM DeduplicatedESR
                 GROUP BY
                     FORMAT(DATEFROMPARTS(YEAR([Work Date]), MONTH([Work Date]), 1), 'yyyy-MM'),
@@ -290,6 +298,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                 row_dict = dict(zip(columns, row))
                 row_dict['estimated_billing'] = float(row_dict['estimated_billing'] or 0)
                 row_dict['headcount'] = int(row_dict['headcount'] or 0)
+                row_dict['hours_worked'] = float(row_dict.get('hours_worked') or 0)
                 b4_data.append(row_dict)
         except Exception as e:
             print(f"Error loading B4 financial data: {e}")

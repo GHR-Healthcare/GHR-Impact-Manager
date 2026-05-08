@@ -4356,9 +4356,9 @@
         // Aggregate data: { month: { system: { ghrBilling, affBilling, ghrHeadcount, affHeadcount,
         //                                       byLine: { Nursing: {...}, Allied: {...}, ... } } } }
         const monthMap = {};
-        const newSlBucket = () => ({ ghrBilling: 0, affBilling: 0, ghrHeadcount: 0, affHeadcount: 0 });
+        const newSlBucket = () => ({ ghrBilling: 0, affBilling: 0, ghrHeadcount: 0, affHeadcount: 0, ghrHours: 0, affHours: 0 });
         const newSysBucket = () => {
-          const b = { ghrBilling: 0, affBilling: 0, ghrHeadcount: 0, affHeadcount: 0, byLine: {} };
+          const b = { ghrBilling: 0, affBilling: 0, ghrHeadcount: 0, affHeadcount: 0, ghrHours: 0, affHours: 0, byLine: {} };
           SERVICE_LINES.forEach(sl => { b.byLine[sl] = newSlBucket(); });
           return b;
         };
@@ -4376,17 +4376,22 @@
 
           const sysBucket = monthMap[m][sys];
           const lineBucket = sysBucket.byLine[sl];
+          const hours = r.hours_worked || 0;
 
           if (r.vendor_type === 'GHR') {
             sysBucket.ghrBilling += r.estimated_billing || 0;
             sysBucket.ghrHeadcount += r.headcount || 0;
+            sysBucket.ghrHours += hours;
             lineBucket.ghrBilling += r.estimated_billing || 0;
             lineBucket.ghrHeadcount += r.headcount || 0;
+            lineBucket.ghrHours += hours;
           } else {
             sysBucket.affBilling += r.estimated_billing || 0;
             sysBucket.affHeadcount += r.headcount || 0;
+            sysBucket.affHours += hours;
             lineBucket.affBilling += r.estimated_billing || 0;
             lineBucket.affHeadcount += r.headcount || 0;
+            lineBucket.affHours += hours;
           }
         });
 
@@ -4403,7 +4408,14 @@
 
         // Default from/to: use stored values or fall back to data range
         const storedFrom = window.store.state.financialFromMonth || months[0];
-        const storedTo = window.store.state.financialToMonth || months[months.length - 1];
+        // Default the "to" picker to the current month (YYYY-MM), not the
+        // latest month with billing data. Otherwise we sit a month behind
+        // current time as cycles trickle in.
+        const currentMonth = (() => {
+          const d = new Date();
+          return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+        })();
+        const storedTo = window.store.state.financialToMonth || currentMonth;
         const systems = [...systemSet].sort();
 
         const fmtDollar = (n) => {
@@ -4455,7 +4467,11 @@
         };
 
         // Helper: build a financial data table with per-system service-line drilldown
-        const buildTable = (title, titleColor, bgColor, getValueFn, formatFn, getTotalFn) => {
+        // aggFn (optional): given a list of bucket objects, return the
+        // aggregated value for the totals row. Used for weighted averages
+        // (like avg bill rate) where summing per-system values is wrong.
+        // If omitted, the totals row sums getValueFn / getTotalFn per system.
+        const buildTable = (title, titleColor, bgColor, getValueFn, formatFn, getTotalFn, aggFn) => {
           const tk = tableKey(title);
           const expandedMap = window.__finExpanded[tk] || {};
           const totalsExpanded = !!expandedMap.__totals;
@@ -4521,35 +4537,32 @@
               </span>
             </td>
             ${months.map(m => {
-              let total = 0;
-              activeSystems.forEach(sys => {
-                const d = monthMap[m]?.[sys];
-                if (d) total += getTotalFn ? getTotalFn(d) : getValueFn(d);
-              });
+              const ds = activeSystems.map(sys => monthMap[m]?.[sys]).filter(Boolean);
+              const total = aggFn
+                ? aggFn(ds)
+                : ds.reduce((s, d) => s + (getTotalFn ? getTotalFn(d) : getValueFn(d)), 0);
               return `<td class="py-1.5 px-2 text-right text-slate-800">${formatFn(total)}</td>`;
             }).join('')}
           </tr>`;
 
-          // Grand-total drilldown by service line (sums every system's per-line bucket)
+          // Grand-total drilldown by service line (aggregates every system's per-line bucket)
           if (totalsExpanded) {
             SERVICE_LINES.forEach(sl => {
               const hasAny = months.some(m => {
-                let v = 0;
-                activeSystems.forEach(sys => {
-                  const d = monthMap[m]?.[sys]?.byLine?.[sl];
-                  if (d) v += getTotalFn ? getTotalFn(d) : getValueFn(d);
-                });
+                const lineDs = activeSystems.map(sys => monthMap[m]?.[sys]?.byLine?.[sl]).filter(Boolean);
+                const v = aggFn
+                  ? aggFn(lineDs)
+                  : lineDs.reduce((s, d) => s + (getTotalFn ? getTotalFn(d) : getValueFn(d)), 0);
                 return v > 0;
               });
               if (!hasAny) return;
               t += `<tr class="border-b border-slate-100 bg-slate-50/40">
                 <td class="py-1 px-2 pl-8 text-slate-600 sticky left-0 ${bgColor} text-xs italic">↳ ${sl}</td>
                 ${months.map(m => {
-                  let val = 0;
-                  activeSystems.forEach(sys => {
-                    const d = monthMap[m]?.[sys]?.byLine?.[sl];
-                    if (d) val += getTotalFn ? getTotalFn(d) : getValueFn(d);
-                  });
+                  const lineDs = activeSystems.map(sys => monthMap[m]?.[sys]?.byLine?.[sl]).filter(Boolean);
+                  const val = aggFn
+                    ? aggFn(lineDs)
+                    : lineDs.reduce((s, d) => s + (getTotalFn ? getTotalFn(d) : getValueFn(d)), 0);
                   return `<td class="py-1 px-2 text-right text-slate-600 text-xs italic">${formatFn(val)}</td>`;
                 }).join('')}
               </tr>`;
@@ -4656,6 +4669,51 @@
         // Total Temps Worked table
         html += buildTable('Total Temps Worked', 'text-slate-800', 'bg-white',
           d => d.ghrHeadcount + d.affHeadcount, fmtNum);
+
+        html += `</div>`;
+
+        // ====== AVG BILL RATE SECTION ======
+        // Per-system value: weighted by hours within the system.
+        // Totals row: weighted by hours across all systems (or service line)
+        // — using the aggFn so summing per-system rates doesn't lie.
+        const fmtRate = (v) => {
+          if (!v || v === 0) return '-';
+          return '$' + v.toFixed(2) + '/hr';
+        };
+        const ghrRate    = d => (d.ghrHours > 0 ? d.ghrBilling / d.ghrHours : 0);
+        const affRate    = d => (d.affHours > 0 ? d.affBilling / d.affHours : 0);
+        const totalRate  = d => {
+          const billed = (d.ghrBilling || 0) + (d.affBilling || 0);
+          const hours  = (d.ghrHours   || 0) + (d.affHours   || 0);
+          return hours > 0 ? billed / hours : 0;
+        };
+        const aggGhrRate = ds => {
+          const billed = ds.reduce((s, d) => s + (d.ghrBilling || 0), 0);
+          const hours  = ds.reduce((s, d) => s + (d.ghrHours   || 0), 0);
+          return hours > 0 ? billed / hours : 0;
+        };
+        const aggAffRate = ds => {
+          const billed = ds.reduce((s, d) => s + (d.affBilling || 0), 0);
+          const hours  = ds.reduce((s, d) => s + (d.affHours   || 0), 0);
+          return hours > 0 ? billed / hours : 0;
+        };
+        const aggTotalRate = ds => {
+          const billed = ds.reduce((s, d) => s + (d.ghrBilling || 0) + (d.affBilling || 0), 0);
+          const hours  = ds.reduce((s, d) => s + (d.ghrHours   || 0) + (d.affHours   || 0), 0);
+          return hours > 0 ? billed / hours : 0;
+        };
+
+        html += `<div id="pdfBillRateSection" class="bg-white p-4 rounded-lg shadow-sm border border-slate-200 mb-6">
+          <h4 class="font-bold text-slate-800 mb-3 text-base">Avg Bill Rate <span class="text-xs font-normal text-slate-400">(Bill Total ÷ Hours, weighted)</span></h4>`;
+
+        html += buildTable('GHR Avg Bill Rate', 'text-blue-800', 'bg-white',
+          ghrRate, fmtRate, null, aggGhrRate);
+
+        html += buildTable('Affiliate Avg Bill Rate', 'text-purple-800', 'bg-white',
+          affRate, fmtRate, null, aggAffRate);
+
+        html += buildTable('Total Avg Bill Rate', 'text-slate-800', 'bg-white',
+          totalRate, fmtRate, null, aggTotalRate);
 
         html += `</div>`;
 
