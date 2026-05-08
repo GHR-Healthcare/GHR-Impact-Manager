@@ -69,11 +69,18 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
         # ============================================================
         try:
             cursor.execute(f'''
+                -- VNDLY [Item Date] is the Billing Cycle End Date (Saturday).
+                -- Bucketing by end-date pushes the cycle ending May 2 (which
+                -- covers Apr 26-May 2 work) entirely into May, leaving end-of-
+                -- month gaps in every system's monthly total. Bucketing by
+                -- Billing Cycle Start Date attributes the cycle to the month
+                -- when most of the work actually happened.
                 WITH DeduplicatedSpend AS (
                     SELECT DISTINCT
                         [Item ID],
                         [Contractor First Name],
                         [Contractor Last Name],
+                        [Billing Cycle Start Date],
                         [Billing Cycle End Date],
                         [Health System],
                         [Work Site Name] AS facility,
@@ -82,13 +89,13 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                         [Item Date],
                         [Client Amount]
                     FROM dbo.STAGING_VNDLY_SPEND
-                    WHERE [Billing Cycle End Date] >= {date_from}
-                        AND [Billing Cycle End Date] < {date_to}
+                    WHERE [Billing Cycle Start Date] >= {date_from}
+                        AND [Billing Cycle Start Date] < {date_to}
                         AND [Health System] IS NOT NULL
                 )
                 SELECT
                     'VNDLY' AS source_system,
-                    FORMAT(DATEFROMPARTS(YEAR([Billing Cycle End Date]), MONTH([Billing Cycle End Date]), 1), 'yyyy-MM') AS month,
+                    FORMAT(DATEFROMPARTS(YEAR([Billing Cycle Start Date]), MONTH([Billing Cycle Start Date]), 1), 'yyyy-MM') AS month,
                     [Health System] AS health_system,
                     facility,
                     category,
@@ -107,7 +114,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                     SUM(ISNULL(TRY_CAST([Client Amount] AS DECIMAL(18,2)), 0)) AS estimated_billing
                 FROM DeduplicatedSpend
                 GROUP BY
-                    FORMAT(DATEFROMPARTS(YEAR([Billing Cycle End Date]), MONTH([Billing Cycle End Date]), 1), 'yyyy-MM'),
+                    FORMAT(DATEFROMPARTS(YEAR([Billing Cycle Start Date]), MONTH([Billing Cycle Start Date]), 1), 'yyyy-MM'),
                     [Health System],
                     facility,
                     category,
@@ -122,7 +129,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                         WHEN [Vendor Company Name] LIKE '%GHR%' OR [Vendor Company Name] LIKE '%Planet Healthcare%'
                         THEN 'GHR' ELSE 'Affiliate'
                     END
-                ORDER BY FORMAT(DATEFROMPARTS(YEAR([Billing Cycle End Date]), MONTH([Billing Cycle End Date]), 1), 'yyyy-MM'), [Health System]
+                ORDER BY FORMAT(DATEFROMPARTS(YEAR([Billing Cycle Start Date]), MONTH([Billing Cycle Start Date]), 1), 'yyyy-MM'), [Health System]
             ''')
 
             columns = [column[0] for column in cursor.description]
@@ -145,11 +152,18 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             cursor.execute(f'''
                 -- Transitioned-system dedupe: for systems where the contract has
                 -- migrated B4 → VNDLY (Cooper, RUMC, Holy Redeemer), the same
-                -- worker can appear in BOTH B4 ESR and VNDLY SPEND for the same
-                -- date during/after the cutover. B4 stores names "Last, First"
-                -- and VNDLY stores "First Last", so a naive worker_name dedupe
-                -- never matches. We normalize both to lower-case "first last"
-                -- and drop B4 rows whose key matches a VNDLY row.
+                -- worker can appear in BOTH B4 ESR and VNDLY SPEND during/after
+                -- the cutover. Two complications:
+                --   1. B4 stores names "Last, First" while VNDLY stores
+                --      "First Last" — names are normalized lower-case "first
+                --      last" before keying.
+                --   2. B4 has individual Work Dates (one per shift) while
+                --      VNDLY has weekly billing cycles (Item Date = cycle end).
+                --      A B4 shift on Wed Apr 15 is dupe with a VNDLY cycle
+                --      ending Apr 18 covering Apr 12-18 — equality on date
+                --      won't catch that. We use BETWEEN cycle_start and
+                --      cycle_end to check whether the B4 work day falls
+                --      inside any matching VNDLY cycle for that worker+system.
                 WITH VNDLYTransitionedKeys AS (
                     SELECT DISTINCT
                         CASE
@@ -162,10 +176,11 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                         LOWER(LTRIM(RTRIM(
                             CONCAT([Contractor First Name], ' ', [Contractor Last Name])
                         ))) AS norm_worker,
-                        CAST([Item Date] AS DATE) AS work_day
+                        CAST([Billing Cycle Start Date] AS DATE) AS cycle_start,
+                        CAST([Billing Cycle End Date] AS DATE) AS cycle_end
                     FROM dbo.STAGING_VNDLY_SPEND
-                    WHERE [Item Date] >= {date_from}
-                        AND [Item Date] < {date_to}
+                    WHERE [Billing Cycle Start Date] >= {date_from}
+                        AND [Billing Cycle Start Date] < {date_to}
                         AND ([Health System] LIKE '%Cooper%'
                           OR [Health System] LIKE '%RUMC%'
                           OR [Health System] LIKE '%Richmond%'
@@ -215,7 +230,8 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                            SELECT 1 FROM VNDLYTransitionedKeys v
                            WHERE v.sys_canon  = b.sys_canon
                              AND v.norm_worker = b.norm_worker
-                             AND v.work_day    = CAST(b.[Work Date] AS DATE)
+                             AND CAST(b.[Work Date] AS DATE)
+                                 BETWEEN v.cycle_start AND v.cycle_end
                        )
                 ),
                 DeduplicatedESR AS (
