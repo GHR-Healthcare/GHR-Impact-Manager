@@ -4734,8 +4734,14 @@
           return '#CBD5E1';
         };
 
+        // Fill-rate sections always respect the hide flag — even when the
+        // billings/headcount tables are showing hidden systems. Per product
+        // direction: hide doesn't apply to spend/billing aggregates, but it
+        // DOES apply to Current Fill Rate by System and Clinical Fill Rate.
+        const activeSystemsForFillRate = activeSystems.filter(sys => !Utils.isHiddenHealthSystem(sys));
+
         // Build fill rate data for horizontal bar chart (latest month)
-        const fillRateData = activeSystems.map(sys => {
+        const fillRateData = activeSystemsForFillRate.map(sys => {
           const d = monthMap[latestMonth]?.[sys];
           if (!d || (d.ghrBilling + d.affBilling) === 0) return { sys, pct: 0 };
           return { sys, pct: (d.ghrBilling / (d.ghrBilling + d.affBilling)) * 100 };
@@ -4743,7 +4749,7 @@
 
         // Calculate overall fill rate for latest month
         let overallGhr = 0, overallTotal = 0;
-        activeSystems.forEach(sys => {
+        activeSystemsForFillRate.forEach(sys => {
           const d = monthMap[latestMonth]?.[sys];
           if (d) { overallGhr += d.ghrBilling; overallTotal += d.ghrBilling + d.affBilling; }
         });
@@ -4791,7 +4797,7 @@
                   </tr>
                 </thead>
                 <tbody>
-                  ${activeSystems.map(sys => {
+                  ${activeSystemsForFillRate.map(sys => {
                     return `<tr class="border-b border-slate-100 hover:bg-slate-50">
                       <td class="py-1 px-2 font-medium text-slate-700 sticky left-0 bg-white text-xs">${sys}</td>
                       ${months.map(m => {
@@ -4808,7 +4814,7 @@
                     <td class="py-1.5 px-2 text-slate-800 sticky left-0 bg-white">Total</td>
                     ${months.map(m => {
                       let mGhr = 0, mTotal = 0;
-                      activeSystems.forEach(sys => {
+                      activeSystemsForFillRate.forEach(sys => {
                         const d = monthMap[m]?.[sys];
                         if (d) { mGhr += d.ghrBilling; mTotal += d.ghrBilling + d.affBilling; }
                       });
