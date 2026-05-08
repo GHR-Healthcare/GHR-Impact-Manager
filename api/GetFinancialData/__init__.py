@@ -77,8 +77,17 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                 -- month gaps in every system's monthly total. Bucketing by
                 -- Billing Cycle Start Date attributes the cycle to the month
                 -- when most of the work actually happened.
+                -- Each STAGING_VNDLY_SPEND row has a unique [System-InvKey]
+                -- (the table's primary key). The previous DISTINCT keyed off a
+                -- subset of business columns and silently collapsed legitimate
+                -- distinct rows when [Item ID]+worker+amount happened to match
+                -- across cycles — losing ~46% of Cooper April. Including
+                -- [System-InvKey] in DISTINCT preserves every real row while
+                -- still defending against true upload duplicates if they ever
+                -- occur (same key inserted twice).
                 WITH DeduplicatedSpend AS (
                     SELECT DISTINCT
+                        [System-InvKey],
                         [Item ID],
                         [Contractor First Name],
                         [Contractor Last Name],
