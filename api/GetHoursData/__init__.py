@@ -46,7 +46,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                     TRY_CAST([Hours] AS DECIMAL(10,2)) AS hours,
                     [Timesheet Status] AS invoice_status,
                     CASE
-                        WHEN [Agency Name] LIKE '%GHR%'
+                        WHEN [Agency Name] LIKE 'GHR%'
                           OR [Agency Name] LIKE '%Planet Healthcare%'
                         THEN 1 ELSE 0
                     END AS is_ghr

@@ -212,10 +212,14 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
         # Weekly actual revenue — VNDLY (from STAGING_VNDLY_SPEND Client Amount)
         # ============================================================
         try:
+            # Bucket VNDLY revenue by Billing Cycle Start Date (not Item Date,
+            # which is the cycle END Saturday). Same fix we made on the
+            # Financials side — keeps end-of-week work in the right week
+            # rather than pushing it to the following one.
             cursor.execute('''
                 SELECT
                     CONVERT(VARCHAR(10),
-                        DATEADD(DAY, 1 - DATEPART(WEEKDAY, CAST([Item Date] AS DATE)), CAST([Item Date] AS DATE)),
+                        DATEADD(DAY, 1 - DATEPART(WEEKDAY, CAST([Billing Cycle Start Date] AS DATE)), CAST([Billing Cycle Start Date] AS DATE)),
                         23) AS week_start,
                     [Health System] AS system,
                     CASE
@@ -224,11 +228,11 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                     END AS vendor_type,
                     SUM(ISNULL(TRY_CAST([Client Amount] AS DECIMAL(18,2)), 0)) AS revenue
                 FROM dbo.STAGING_VNDLY_SPEND
-                WHERE [Item Date] IS NOT NULL
-                    AND CAST([Item Date] AS DATE) >= DATEADD(WEEK, -8, GETDATE())
+                WHERE [Billing Cycle Start Date] IS NOT NULL
+                    AND CAST([Billing Cycle Start Date] AS DATE) >= DATEADD(WEEK, -8, GETDATE())
                     AND [Health System] IS NOT NULL
                 GROUP BY
-                    DATEADD(DAY, 1 - DATEPART(WEEKDAY, CAST([Item Date] AS DATE)), CAST([Item Date] AS DATE)),
+                    DATEADD(DAY, 1 - DATEPART(WEEKDAY, CAST([Billing Cycle Start Date] AS DATE)), CAST([Billing Cycle Start Date] AS DATE)),
                     [Health System],
                     CASE
                         WHEN [Vendor Company Name] LIKE '%GHR%' OR [Vendor Company Name] LIKE '%Planet Healthcare%'

@@ -41,9 +41,14 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                     FROM sys.all_objects
                 ),
                 Assignments AS (
+                    -- Worker name is normalized to lower-case "first last" so
+                    -- the same person counts once across B4 and VNDLY for
+                    -- transitioned systems. B4 stores "Last, First" — we
+                    -- already build it with CONCAT here, so we just produce
+                    -- "first last" directly from the source columns.
                     SELECT
                         'B4' AS src,
-                        CONCAT(Last_Name, ', ', First_Name) AS worker,
+                        LOWER(LTRIM(RTRIM(CONCAT(First_Name, ' ', Last_Name)))) AS worker,
                         Health_System AS system,
                         Facility AS facility,
                         Program AS category,
@@ -60,7 +65,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
 
                     SELECT
                         'VNDLY' AS src,
-                        CONCAT([Contractor First Name], ' ', [Contractor Last Name]) AS worker,
+                        LOWER(LTRIM(RTRIM(CONCAT([Contractor First Name], ' ', [Contractor Last Name])))) AS worker,
                         [Health System] AS system,
                         [Default Work Site Name] AS facility,
                         [Labor Type] AS category,
@@ -78,7 +83,9 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                     a.category,
                     a.facility,
                     CASE
-                        WHEN a.agency LIKE '%GHR%' OR a.agency LIKE '%Planet Healthcare%'
+                        WHEN (a.src = 'B4'    AND a.agency LIKE 'GHR%')
+                          OR (a.src = 'VNDLY' AND a.agency LIKE '%GHR%')
+                          OR a.agency LIKE '%Planet Healthcare%'
                         THEN 'GHR' ELSE 'Affiliate'
                     END AS vendor_type,
                     COUNT(DISTINCT a.worker) AS headcount
@@ -92,7 +99,9 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                     a.category,
                     a.facility,
                     CASE
-                        WHEN a.agency LIKE '%GHR%' OR a.agency LIKE '%Planet Healthcare%'
+                        WHEN (a.src = 'B4'    AND a.agency LIKE 'GHR%')
+                          OR (a.src = 'VNDLY' AND a.agency LIKE '%GHR%')
+                          OR a.agency LIKE '%Planet Healthcare%'
                         THEN 'GHR' ELSE 'Affiliate'
                     END
                 ORDER BY w.week_start, a.system

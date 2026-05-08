@@ -63,7 +63,10 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                         WHEN Offer_Date IS NOT NULL THEN 'Offer Pending'
                         ELSE 'Submitted'
                     END AS status
-                    ,CASE WHEN Agency_Name LIKE '%GHR%' THEN 1 ELSE 0 END AS is_ghr
+                    ,CASE
+                        WHEN Agency_Name LIKE 'GHR%' OR Agency_Name LIKE '%Planet Healthcare%'
+                        THEN 1 ELSE 0
+                     END AS is_ghr
                 FROM dhc.B4Health_Contract_Submissions
                 WHERE Submission_Date >= DATEADD(MONTH, -6, GETDATE())
                     AND LTRIM(RTRIM(IsActive)) = 'Yes'
