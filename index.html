@@ -5451,6 +5451,39 @@
           </div>
         `;
 
+        // ============================================================
+        // GHR Vendor Trendline — shifts worked per week, with linear
+        // regression overlay. Buckets correspond to GHR's internal vendor
+        // names (B4 [Agency Name] / VNDLY [Vendor Company Name]). Acute
+        // Care Nursing combines B4 "GHR Acute" + VNDLY "GHR Nursing" since
+        // the two systems use different labels for the same team.
+        // Mirrors the standalone Excel tracker the recruiting team uses.
+        // ============================================================
+        const GHR_VENDOR_BUCKETS = [
+          { id: 'acute',  label: 'Acute Care Nursing', match: a => /^GHR (Acute|Nursing)$/i.test(String(a || '').trim()) },
+          { id: 'travel', label: 'Travel',             match: a => /^GHR Travel$/i.test(String(a || '').trim()) },
+          { id: 'paltc',  label: 'PA LTC Nursing',     match: a => /^GHR PA LTC Nursing$/i.test(String(a || '').trim()) },
+          { id: 'allied', label: 'Allied',             match: a => /^GHR Allied$/i.test(String(a || '').trim()) },
+        ];
+        html += `
+          <div class="mt-6 border border-slate-200 rounded-lg p-4">
+            <div class="flex items-center justify-between mb-3 flex-wrap gap-2">
+              <h4 class="font-bold text-sm text-slate-700">GHR Vendor Performance — Weekly Shifts</h4>
+              <div class="flex items-center gap-2">
+                <label class="text-xs text-slate-500">Vendor:</label>
+                <select id="pdGhrVendorSelect" class="text-xs border border-slate-300 rounded px-2 py-1 bg-white">
+                  ${GHR_VENDOR_BUCKETS.map(b => `<option value="${b.id}"${b.id === 'acute' ? ' selected' : ''}>${b.label}</option>`).join('')}
+                </select>
+              </div>
+            </div>
+            <div class="h-80"><canvas id="pdGhrVendorChart"></canvas></div>
+            <div class="text-[10px] text-slate-400 mt-2">
+              Solid line: weekly distinct (worker × date) shifts.
+              Dashed line: linear regression trendline.
+            </div>
+          </div>
+        `;
+
         // Drilldown modal
         html += `
           <div id="pdDrilldownModal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50">
@@ -5489,6 +5522,95 @@
         // Destroy previous chart instances
         if (window.__pdPctWorkedChart) { window.__pdPctWorkedChart.destroy(); window.__pdPctWorkedChart = null; }
         if (window.__pdShiftsPerNurseChart) { window.__pdShiftsPerNurseChart.destroy(); window.__pdShiftsPerNurseChart = null; }
+        if (window.__pdGhrVendorChart) { window.__pdGhrVendorChart.destroy(); window.__pdGhrVendorChart = null; }
+
+        // ============================================================
+        // GHR vendor trendline rendering. Computes weekly distinct
+        // (worker, date) shift counts for the selected vendor bucket,
+        // overlaid with a least-squares linear regression line.
+        // ============================================================
+        const renderGhrVendorChart = (vendorId) => {
+          const bucket = GHR_VENDOR_BUCKETS.find(b => b.id === vendorId) || GHR_VENDOR_BUCKETS[0];
+          const ghrShifts = filteredShifts.filter(sh => bucket.match(sh.agency));
+          // Weekly counts: distinct (worker × shift_date) within each Sun-Sat bucket
+          const weeklyCounts = activeWeeks.map(w => {
+            const seen = new Set();
+            ghrShifts.forEach(sh => {
+              if (!sh.shift_date) return;
+              if (sh.shift_date < w.start || sh.shift_date > w.end) return;
+              seen.add(sh.worker_name + '|' + sh.shift_date.toISOString().slice(0, 10));
+            });
+            return seen.size;
+          });
+          // Least-squares linear regression over (week_index, count)
+          const n = weeklyCounts.length;
+          let sumX = 0, sumY = 0, sumXY = 0, sumXX = 0;
+          for (let i = 0; i < n; i++) {
+            sumX += i; sumY += weeklyCounts[i];
+            sumXY += i * weeklyCounts[i]; sumXX += i * i;
+          }
+          const denom = n * sumXX - sumX * sumX;
+          const slope = denom === 0 ? 0 : (n * sumXY - sumX * sumY) / denom;
+          const intercept = n === 0 ? 0 : (sumY - slope * sumX) / n;
+          const trendValues = Array.from({ length: n }, (_, i) => intercept + slope * i);
+
+          const ctx = document.getElementById('pdGhrVendorChart')?.getContext('2d');
+          if (!ctx) return;
+          if (window.__pdGhrVendorChart) { window.__pdGhrVendorChart.destroy(); }
+          window.__pdGhrVendorChart = new Chart(ctx, {
+            type: 'line',
+            data: {
+              labels: weekLabels,
+              datasets: [
+                {
+                  label: 'Weekly Shifts',
+                  data: weeklyCounts,
+                  borderColor: '#2563eb',
+                  backgroundColor: '#2563eb20',
+                  borderWidth: 2,
+                  fill: false,
+                  tension: 0.2,
+                  pointRadius: 4,
+                  pointBackgroundColor: '#2563eb',
+                },
+                {
+                  label: 'Trendline',
+                  data: trendValues,
+                  borderColor: '#dc2626',
+                  borderWidth: 1.5,
+                  borderDash: [6, 4],
+                  fill: false,
+                  pointRadius: 0,
+                  tension: 0,
+                },
+              ],
+            },
+            options: {
+              responsive: true,
+              maintainAspectRatio: false,
+              plugins: {
+                legend: { position: 'bottom', labels: { boxWidth: 12, font: { size: 10 } } },
+                title: {
+                  display: true,
+                  text: `${bucket.label} — ${weeklyCounts.reduce((a, b) => a + b, 0)} shifts over ${n} weeks (slope ${slope >= 0 ? '+' : ''}${slope.toFixed(2)}/wk)`,
+                  font: { size: 11, weight: 'normal' },
+                  color: '#64748b',
+                },
+                tooltip: { callbacks: { label: ctx => `${ctx.dataset.label}: ${ctx.parsed.y.toFixed(0)}` } },
+              },
+              scales: {
+                y: { min: 0, ticks: { font: { size: 10 } } },
+                x: { ticks: { font: { size: 9 }, maxRotation: 45 } },
+              },
+            },
+          });
+        };
+        // Initial render + wire up the vendor selector
+        renderGhrVendorChart('acute');
+        const ghrVendorSelect = document.getElementById('pdGhrVendorSelect');
+        if (ghrVendorSelect) {
+          ghrVendorSelect.onchange = (e) => renderGhrVendorChart(e.target.value);
+        }
 
         // % Actives Worked chart
         const pctCtx = document.getElementById('pdPctWorkedChart')?.getContext('2d');
