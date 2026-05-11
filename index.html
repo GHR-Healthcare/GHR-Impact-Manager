@@ -5239,9 +5239,22 @@
           });
         });
 
-        // Filter out weeks where ALL systems have zero activity (no shifts and no headcount)
+        // Filter weeks by:
+        //   1. Activity gate — at least one system has shifts or headcount
+        //   2. Completeness gate — week's Saturday end-date is at least 7
+        //      days before today. Drops in-progress weeks AND the
+        //      just-finished week (VNDLY billing lags ~11 days, so a
+        //      Saturday-ended week looks empty for a week+ after it ends).
+        // Both gates apply at source so every downstream consumer — tables,
+        // % Actives Worked chart, Shifts/Nurse chart, GHR vendor trendline —
+        // sees the same complete-only window. Auto-rolls forward as time
+        // passes; no manual maintenance.
+        const completeWeekCutoff = new Date();
+        completeWeekCutoff.setHours(0, 0, 0, 0);
+        completeWeekCutoff.setDate(completeWeekCutoff.getDate() - 7);
         const activeWeekIndices = [];
         weeks.forEach((w, i) => {
+          if (w.end > completeWeekCutoff) return;
           const hasActivity = groups.some(g => metrics[g.key][i] && (metrics[g.key][i].totalShifts > 0 || metrics[g.key][i].activeHC > 0));
           if (hasActivity) activeWeekIndices.push(i);
         });
@@ -5533,19 +5546,11 @@
         const renderGhrVendorChart = (vendorId) => {
           const bucket = GHR_VENDOR_BUCKETS.find(b => b.id === vendorId) || GHR_VENDOR_BUCKETS[0];
           const ghrShifts = filteredShifts.filter(sh => bucket.match(sh.agency));
-          // Only include weeks whose Saturday end-of-week is at least 7 days
-          // before today. That excludes the in-progress week (would always be
-          // partial) and the just-ended week (B4 data may be in but VNDLY
-          // billing lags ~11 days, so the count is misleadingly low). Without
-          // this filter, an incomplete final week pulled the regression slope
-          // down regardless of the actual trend.
-          const completeWeekCutoff = new Date();
-          completeWeekCutoff.setHours(0, 0, 0, 0);
-          completeWeekCutoff.setDate(completeWeekCutoff.getDate() - 7);
-          const chartWeeks = activeWeeks.filter(w => w.end <= completeWeekCutoff);
-          const chartLabels = chartWeeks.map(w => fmtWeek(w));
+          // activeWeeks already filtered to complete weeks only at the source —
+          // see the activeWeekIndices block above. No further cutoff needed here.
+          const chartLabels = activeWeeks.map(w => fmtWeek(w));
           // Weekly counts: distinct (worker × shift_date) within each Sun-Sat bucket
-          const weeklyCounts = chartWeeks.map(w => {
+          const weeklyCounts = activeWeeks.map(w => {
             const seen = new Set();
             ghrShifts.forEach(sh => {
               if (!sh.shift_date) return;
