@@ -5460,8 +5460,9 @@
         // Mirrors the standalone Excel tracker the recruiting team uses.
         // ============================================================
         const GHR_VENDOR_BUCKETS = [
-          { id: 'acute',  label: 'Acute Care Nursing', match: a => /^GHR (Acute|Nursing)$/i.test(String(a || '').trim()) },
-          { id: 'travel', label: 'Travel',             match: a => /^GHR Travel$/i.test(String(a || '').trim()) },
+          // Acute Care Nursing rolls up B4 "GHR Acute" + B4 "GHR Travel" +
+          // VNDLY "GHR Nursing" — same team, multiple labels across systems.
+          { id: 'acute',  label: 'Acute Care Nursing', match: a => /^GHR (Acute|Nursing|Travel)$/i.test(String(a || '').trim()) },
           { id: 'paltc',  label: 'PA LTC Nursing',     match: a => /^GHR PA LTC Nursing$/i.test(String(a || '').trim()) },
           { id: 'allied', label: 'Allied',             match: a => /^GHR Allied$/i.test(String(a || '').trim()) },
         ];
