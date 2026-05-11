@@ -5533,8 +5533,19 @@
         const renderGhrVendorChart = (vendorId) => {
           const bucket = GHR_VENDOR_BUCKETS.find(b => b.id === vendorId) || GHR_VENDOR_BUCKETS[0];
           const ghrShifts = filteredShifts.filter(sh => bucket.match(sh.agency));
+          // Only include weeks whose Saturday end-of-week is at least 7 days
+          // before today. That excludes the in-progress week (would always be
+          // partial) and the just-ended week (B4 data may be in but VNDLY
+          // billing lags ~11 days, so the count is misleadingly low). Without
+          // this filter, an incomplete final week pulled the regression slope
+          // down regardless of the actual trend.
+          const completeWeekCutoff = new Date();
+          completeWeekCutoff.setHours(0, 0, 0, 0);
+          completeWeekCutoff.setDate(completeWeekCutoff.getDate() - 7);
+          const chartWeeks = activeWeeks.filter(w => w.end <= completeWeekCutoff);
+          const chartLabels = chartWeeks.map(w => fmtWeek(w));
           // Weekly counts: distinct (worker × shift_date) within each Sun-Sat bucket
-          const weeklyCounts = activeWeeks.map(w => {
+          const weeklyCounts = chartWeeks.map(w => {
             const seen = new Set();
             ghrShifts.forEach(sh => {
               if (!sh.shift_date) return;
@@ -5561,7 +5572,7 @@
           window.__pdGhrVendorChart = new Chart(ctx, {
             type: 'line',
             data: {
-              labels: weekLabels,
+              labels: chartLabels,
               datasets: [
                 {
                   label: 'Weekly Shifts',
