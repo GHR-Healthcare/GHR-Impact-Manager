@@ -281,12 +281,16 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
 
         # ============================================================
         # VNDLY - Jobs (Total Positions = Open + Filled, individual rows)
+        # facility_name comes from [Facility] (Cape Regional Medical Center,
+        # Cooper University Healthcare) which matches what the assignment +
+        # shift queries use. [Work Site (Job)] is the generic Cooper Main
+        # GL code and can't distinguish sub-facilities — fallback only.
         # ============================================================
         try:
             cursor.execute(f'''
                 SELECT
                     'VNDLY' AS source_system,
-                    [Work Site (Job)] AS facility_name,
+                    COALESCE([Facility], [Work Site (Job)]) AS facility_name,
                     [Health System] AS health_system,
                     [JobSystemKey] AS position_id,
                     [Job Title] AS specialty,
