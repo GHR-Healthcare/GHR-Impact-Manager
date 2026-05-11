@@ -143,24 +143,46 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
         # VNDLY - Per Diem Assignments (from Work Orders)
         # Include historical work orders so weeks in the past still report
         # Active Headcount. Frontend filters by date-range overlap per week.
+        #
+        # Facility override: when a worker has an active B4 per-diem
+        # assignment with a more specific facility name (e.g. "Cape Regional
+        # Medical Center"), prefer that over VNDLY's generic Default Work
+        # Site Name (which can be a GL code like "Nursing Administration-01-
+        # 6601-5400" that doesn't distinguish sub-facilities). Keeps Cape
+        # Regional broken out on the Per Diem tab after the B4→VNDLY move.
         # ============================================================
         try:
             cursor.execute('''
+                WITH B4PerDiemFacility AS (
+                    SELECT DISTINCT
+                        LOWER(LTRIM(RTRIM(CONCAT(First_Name, ' ', Last_Name)))) AS norm_worker,
+                        Health_System,
+                        Facility AS b4_facility
+                    FROM dhc.B4HealthOrder
+                    WHERE Program LIKE '%Per Diem%'
+                        AND Contract_Status = 'Closed And Awarded'
+                        AND Last_Name IS NOT NULL
+                        AND First_Name IS NOT NULL
+                        AND Facility IS NOT NULL
+                )
                 SELECT DISTINCT
                     'VNDLY' AS source_system,
-                    CAST([Work Order Id] AS NVARCHAR(50)) AS contract_id,
-                    CONCAT([Contractor First Name], ' ', [Contractor Last Name]) AS worker_name,
-                    [Health System] AS system,
-                    [Default Work Site Name] AS facility,
-                    [Vendor Name] AS agency,
-                    [Start Date] AS startDate,
-                    [End Date] AS endDate,
+                    CAST(wo.[Work Order Id] AS NVARCHAR(50)) AS contract_id,
+                    CONCAT(wo.[Contractor First Name], ' ', wo.[Contractor Last Name]) AS worker_name,
+                    wo.[Health System] AS system,
+                    COALESCE(b4.b4_facility, wo.[Default Work Site Name]) AS facility,
+                    wo.[Vendor Name] AS agency,
+                    wo.[Start Date] AS startDate,
+                    wo.[End Date] AS endDate,
                     NULL AS account_manager,
-                    [Resource Manager] AS hiring_manager
-                FROM dbo.STAGING_VNDLY_WORKORDERS
-                WHERE [Start Date] IS NOT NULL
-                    AND [Labor Type] LIKE '%Per Diem%'
-                    AND ([Current Status] IS NULL OR [Current Status] NOT IN ('Cancelled', 'Rejected', 'Draft'))
+                    wo.[Resource Manager] AS hiring_manager
+                FROM dbo.STAGING_VNDLY_WORKORDERS wo
+                LEFT JOIN B4PerDiemFacility b4
+                    ON b4.norm_worker = LOWER(LTRIM(RTRIM(CONCAT(wo.[Contractor First Name], ' ', wo.[Contractor Last Name]))))
+                    AND b4.Health_System = wo.[Health System]
+                WHERE wo.[Start Date] IS NOT NULL
+                    AND wo.[Labor Type] LIKE '%Per Diem%'
+                    AND (wo.[Current Status] IS NULL OR wo.[Current Status] NOT IN ('Cancelled', 'Rejected', 'Draft'))
             ''')
 
             columns = [column[0] for column in cursor.description]
@@ -176,17 +198,32 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
 
         # ============================================================
         # VNDLY - Shifts Worked by Per Diem Workers
-        # Uses STAGING_VNDLY_SPEND filtered by Labor Type directly
+        # Uses STAGING_VNDLY_SPEND filtered by Labor Type directly.
+        # Same B4PerDiemFacility override as the assignment query above —
+        # ensures shifts roll up to the right sub-facility (Cape Regional
+        # etc.) when VNDLY tags them with a generic Cooper Main GL code.
         # ============================================================
         try:
             cursor.execute(f'''
+                WITH B4PerDiemFacility AS (
+                    SELECT DISTINCT
+                        LOWER(LTRIM(RTRIM(CONCAT(First_Name, ' ', Last_Name)))) AS norm_worker,
+                        Health_System,
+                        Facility AS b4_facility
+                    FROM dhc.B4HealthOrder
+                    WHERE Program LIKE '%Per Diem%'
+                        AND Contract_Status = 'Closed And Awarded'
+                        AND Last_Name IS NOT NULL
+                        AND First_Name IS NOT NULL
+                        AND Facility IS NOT NULL
+                )
                 SELECT
                     'VNDLY' AS source_system,
                     CONCAT(s.[Contractor First Name], ' ', s.[Contractor Last Name]) AS worker_name,
                     s.[Item Date] AS shift_date,
                     s.[Health System] AS system,
                     s.[Vendor Company Name] AS agency,
-                    wo.[Default Work Site Name] AS facility
+                    COALESCE(b4.b4_facility, wo.[Default Work Site Name]) AS facility
                 FROM dbo.STAGING_VNDLY_SPEND s
                 INNER JOIN (
                     SELECT DISTINCT
@@ -201,6 +238,9 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                     AND wo.[Health System] = s.[Health System]
                     AND s.[Item Date] >= wo.assignment_start
                     AND (wo.assignment_end IS NULL OR s.[Item Date] <= wo.assignment_end)
+                LEFT JOIN B4PerDiemFacility b4
+                    ON b4.norm_worker = LOWER(LTRIM(RTRIM(CONCAT(s.[Contractor First Name], ' ', s.[Contractor Last Name]))))
+                    AND b4.Health_System = s.[Health System]
                 WHERE s.[Health System] IS NOT NULL
                     AND s.[Item Date] >= {date_from}
                     AND s.[Item Date] < {date_to}
