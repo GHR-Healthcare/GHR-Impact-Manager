@@ -6,7 +6,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
     try:
         config = {
             'defaultMargin': os.environ.get('DEFAULT_MARGIN', '25'),
-            'appVersion': os.environ.get('APP_VERSION', '1.4.0')
+            'appVersion': os.environ.get('APP_VERSION', '1.7.2')
         }
         
         return func.HttpResponse(

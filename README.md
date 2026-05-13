@@ -2,6 +2,9 @@
 
 ## Version History
 
+**1.7.2** - Trend chart extended one more week forward
+- Headcount trend now shows 4 back + current + 4 forward (was 3 forward)
+
 **1.7.1** - Pending $ KPIs + richer revenue tooltip
 - Pending tab has a new 4-card KPI row: pipeline weekly run rate with Δ vs 4-wk actual avg, next-3-wk expected $, last complete week actual, baseline avg
 - Pipeline $ computed as `bill_rate × weekly_hours` on pending + assignment workorders (B4 uses Awarded_Rate/Hours_per_Peek, VNDLY uses Bill Rate with 36hr/wk default)

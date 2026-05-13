@@ -699,7 +699,7 @@
     const $ = (id) => document.getElementById(id);
 
     // App version - loaded from environment variable via API, with fallback
-    let APP_VERSION = '1.4.0';
+    let APP_VERSION = '1.7.2';
 
     const API_BASE_URL = '/api';
     
@@ -6062,7 +6062,7 @@
         const filtered = deduped.filter(filterRow);
         const filteredPending = allPending.filter(filterRow);
 
-        // Build 8 week buckets: 4 back + current + 3 forward (Sun-Sat)
+        // Build 9 week buckets: 4 back + current + 4 forward (Sun-Sat)
         const getSunday = (d) => {
           const dt = new Date(d);
           const day = dt.getDay();
@@ -6074,7 +6074,7 @@
         const currentSunday = getSunday(today);
 
         const weeks = [];
-        for (let i = -4; i <= 3; i++) {
+        for (let i = -4; i <= 4; i++) {
           const start = new Date(currentSunday);
           start.setDate(start.getDate() + i * 7);
           const end = new Date(start);
