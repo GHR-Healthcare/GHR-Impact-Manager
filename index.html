@@ -7353,16 +7353,36 @@
           const lbl = document.getElementById('trendYoYLabel');
           if (window.__yoyVisible && !window.__yoyLoaded) {
             if (lbl) lbl.textContent = 'Loading…';
+            let failed = false;
+            let errMsg = '';
             try {
-              const resp = await fetch(`${API_BASE_URL}/yoy-trend-data`);
+              // 4-minute client timeout — server has its own but this prevents
+              // a forever-spinning button if the function silently dies.
+              const controller = new AbortController();
+              const timer = setTimeout(() => controller.abort(), 240000);
+              const resp = await fetch(`${API_BASE_URL}/yoy-trend-data`, { signal: controller.signal });
+              clearTimeout(timer);
               if (resp.ok) {
                 const data = await resp.json();
-                window.__yoyData = data.rows || [];
-                window.__yoyLoaded = true;
+                if (data.error) {
+                  failed = true; errMsg = data.error;
+                } else {
+                  window.__yoyData = data.rows || [];
+                  window.__yoyLoaded = true;
+                }
+              } else {
+                failed = true;
+                const text = await resp.text().catch(() => '');
+                errMsg = `HTTP ${resp.status} ${resp.statusText}${text ? ' — ' + text.slice(0, 200) : ''}`;
               }
             } catch (e) {
+              failed = true;
+              errMsg = e.name === 'AbortError' ? 'Request timed out' : (e.message || String(e));
               console.warn('Failed to load YoY data:', e);
+            }
+            if (failed) {
               window.__yoyVisible = false;
+              window.showToast?.(`Prior-year load failed: ${errMsg}`, 'error');
             }
           }
           if (lbl) lbl.textContent = window.__yoyVisible ? 'Hide Prior Year' : 'Show Prior Year';
