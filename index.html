@@ -2905,7 +2905,15 @@
       Utils.setLoading(true, "Exporting financials...");
       setTimeout(() => {
         try {
-          // Aggregate data
+          // Match the on-screen view: bucket per system per service-line per month
+          const SERVICE_LINES = ['Nursing', 'Allied', 'Locums', 'Non-Clinical', 'Other'];
+          const newSlBucket = () => ({ ghrBilling: 0, affBilling: 0, ghrHeadcount: 0, affHeadcount: 0 });
+          const newSysBucket = () => {
+            const b = { ghrBilling: 0, affBilling: 0, ghrHeadcount: 0, affHeadcount: 0, byLine: {} };
+            SERVICE_LINES.forEach(sl => { b.byLine[sl] = newSlBucket(); });
+            return b;
+          };
+
           const monthMap = {};
           const systemSet = new Set();
           const monthSet = new Set();
@@ -2913,15 +2921,22 @@
           rawData.forEach(r => {
             const m = r.month;
             const sys = Utils.getHealthSystem(null, r.health_system) || r.health_system || 'Unknown';
+            const sl = SERVICE_LINES.includes(r.service_line) ? r.service_line : 'Other';
             monthSet.add(m); systemSet.add(sys);
             if (!monthMap[m]) monthMap[m] = {};
-            if (!monthMap[m][sys]) monthMap[m][sys] = { ghrBilling: 0, affBilling: 0, ghrHeadcount: 0, affHeadcount: 0 };
+            if (!monthMap[m][sys]) monthMap[m][sys] = newSysBucket();
+            const sysB = monthMap[m][sys];
+            const slB = sysB.byLine[sl];
             if (r.vendor_type === 'GHR') {
-              monthMap[m][sys].ghrBilling += r.estimated_billing || 0;
-              monthMap[m][sys].ghrHeadcount += r.headcount || 0;
+              sysB.ghrBilling += r.estimated_billing || 0;
+              sysB.ghrHeadcount += r.headcount || 0;
+              slB.ghrBilling += r.estimated_billing || 0;
+              slB.ghrHeadcount += r.headcount || 0;
             } else {
-              monthMap[m][sys].affBilling += r.estimated_billing || 0;
-              monthMap[m][sys].affHeadcount += r.headcount || 0;
+              sysB.affBilling += r.estimated_billing || 0;
+              sysB.affHeadcount += r.headcount || 0;
+              slB.affBilling += r.estimated_billing || 0;
+              slB.affHeadcount += r.headcount || 0;
             }
           });
 
@@ -2940,28 +2955,64 @@
             })
           );
 
-          // Helper: build rows for a billing-style sheet with per-system rows + total
+          // Service lines that have any data for this system across months
+          const activeLinesForSystem = (sys) => SERVICE_LINES.filter(sl =>
+            months.some(m => {
+              const lb = monthMap[m]?.[sys]?.byLine?.[sl];
+              return lb && (lb.ghrBilling + lb.affBilling > 0 || lb.ghrHeadcount + lb.affHeadcount > 0);
+            })
+          );
+
+          // Numeric sheet builder: per-system Total row + a row per active service line, plus a grand total
           const buildSheetRows = (getValueFn) => {
             const rows = [];
             activeSystems.forEach(sys => {
-              const row = { 'Health System': sys };
+              const totalRow = { 'Health System': sys, 'Service Line': 'Total' };
               months.forEach(m => {
-                const d = monthMap[m]?.[sys] || { ghrBilling: 0, affBilling: 0, ghrHeadcount: 0, affHeadcount: 0 };
-                row[monthLabel(m)] = Math.round(getValueFn(d));
+                const d = monthMap[m]?.[sys];
+                totalRow[monthLabel(m)] = d ? Math.round(getValueFn(d)) : 0;
               });
-              rows.push(row);
+              rows.push(totalRow);
+              activeLinesForSystem(sys).forEach(sl => {
+                const slRow = { 'Health System': sys, 'Service Line': sl };
+                months.forEach(m => {
+                  const lb = monthMap[m]?.[sys]?.byLine?.[sl];
+                  slRow[monthLabel(m)] = lb ? Math.round(getValueFn(lb)) : 0;
+                });
+                rows.push(slRow);
+              });
             });
-            // Total row
-            const totalRow = { 'Health System': 'Total' };
+            // Grand total row across all systems
+            const grandRow = { 'Health System': 'Total', 'Service Line': 'Total' };
             months.forEach(m => {
               let total = 0;
               activeSystems.forEach(sys => {
                 const d = monthMap[m]?.[sys];
                 if (d) total += getValueFn(d);
               });
-              totalRow[monthLabel(m)] = Math.round(total);
+              grandRow[monthLabel(m)] = Math.round(total);
             });
-            rows.push(totalRow);
+            rows.push(grandRow);
+            // Grand total per service line
+            SERVICE_LINES.forEach(sl => {
+              const hasData = months.some(m =>
+                activeSystems.some(sys => {
+                  const lb = monthMap[m]?.[sys]?.byLine?.[sl];
+                  return lb && getValueFn(lb) > 0;
+                })
+              );
+              if (!hasData) return;
+              const slGrand = { 'Health System': 'Total', 'Service Line': sl };
+              months.forEach(m => {
+                let total = 0;
+                activeSystems.forEach(sys => {
+                  const lb = monthMap[m]?.[sys]?.byLine?.[sl];
+                  if (lb) total += getValueFn(lb);
+                });
+                slGrand[monthLabel(m)] = Math.round(total);
+              });
+              rows.push(slGrand);
+            });
             return rows;
           };
 
@@ -2972,31 +3023,59 @@
           // Sheet 3: Total Billings
           const totalBillRows = buildSheetRows(d => d.ghrBilling + d.affBilling);
 
-          // Sheet 4: Fill Rates
+          // Sheet 4: Fill Rates — ghr / (ghr + aff) per system + per service line
+          const fillPct = (g, t) => t > 0 ? ((g / t) * 100).toFixed(1) + '%' : '0.0%';
           const fillRows = [];
           activeSystems.forEach(sys => {
-            const row = { 'Health System': sys };
+            const totalRow = { 'Health System': sys, 'Service Line': 'Total' };
             months.forEach(m => {
               const d = monthMap[m]?.[sys];
-              if (d && (d.ghrBilling + d.affBilling > 0)) {
-                row[monthLabel(m)] = ((d.ghrBilling / (d.ghrBilling + d.affBilling)) * 100).toFixed(1) + '%';
-              } else {
-                row[monthLabel(m)] = '0.0%';
-              }
+              const ghr = d ? d.ghrBilling : 0;
+              const all = d ? d.ghrBilling + d.affBilling : 0;
+              totalRow[monthLabel(m)] = fillPct(ghr, all);
             });
-            fillRows.push(row);
+            fillRows.push(totalRow);
+            activeLinesForSystem(sys).forEach(sl => {
+              const slRow = { 'Health System': sys, 'Service Line': sl };
+              months.forEach(m => {
+                const lb = monthMap[m]?.[sys]?.byLine?.[sl];
+                const ghr = lb ? lb.ghrBilling : 0;
+                const all = lb ? lb.ghrBilling + lb.affBilling : 0;
+                slRow[monthLabel(m)] = fillPct(ghr, all);
+              });
+              fillRows.push(slRow);
+            });
           });
-          // Fill rate total row
-          const fillTotalRow = { 'Health System': 'Total' };
+          // Fill rate grand totals
+          const fillGrand = { 'Health System': 'Total', 'Service Line': 'Total' };
           months.forEach(m => {
             let mGhr = 0, mTotal = 0;
             activeSystems.forEach(sys => {
               const d = monthMap[m]?.[sys];
               if (d) { mGhr += d.ghrBilling; mTotal += d.ghrBilling + d.affBilling; }
             });
-            fillTotalRow[monthLabel(m)] = mTotal > 0 ? ((mGhr / mTotal) * 100).toFixed(1) + '%' : '0.0%';
+            fillGrand[monthLabel(m)] = fillPct(mGhr, mTotal);
           });
-          fillRows.push(fillTotalRow);
+          fillRows.push(fillGrand);
+          SERVICE_LINES.forEach(sl => {
+            const hasData = months.some(m =>
+              activeSystems.some(sys => {
+                const lb = monthMap[m]?.[sys]?.byLine?.[sl];
+                return lb && (lb.ghrBilling + lb.affBilling) > 0;
+              })
+            );
+            if (!hasData) return;
+            const slGrand = { 'Health System': 'Total', 'Service Line': sl };
+            months.forEach(m => {
+              let mGhr = 0, mTotal = 0;
+              activeSystems.forEach(sys => {
+                const lb = monthMap[m]?.[sys]?.byLine?.[sl];
+                if (lb) { mGhr += lb.ghrBilling; mTotal += lb.ghrBilling + lb.affBilling; }
+              });
+              slGrand[monthLabel(m)] = fillPct(mGhr, mTotal);
+            });
+            fillRows.push(slGrand);
+          });
 
           // Sheet 5: GHR Headcounts
           const ghrHCRows = buildSheetRows(d => d.ghrHeadcount);
