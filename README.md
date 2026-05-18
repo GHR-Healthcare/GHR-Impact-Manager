@@ -2,6 +2,10 @@
 
 ## Version History
 
+**1.7.3** - GHR Capture % row on Trend table
+- New "GHR Capture %" row above Total on the Category / Account / PM views (GHR / (GHR + Affiliate))
+- WoW delta in percentage points highlights whether capture is improving across future projection weeks
+
 **1.7.2** - Trend chart extended one more week forward
 - Headcount trend now shows 4 back + current + 4 forward (was 3 forward)
 

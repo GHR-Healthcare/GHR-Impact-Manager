@@ -699,7 +699,7 @@
     const $ = (id) => document.getElementById(id);
 
     // App version - loaded from environment variable via API, with fallback
-    let APP_VERSION = '1.7.2';
+    let APP_VERSION = '1.7.3';
 
     const API_BASE_URL = '/api';
     
@@ -6613,6 +6613,48 @@
           return rows;
         };
 
+        // GHR Capture % row — GHR / (GHR + Affiliate), with WoW pp delta so future
+        // weeks (pipeline + pending starts) surface whether capture is improving.
+        const captureAt = i => {
+          const g = weekData[i].ghr || 0;
+          const a = weekData[i].aff || 0;
+          const t = g + a;
+          return t > 0 ? (g / t) * 100 : null;
+        };
+        const fmtPct = v => v == null ? '—' : v.toFixed(1) + '%';
+        const deltaPP = (v, p) => {
+          if (v == null || p == null) return '';
+          const d = v - p;
+          if (Math.abs(d) < 0.05) return '';
+          const txt = (d > 0 ? '+' : '') + d.toFixed(1) + 'pp';
+          return d > 0
+            ? `<span class="text-emerald-600 ml-0.5">${txt}</span>`
+            : `<span class="text-red-500 ml-0.5">${txt}</span>`;
+        };
+        const captureAvg4 = (() => {
+          const endIdx = currentWeekIdx > 0 ? currentWeekIdx - 1 : lastActualIdx;
+          const startIdx = Math.max(0, endIdx - 3);
+          let sum = 0, n = 0;
+          for (let i = startIdx; i <= endIdx; i++) {
+            const v = captureAt(i);
+            if (v != null) { sum += v; n++; }
+          }
+          return n > 0 ? sum / n : null;
+        })();
+        const buildCaptureRow = () => {
+          let cells = `<td class="px-3 py-1.5 border-b border-slate-200 font-bold text-slate-600 whitespace-nowrap text-xs"><span class="inline-block w-3 mr-1"></span>GHR Capture %</td>`;
+          weeks.forEach((w, i) => {
+            const v = captureAt(i);
+            const p = i > 0 ? captureAt(i - 1) : null;
+            const isCurrent = i === currentWeekIdx;
+            cells += `<td class="px-2 py-1.5 border-b border-slate-200 text-center text-[11px] font-bold text-blue-700 ${isCurrent ? 'bg-blue-50' : ''}">${fmtPct(v)}${deltaPP(v, p)}</td>`;
+            if (isCurrent) {
+              cells += `<td class="px-2 py-1.5 border-b border-slate-200 text-center text-[11px] font-bold trend-avg-col bg-amber-50 border-l border-r border-amber-200 text-blue-700">${captureAvg4 != null ? captureAvg4.toFixed(1) + '%' : '—'}</td>`;
+            }
+          });
+          return `<tr class="bg-slate-100">${cells}</tr>`;
+        };
+
         // Total row
         const buildTotalRow = () => {
           const avgG = rolling4Wk(i => weekData[i].ghr);
@@ -6727,7 +6769,7 @@
 
         // Total col count: weeks + 1 (avg col after current week) + 1 (label col)
         const totalCols = weeks.length + 2;
-        let catTableBodyParts = [buildTotalRow()];
+        let catTableBodyParts = [buildCaptureRow(), buildTotalRow()];
         const assignedCats = new Set();
         catGroupDefs.forEach(group => {
           const groupCats = sortedCats.filter(c => !assignedCats.has(c) && group.match(c));
@@ -6825,7 +6867,7 @@
           });
           return `<tr class="bg-slate-50">${cells}</tr>`;
         })();
-        const sysTableBody = sysTableTotalRow + sortedSystems.map(buildSysRow).join('');
+        const sysTableBody = buildCaptureRow() + sysTableTotalRow + sortedSystems.map(buildSysRow).join('');
 
         // ── PM view ────────────────────────────────────────────────────────────
         const allPMs = new Set();
@@ -6907,7 +6949,7 @@
           return rows;
         };
         const pmTableTotalRow = sysTableTotalRow; // same total
-        const pmTableBody = pmTableTotalRow + sortedPMs.map(buildPMRow).join('');
+        const pmTableBody = buildCaptureRow() + pmTableTotalRow + sortedPMs.map(buildPMRow).join('');
 
         // Weekly summary rows: Total HC, GHR, Affiliate, Pipeline, Trend Projection
         const summaryRows = [
@@ -6941,7 +6983,7 @@
           <div class="flex items-center justify-between mb-3 pb-3 border-b border-slate-100">
             <div>
               <h2 class="text-lg font-bold text-slate-700">Headcount Trend</h2>
-              <p class="text-xs text-slate-400">4-week lookback · 3-week projection · follows active filters</p>
+              <p class="text-xs text-slate-400">4-week lookback · 4-week projection · follows active filters</p>
             </div>
             <div class="flex items-center gap-3 flex-wrap justify-end">
               <span class="text-[10px] font-semibold text-slate-400 uppercase tracking-wide">Group By</span>
