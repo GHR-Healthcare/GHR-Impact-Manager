@@ -6267,6 +6267,8 @@
           const pmSysAff = {};
           const pmSysCatGhr = {};    // pm → system → category → Set of names
           const pmSysCatAff = {};
+          const vendorAff = {};      // vendor → Set of names (affiliate only)
+          const vendorSysAff = {};   // vendor → system → Set of names
 
           const addToNested2 = (map, k1, k2, val) => {
             if (!map[k1]) map[k1] = {};
@@ -6312,6 +6314,9 @@
                   addToNested2(pmSysAff, pm, sys, name);
                   addToNested3(pmSysCatAff, pm, sys, cat, name);
                 }
+                const vendor = (r.agency || '').trim() || 'Unknown';
+                if (!vendorAff[vendor]) vendorAff[vendor] = new Set(); vendorAff[vendor].add(name);
+                addToNested2(vendorSysAff, vendor, sys, name);
               }
             }
           });
@@ -6335,6 +6340,8 @@
           const pmSysAffCounts = toCount2(pmSysAff);
           const pmSysCatGhrCounts = toCount3(pmSysCatGhr);
           const pmSysCatAffCounts = toCount3(pmSysCatAff);
+          const vendorAffCounts = toCount1(vendorAff);
+          const vendorSysAffCounts = toCount2(vendorSysAff);
           // Pending headcount (future weeks only)
           const pendingGhrNames = new Set();
           const pendingAffNames = new Set();
@@ -6358,6 +6365,7 @@
             pmGhr: pmGhrCounts, pmAff: pmAffCounts,
             pmSysGhr: pmSysGhrCounts, pmSysAff: pmSysAffCounts,
             pmSysCat: { ghr: pmSysCatGhrCounts, aff: pmSysCatAffCounts },
+            vendorAff: vendorAffCounts, vendorSysAff: vendorSysAffCounts,
             pendingGhr: pendingGhrNames.size, pendingAff: pendingAffNames.size,
             pendingTotal: pendingGhrNames.size + pendingAffNames.size,
           };
@@ -6951,6 +6959,82 @@
         const pmTableTotalRow = sysTableTotalRow; // same total
         const pmTableBody = buildCaptureRow() + pmTableTotalRow + sortedPMs.map(buildPMRow).join('');
 
+        // ── Vendor view (Affiliate vendors only) ───────────────────────────────
+        const allVendors = new Set();
+        weekData.forEach(wd => Object.keys(wd.vendorAff || {}).forEach(v => allVendors.add(v)));
+        const sortedVendors = [...allVendors].sort((a, b) => a === 'Unknown' ? 1 : b === 'Unknown' ? -1 : a.localeCompare(b));
+
+        const buildVendorRow = (vendor) => {
+          const vendorId = vendor.replace(/[^a-zA-Z0-9]/g, '_');
+          const vendorSystems = new Set();
+          weekData.forEach(wd => Object.keys(wd.vendorSysAff?.[vendor] || {}).forEach(s => vendorSystems.add(s)));
+          const hasSubs = vendorSystems.size > 1;
+          const toggleAttr = hasSubs ? `onclick="document.querySelectorAll('.vendor-sys-${vendorId}').forEach(r=>r.classList.toggle('hidden'))" style="cursor:pointer"` : '';
+          const chevron = hasSubs ? `<span class="inline-block w-3 text-slate-400 mr-1">&#9654;</span>` : `<span class="inline-block w-3 mr-1"></span>`;
+          const avgA = rolling4Wk(i => weekData[i].vendorAff?.[vendor] || 0);
+          let cells = `<td class="px-3 py-1.5 border-b border-slate-100 font-medium text-slate-700 whitespace-nowrap text-xs">${chevron}${vendor}</td>`;
+          weeks.forEach((w, i) => {
+            const av = weekData[i].vendorAff?.[vendor] || 0;
+            const aPrev = i > 0 ? (weekData[i-1].vendorAff?.[vendor] || 0) : null;
+            const isCurrent = i === currentWeekIdx;
+            cells += `<td class="px-2 py-1.5 border-b border-slate-100 text-center text-[10px] ${isCurrent ? 'bg-blue-50' : ''}">
+              <span class="text-slate-300">—</span>
+              <span class="text-slate-300 mx-0.5">/</span>
+              <span class="text-purple-700 font-semibold">${av}${deltaSpan(av,aPrev)}</span>
+            </td>`;
+            if (isCurrent) {
+              cells += `<td class="px-2 py-1.5 border-b border-slate-100 text-center text-[10px] trend-avg-col bg-amber-50 border-l border-r border-amber-200">
+                <span class="text-slate-300">—</span>
+                <span class="text-slate-300 mx-0.5">/</span>
+                <span class="text-purple-700 font-semibold">${avgA ?? '—'}</span>
+              </td>`;
+            }
+          });
+          let rows = `<tr class="hover:bg-slate-50" ${toggleAttr}>${cells}</tr>`;
+          if (hasSubs) {
+            [...vendorSystems].sort().forEach(sys => {
+              const sAvgA = rolling4Wk(i => weekData[i].vendorSysAff?.[vendor]?.[sys] || 0);
+              let sc = `<td class="pl-8 pr-3 py-1 border-b border-slate-50 text-slate-500 whitespace-nowrap text-[10px]">${sys}</td>`;
+              weeks.forEach((w, i) => {
+                const av = weekData[i].vendorSysAff?.[vendor]?.[sys] || 0;
+                const aPrev = i > 0 ? (weekData[i-1].vendorSysAff?.[vendor]?.[sys] || 0) : null;
+                const isCurrent = i === currentWeekIdx;
+                sc += `<td class="px-2 py-1 border-b border-slate-50 text-center text-[10px] ${isCurrent ? 'bg-blue-50/50' : ''}">
+                  <span class="text-slate-200">—</span>
+                  <span class="text-slate-200 mx-0.5">/</span>
+                  <span class="text-purple-600">${av}${deltaSpan(av,aPrev)}</span>
+                </td>`;
+                if (isCurrent) {
+                  sc += `<td class="px-2 py-1 border-b border-slate-50 text-center text-[10px] trend-avg-col bg-amber-50 border-l border-r border-amber-200">
+                    <span class="text-slate-200">—</span>
+                    <span class="text-slate-200 mx-0.5">/</span>
+                    <span class="text-purple-600">${sAvgA ?? '—'}</span>
+                  </td>`;
+                }
+              });
+              rows += `<tr class="vendor-sys-${vendorId} hidden bg-slate-25 hover:bg-slate-50">${sc}</tr>`;
+            });
+          }
+          return rows;
+        };
+        const vendorTableTotalRow = (() => {
+          const avgA = rolling4Wk(i => weekData[i].aff);
+          let cells = `<td class="px-3 py-1.5 border-b border-slate-200 font-bold text-slate-800 whitespace-nowrap text-xs"><span class="inline-block w-3 mr-1"></span>Total Affiliate</td>`;
+          weeks.forEach((w, i) => {
+            const a = weekData[i].aff;
+            const aP = i > 0 ? weekData[i-1].aff : null;
+            const isCurrent = i === currentWeekIdx;
+            cells += `<td class="px-2 py-1.5 border-b border-slate-200 text-center text-[11px] font-bold ${isCurrent ? 'bg-blue-50' : ''}">
+              <span class="text-slate-300">—</span><span class="text-slate-300 mx-0.5">/</span><span class="text-purple-700">${a}${deltaSpan(a,aP)}</span></td>`;
+            if (isCurrent) {
+              cells += `<td class="px-2 py-1.5 border-b border-slate-200 text-center text-[11px] font-bold trend-avg-col bg-amber-50 border-l border-r border-amber-200">
+                <span class="text-slate-300">—</span><span class="text-slate-300 mx-0.5">/</span><span class="text-purple-700">${avgA ?? '—'}</span></td>`;
+            }
+          });
+          return `<tr class="bg-slate-50">${cells}</tr>`;
+        })();
+        const vendorTableBody = buildCaptureRow() + vendorTableTotalRow + sortedVendors.map(buildVendorRow).join('');
+
         // Weekly summary rows: Total HC, GHR, Affiliate, Pipeline, Trend Projection
         const summaryRows = [
           { label: 'Total HC', color: 'slate-700', getData: i => weekData[i].total },
@@ -6994,6 +7078,8 @@
                   class="px-2.5 py-1 rounded-md text-slate-500 hover:text-slate-700 transition-colors">Account</button>
                 <button onclick="window.__trendView='pm';document.getElementById('trendBreakdownBody').innerHTML=window.__trendPMBody;document.getElementById('trendBreakdownLabel').textContent='PM';document.getElementById('trendGroupByBtns').querySelectorAll('button').forEach(b=>b.classList.remove('bg-white','shadow-sm','text-slate-700'));this.classList.add('bg-white','shadow-sm','text-slate-700');window.updateTrendChart('pm')"
                   class="px-2.5 py-1 rounded-md text-slate-500 hover:text-slate-700 transition-colors">PM</button>
+                <button onclick="window.__trendView='vendor';document.getElementById('trendBreakdownBody').innerHTML=window.__trendVendorBody;document.getElementById('trendBreakdownLabel').textContent='Vendor';document.getElementById('trendGroupByBtns').querySelectorAll('button').forEach(b=>b.classList.remove('bg-white','shadow-sm','text-slate-700'));this.classList.add('bg-white','shadow-sm','text-slate-700');window.updateTrendChart('vendor')"
+                  class="px-2.5 py-1 rounded-md text-slate-500 hover:text-slate-700 transition-colors">Vendor</button>
               </div>
               <button onclick="window.collapseAllTrend()" class="flex items-center gap-1 px-2.5 py-1 rounded-md text-[10px] font-semibold text-slate-500 hover:text-slate-700 hover:bg-slate-100 transition-colors border border-slate-200">
                 <i data-lucide="chevrons-up-down" class="w-3 h-3"></i> Collapse All
@@ -7051,23 +7137,20 @@
         window.__trendCatBody = catTableBody;
         window.__trendSysBody = sysTableBody;
         window.__trendPMBody = pmTableBody;
+        window.__trendVendorBody = vendorTableBody;
         window.__trendView = window.__trendView || 'category';
         // Restore previous toggle selection if re-rendering
-        if (window.__trendView === 'account') {
+        const restoreTrendView = (bodyHtml, label, btnIdx) => {
           const el = document.getElementById('trendBreakdownBody');
           const lbl = document.getElementById('trendBreakdownLabel');
-          if (el) el.innerHTML = sysTableBody;
-          if (lbl) lbl.textContent = 'Account';
+          if (el) el.innerHTML = bodyHtml;
+          if (lbl) lbl.textContent = label;
           const btns = document.getElementById('trendGroupByBtns');
-          if (btns) { btns.querySelectorAll('button').forEach((b,i) => { b.classList.remove('bg-white','shadow-sm','text-slate-700'); if(i===1) b.classList.add('bg-white','shadow-sm','text-slate-700'); }); }
-        } else if (window.__trendView === 'pm') {
-          const el = document.getElementById('trendBreakdownBody');
-          const lbl = document.getElementById('trendBreakdownLabel');
-          if (el) el.innerHTML = pmTableBody;
-          if (lbl) lbl.textContent = 'PM';
-          const btns = document.getElementById('trendGroupByBtns');
-          if (btns) { btns.querySelectorAll('button').forEach((b,i) => { b.classList.remove('bg-white','shadow-sm','text-slate-700'); if(i===2) b.classList.add('bg-white','shadow-sm','text-slate-700'); }); }
-        }
+          if (btns) { btns.querySelectorAll('button').forEach((b,i) => { b.classList.remove('bg-white','shadow-sm','text-slate-700'); if(i===btnIdx) b.classList.add('bg-white','shadow-sm','text-slate-700'); }); }
+        };
+        if (window.__trendView === 'account') restoreTrendView(sysTableBody, 'Account', 1);
+        else if (window.__trendView === 'pm') restoreTrendView(pmTableBody, 'PM', 2);
+        else if (window.__trendView === 'vendor') restoreTrendView(vendorTableBody, 'Vendor', 3);
 
         // Per-system and per-PM chart datasets (used when Group By = Account or PM)
         const TREND_COLORS = ['#3b82f6','#8b5cf6','#22c55e','#f59e0b','#ef4444','#06b6d4','#84cc16','#f97316','#ec4899','#6366f1','#14b8a6','#f43f5e'];
@@ -7267,6 +7350,12 @@
             buildSeriesPair(pm, i => (weekData[i].pmGhr?.[pm] || 0) + (weekData[i].pmAff?.[pm] || 0), TREND_COLORS[idx % TREND_COLORS.length], idx)
           ),
         ];
+        const vendorChartDatasets = [
+          ...overlayDatasets,
+          ...sortedVendors.flatMap((v, idx) =>
+            buildSeriesPair(v, i => weekData[i].vendorAff?.[v] || 0, TREND_COLORS[idx % TREND_COLORS.length], idx)
+          ),
+        ];
         // Grouped so Total, GHR, and Affiliate each have their current + pipeline + pending + projection
         // sitting next to each other in the legend/tooltip. YoY lines insert inline via interleave.
         // Dash patterns: pipeline = fine dots, pending = dash-dot, projection = long dashes.
@@ -7286,7 +7375,7 @@
           { label: 'Revenue', data: revenueTotalData, borderColor: '#d97706', backgroundColor: 'rgba(217,119,6,0.08)', fill: false, tension: 0.3, pointRadius: 4, borderWidth: 2, yAxisID: 'y1' },
           { label: 'Revenue (projected)', data: revenueProjectedData, borderColor: '#d97706', fill: false, tension: 0.3, pointRadius: 3, borderWidth: 2, borderDash: DASH_PENDING, yAxisID: 'y1', hideFromLegend: true },
         ];
-        window.__trendChartDatasets = { category: categoryChartDatasets, account: sysChartDatasets, pm: pmChartDatasets };
+        window.__trendChartDatasets = { category: categoryChartDatasets, account: sysChartDatasets, pm: pmChartDatasets, vendor: vendorChartDatasets };
 
         // ── Prior-Year (YoY) overlay ─────────────────────────────────────────
         // Compute prior-year week-start strings (52 weeks = 364 days back)
@@ -7532,6 +7621,7 @@
             let base;
             if (view === 'account') base = window.__trendChartDatasets.account;
             else if (view === 'pm') base = window.__trendChartDatasets.pm;
+            else if (view === 'vendor') base = window.__trendChartDatasets.vendor;
             else base = window.__trendChartDatasets.category;
             const yoy = window.__yoyVisible ? computeYoYDatasets(view) : [];
             datasets = interleaveYoY(base, yoy);
@@ -9629,7 +9719,7 @@
     window.collapseAllTrend = function() {
         const tbody = document.getElementById('trendBreakdownBody');
         if (!tbody) return;
-        tbody.querySelectorAll('tr[class*="cat-sys-"], tr[class*="sys-cat-"], tr[class*="pm-sys-"]').forEach(r => r.classList.add('hidden'));
+        tbody.querySelectorAll('tr[class*="cat-sys-"], tr[class*="sys-cat-"], tr[class*="pm-sys-"], tr[class*="vendor-sys-"]').forEach(r => r.classList.add('hidden'));
     };
 
     window.updateMapping = function(idx, field, value) {
