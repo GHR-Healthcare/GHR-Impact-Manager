@@ -6342,17 +6342,35 @@
           const pmSysCatAffCounts = toCount3(pmSysCatAff);
           const vendorAffCounts = toCount1(vendorAff);
           const vendorSysAffCounts = toCount2(vendorSysAff);
-          // Pending headcount (future weeks only)
+          // Pending headcount (future weeks only) — broken out by category, system, PM, vendor
           const pendingGhrNames = new Set();
           const pendingAffNames = new Set();
+          const pendCatGhr = {}, pendCatAff = {};
+          const pendSysGhr = {}, pendSysAff = {};
+          const pendPmGhr = {},  pendPmAff = {};
+          const pendVendorAff = {};
           filteredPending.forEach(r => {
             const sd = r.startDate;
             const ed = r.endDate;
             const overlaps = sd <= end && (ed === null || ed >= start);
-            if (overlaps) {
-              const name = r.worker_name || '';
-              if (isGHRAgency(r.agency)) pendingGhrNames.add(name);
-              else pendingAffNames.add(name);
+            if (!overlaps) return;
+            const name = r.worker_name || '';
+            const cat = normalizeCategory(r.category);
+            const sys = r.healthSystem || 'Unknown';
+            const pm = resolvePM(r.facility, r.healthSystem);
+            const includeInPM = !PM_EXCLUDED_SYSTEMS.has(sys);
+            if (isGHRAgency(r.agency)) {
+              pendingGhrNames.add(name);
+              if (!pendCatGhr[cat]) pendCatGhr[cat] = new Set(); pendCatGhr[cat].add(name);
+              if (!pendSysGhr[sys]) pendSysGhr[sys] = new Set(); pendSysGhr[sys].add(name);
+              if (includeInPM) { if (!pendPmGhr[pm]) pendPmGhr[pm] = new Set(); pendPmGhr[pm].add(name); }
+            } else {
+              pendingAffNames.add(name);
+              if (!pendCatAff[cat]) pendCatAff[cat] = new Set(); pendCatAff[cat].add(name);
+              if (!pendSysAff[sys]) pendSysAff[sys] = new Set(); pendSysAff[sys].add(name);
+              if (includeInPM) { if (!pendPmAff[pm]) pendPmAff[pm] = new Set(); pendPmAff[pm].add(name); }
+              const vendor = (r.agency || '').trim() || 'Unknown';
+              if (!pendVendorAff[vendor]) pendVendorAff[vendor] = new Set(); pendVendorAff[vendor].add(name);
             }
           });
 
@@ -6368,6 +6386,10 @@
             vendorAff: vendorAffCounts, vendorSysAff: vendorSysAffCounts,
             pendingGhr: pendingGhrNames.size, pendingAff: pendingAffNames.size,
             pendingTotal: pendingGhrNames.size + pendingAffNames.size,
+            pendCatGhr: toCount1(pendCatGhr), pendCatAff: toCount1(pendCatAff),
+            pendSysGhr: toCount1(pendSysGhr), pendSysAff: toCount1(pendSysAff),
+            pendPmGhr: toCount1(pendPmGhr), pendPmAff: toCount1(pendPmAff),
+            pendVendorAff: toCount1(pendVendorAff),
           };
         });
         const weekHC = weekData.map(d => d.total);
@@ -6540,6 +6562,35 @@
           return count > 0 ? Math.round(sum / count) : null;
         };
 
+        // Pending sub-row helper — renders only if there's any pending data.
+        // getGhr/getAff return the GHR / Affiliate pending count for a given week index i.
+        // Pending only meaningfully applies from lastActualIdx onward (current + future weeks).
+        const buildPendingSubRow = (label, getGhr, getAff, opts = {}) => {
+          let hasAny = false;
+          for (let i = lastActualIdx; i < weeks.length; i++) {
+            if ((getGhr(i) || 0) + (getAff(i) || 0) > 0) { hasAny = true; break; }
+          }
+          if (!hasAny) return '';
+          const indent = opts.indent || 'pl-4';
+          const labelCls = opts.labelCls || 'text-amber-700 italic font-medium';
+          let cells = `<td class="${indent} pr-3 py-1 border-b border-amber-50 whitespace-nowrap text-[10px] ${labelCls}">${label}</td>`;
+          weeks.forEach((w, i) => {
+            const isFuture = i >= lastActualIdx;
+            const isCurrent = i === currentWeekIdx;
+            const g = isFuture ? (getGhr(i) || 0) : 0;
+            const a = isFuture ? (getAff(i) || 0) : 0;
+            cells += `<td class="px-2 py-1 border-b border-amber-50 text-center text-[10px] ${isCurrent ? 'bg-amber-50/60' : 'bg-amber-50/30'}">
+              ${isFuture && (g + a) > 0
+                ? `<span class="text-blue-600">+${g}</span><span class="text-slate-200 mx-0.5">/</span><span class="text-purple-600">+${a}</span>`
+                : `<span class="text-slate-300">—</span>`}
+            </td>`;
+            if (isCurrent) {
+              cells += `<td class="px-2 py-1 border-b border-amber-50 text-center text-[10px] trend-avg-col bg-amber-50/60 border-l border-r border-amber-200"><span class="text-slate-300">—</span></td>`;
+            }
+          });
+          return `<tr class="bg-amber-50/20">${cells}</tr>`;
+        };
+
         // Build a row for a category (expandable)
         const buildCatRow = (cat) => {
           const catId = cat.replace(/[^a-zA-Z0-9]/g, '_');
@@ -6580,6 +6631,10 @@
           });
 
           let rows = `<tr class="hover:bg-slate-50" ${toggleAttr}>${cells}</tr>`;
+          rows += buildPendingSubRow('Pending',
+            i => weekData[i].pendCatGhr?.[cat] || 0,
+            i => weekData[i].pendCatAff?.[cat] || 0
+          );
 
           // Sub-rows for each health system (hidden by default)
           if (hasSubRows) {
@@ -6777,7 +6832,11 @@
 
         // Total col count: weeks + 1 (avg col after current week) + 1 (label col)
         const totalCols = weeks.length + 2;
-        let catTableBodyParts = [buildCaptureRow(), buildTotalRow()];
+        const totalPendingRow = buildPendingSubRow('Pending Total',
+          i => weekData[i].pendingGhr || 0,
+          i => weekData[i].pendingAff || 0
+        );
+        let catTableBodyParts = [buildCaptureRow(), buildTotalRow(), totalPendingRow];
         const assignedCats = new Set();
         catGroupDefs.forEach(group => {
           const groupCats = sortedCats.filter(c => !assignedCats.has(c) && group.match(c));
@@ -6830,6 +6889,10 @@
             }
           });
           let rows = `<tr class="hover:bg-slate-50" ${toggleAttr}>${cells}</tr>`;
+          rows += buildPendingSubRow('Pending',
+            i => weekData[i].pendSysGhr?.[sys] || 0,
+            i => weekData[i].pendSysAff?.[sys] || 0
+          );
           if (hasCats) {
             [...cats].sort().forEach(cat => {
               const sAvgG = rolling4Wk(i => weekData[i].sysCatGhr?.[sys]?.[cat] || 0);
@@ -6875,7 +6938,7 @@
           });
           return `<tr class="bg-slate-50">${cells}</tr>`;
         })();
-        const sysTableBody = buildCaptureRow() + sysTableTotalRow + sortedSystems.map(buildSysRow).join('');
+        const sysTableBody = buildCaptureRow() + sysTableTotalRow + totalPendingRow + sortedSystems.map(buildSysRow).join('');
 
         // ── PM view ────────────────────────────────────────────────────────────
         const allPMs = new Set();
@@ -6909,6 +6972,10 @@
             }
           });
           let rows = `<tr class="hover:bg-slate-50" ${toggleAttr}>${cells}</tr>`;
+          rows += buildPendingSubRow('Pending',
+            i => weekData[i].pendPmGhr?.[pm] || 0,
+            i => weekData[i].pendPmAff?.[pm] || 0
+          );
           [...pmSystems].sort().forEach(sys => {
             const sysId2 = (pm + '_' + sys).replace(/[^a-zA-Z0-9]/g, '_');
             const pmSysCats = new Set();
@@ -6957,7 +7024,7 @@
           return rows;
         };
         const pmTableTotalRow = sysTableTotalRow; // same total
-        const pmTableBody = buildCaptureRow() + pmTableTotalRow + sortedPMs.map(buildPMRow).join('');
+        const pmTableBody = buildCaptureRow() + pmTableTotalRow + totalPendingRow + sortedPMs.map(buildPMRow).join('');
 
         // ── Vendor view (Affiliate vendors only) ───────────────────────────────
         const allVendors = new Set();
@@ -6991,6 +7058,10 @@
             }
           });
           let rows = `<tr class="hover:bg-slate-50" ${toggleAttr}>${cells}</tr>`;
+          rows += buildPendingSubRow('Pending',
+            () => 0, // vendor view is affiliate-only
+            i => weekData[i].pendVendorAff?.[vendor] || 0
+          );
           if (hasSubs) {
             [...vendorSystems].sort().forEach(sys => {
               const sAvgA = rolling4Wk(i => weekData[i].vendorSysAff?.[vendor]?.[sys] || 0);
@@ -7033,7 +7104,11 @@
           });
           return `<tr class="bg-slate-50">${cells}</tr>`;
         })();
-        const vendorTableBody = buildCaptureRow() + vendorTableTotalRow + sortedVendors.map(buildVendorRow).join('');
+        const vendorTotalPendingRow = buildPendingSubRow('Pending Total',
+          () => 0,
+          i => weekData[i].pendingAff || 0
+        );
+        const vendorTableBody = buildCaptureRow() + vendorTableTotalRow + vendorTotalPendingRow + sortedVendors.map(buildVendorRow).join('');
 
         // Weekly summary rows: Total HC, GHR, Affiliate, Pipeline, Trend Projection
         const summaryRows = [
