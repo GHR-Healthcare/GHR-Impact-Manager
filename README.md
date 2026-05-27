@@ -2,6 +2,10 @@
 
 ## Version History
 
+**1.7.4** - VIP rolled into confirmed + vendor chart top-5 cap
+- "Verification In Progress" VNDLY workorders now count in the main GHR/Affiliate row (and the chart's confirmed line) instead of the Pending sub-row, since they're far enough along to treat as confirmed
+- Vendor-view line chart now plots only the top 5 affiliate vendors by total headcount across the visible window; the table still lists every vendor
+
 **1.7.3** - GHR Capture % row on Trend table
 - New "GHR Capture %" row above Total on the Category / Account / PM views (GHR / (GHR + Affiliate))
 - WoW delta in percentage points highlights whether capture is improving across future projection weeks

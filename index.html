@@ -699,7 +699,7 @@
     const $ = (id) => document.getElementById(id);
 
     // App version - loaded from environment variable via API, with fallback
-    let APP_VERSION = '1.7.3';
+    let APP_VERSION = '1.7.4';
 
     const API_BASE_URL = '/api';
     
@@ -6359,6 +6359,40 @@
             const sys = r.healthSystem || 'Unknown';
             const pm = resolvePM(r.facility, r.healthSystem);
             const includeInPM = !PM_EXCLUDED_SYSTEMS.has(sys);
+
+            // Verification In Progress is far enough along that we treat it as
+            // confirmed — roll into the main GHR/Affiliate counts instead of the
+            // pending sub-row.
+            if (/verification\s+in\s+progress/i.test(r.status || '')) {
+              if (isGHRAgency(r.agency)) {
+                ghrNames.add(name);
+                if (!catGhr[cat]) catGhr[cat] = new Set(); catGhr[cat].add(name);
+                addToNested2(catSysGhr, cat, sys, name);
+                if (!sysGhr[sys]) sysGhr[sys] = new Set(); sysGhr[sys].add(name);
+                addToNested2(sysCatGhr, sys, cat, name);
+                if (includeInPM) {
+                  if (!pmGhr[pm]) pmGhr[pm] = new Set(); pmGhr[pm].add(name);
+                  addToNested2(pmSysGhr, pm, sys, name);
+                  addToNested3(pmSysCatGhr, pm, sys, cat, name);
+                }
+              } else {
+                affNames.add(name);
+                if (!catAff[cat]) catAff[cat] = new Set(); catAff[cat].add(name);
+                addToNested2(catSysAff, cat, sys, name);
+                if (!sysAff[sys]) sysAff[sys] = new Set(); sysAff[sys].add(name);
+                addToNested2(sysCatAff, sys, cat, name);
+                if (includeInPM) {
+                  if (!pmAff[pm]) pmAff[pm] = new Set(); pmAff[pm].add(name);
+                  addToNested2(pmSysAff, pm, sys, name);
+                  addToNested3(pmSysCatAff, pm, sys, cat, name);
+                }
+                const vendor = (r.agency || '').trim() || 'Unknown';
+                if (!vendorAff[vendor]) vendorAff[vendor] = new Set(); vendorAff[vendor].add(name);
+                addToNested2(vendorSysAff, vendor, sys, name);
+              }
+              return;
+            }
+
             if (isGHRAgency(r.agency)) {
               pendingGhrNames.add(name);
               if (!pendCatGhr[cat]) pendCatGhr[cat] = new Set(); pendCatGhr[cat].add(name);
@@ -7425,9 +7459,20 @@
             buildSeriesPair(pm, i => (weekData[i].pmGhr?.[pm] || 0) + (weekData[i].pmAff?.[pm] || 0), TREND_COLORS[idx % TREND_COLORS.length], idx)
           ),
         ];
+        // Chart caps to top-5 affiliate vendors by total headcount across the
+        // visible window — otherwise the line chart becomes an unreadable mess.
+        // The table still shows every vendor.
+        const vendorTotals = sortedVendors.map(v => ({
+          v,
+          total: weeks.reduce((s, _w, i) => s + (weekData[i].vendorAff?.[v] || 0), 0),
+        }));
+        const topVendors = vendorTotals
+          .sort((a, b) => b.total - a.total)
+          .slice(0, 5)
+          .map(x => x.v);
         const vendorChartDatasets = [
           ...overlayDatasets,
-          ...sortedVendors.flatMap((v, idx) =>
+          ...topVendors.flatMap((v, idx) =>
             buildSeriesPair(v, i => weekData[i].vendorAff?.[v] || 0, TREND_COLORS[idx % TREND_COLORS.length], idx)
           ),
         ];
