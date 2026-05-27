@@ -2,6 +2,7 @@ import azure.functions as func
 import pyodbc
 import os
 import json
+from shared_code.auth import require_allowed_domain
 
 
 def main(req: func.HttpRequest) -> func.HttpResponse:
@@ -13,6 +14,9 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
     health_system, work_site, labor_type, billing_week_start, billing_week_end,
     item_date, hours, invoice_status, is_ghr
     """
+    auth_error = require_allowed_domain(req)
+    if auth_error:
+        return auth_error
     try:
         conn = pyodbc.connect(
             f"DRIVER={{ODBC Driver 17 for SQL Server}};"

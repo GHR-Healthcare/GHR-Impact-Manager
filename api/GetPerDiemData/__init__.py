@@ -4,6 +4,7 @@ import os
 import json
 import re
 from datetime import datetime
+from shared_code.auth import require_allowed_domain
 
 
 def main(req: func.HttpRequest) -> func.HttpResponse:
@@ -15,6 +16,9 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
     Frontend computes weekly metrics from this raw data:
     - Total Active Headcount, Actives Worked, % Worked, Total Shifts, Shifts/Nurse Avg
     """
+    auth_error = require_allowed_domain(req)
+    if auth_error:
+        return auth_error
     try:
         # Optional date range params (format: YYYY-MM)
         from_month = req.params.get('from')

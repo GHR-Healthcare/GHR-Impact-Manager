@@ -3,6 +3,7 @@ import pyodbc
 import os
 import json
 from datetime import datetime
+from shared_code.auth import require_allowed_domain
 
 
 # Max days between start dates for an assignment/placement to still be considered
@@ -51,6 +52,9 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
     Returns three buckets: date mismatches, missing in Bullhorn, missing in B4/VNDLY.
     Matching is by normalized (first + last) name.
     """
+    auth_error = require_allowed_domain(req)
+    if auth_error:
+        return auth_error
     try:
         # ===========================================================
         # B4 + VNDLY assignments from positions DB

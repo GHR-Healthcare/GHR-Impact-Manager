@@ -3,6 +3,7 @@ import pyodbc
 import os
 import json
 from datetime import datetime, date
+from shared_code.auth import require_allowed_domain
 
 
 def main(req: func.HttpRequest) -> func.HttpResponse:
@@ -10,6 +11,9 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
     Returns pending GHR submissions/offers from B4 and VNDLY.
     Only GHR agency submissions are included.
     """
+    auth_error = require_allowed_domain(req)
+    if auth_error:
+        return auth_error
     try:
         conn = pyodbc.connect(
             f"DRIVER={{ODBC Driver 17 for SQL Server}};"

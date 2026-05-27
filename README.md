@@ -2,6 +2,11 @@
 
 ## Version History
 
+**1.7.5** - SWA Free build fix + tenant domain allowlist
+- Removed the `auth` block from `staticwebapp.config.json` (Microsoft tightened the SWA validator on 2026-05-27 and the block was inactive anyway because the openIdIssuer was still the `YOUR_TENANT_ID` placeholder)
+- Added `api/shared_code/auth.py` enforcing a domain allowlist: `ghrhealthcare.com`, `unitedanesthesia.com`, `ghreducation.com`. Every API endpoint now returns 401/403 if the SWA principal's email isn't in one of these domains
+- Closes the gap where SWA Free's built-in Microsoft provider was accepting any Microsoft account
+
 **1.7.4** - VIP rolled into confirmed + vendor chart top-5 cap
 - "Verification In Progress" VNDLY workorders now count in the main GHR/Affiliate row (and the chart's confirmed line) instead of the Pending sub-row, since they're far enough along to treat as confirmed
 - Vendor-view line chart now plots only the top 5 affiliate vendors by total headcount across the visible window; the table still lists every vendor

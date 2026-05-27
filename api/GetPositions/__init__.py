@@ -2,8 +2,12 @@ import azure.functions as func
 import pyodbc
 import os
 import json
+from shared_code.auth import require_allowed_domain
 
 def main(req: func.HttpRequest) -> func.HttpResponse:
+    auth_error = require_allowed_domain(req)
+    if auth_error:
+        return auth_error
     try:
         # Connect to positions database
         conn = pyodbc.connect(

@@ -2,6 +2,7 @@ import azure.functions as func
 import pyodbc
 import os
 import json
+from shared_code.auth import require_allowed_domain
 
 
 def ensure_schema(cursor):
@@ -28,6 +29,9 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
     POST: Save/update mappings (replaces all)
     Storage: ghrappdb.impactmgr.pm_mappings
     """
+    auth_error = require_allowed_domain(req)
+    if auth_error:
+        return auth_error
     try:
         conn = pyodbc.connect(
             f"DRIVER={{ODBC Driver 17 for SQL Server}};"

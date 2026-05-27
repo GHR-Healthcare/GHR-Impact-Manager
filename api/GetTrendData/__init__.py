@@ -2,6 +2,7 @@ import azure.functions as func
 import pyodbc
 import os
 import json
+from shared_code.auth import require_allowed_domain
 
 
 def main(req: func.HttpRequest) -> func.HttpResponse:
@@ -10,6 +11,9 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
     Covers 6 weeks back through present (and beyond via end dates) to support
     4-week lookback + current week + 4-week forward projection in the frontend.
     """
+    auth_error = require_allowed_domain(req)
+    if auth_error:
+        return auth_error
     try:
         conn = pyodbc.connect(
             f"DRIVER={{ODBC Driver 17 for SQL Server}};"

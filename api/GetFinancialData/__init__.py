@@ -4,6 +4,7 @@ import os
 import json
 import re
 from datetime import datetime
+from shared_code.auth import require_allowed_domain
 
 # Mapping of B4 health system names to VNDLY health system names
 # Used to detect overlap and prefer VNDLY data when available
@@ -26,6 +27,9 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
     VNDLY data is preferred when available for a given month.
     B4 data is used as fallback for months before VNDLY coverage.
     """
+    auth_error = require_allowed_domain(req)
+    if auth_error:
+        return auth_error
     try:
         # Optional date range params (format: YYYY-MM)
         from_month = req.params.get('from')  # e.g. '2025-02'

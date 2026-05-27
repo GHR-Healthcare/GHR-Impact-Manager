@@ -3,6 +3,7 @@ import os
 import json
 import urllib.request
 import urllib.parse
+from shared_code.auth import require_allowed_domain
 
 
 def get_graph_token():
@@ -37,6 +38,9 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
     Requires app registration with User.Read.All application permission.
     Env vars: AAD_TENANT_ID, AAD_CLIENT_ID, AAD_CLIENT_SECRET
     """
+    auth_error = require_allowed_domain(req)
+    if auth_error:
+        return auth_error
     query = (req.params.get('q') or '').strip()
 
     if len(query) < 2:
