@@ -1,32 +1,54 @@
 {
   "routes": [
     {
+      "route": "/api/health",
+      "allowedRoles": [
+        "anonymous",
+        "authenticated"
+      ]
+    },
+    {
       "route": "/api/*",
-      "allowedRoles": ["authenticated"]
+      "allowedRoles": [
+        "authenticated"
+      ]
     },
     {
       "route": "/*.html",
-      "allowedRoles": ["authenticated"]
+      "allowedRoles": [
+        "authenticated"
+      ]
     },
     {
       "route": "/",
-      "allowedRoles": ["authenticated"]
+      "allowedRoles": [
+        "authenticated"
+      ]
     },
     {
       "route": "/.auth/login/aad",
-      "allowedRoles": ["anonymous"]
+      "allowedRoles": [
+        "anonymous"
+      ]
     },
     {
       "route": "/.auth/logout",
-      "allowedRoles": ["anonymous", "authenticated"]
+      "allowedRoles": [
+        "anonymous",
+        "authenticated"
+      ]
     },
     {
       "route": "/.auth/*",
-      "allowedRoles": ["anonymous"]
+      "allowedRoles": [
+        "anonymous"
+      ]
     },
     {
       "route": "/favicon.ico",
-      "allowedRoles": ["anonymous"]
+      "allowedRoles": [
+        "anonymous"
+      ]
     }
   ],
   "responseOverrides": {
@@ -37,7 +59,11 @@
   },
   "navigationFallback": {
     "rewrite": "/index.html",
-    "exclude": ["/api/*", "/.auth/*", "/favicon.ico"]
+    "exclude": [
+      "/api/*",
+      "/.auth/*",
+      "/favicon.ico"
+    ]
   },
   "platform": {
     "apiRuntime": "python:3.9"
