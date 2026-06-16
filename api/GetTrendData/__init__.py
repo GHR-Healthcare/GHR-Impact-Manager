@@ -3,10 +3,14 @@ import pyodbc
 import os
 import json
 from shared_code.auth import require_allowed_domain
-from shared_code.data_source import is_non_msp
+from shared_code.data_source import is_non_msp, get_bullhorn_conn, get_symplr_conn
 from shared_code.bullhorn_systems import (
     build_system_case_expr,
     build_scope_filter,
+)
+from shared_code.symplr_systems import (
+    build_system_case_expr as symplr_system_case_expr,
+    build_scope_filter as symplr_scope_filter,
 )
 
 
@@ -20,135 +24,215 @@ BULLHORN_ACTIVE_STATUSES = (
 )
 
 
-def _bullhorn_trend(req: func.HttpRequest) -> func.HttpResponse:
+def _bullhorn_trend_data():
     """
-    Trend data for the non-MSP (Bullhorn) instance.
+    Returns {assignments, weekly_revenue} from the Bullhorn book. Raises on
+    connection or query error so the caller can log + continue.
+    """
+    conn = get_bullhorn_conn()
+    cursor = conn.cursor()
 
-    Shape mirrors the MSP response so the frontend doesn't branch:
-      - assignments[]: weekly headcount source rows
-      - pending[]: empty — non-MSP has no pre-active funnel (spec §5)
-      - weekly_revenue[]: scheduled revenue per (week, system, vendor_type)
-        computed as clientBillRate * hoursPerDay * 5 over overlap
+    system_case = build_system_case_expr('p.clientCorporationID')
+    scope_filter = build_scope_filter('p.clientCorporationID')
+    status_list = ', '.join("'" + s + "'" for s in BULLHORN_ACTIVE_STATUSES)
+
+    assignments = []
+    cursor.execute(f'''
+        SELECT
+            'Bullhorn' AS source_system,
+            LTRIM(RTRIM(ISNULL(c.firstName,'') + ' ' + ISNULL(c.lastName,''))) AS worker_name,
+            ({system_case}) AS system,
+            cc.name AS facility,
+            'GHR' AS agency,
+            p.customText1 AS specialty,
+            p.employmentType AS category,
+            p.customText11 AS pm,
+            p.status AS status,
+            TRY_CAST(p.clientBillRate AS DECIMAL(10,2)) AS bill_rate,
+            TRY_CAST(p.hoursPerDay * 5 AS DECIMAL(10,2)) AS weekly_hours,
+            CAST(p.dateBegin AS DATE) AS startDate,
+            CAST(p.dateEnd AS DATE) AS endDate
+        FROM dbo.View_Placement p
+        LEFT JOIN dbo.View_Candidate c ON p.candidateID = c.candidateID
+        LEFT JOIN dbo.View_ClientCorporation cc ON p.clientCorporationID = cc.clientCorporationID
+        WHERE p.isDeleted = 0
+            AND p.status IN ({status_list})
+            AND p.dateBegin IS NOT NULL
+            AND (p.dateEnd IS NULL OR p.dateEnd >= DATEADD(WEEK, -4, GETDATE()))
+            AND {scope_filter}
+    ''')
+    columns = [column[0] for column in cursor.description]
+    for row in cursor.fetchall():
+        row_dict = dict(zip(columns, row))
+        if row_dict.get('startDate'):
+            row_dict['startDate'] = row_dict['startDate'].isoformat() if hasattr(row_dict['startDate'], 'isoformat') else str(row_dict['startDate'])
+        if row_dict.get('endDate'):
+            row_dict['endDate'] = row_dict['endDate'].isoformat() if hasattr(row_dict['endDate'], 'isoformat') else str(row_dict['endDate'])
+        assignments.append(row_dict)
+
+    weekly_revenue = []
+    cursor.execute(f'''
+        ;WITH Weeks AS (
+            SELECT TOP 8
+                DATEADD(WEEK, 1 - ROW_NUMBER() OVER (ORDER BY (SELECT NULL)),
+                        DATEADD(DAY, 1 - DATEPART(WEEKDAY, CAST(GETDATE() AS DATE)),
+                                CAST(GETDATE() AS DATE))
+                ) AS week_start
+            FROM sys.all_objects
+        )
+        SELECT
+            CONVERT(VARCHAR(10), w.week_start, 23) AS week_start,
+            ({system_case}) AS system,
+            'GHR' AS vendor_type,
+            SUM(ISNULL(p.clientBillRate, 0) * ISNULL(p.hoursPerDay, 0) * 5) AS revenue
+        FROM Weeks w
+        INNER JOIN dbo.View_Placement p
+            ON p.dateBegin <= DATEADD(DAY, 6, w.week_start)
+            AND (p.dateEnd IS NULL OR p.dateEnd >= w.week_start)
+        WHERE p.isDeleted = 0
+            AND p.status IN ({status_list})
+            AND p.dateBegin IS NOT NULL
+            AND {scope_filter}
+        GROUP BY w.week_start, ({system_case})
+    ''')
+    for row in cursor.fetchall():
+        weekly_revenue.append({
+            'source_system': 'Bullhorn',
+            'week_start': row[0],
+            'system': row[1],
+            'vendor_type': row[2],
+            'revenue': float(row[3] or 0),
+        })
+
+    conn.close()
+    return {'assignments': assignments, 'weekly_revenue': weekly_revenue}
+
+
+def _symplr_trend_data():
     """
+    Returns {assignments, weekly_revenue} from the Symplr book. Raises on
+    connection / query error. Returns empty dicts if SYMPLR_* env vars
+    aren't configured (get_symplr_conn returns None).
+    """
+    conn = get_symplr_conn()
+    if conn is None:
+        return {'assignments': [], 'weekly_revenue': []}
+
+    cursor = conn.cursor()
+    system_case = symplr_system_case_expr('lt.clientid')
+    scope_filter = symplr_scope_filter('lt.clientid')
+
+    # ============================================================
+    # Symplr — Long-term orders (filled placements) in rolling window
+    # ============================================================
+    assignments = []
+    cursor.execute(f'''
+        SELECT
+            'Symplr' AS source_system,
+            LTRIM(RTRIM(ISNULL(pt.firstname, '') + ' ' + ISNULL(pt.lastname, ''))) AS worker_name,
+            ({system_case}) AS system,
+            pc.clientname AS facility,
+            'GHR' AS agency,
+            lt.specialty AS specialty,
+            lt.nursetype AS category,
+            NULL AS pm,
+            lt.status AS status,
+            NULL AS bill_rate,
+            TRY_CAST(lt.HoursPerWeek AS DECIMAL(10,2)) AS weekly_hours,
+            CAST(lt.date_start AS DATE) AS startDate,
+            CAST(lt.date_end AS DATE) AS endDate
+        FROM dbo.lt_order lt
+        LEFT JOIN dbo.profile_client pc ON lt.clientid = pc.recordid
+        LEFT JOIN dbo.profile_temp pt ON lt.tempid = pt.recordid
+        WHERE lt.status = 'filled'
+            AND lt.date_start IS NOT NULL
+            AND (lt.date_end IS NULL OR lt.date_end >= DATEADD(WEEK, -4, GETDATE()))
+            AND {scope_filter}
+    ''')
+    columns = [column[0] for column in cursor.description]
+    for row in cursor.fetchall():
+        row_dict = dict(zip(columns, row))
+        if row_dict.get('startDate'):
+            row_dict['startDate'] = row_dict['startDate'].isoformat() if hasattr(row_dict['startDate'], 'isoformat') else str(row_dict['startDate'])
+        if row_dict.get('endDate'):
+            row_dict['endDate'] = row_dict['endDate'].isoformat() if hasattr(row_dict['endDate'], 'isoformat') else str(row_dict['endDate'])
+        assignments.append(row_dict)
+
+    # ============================================================
+    # Symplr — Weekly ACTUAL revenue from shift-level orders table
+    # Symplr is the only source with real billed dollars per shift —
+    # bucket by week of jobdatestart and sum totalbillamount.
+    # ============================================================
+    weekly_revenue = []
+    cursor.execute(f'''
+        SELECT
+            CONVERT(VARCHAR(10),
+                DATEADD(DAY, 1 - DATEPART(WEEKDAY, CAST(o.jobdatestart AS DATE)),
+                        CAST(o.jobdatestart AS DATE)),
+                23) AS week_start,
+            ({symplr_system_case_expr('o.customerid')}) AS system,
+            'GHR' AS vendor_type,
+            SUM(ISNULL(o.totalbillamount, 0)) AS revenue
+        FROM dbo.orders o
+        WHERE o.jobdatestart IS NOT NULL
+            AND CAST(o.jobdatestart AS DATE) >= DATEADD(WEEK, -8, GETDATE())
+            AND {symplr_scope_filter('o.customerid')}
+        GROUP BY
+            DATEADD(DAY, 1 - DATEPART(WEEKDAY, CAST(o.jobdatestart AS DATE)),
+                    CAST(o.jobdatestart AS DATE)),
+            ({symplr_system_case_expr('o.customerid')})
+    ''')
+    for row in cursor.fetchall():
+        weekly_revenue.append({
+            'source_system': 'Symplr',
+            'week_start': row[0],
+            'system': row[1],
+            'vendor_type': row[2],
+            'revenue': float(row[3] or 0),
+        })
+
+    conn.close()
+    return {'assignments': assignments, 'weekly_revenue': weekly_revenue}
+
+
+def _non_msp_trend(req: func.HttpRequest) -> func.HttpResponse:
+    """
+    Trend data for the non-MSP instance. Calls Bullhorn and Symplr independently
+    and unions the results. Either side failing is logged but not fatal — the
+    other source still contributes its rows.
+    """
+    assignments = []
+    weekly_revenue = []
+    errors = []
+
     try:
-        conn = pyodbc.connect(
-            f"DRIVER={{ODBC Driver 17 for SQL Server}};"
-            f"SERVER={os.environ['BULLHORN_HOST']};"
-            f"DATABASE={os.environ['BULLHORN_DB']};"
-            f"UID={os.environ['BULLHORN_USER']};"
-            f"PWD={os.environ['BULLHORN_PASSWORD']};"
-            f"TrustServerCertificate=yes;"
-            f"Encrypt=yes"
-        )
-        cursor = conn.cursor()
-
-        system_case = build_system_case_expr('p.clientCorporationID')
-        scope_filter = build_scope_filter('p.clientCorporationID')
-        status_list = ', '.join("'" + s + "'" for s in BULLHORN_ACTIVE_STATUSES)
-
-        # ============================================================
-        # Bullhorn — Placements in rolling window
-        # ============================================================
-        assignments = []
-        try:
-            cursor.execute(f'''
-                SELECT
-                    'Bullhorn' AS source_system,
-                    LTRIM(RTRIM(ISNULL(c.firstName,'') + ' ' + ISNULL(c.lastName,''))) AS worker_name,
-                    ({system_case}) AS system,
-                    cc.name AS facility,
-                    'GHR' AS agency,
-                    p.customText1 AS specialty,
-                    p.employmentType AS category,
-                    p.customText11 AS pm,
-                    p.status AS status,
-                    TRY_CAST(p.clientBillRate AS DECIMAL(10,2)) AS bill_rate,
-                    TRY_CAST(p.hoursPerDay * 5 AS DECIMAL(10,2)) AS weekly_hours,
-                    CAST(p.dateBegin AS DATE) AS startDate,
-                    CAST(p.dateEnd AS DATE) AS endDate
-                FROM dbo.View_Placement p
-                LEFT JOIN dbo.View_Candidate c ON p.candidateID = c.candidateID
-                LEFT JOIN dbo.View_ClientCorporation cc ON p.clientCorporationID = cc.clientCorporationID
-                WHERE p.isDeleted = 0
-                    AND p.status IN ({status_list})
-                    AND p.dateBegin IS NOT NULL
-                    AND (p.dateEnd IS NULL OR p.dateEnd >= DATEADD(WEEK, -4, GETDATE()))
-                    AND {scope_filter}
-            ''')
-            columns = [column[0] for column in cursor.description]
-            for row in cursor.fetchall():
-                row_dict = dict(zip(columns, row))
-                if row_dict.get('startDate'):
-                    row_dict['startDate'] = row_dict['startDate'].isoformat() if hasattr(row_dict['startDate'], 'isoformat') else str(row_dict['startDate'])
-                if row_dict.get('endDate'):
-                    row_dict['endDate'] = row_dict['endDate'].isoformat() if hasattr(row_dict['endDate'], 'isoformat') else str(row_dict['endDate'])
-                assignments.append(row_dict)
-        except Exception as e:
-            print(f"Error loading Bullhorn trend assignments: {e}")
-            import traceback; traceback.print_exc()
-
-        # ============================================================
-        # Weekly scheduled revenue — Bullhorn
-        # revenue per placement per week = clientBillRate * hoursPerDay * 5
-        # ============================================================
-        weekly_revenue = []
-        try:
-            cursor.execute(f'''
-                ;WITH Weeks AS (
-                    SELECT TOP 8
-                        DATEADD(WEEK, 1 - ROW_NUMBER() OVER (ORDER BY (SELECT NULL)),
-                                DATEADD(DAY, 1 - DATEPART(WEEKDAY, CAST(GETDATE() AS DATE)),
-                                        CAST(GETDATE() AS DATE))
-                        ) AS week_start
-                    FROM sys.all_objects
-                )
-                SELECT
-                    CONVERT(VARCHAR(10), w.week_start, 23) AS week_start,
-                    ({system_case}) AS system,
-                    'GHR' AS vendor_type,
-                    SUM(ISNULL(p.clientBillRate, 0) * ISNULL(p.hoursPerDay, 0) * 5) AS revenue
-                FROM Weeks w
-                INNER JOIN dbo.View_Placement p
-                    ON p.dateBegin <= DATEADD(DAY, 6, w.week_start)
-                    AND (p.dateEnd IS NULL OR p.dateEnd >= w.week_start)
-                WHERE p.isDeleted = 0
-                    AND p.status IN ({status_list})
-                    AND p.dateBegin IS NOT NULL
-                    AND {scope_filter}
-                GROUP BY w.week_start, ({system_case})
-            ''')
-            for row in cursor.fetchall():
-                weekly_revenue.append({
-                    'source_system': 'Bullhorn',
-                    'week_start': row[0],
-                    'system': row[1],
-                    'vendor_type': row[2],
-                    'revenue': float(row[3] or 0),
-                })
-        except Exception as e:
-            print(f"Error loading Bullhorn weekly revenue: {e}")
-            import traceback; traceback.print_exc()
-
-        conn.close()
-        print(f"Returning {len(assignments)} Bullhorn trend assignments, 0 pending, {len(weekly_revenue)} weekly revenue rows")
-
-        return func.HttpResponse(
-            json.dumps({
-                'assignments': assignments,
-                'pending': [],
-                'weekly_revenue': weekly_revenue,
-            }, default=str),
-            mimetype="application/json",
-            status_code=200,
-        )
+        bh = _bullhorn_trend_data()
+        assignments.extend(bh['assignments'])
+        weekly_revenue.extend(bh['weekly_revenue'])
     except Exception as e:
         print(f"Bullhorn trend error: {e}")
         import traceback; traceback.print_exc()
-        return func.HttpResponse(
-            json.dumps({'error': str(e), 'assignments': [], 'pending': [], 'weekly_revenue': []}),
-            mimetype="application/json",
-            status_code=500,
-        )
+        errors.append(f"bullhorn: {e}")
+
+    try:
+        sp = _symplr_trend_data()
+        assignments.extend(sp['assignments'])
+        weekly_revenue.extend(sp['weekly_revenue'])
+    except Exception as e:
+        print(f"Symplr trend error: {e}")
+        import traceback; traceback.print_exc()
+        errors.append(f"symplr: {e}")
+
+    print(f"Returning {len(assignments)} non-MSP trend assignments, 0 pending, {len(weekly_revenue)} weekly revenue rows (errors: {errors or 'none'})")
+    return func.HttpResponse(
+        json.dumps({
+            'assignments': assignments,
+            'pending': [],
+            'weekly_revenue': weekly_revenue,
+        }, default=str),
+        mimetype="application/json",
+        status_code=200,
+    )
 
 
 def main(req: func.HttpRequest) -> func.HttpResponse:
@@ -162,7 +246,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
         return auth_error
 
     if is_non_msp():
-        return _bullhorn_trend(req)
+        return _non_msp_trend(req)
 
     try:
         conn = pyodbc.connect(

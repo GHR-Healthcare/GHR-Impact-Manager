@@ -5,27 +5,42 @@ import json
 from shared_code.auth import require_allowed_domain
 from shared_code.data_source import is_non_msp
 from shared_code.bullhorn_systems import BULLHORN_SYSTEM_ROLLUP
+from shared_code.symplr_systems import SYMPLR_SYSTEM_ROLLUP
 
 
-def _bullhorn_mappings_response():
+def _non_msp_mappings_response():
     """
-    Non-MSP instance: return the hard-coded Bullhorn account rollup.
-    Shape mirrors the MSP shape so the frontend can read system_name without
-    branching. POST is rejected — the rollup is code-managed for now.
+    Non-MSP instance: union the Bullhorn book (8 accounts) and Symplr Education
+    book (3 accounts) into one mappings list. 11 total. Shape mirrors the MSP
+    shape so the frontend can read system_name without branching. POST is
+    rejected — the rollup is code-managed.
     """
     mappings = []
-    for idx, entry in enumerate(BULLHORN_SYSTEM_ROLLUP):
+    idx = 0
+    for entry in BULLHORN_SYSTEM_ROLLUP:
         mappings.append({
             'id': idx + 1,
             'system_name': entry['system_name'],
-            # Bullhorn matches by clientCorporationID, not keyword strings.
-            # Returned for completeness; frontend doesn't use it today.
             'client_ids': entry['client_ids'],
+            'source': 'bullhorn',
             'keywords': [],
             'sort_order': idx,
             'perdiem_breakout': 0,
             'hidden': 0,
         })
+        idx += 1
+    for entry in SYMPLR_SYSTEM_ROLLUP:
+        mappings.append({
+            'id': idx + 1,
+            'system_name': entry['system_name'],
+            'client_ids': entry['client_ids'],
+            'source': 'symplr',
+            'keywords': [],
+            'sort_order': idx,
+            'perdiem_breakout': 0,
+            'hidden': 0,
+        })
+        idx += 1
     return func.HttpResponse(
         json.dumps({'mappings': mappings, 'source': 'non_msp'}),
         mimetype="application/json",
@@ -74,7 +89,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                 mimetype="application/json",
                 status_code=405,
             )
-        return _bullhorn_mappings_response()
+        return _non_msp_mappings_response()
 
     try:
         conn = pyodbc.connect(
