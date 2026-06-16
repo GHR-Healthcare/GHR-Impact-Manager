@@ -1292,6 +1292,9 @@
                         if (versionEl) versionEl.textContent = `v${APP_VERSION}`;
                         console.log('Loaded app version from config:', APP_VERSION);
                     }
+                    // 'msp' (default) or 'non_msp'. Tab visibility logic in
+                    // viewToggle() reads window.store.state.dataSource.
+                    window.store.state.dataSource = config.dataSource || 'msp';
                 }
             } catch (configError) {
                 console.warn('Could not load config, using defaults');
@@ -8728,6 +8731,9 @@
         contractsData: null,
         contractsLoaded: false,
         contractsLoading: false,
+        // Data source flavor: 'msp' (B4 + VNDLY) or 'non_msp' (Bullhorn + Symplr).
+        // Populated from /api/get-config on startup; default keeps current MSP UX.
+        dataSource: 'msp',
         reviewedContractsKeys: new Set(),
         showReviewedContracts: false,
         perDiemSubTab: 'overview',
