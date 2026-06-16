@@ -102,8 +102,10 @@ def _bullhorn_positions(req: func.HttpRequest) -> func.HttpResponse:
         conn.close()
         print(f"Returning {len(positions)} Bullhorn open positions")
 
+        # MSP returns the array directly (not wrapped) — match that shape
+        # so processPositionData on the frontend can iterate without branching.
         return func.HttpResponse(
-            json.dumps({'positions': positions}, default=str),
+            json.dumps(positions, default=str),
             mimetype="application/json",
             status_code=200,
         )
@@ -111,7 +113,7 @@ def _bullhorn_positions(req: func.HttpRequest) -> func.HttpResponse:
         print(f"Bullhorn positions error: {e}")
         import traceback; traceback.print_exc()
         return func.HttpResponse(
-            json.dumps({'error': str(e), 'positions': []}),
+            json.dumps({'error': str(e)}),
             mimetype="application/json",
             status_code=500,
         )
