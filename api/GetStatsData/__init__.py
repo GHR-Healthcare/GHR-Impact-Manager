@@ -4,6 +4,142 @@ import os
 import json
 from datetime import datetime, timedelta
 from shared_code.auth import require_allowed_domain
+from shared_code.data_source import is_non_msp
+from shared_code.bullhorn_systems import (
+    build_system_case_expr,
+    build_scope_filter,
+)
+
+
+# Statuses where the placement is awarded and actively in play. Per spec §5
+# there is no pre-active funnel for non-MSP — future-dated 'Approved' /
+# 'Pending Start' / etc. are the pipeline. Completed/Termination are excluded
+# here because Stats is a snapshot of currently-in-play work, not history.
+BULLHORN_ACTIVE_SNAPSHOT_STATUSES = (
+    'Approved', 'Pending Start', 'Cleared', 'Onboarding', 'Started',
+)
+
+
+def _bullhorn_stats(req: func.HttpRequest) -> func.HttpResponse:
+    """
+    Stats data for the non-MSP (Bullhorn) instance.
+
+    Shape mirrors the MSP response: { onAssignment[], upcoming[] }. The Stats
+    tab itself was removed from the UI, but the Trend tab's cascading filter
+    logic reads this data, so we still need to return the right shape.
+    """
+    try:
+        conn = pyodbc.connect(
+            f"DRIVER={{ODBC Driver 17 for SQL Server}};"
+            f"SERVER={os.environ['BULLHORN_HOST']};"
+            f"DATABASE={os.environ['BULLHORN_DB']};"
+            f"UID={os.environ['BULLHORN_USER']};"
+            f"PWD={os.environ['BULLHORN_PASSWORD']};"
+            f"TrustServerCertificate=yes;"
+            f"Encrypt=yes"
+        )
+        cursor = conn.cursor()
+
+        system_case = build_system_case_expr('p.clientCorporationID')
+        scope_filter = build_scope_filter('p.clientCorporationID')
+        status_list = ', '.join("'" + s + "'" for s in BULLHORN_ACTIVE_SNAPSHOT_STATUSES)
+
+        on_assignment = []
+        upcoming = []
+
+        # ============================================================
+        # Bullhorn — currently active (started + not yet ended)
+        # ============================================================
+        try:
+            cursor.execute(f'''
+                SELECT
+                    'Bullhorn' AS source_system,
+                    CAST(p.placementID AS NVARCHAR(50)) AS position_id,
+                    LTRIM(RTRIM(ISNULL(c.firstName, '') + ' ' + ISNULL(c.lastName, ''))) AS candidate_name,
+                    'GHR' AS agency,
+                    cc.name AS facility,
+                    ({system_case}) AS system,
+                    p.customText1 AS specialty,
+                    CAST(p.dateBegin AS DATE) AS startDate,
+                    CAST(p.dateEnd AS DATE) AS endDate,
+                    p.status AS status
+                FROM dbo.View_Placement p
+                LEFT JOIN dbo.View_Candidate c ON p.candidateID = c.candidateID
+                LEFT JOIN dbo.View_ClientCorporation cc ON p.clientCorporationID = cc.clientCorporationID
+                WHERE p.isDeleted = 0
+                    AND p.status IN ({status_list})
+                    AND p.dateBegin IS NOT NULL
+                    AND p.dateBegin <= GETDATE()
+                    AND (p.dateEnd IS NULL OR p.dateEnd >= GETDATE())
+                    AND {scope_filter}
+            ''')
+            columns = [column[0] for column in cursor.description]
+            for row in cursor.fetchall():
+                row_dict = dict(zip(columns, row))
+                if row_dict.get('startDate'):
+                    row_dict['startDate'] = row_dict['startDate'].isoformat() if hasattr(row_dict['startDate'], 'isoformat') else str(row_dict['startDate'])
+                if row_dict.get('endDate'):
+                    row_dict['endDate'] = row_dict['endDate'].isoformat() if hasattr(row_dict['endDate'], 'isoformat') else str(row_dict['endDate'])
+                on_assignment.append(row_dict)
+        except Exception as e:
+            print(f"Error loading Bullhorn active assignments: {e}")
+            import traceback; traceback.print_exc()
+
+        # ============================================================
+        # Bullhorn — upcoming starts within the next 30 days
+        # ============================================================
+        try:
+            cursor.execute(f'''
+                SELECT
+                    'Bullhorn' AS source_system,
+                    CAST(p.placementID AS NVARCHAR(50)) AS position_id,
+                    LTRIM(RTRIM(ISNULL(c.firstName, '') + ' ' + ISNULL(c.lastName, ''))) AS candidate_name,
+                    'GHR' AS agency,
+                    cc.name AS facility,
+                    ({system_case}) AS system,
+                    p.customText1 AS specialty,
+                    CAST(p.dateBegin AS DATE) AS startDate,
+                    CAST(p.dateEnd AS DATE) AS endDate,
+                    p.status AS status
+                FROM dbo.View_Placement p
+                LEFT JOIN dbo.View_Candidate c ON p.candidateID = c.candidateID
+                LEFT JOIN dbo.View_ClientCorporation cc ON p.clientCorporationID = cc.clientCorporationID
+                WHERE p.isDeleted = 0
+                    AND p.status IN ({status_list})
+                    AND p.dateBegin IS NOT NULL
+                    AND p.dateBegin > GETDATE()
+                    AND p.dateBegin <= DATEADD(DAY, 30, GETDATE())
+                    AND {scope_filter}
+            ''')
+            columns = [column[0] for column in cursor.description]
+            for row in cursor.fetchall():
+                row_dict = dict(zip(columns, row))
+                if row_dict.get('startDate'):
+                    row_dict['startDate'] = row_dict['startDate'].isoformat() if hasattr(row_dict['startDate'], 'isoformat') else str(row_dict['startDate'])
+                if row_dict.get('endDate'):
+                    row_dict['endDate'] = row_dict['endDate'].isoformat() if hasattr(row_dict['endDate'], 'isoformat') else str(row_dict['endDate'])
+                upcoming.append(row_dict)
+        except Exception as e:
+            print(f"Error loading Bullhorn upcoming starts: {e}")
+            import traceback; traceback.print_exc()
+
+        conn.close()
+        print(f"Returning Bullhorn stats: {len(on_assignment)} active, {len(upcoming)} upcoming")
+
+        return func.HttpResponse(
+            json.dumps({'onAssignment': on_assignment, 'upcoming': upcoming}, default=str),
+            mimetype="application/json",
+            status_code=200,
+        )
+    except Exception as e:
+        print(f"Bullhorn stats error: {e}")
+        import traceback; traceback.print_exc()
+        return func.HttpResponse(
+            json.dumps({'error': str(e), 'onAssignment': [], 'upcoming': []}),
+            mimetype="application/json",
+            status_code=500,
+        )
+
 
 def main(req: func.HttpRequest) -> func.HttpResponse:
     """
@@ -16,6 +152,10 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
     auth_error = require_allowed_domain(req)
     if auth_error:
         return auth_error
+
+    if is_non_msp():
+        return _bullhorn_stats(req)
+
     try:
         conn = pyodbc.connect(
             f"DRIVER={{ODBC Driver 17 for SQL Server}};"
