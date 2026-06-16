@@ -1,7 +1,7 @@
 """
 Bullhorn account rollup.
 
-Maps Bullhorn clientCorporationID → display name for the 9 non-MSP accounts
+Maps Bullhorn clientCorporationID → display name for the 8 non-MSP accounts
 in the Bullhorn book. The current dashboard treats display name as a
 "Health System" — same dimension that B4/VNDLY rollup feeds on the MSP side.
 
@@ -20,7 +20,10 @@ account list. Active-placement counts captured during ID verification:
   Lakeland Regional :  28
   University of Miami: 20
   CarolinaEast      :  15
-  Duke Health       :   1 (historical-heavy — most volume is in Completed)
+
+Duke Health was on the original top-12 list but is dropped — 1 active
+placement total, most volume in Completed/Termination status (closed
+historical book, not actively serviced).
 """
 
 # system_name → list of Bullhorn clientCorporationIDs that roll up to it.
@@ -31,7 +34,6 @@ BULLHORN_SYSTEM_ROLLUP = [
     {'system_name': 'Montefiore',           'client_ids': [4116]},
     {'system_name': 'Memorial Hermann',     'client_ids': [8186]},
     {'system_name': 'Lakeland Regional',    'client_ids': [2936]},
-    {'system_name': 'Duke Health',          'client_ids': [5019, 5018, 5350, 135463]},
     {'system_name': 'Cone Health',          'client_ids': [5127, 18726, 5245, 361020]},
     {'system_name': 'CarolinaEast Health',  'client_ids': [5154]},
     {'system_name': 'University of Miami',  'client_ids': [10324, 371546, 10325]},
