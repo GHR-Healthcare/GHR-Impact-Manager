@@ -329,6 +329,15 @@
       <div id="settingsPanelSystems" class="p-6 overflow-y-auto">
         <p class="text-sm text-slate-500 mb-4">Map facility name keywords to normalized health system names. Keywords are matched case-insensitively.</p>
 
+        <!-- Non-MSP banner: rollup is code-managed (shared_code/bullhorn_systems.py).
+             Shown via JS when dataSource === 'non_msp'. -->
+        <div id="systemMappingsCodeManagedBanner" class="hidden mb-4 p-3 bg-amber-50 border border-amber-200 rounded text-sm text-amber-800">
+          <i data-lucide="info" class="w-4 h-4 inline-block mr-1"></i>
+          The non-MSP account rollup is code-managed. Edit
+          <code class="px-1 py-0.5 bg-amber-100 rounded text-xs">api/shared_code/bullhorn_systems.py</code>
+          and redeploy to add or remove accounts.
+        </div>
+
         <div class="border rounded-lg overflow-hidden mb-4">
           <table class="w-full text-sm">
             <thead class="bg-slate-100">
@@ -1295,6 +1304,11 @@
                     // 'msp' (default) or 'non_msp'. Tab visibility logic in
                     // viewToggle() reads window.store.state.dataSource.
                     window.store.state.dataSource = config.dataSource || 'msp';
+                    // Re-run viewToggle so Pending / Per Diem buttons hide on
+                    // the non-MSP instance now that we know which flavor we are.
+                    if (typeof View !== 'undefined' && View.viewToggle) {
+                        View.viewToggle();
+                    }
                 }
             } catch (configError) {
                 console.warn('Could not load config, using defaults');
@@ -3708,6 +3722,20 @@
       },
 
       viewToggle() {
+        // Non-MSP instance has no submission funnel and no per-diem actuals
+        // (BULLHORN_PORT_SPEC.md §5 + §8). Hide those tab buttons entirely so
+        // users can't navigate to dead-empty views.
+        const isNonMsp = window.store.state.dataSource === 'non_msp';
+        const btnPerDiemHide = $('btnViewPerDiem');
+        const btnPendingHide = $('btnViewPending');
+        if (btnPerDiemHide) btnPerDiemHide.classList.toggle('hidden', isNonMsp);
+        if (btnPendingHide) btnPendingHide.classList.toggle('hidden', isNonMsp);
+
+        // If the URL/state somehow landed on a hidden tab, bounce to List.
+        if (isNonMsp && (window.store.state.view === 'perdiem' || window.store.state.view === 'pending')) {
+          window.store.state.view = 'list';
+        }
+
         const view = window.store.state.view;
         $('listViewWrapper')?.classList.toggle('hidden', view !== 'list');
         $('hotJobsViewWrapper')?.classList.toggle('hidden', view !== 'hotjobs');
@@ -9571,6 +9599,16 @@
     window.openSettingsModal = async function() {
         document.getElementById('settingsModal').classList.remove('hidden');
         switchSettingsTab('systems');
+
+        // Non-MSP: rollup is code-managed. Show banner, hide edit controls.
+        const isNonMsp = window.store.state.dataSource === 'non_msp';
+        const banner = document.getElementById('systemMappingsCodeManagedBanner');
+        if (banner) banner.classList.toggle('hidden', !isNonMsp);
+        // Hide Add Mapping and Reset to Defaults buttons on non-MSP
+        document.querySelectorAll('#settingsPanelSystems button[onclick="addMappingRow()"], #settingsPanelSystems button[onclick="resetMappingsToDefaults()"]').forEach(b => {
+            b.classList.toggle('hidden', isNonMsp);
+        });
+
         lucide.createIcons();
 
         // Load system mappings
@@ -9641,15 +9679,31 @@
     function renderMappingsTable() {
         const tbody = document.getElementById('mappingsTableBody');
         if (!tbody) return;
-        
+
+        const isNonMsp = window.store.state.dataSource === 'non_msp';
+
         tbody.innerHTML = currentMappings.map((mapping, idx) => {
-            const keywordsStr = Array.isArray(mapping.keywords) 
-                ? mapping.keywords.join(', ') 
+            // Non-MSP: render read-only rows. "Keywords" column shows the
+            // clientCorporationID list instead since rollup is by ID, not name.
+            if (isNonMsp) {
+                const ids = Array.isArray(mapping.client_ids) ? mapping.client_ids.join(', ') : '';
+                return `
+                    <tr class="hover:bg-slate-50" data-idx="${idx}">
+                        <td class="p-3 text-sm text-slate-600 font-mono">${ids}</td>
+                        <td class="p-3 text-sm text-slate-700 font-medium">${mapping.system_name || ''}</td>
+                        <td class="p-3 text-center text-slate-300">—</td>
+                        <td class="p-3 text-center text-slate-300">—</td>
+                        <td class="p-3 text-center text-slate-300">—</td>
+                    </tr>
+                `;
+            }
+            const keywordsStr = Array.isArray(mapping.keywords)
+                ? mapping.keywords.join(', ')
                 : mapping.keywords;
             return `
                 <tr class="hover:bg-slate-50" data-idx="${idx}">
                     <td class="p-2">
-                        <input type="text" value="${keywordsStr}" 
+                        <input type="text" value="${keywordsStr}"
                                onchange="updateMapping(${idx}, 'keywords', this.value)"
                                class="w-full border border-slate-300 rounded px-2 py-1.5 text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none">
                     </td>
@@ -9678,7 +9732,7 @@
                 </tr>
             `;
         }).join('');
-        
+
         lucide.createIcons();
     }
     
@@ -9874,13 +9928,19 @@
     
     window.saveSettings = async function() {
         try {
-            // Save system mappings and PM mappings in parallel
-            const [sysResp, pmResp] = await Promise.all([
-                fetch(`${API_BASE_URL}/system-mappings`, {
+            // Non-MSP: system mappings rollup is code-managed (shared_code/
+            // bullhorn_systems.py), so don't POST to /system-mappings — the
+            // endpoint rejects it anyway. PM mappings are still editable.
+            const isNonMsp = window.store.state.dataSource === 'non_msp';
+            const sysPromise = isNonMsp
+                ? Promise.resolve({ ok: true })
+                : fetch(`${API_BASE_URL}/system-mappings`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ mappings: currentMappings })
-                }),
+                });
+            const [sysResp, pmResp] = await Promise.all([
+                sysPromise,
                 fetch(`${API_BASE_URL}/pm-mappings`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
