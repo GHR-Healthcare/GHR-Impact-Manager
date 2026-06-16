@@ -3,6 +3,115 @@ import pyodbc
 import os
 import json
 from shared_code.auth import require_allowed_domain
+from shared_code.data_source import is_non_msp
+from shared_code.bullhorn_systems import (
+    build_system_case_expr,
+    build_scope_filter,
+)
+
+
+# Same status set GetTrendData uses — includes Completed/Termination so
+# prior-year weeks reflect placements that actually ran back then.
+BULLHORN_YOY_STATUSES = (
+    'Approved', 'Pending Start', 'Cleared', 'Onboarding', 'Started',
+    'Completed', 'Termination',
+)
+
+
+def _bullhorn_yoy(req: func.HttpRequest) -> func.HttpResponse:
+    """
+    Pre-aggregated weekly headcount for the non-MSP (Bullhorn) instance,
+    going back 60 weeks. Used to overlay prior-year lines on the trend chart.
+
+    Output shape matches MSP — array of { week_start, system, category,
+    facility, vendor_type, headcount }. vendor_type is always 'GHR' for
+    non-MSP since there's no affiliate split.
+    """
+    try:
+        conn = pyodbc.connect(
+            f"DRIVER={{ODBC Driver 17 for SQL Server}};"
+            f"SERVER={os.environ['BULLHORN_HOST']};"
+            f"DATABASE={os.environ['BULLHORN_DB']};"
+            f"UID={os.environ['BULLHORN_USER']};"
+            f"PWD={os.environ['BULLHORN_PASSWORD']};"
+            f"TrustServerCertificate=yes;"
+            f"Encrypt=yes"
+        )
+        cursor = conn.cursor()
+
+        system_case = build_system_case_expr('p.clientCorporationID')
+        scope_filter = build_scope_filter('p.clientCorporationID')
+        status_list = ', '.join("'" + s + "'" for s in BULLHORN_YOY_STATUSES)
+
+        rows = []
+        try:
+            cursor.execute(f'''
+                ;WITH Weeks AS (
+                    SELECT TOP 60
+                        DATEADD(WEEK, 1 - ROW_NUMBER() OVER (ORDER BY (SELECT NULL)),
+                                DATEADD(DAY, 1 - DATEPART(WEEKDAY, CAST(GETDATE() AS DATE)),
+                                        CAST(GETDATE() AS DATE))
+                        ) AS week_start
+                    FROM sys.all_objects
+                ),
+                Placements AS (
+                    SELECT
+                        p.placementID,
+                        LOWER(LTRIM(RTRIM(ISNULL(c.firstName,'') + ' ' + ISNULL(c.lastName,'')))) AS worker,
+                        ({system_case}) AS system,
+                        cc.name AS facility,
+                        ISNULL(p.employmentType, 'Unknown') AS category,
+                        CAST(p.dateBegin AS DATE) AS sd,
+                        CAST(p.dateEnd AS DATE) AS ed
+                    FROM dbo.View_Placement p
+                    LEFT JOIN dbo.View_Candidate c ON p.candidateID = c.candidateID
+                    LEFT JOIN dbo.View_ClientCorporation cc ON p.clientCorporationID = cc.clientCorporationID
+                    WHERE p.isDeleted = 0
+                        AND p.status IN ({status_list})
+                        AND p.dateBegin IS NOT NULL
+                        AND p.dateBegin >= DATEADD(WEEK, -62, GETDATE())
+                        AND {scope_filter}
+                )
+                SELECT
+                    CONVERT(VARCHAR(10), w.week_start, 23) AS week_start,
+                    p.system,
+                    p.category,
+                    p.facility,
+                    'GHR' AS vendor_type,
+                    COUNT(DISTINCT p.worker) AS headcount
+                FROM Weeks w
+                INNER JOIN Placements p
+                    ON p.sd <= DATEADD(DAY, 6, w.week_start)
+                    AND (p.ed IS NULL OR p.ed >= w.week_start)
+                GROUP BY w.week_start, p.system, p.category, p.facility
+                ORDER BY w.week_start, p.system
+            ''')
+            columns = [column[0] for column in cursor.description]
+            for row in cursor.fetchall():
+                row_dict = dict(zip(columns, row))
+                row_dict['headcount'] = int(row_dict.get('headcount') or 0)
+                rows.append(row_dict)
+        except Exception as e:
+            print(f"Error loading Bullhorn YoY trend data: {e}")
+            import traceback; traceback.print_exc()
+
+        conn.close()
+        print(f"Returning {len(rows)} Bullhorn YoY trend aggregate rows")
+
+        return func.HttpResponse(
+            json.dumps({'rows': rows}, default=str),
+            mimetype="application/json",
+            status_code=200,
+            headers={"Access-Control-Allow-Origin": "*"}
+        )
+    except Exception as e:
+        print(f"Bullhorn YoY error: {e}")
+        import traceback; traceback.print_exc()
+        return func.HttpResponse(
+            json.dumps({'error': str(e), 'rows': []}),
+            mimetype="application/json",
+            status_code=500,
+        )
 
 
 def main(req: func.HttpRequest) -> func.HttpResponse:
@@ -21,6 +130,10 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
     auth_error = require_allowed_domain(req)
     if auth_error:
         return auth_error
+
+    if is_non_msp():
+        return _bullhorn_yoy(req)
+
     try:
         conn = pyodbc.connect(
             f"DRIVER={{ODBC Driver 17 for SQL Server}};"
