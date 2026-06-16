@@ -3,6 +3,34 @@ import pyodbc
 import os
 import json
 from shared_code.auth import require_allowed_domain
+from shared_code.data_source import is_non_msp
+from shared_code.bullhorn_systems import BULLHORN_SYSTEM_ROLLUP
+
+
+def _bullhorn_mappings_response():
+    """
+    Non-MSP instance: return the hard-coded Bullhorn account rollup.
+    Shape mirrors the MSP shape so the frontend can read system_name without
+    branching. POST is rejected — the rollup is code-managed for now.
+    """
+    mappings = []
+    for idx, entry in enumerate(BULLHORN_SYSTEM_ROLLUP):
+        mappings.append({
+            'id': idx + 1,
+            'system_name': entry['system_name'],
+            # Bullhorn matches by clientCorporationID, not keyword strings.
+            # Returned for completeness; frontend doesn't use it today.
+            'client_ids': entry['client_ids'],
+            'keywords': [],
+            'sort_order': idx,
+            'perdiem_breakout': 0,
+            'hidden': 0,
+        })
+    return func.HttpResponse(
+        json.dumps({'mappings': mappings, 'source': 'non_msp'}),
+        mimetype="application/json",
+        status_code=200,
+    )
 
 
 def ensure_schema(cursor):
@@ -35,6 +63,19 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
     auth_error = require_allowed_domain(req)
     if auth_error:
         return auth_error
+
+    # Non-MSP instance: rollup is code-managed (BULLHORN_SYSTEM_ROLLUP).
+    # POST is a no-op — the mapping can't be edited from the UI while it's
+    # hard-coded. If we ever move it to a DB table, this branch goes away.
+    if is_non_msp():
+        if req.method == 'POST':
+            return func.HttpResponse(
+                json.dumps({'error': 'System mappings are code-managed on the non-MSP instance'}),
+                mimetype="application/json",
+                status_code=405,
+            )
+        return _bullhorn_mappings_response()
+
     try:
         conn = pyodbc.connect(
             f"DRIVER={{ODBC Driver 17 for SQL Server}};"
