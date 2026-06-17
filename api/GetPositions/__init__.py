@@ -3,10 +3,14 @@ import pyodbc
 import os
 import json
 from shared_code.auth import require_allowed_domain
-from shared_code.data_source import is_non_msp
+from shared_code.data_source import is_non_msp, get_bullhorn_conn, get_symplr_conn
 from shared_code.bullhorn_systems import (
     build_system_case_expr,
     build_scope_filter,
+)
+from shared_code.symplr_systems import (
+    build_system_case_expr as symplr_system_case_expr,
+    build_scope_filter as symplr_scope_filter,
 )
 
 
@@ -16,107 +20,151 @@ from shared_code.bullhorn_systems import (
 BULLHORN_OPEN_JO_STATUSES = ('Accepting Candidates', 'On Hold')
 
 
-def _bullhorn_positions(req: func.HttpRequest) -> func.HttpResponse:
-    """
-    Open positions for the non-MSP (Bullhorn) instance.
+def _bullhorn_positions_data():
+    """Returns open Bullhorn job orders. Raises on error."""
+    conn = get_bullhorn_conn()
+    cursor = conn.cursor()
+    system_case = build_system_case_expr('jo.clientCorporationID')
+    scope_filter = build_scope_filter('jo.clientCorporationID')
+    status_list = ', '.join("'" + s + "'" for s in BULLHORN_OPEN_JO_STATUSES)
 
-    Source: dbo.View_JobOrder (filtered to Accepting Candidates + On Hold).
-    No submission funnel exists for non-MSP per BULLHORN_PORT_SPEC.md §5,
-    so candidates[] is always empty and ghrSubs/avSubs/decline counts stay 0.
+    cursor.execute(f'''
+        SELECT
+            'Bullhorn' AS source_system,
+            CAST(jo.jobOrderID AS NVARCHAR(50)) AS position_id,
+            ISNULL(jo.employmentType, 'Unknown') AS program,
+            cc.name AS facility,
+            jo.title AS specialty,
+            CAST(jo.dateAdded AS DATE) AS date_added,
+            NULL AS unit,
+            NULL AS cost_center,
+            TRY_CAST(jo.clientBillRate AS DECIMAL(10,2)) AS bill_rate,
+            0 AS bill_rate_estimated,
+            TRY_CAST(jo.hoursPerWeek AS DECIMAL(10,2)) AS shift_hours,
+            NULL AS shift_time,
+            LTRIM(RTRIM(ISNULL(u.firstName, '') + ' ' + ISNULL(u.lastName, ''))) AS hiring_manager,
+            0 AS num_submissions,
+            jo.numOpenings AS num_positions,
+            NULL AS requisition_reason,
+            NULL AS shift_diff,
+            NULL AS min_hours,
+            CAST(jo.startDate AS DATE) AS open_start_date,
+            jo.employmentType AS time_type,
+            NULL AS start_time,
+            NULL AS end_time,
+            jo.status AS status,
+            ({system_case}) AS health_system,
+            jo.customText1 AS profession,
+            jo.customText2 AS subspecialty
+        FROM dbo.View_JobOrder jo
+        LEFT JOIN dbo.View_ClientCorporation cc ON jo.clientCorporationID = cc.clientCorporationID
+        LEFT JOIN dbo.View_CorporateUser u ON jo.ownerID = u.corporateUserID
+        WHERE jo.isDeleted = 0
+            AND jo.status IN ({status_list})
+            AND {scope_filter}
+        ORDER BY jo.dateAdded DESC
+    ''')
+    columns = [column[0] for column in cursor.description]
+    rows = []
+    for row in cursor.fetchall():
+        row_dict = dict(zip(columns, row))
+        if row_dict.get('date_added'):
+            row_dict['date_added'] = row_dict['date_added'].isoformat() if hasattr(row_dict['date_added'], 'isoformat') else str(row_dict['date_added'])
+        if row_dict.get('open_start_date'):
+            row_dict['open_start_date'] = row_dict['open_start_date'].isoformat() if hasattr(row_dict['open_start_date'], 'isoformat') else str(row_dict['open_start_date'])
+        row_dict['ghrSubs'] = 0
+        row_dict['avSubs'] = 0
+        row_dict['ghrDeclines'] = 0
+        row_dict['avDeclines'] = 0
+        row_dict['candidates'] = []
+        rows.append(row_dict)
+    conn.close()
+    return rows
 
-    Output shape mirrors MSP — same keys, same field names — so the existing
-    Positions UI renders without branching on data source.
-    """
+
+def _symplr_positions_data():
+    """Returns open Symplr lt_order rows. Raises on error."""
+    conn = get_symplr_conn()
+    if conn is None:
+        return []
+    cursor = conn.cursor()
+    sys_case = symplr_system_case_expr('lt.clientid')
+    scope = symplr_scope_filter('lt.clientid')
+
+    cursor.execute(f'''
+        SELECT
+            'Symplr' AS source_system,
+            CAST(lt.lt_orderid AS NVARCHAR(50)) AS position_id,
+            ISNULL(lt.nursetype, 'Unknown') AS program,
+            pc.clientname AS facility,
+            -- Symplr title-equivalent: nursetype + specialty (e.g. "PCA — Autistic Support")
+            LTRIM(RTRIM(ISNULL(lt.nursetype, '') + ' — ' + ISNULL(lt.specialty, ''))) AS specialty,
+            CAST(lt.date_entered AS DATE) AS date_added,
+            NULL AS unit,
+            ISNULL(lt.costCenterNumber, '') AS cost_center,
+            NULL AS bill_rate,
+            1 AS bill_rate_estimated,
+            TRY_CAST(lt.HoursPerWeek AS DECIMAL(10,2)) AS shift_hours,
+            NULL AS shift_time,
+            NULL AS hiring_manager,
+            0 AS num_submissions,
+            1 AS num_positions,
+            NULL AS requisition_reason,
+            NULL AS shift_diff,
+            NULL AS min_hours,
+            CAST(lt.date_start AS DATE) AS open_start_date,
+            'Long-Term' AS time_type,
+            NULL AS start_time,
+            NULL AS end_time,
+            lt.status AS status,
+            ({sys_case}) AS health_system,
+            lt.specialty AS profession,
+            NULL AS subspecialty
+        FROM dbo.lt_order lt
+        LEFT JOIN dbo.profile_client pc ON lt.clientid = pc.recordid
+        WHERE lt.status = 'open'
+            AND {scope}
+        ORDER BY lt.date_entered DESC
+    ''')
+    columns = [column[0] for column in cursor.description]
+    rows = []
+    for row in cursor.fetchall():
+        row_dict = dict(zip(columns, row))
+        if row_dict.get('date_added'):
+            row_dict['date_added'] = row_dict['date_added'].isoformat() if hasattr(row_dict['date_added'], 'isoformat') else str(row_dict['date_added'])
+        if row_dict.get('open_start_date'):
+            row_dict['open_start_date'] = row_dict['open_start_date'].isoformat() if hasattr(row_dict['open_start_date'], 'isoformat') else str(row_dict['open_start_date'])
+        row_dict['ghrSubs'] = 0
+        row_dict['avSubs'] = 0
+        row_dict['ghrDeclines'] = 0
+        row_dict['avDeclines'] = 0
+        row_dict['candidates'] = []
+        rows.append(row_dict)
+    conn.close()
+    return rows
+
+
+def _non_msp_positions(req: func.HttpRequest) -> func.HttpResponse:
+    positions = []
+    errors = []
     try:
-        conn = pyodbc.connect(
-            f"DRIVER={{ODBC Driver 17 for SQL Server}};"
-            f"SERVER={os.environ['BULLHORN_HOST']};"
-            f"DATABASE={os.environ['BULLHORN_DB']};"
-            f"UID={os.environ['BULLHORN_USER']};"
-            f"PWD={os.environ['BULLHORN_PASSWORD']};"
-            f"TrustServerCertificate=yes;"
-            f"Encrypt=yes"
-        )
-        cursor = conn.cursor()
-
-        system_case = build_system_case_expr('jo.clientCorporationID')
-        scope_filter = build_scope_filter('jo.clientCorporationID')
-        status_list = ', '.join("'" + s + "'" for s in BULLHORN_OPEN_JO_STATUSES)
-
-        positions = []
-        try:
-            cursor.execute(f'''
-                SELECT
-                    'Bullhorn' AS source_system,
-                    CAST(jo.jobOrderID AS NVARCHAR(50)) AS position_id,
-                    ISNULL(jo.employmentType, 'Unknown') AS program,
-                    cc.name AS facility,
-                    jo.title AS specialty,
-                    CAST(jo.dateAdded AS DATE) AS date_added,
-                    NULL AS unit,
-                    NULL AS cost_center,
-                    TRY_CAST(jo.clientBillRate AS DECIMAL(10,2)) AS bill_rate,
-                    0 AS bill_rate_estimated,
-                    TRY_CAST(jo.hoursPerWeek AS DECIMAL(10,2)) AS shift_hours,
-                    NULL AS shift_time,
-                    LTRIM(RTRIM(ISNULL(u.firstName, '') + ' ' + ISNULL(u.lastName, ''))) AS hiring_manager,
-                    0 AS num_submissions,
-                    jo.numOpenings AS num_positions,
-                    NULL AS requisition_reason,
-                    NULL AS shift_diff,
-                    NULL AS min_hours,
-                    CAST(jo.startDate AS DATE) AS open_start_date,
-                    jo.employmentType AS time_type,
-                    NULL AS start_time,
-                    NULL AS end_time,
-                    jo.status AS status,
-                    ({system_case}) AS health_system,
-                    jo.customText1 AS profession,
-                    jo.customText2 AS subspecialty
-                FROM dbo.View_JobOrder jo
-                LEFT JOIN dbo.View_ClientCorporation cc ON jo.clientCorporationID = cc.clientCorporationID
-                LEFT JOIN dbo.View_CorporateUser u ON jo.ownerID = u.corporateUserID
-                WHERE jo.isDeleted = 0
-                    AND jo.status IN ({status_list})
-                    AND {scope_filter}
-                ORDER BY jo.dateAdded DESC
-            ''')
-            columns = [column[0] for column in cursor.description]
-            for row in cursor.fetchall():
-                row_dict = dict(zip(columns, row))
-                if row_dict.get('date_added'):
-                    row_dict['date_added'] = row_dict['date_added'].isoformat() if hasattr(row_dict['date_added'], 'isoformat') else str(row_dict['date_added'])
-                if row_dict.get('open_start_date'):
-                    row_dict['open_start_date'] = row_dict['open_start_date'].isoformat() if hasattr(row_dict['open_start_date'], 'isoformat') else str(row_dict['open_start_date'])
-                # Non-MSP has no submission funnel — initialize empty
-                row_dict['ghrSubs'] = 0
-                row_dict['avSubs'] = 0
-                row_dict['ghrDeclines'] = 0
-                row_dict['avDeclines'] = 0
-                row_dict['candidates'] = []
-                positions.append(row_dict)
-        except Exception as e:
-            print(f"Error loading Bullhorn positions: {e}")
-            import traceback; traceback.print_exc()
-
-        conn.close()
-        print(f"Returning {len(positions)} Bullhorn open positions")
-
-        # MSP returns the array directly (not wrapped) — match that shape
-        # so processPositionData on the frontend can iterate without branching.
-        return func.HttpResponse(
-            json.dumps(positions, default=str),
-            mimetype="application/json",
-            status_code=200,
-        )
+        positions.extend(_bullhorn_positions_data())
     except Exception as e:
         print(f"Bullhorn positions error: {e}")
         import traceback; traceback.print_exc()
-        return func.HttpResponse(
-            json.dumps({'error': str(e)}),
-            mimetype="application/json",
-            status_code=500,
-        )
+        errors.append(f"bullhorn: {e}")
+    try:
+        positions.extend(_symplr_positions_data())
+    except Exception as e:
+        print(f"Symplr positions error: {e}")
+        import traceback; traceback.print_exc()
+        errors.append(f"symplr: {e}")
+    print(f"non-MSP positions: {len(positions)} rows (errors: {errors or 'none'})")
+    return func.HttpResponse(
+        json.dumps(positions, default=str),
+        mimetype="application/json",
+        status_code=200,
+    )
 
 
 def main(req: func.HttpRequest) -> func.HttpResponse:
@@ -125,7 +173,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
         return auth_error
 
     if is_non_msp():
-        return _bullhorn_positions(req)
+        return _non_msp_positions(req)
 
     try:
         # Connect to positions database

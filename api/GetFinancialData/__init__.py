@@ -5,10 +5,14 @@ import json
 import re
 from datetime import datetime
 from shared_code.auth import require_allowed_domain
-from shared_code.data_source import is_non_msp
+from shared_code.data_source import is_non_msp, get_bullhorn_conn, get_symplr_conn
 from shared_code.bullhorn_systems import (
     build_system_case_expr,
     build_scope_filter,
+)
+from shared_code.symplr_systems import (
+    build_system_case_expr as symplr_system_case_expr,
+    build_scope_filter as symplr_scope_filter,
 )
 
 # Mapping of B4 health system names to VNDLY health system names
@@ -43,123 +47,175 @@ BULLHORN_SERVICE_LINE_CASE = """
 """
 
 
-def _bullhorn_financial(req: func.HttpRequest, date_from_sql: str, date_to_sql: str) -> func.HttpResponse:
+def _bullhorn_financial_data(date_from_sql: str, date_to_sql: str):
     """
-    Financial data for the non-MSP (Bullhorn) instance.
+    Returns the Bullhorn monthlyData rows. Raises on error.
 
-    Bullhorn doesn't expose actual billed hours per shift (no equivalent to
-    B4 ESR or VNDLY SPEND in the views we have). We compute SCHEDULED revenue
+    Bullhorn doesn't expose actual billed hours, so we compute SCHEDULED revenue
     by walking weekly overlaps:
-
         weekly_revenue = clientBillRate * hoursPerDay * 5
         weekly_hours   = hoursPerDay * 5
         weekly_margin  = weekly_revenue * (reportedMargin / 100)
-
-    Output shape matches MSP exactly (monthlyData array) so the frontend
-    Financials tab renders without branching. Adds one extra column —
-    gross_margin (dollars) — which the frontend can opt into rendering.
     """
+    conn = get_bullhorn_conn()
+    cursor = conn.cursor()
+    system_case = build_system_case_expr('p.clientCorporationID')
+    scope_filter = build_scope_filter('p.clientCorporationID')
+    status_list = ', '.join("'" + s + "'" for s in BULLHORN_BILLABLE_STATUSES)
+
+    cursor.execute(f'''
+        ;WITH Weeks AS (
+            SELECT TOP 80
+                DATEADD(WEEK, 1 - ROW_NUMBER() OVER (ORDER BY (SELECT NULL)),
+                        DATEADD(DAY, 1 - DATEPART(WEEKDAY, CAST(GETDATE() AS DATE)),
+                                CAST(GETDATE() AS DATE))
+                ) AS week_start
+            FROM sys.all_objects
+        ),
+        PlacementWeeks AS (
+            SELECT
+                p.placementID,
+                w.week_start,
+                FORMAT(w.week_start, 'yyyy-MM') AS month,
+                ({system_case}) AS health_system,
+                cc.name AS facility,
+                ISNULL(p.employmentType, 'Unknown') AS category,
+                ({BULLHORN_SERVICE_LINE_CASE.strip()}) AS service_line,
+                LTRIM(RTRIM(ISNULL(c.firstName, '') + ' ' + ISNULL(c.lastName, ''))) AS worker_name,
+                ISNULL(p.clientBillRate, 0) * ISNULL(p.hoursPerDay, 0) * 5 AS weekly_revenue,
+                ISNULL(p.hoursPerDay, 0) * 5 AS weekly_hours,
+                ISNULL(p.clientBillRate, 0) * ISNULL(p.hoursPerDay, 0) * 5
+                    * (ISNULL(p.reportedMargin, 0) / 100.0) AS weekly_margin
+            FROM Weeks w
+            INNER JOIN dbo.View_Placement p
+                ON p.dateBegin <= DATEADD(DAY, 6, w.week_start)
+                AND (p.dateEnd IS NULL OR p.dateEnd >= w.week_start)
+            LEFT JOIN dbo.View_Candidate c ON p.candidateID = c.candidateID
+            LEFT JOIN dbo.View_ClientCorporation cc ON p.clientCorporationID = cc.clientCorporationID
+            WHERE p.isDeleted = 0
+                AND p.status IN ({status_list})
+                AND p.dateBegin IS NOT NULL
+                AND {scope_filter}
+                AND w.week_start >= {date_from_sql}
+                AND w.week_start < {date_to_sql}
+        )
+        SELECT
+            'Bullhorn' AS source_system,
+            month, health_system, facility, category, service_line,
+            'GHR' AS vendor_type,
+            COUNT(DISTINCT worker_name) AS headcount,
+            SUM(weekly_revenue) AS estimated_billing,
+            SUM(weekly_hours) AS hours_worked,
+            SUM(weekly_margin) AS gross_margin
+        FROM PlacementWeeks
+        GROUP BY month, health_system, facility, category, service_line
+        ORDER BY month, health_system, facility
+    ''')
+    columns = [column[0] for column in cursor.description]
+    rows = []
+    for row in cursor.fetchall():
+        row_dict = dict(zip(columns, row))
+        row_dict['estimated_billing'] = float(row_dict['estimated_billing'] or 0)
+        row_dict['headcount'] = int(row_dict['headcount'] or 0)
+        row_dict['hours_worked'] = float(row_dict.get('hours_worked') or 0)
+        row_dict['gross_margin'] = float(row_dict.get('gross_margin') or 0)
+        rows.append(row_dict)
+    conn.close()
+    return rows
+
+
+# Symplr service-line bucketing based on lt_order.nursetype.
+# Education staffing is mostly clinical-adjacent — PCA, RN, etc.
+SYMPLR_SERVICE_LINE_CASE = """
+    CASE
+        WHEN lt.nursetype IN ('RN', 'LPN') THEN 'Nursing'
+        WHEN lt.nursetype IN ('PCA', 'CNA', 'Aide', 'Paraprofessional') THEN 'Non-Clinical'
+        WHEN lt.nursetype IN ('OT', 'PT', 'SLP', 'Therapy', 'Behavior Therapist') THEN 'Allied'
+        ELSE 'Other'
+    END
+"""
+
+
+def _symplr_financial_data(date_from_sql: str, date_to_sql: str):
+    """
+    Returns the Symplr monthlyData rows. Real billed dollars from the shift-level
+    orders table — more accurate than the Bullhorn scheduled-revenue proxy.
+
+    Headcount is distinct workers per month (lt_order joined to orders for the
+    same window). gross_margin not exposed in Symplr — 0 in this output.
+    """
+    conn = get_symplr_conn()
+    if conn is None:
+        return []
+    cursor = conn.cursor()
+    sym_scope_o = symplr_scope_filter('o.customerid')
+    sym_case_o = symplr_system_case_expr('o.customerid')
+
+    # Aggregate actual billed shifts by month + (system, facility from join, category).
+    # Workers come from lt_order so headcount is meaningful.
+    cursor.execute(f'''
+        SELECT
+            'Symplr' AS source_system,
+            FORMAT(CAST(o.jobdatestart AS DATE), 'yyyy-MM') AS month,
+            ({sym_case_o}) AS health_system,
+            pc.clientname AS facility,
+            ISNULL(lt.nursetype, 'Unknown') AS category,
+            ({SYMPLR_SERVICE_LINE_CASE.strip()}) AS service_line,
+            'GHR' AS vendor_type,
+            COUNT(DISTINCT lt.tempid) AS headcount,
+            SUM(ISNULL(o.totalbillamount, 0)) AS estimated_billing,
+            SUM(ISNULL(o.totalbillhours, 0)) AS hours_worked,
+            0 AS gross_margin
+        FROM dbo.orders o
+        LEFT JOIN dbo.lt_order lt ON o.lt_orderid = lt.lt_orderid
+        LEFT JOIN dbo.profile_client pc ON o.customerid = pc.recordid
+        WHERE o.jobdatestart IS NOT NULL
+            AND CAST(o.jobdatestart AS DATE) >= {date_from_sql}
+            AND CAST(o.jobdatestart AS DATE) < {date_to_sql}
+            AND {sym_scope_o}
+        GROUP BY
+            FORMAT(CAST(o.jobdatestart AS DATE), 'yyyy-MM'),
+            ({sym_case_o}),
+            pc.clientname,
+            ISNULL(lt.nursetype, 'Unknown'),
+            ({SYMPLR_SERVICE_LINE_CASE.strip()})
+        ORDER BY month, health_system, facility
+    ''')
+    columns = [column[0] for column in cursor.description]
+    rows = []
+    for row in cursor.fetchall():
+        row_dict = dict(zip(columns, row))
+        row_dict['estimated_billing'] = float(row_dict['estimated_billing'] or 0)
+        row_dict['headcount'] = int(row_dict['headcount'] or 0)
+        row_dict['hours_worked'] = float(row_dict.get('hours_worked') or 0)
+        row_dict['gross_margin'] = float(row_dict.get('gross_margin') or 0)
+        rows.append(row_dict)
+    conn.close()
+    return rows
+
+
+def _non_msp_financial(req: func.HttpRequest, date_from_sql: str, date_to_sql: str) -> func.HttpResponse:
+    """Run Bullhorn + Symplr financial queries independently, union the results."""
+    monthly_data = []
+    errors = []
     try:
-        conn = pyodbc.connect(
-            f"DRIVER={{ODBC Driver 17 for SQL Server}};"
-            f"SERVER={os.environ['BULLHORN_HOST']};"
-            f"DATABASE={os.environ['BULLHORN_DB']};"
-            f"UID={os.environ['BULLHORN_USER']};"
-            f"PWD={os.environ['BULLHORN_PASSWORD']};"
-            f"TrustServerCertificate=yes;"
-            f"Encrypt=yes"
-        )
-        cursor = conn.cursor()
-
-        system_case = build_system_case_expr('p.clientCorporationID')
-        scope_filter = build_scope_filter('p.clientCorporationID')
-        status_list = ', '.join("'" + s + "'" for s in BULLHORN_BILLABLE_STATUSES)
-
-        monthly_data = []
-        try:
-            cursor.execute(f'''
-                ;WITH Weeks AS (
-                    -- Generate every Sunday from the date_from window through
-                    -- the date_to upper bound. 60 weeks covers any 13-month
-                    -- default plus comfortable backdate room.
-                    SELECT TOP 80
-                        DATEADD(WEEK, 1 - ROW_NUMBER() OVER (ORDER BY (SELECT NULL)),
-                                DATEADD(DAY, 1 - DATEPART(WEEKDAY, CAST(GETDATE() AS DATE)),
-                                        CAST(GETDATE() AS DATE))
-                        ) AS week_start
-                    FROM sys.all_objects
-                ),
-                PlacementWeeks AS (
-                    SELECT
-                        p.placementID,
-                        w.week_start,
-                        FORMAT(w.week_start, 'yyyy-MM') AS month,
-                        ({system_case}) AS health_system,
-                        cc.name AS facility,
-                        ISNULL(p.employmentType, 'Unknown') AS category,
-                        ({BULLHORN_SERVICE_LINE_CASE.strip()}) AS service_line,
-                        LTRIM(RTRIM(ISNULL(c.firstName, '') + ' ' + ISNULL(c.lastName, ''))) AS worker_name,
-                        ISNULL(p.clientBillRate, 0) * ISNULL(p.hoursPerDay, 0) * 5 AS weekly_revenue,
-                        ISNULL(p.hoursPerDay, 0) * 5 AS weekly_hours,
-                        ISNULL(p.clientBillRate, 0) * ISNULL(p.hoursPerDay, 0) * 5
-                            * (ISNULL(p.reportedMargin, 0) / 100.0) AS weekly_margin
-                    FROM Weeks w
-                    INNER JOIN dbo.View_Placement p
-                        ON p.dateBegin <= DATEADD(DAY, 6, w.week_start)
-                        AND (p.dateEnd IS NULL OR p.dateEnd >= w.week_start)
-                    LEFT JOIN dbo.View_Candidate c ON p.candidateID = c.candidateID
-                    LEFT JOIN dbo.View_ClientCorporation cc ON p.clientCorporationID = cc.clientCorporationID
-                    WHERE p.isDeleted = 0
-                        AND p.status IN ({status_list})
-                        AND p.dateBegin IS NOT NULL
-                        AND {scope_filter}
-                        AND w.week_start >= {date_from_sql}
-                        AND w.week_start < {date_to_sql}
-                )
-                SELECT
-                    'Bullhorn' AS source_system,
-                    month,
-                    health_system,
-                    facility,
-                    category,
-                    service_line,
-                    'GHR' AS vendor_type,
-                    COUNT(DISTINCT worker_name) AS headcount,
-                    SUM(weekly_revenue) AS estimated_billing,
-                    SUM(weekly_hours) AS hours_worked,
-                    SUM(weekly_margin) AS gross_margin
-                FROM PlacementWeeks
-                GROUP BY month, health_system, facility, category, service_line
-                ORDER BY month, health_system, facility
-            ''')
-            columns = [column[0] for column in cursor.description]
-            for row in cursor.fetchall():
-                row_dict = dict(zip(columns, row))
-                row_dict['estimated_billing'] = float(row_dict['estimated_billing'] or 0)
-                row_dict['headcount'] = int(row_dict['headcount'] or 0)
-                row_dict['hours_worked'] = float(row_dict.get('hours_worked') or 0)
-                row_dict['gross_margin'] = float(row_dict.get('gross_margin') or 0)
-                monthly_data.append(row_dict)
-        except Exception as e:
-            print(f"Error loading Bullhorn financial data: {e}")
-            import traceback; traceback.print_exc()
-
-        conn.close()
-        print(f"Returning {len(monthly_data)} Bullhorn financial data rows")
-
-        return func.HttpResponse(
-            json.dumps({'monthlyData': monthly_data}, default=str),
-            mimetype="application/json",
-            status_code=200,
-        )
+        monthly_data.extend(_bullhorn_financial_data(date_from_sql, date_to_sql))
     except Exception as e:
         print(f"Bullhorn financial error: {e}")
         import traceback; traceback.print_exc()
-        return func.HttpResponse(
-            json.dumps({'error': str(e), 'monthlyData': []}),
-            mimetype="application/json",
-            status_code=500,
-        )
+        errors.append(f"bullhorn: {e}")
+    try:
+        monthly_data.extend(_symplr_financial_data(date_from_sql, date_to_sql))
+    except Exception as e:
+        print(f"Symplr financial error: {e}")
+        import traceback; traceback.print_exc()
+        errors.append(f"symplr: {e}")
+    print(f"Returning {len(monthly_data)} non-MSP financial rows (errors: {errors or 'none'})")
+    return func.HttpResponse(
+        json.dumps({'monthlyData': monthly_data}, default=str),
+        mimetype="application/json",
+        status_code=200,
+    )
 
 
 def main(req: func.HttpRequest) -> func.HttpResponse:
@@ -206,7 +262,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             date_to = "DATEADD(MONTH, 1, DATEFROMPARTS(YEAR(GETDATE()), MONTH(GETDATE()), 1))"
 
         if is_non_msp():
-            return _bullhorn_financial(req, date_from, date_to)
+            return _non_msp_financial(req, date_from, date_to)
 
         conn = pyodbc.connect(
             f"DRIVER={{ODBC Driver 17 for SQL Server}};"

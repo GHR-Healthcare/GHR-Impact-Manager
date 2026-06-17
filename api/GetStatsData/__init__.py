@@ -4,10 +4,14 @@ import os
 import json
 from datetime import datetime, timedelta
 from shared_code.auth import require_allowed_domain
-from shared_code.data_source import is_non_msp
+from shared_code.data_source import is_non_msp, get_bullhorn_conn, get_symplr_conn
 from shared_code.bullhorn_systems import (
     build_system_case_expr,
     build_scope_filter,
+)
+from shared_code.symplr_systems import (
+    build_system_case_expr as symplr_system_case_expr,
+    build_scope_filter as symplr_scope_filter,
 )
 
 
@@ -20,125 +24,125 @@ BULLHORN_ACTIVE_SNAPSHOT_STATUSES = (
 )
 
 
-def _bullhorn_stats(req: func.HttpRequest) -> func.HttpResponse:
-    """
-    Stats data for the non-MSP (Bullhorn) instance.
+def _bullhorn_stats_data():
+    """Returns (on_assignment[], upcoming[]) for the Bullhorn book. Raises on error."""
+    conn = get_bullhorn_conn()
+    cursor = conn.cursor()
+    system_case = build_system_case_expr('p.clientCorporationID')
+    scope_filter = build_scope_filter('p.clientCorporationID')
+    status_list = ', '.join("'" + s + "'" for s in BULLHORN_ACTIVE_SNAPSHOT_STATUSES)
 
-    Shape mirrors the MSP response: { onAssignment[], upcoming[] }. The Stats
-    tab itself was removed from the UI, but the Trend tab's cascading filter
-    logic reads this data, so we still need to return the right shape.
-    """
+    def _fetch_rows(date_clause):
+        cursor.execute(f'''
+            SELECT
+                'Bullhorn' AS source_system,
+                CAST(p.placementID AS NVARCHAR(50)) AS position_id,
+                LTRIM(RTRIM(ISNULL(c.firstName, '') + ' ' + ISNULL(c.lastName, ''))) AS candidate_name,
+                'GHR' AS agency,
+                cc.name AS facility,
+                ({system_case}) AS system,
+                p.customText1 AS specialty,
+                CAST(p.dateBegin AS DATE) AS startDate,
+                CAST(p.dateEnd AS DATE) AS endDate,
+                p.status AS status
+            FROM dbo.View_Placement p
+            LEFT JOIN dbo.View_Candidate c ON p.candidateID = c.candidateID
+            LEFT JOIN dbo.View_ClientCorporation cc ON p.clientCorporationID = cc.clientCorporationID
+            WHERE p.isDeleted = 0
+                AND p.status IN ({status_list})
+                AND p.dateBegin IS NOT NULL
+                AND {date_clause}
+                AND {scope_filter}
+        ''')
+        columns = [column[0] for column in cursor.description]
+        out = []
+        for row in cursor.fetchall():
+            row_dict = dict(zip(columns, row))
+            if row_dict.get('startDate'):
+                row_dict['startDate'] = row_dict['startDate'].isoformat() if hasattr(row_dict['startDate'], 'isoformat') else str(row_dict['startDate'])
+            if row_dict.get('endDate'):
+                row_dict['endDate'] = row_dict['endDate'].isoformat() if hasattr(row_dict['endDate'], 'isoformat') else str(row_dict['endDate'])
+            out.append(row_dict)
+        return out
+
+    on_assignment = _fetch_rows("p.dateBegin <= GETDATE() AND (p.dateEnd IS NULL OR p.dateEnd >= GETDATE())")
+    upcoming = _fetch_rows("p.dateBegin > GETDATE() AND p.dateBegin <= DATEADD(DAY, 30, GETDATE())")
+    conn.close()
+    return on_assignment, upcoming
+
+
+def _symplr_stats_data():
+    """Returns (on_assignment[], upcoming[]) for the Symplr book. Raises on error."""
+    conn = get_symplr_conn()
+    if conn is None:
+        return [], []
+    cursor = conn.cursor()
+    sys_case = symplr_system_case_expr('lt.clientid')
+    scope = symplr_scope_filter('lt.clientid')
+
+    def _fetch_rows(date_clause):
+        cursor.execute(f'''
+            SELECT
+                'Symplr' AS source_system,
+                CAST(lt.lt_orderid AS NVARCHAR(50)) AS position_id,
+                LTRIM(RTRIM(ISNULL(pt.firstname, '') + ' ' + ISNULL(pt.lastname, ''))) AS candidate_name,
+                'GHR' AS agency,
+                pc.clientname AS facility,
+                ({sys_case}) AS system,
+                lt.specialty AS specialty,
+                CAST(lt.date_start AS DATE) AS startDate,
+                CAST(lt.date_end AS DATE) AS endDate,
+                lt.status AS status
+            FROM dbo.lt_order lt
+            LEFT JOIN dbo.profile_client pc ON lt.clientid = pc.recordid
+            LEFT JOIN dbo.profile_temp pt ON lt.tempid = pt.recordid
+            WHERE lt.status = 'filled'
+                AND lt.date_start IS NOT NULL
+                AND {date_clause}
+                AND {scope}
+        ''')
+        columns = [column[0] for column in cursor.description]
+        out = []
+        for row in cursor.fetchall():
+            row_dict = dict(zip(columns, row))
+            if row_dict.get('startDate'):
+                row_dict['startDate'] = row_dict['startDate'].isoformat() if hasattr(row_dict['startDate'], 'isoformat') else str(row_dict['startDate'])
+            if row_dict.get('endDate'):
+                row_dict['endDate'] = row_dict['endDate'].isoformat() if hasattr(row_dict['endDate'], 'isoformat') else str(row_dict['endDate'])
+            out.append(row_dict)
+        return out
+
+    on_assignment = _fetch_rows("lt.date_start <= GETDATE() AND (lt.date_end IS NULL OR lt.date_end >= GETDATE())")
+    upcoming = _fetch_rows("lt.date_start > GETDATE() AND lt.date_start <= DATEADD(DAY, 30, GETDATE())")
+    conn.close()
+    return on_assignment, upcoming
+
+
+def _non_msp_stats(req: func.HttpRequest) -> func.HttpResponse:
+    """Run Bullhorn + Symplr stats queries independently, union the results."""
+    on_assignment = []
+    upcoming = []
+    errors = []
     try:
-        conn = pyodbc.connect(
-            f"DRIVER={{ODBC Driver 17 for SQL Server}};"
-            f"SERVER={os.environ['BULLHORN_HOST']};"
-            f"DATABASE={os.environ['BULLHORN_DB']};"
-            f"UID={os.environ['BULLHORN_USER']};"
-            f"PWD={os.environ['BULLHORN_PASSWORD']};"
-            f"TrustServerCertificate=yes;"
-            f"Encrypt=yes"
-        )
-        cursor = conn.cursor()
-
-        system_case = build_system_case_expr('p.clientCorporationID')
-        scope_filter = build_scope_filter('p.clientCorporationID')
-        status_list = ', '.join("'" + s + "'" for s in BULLHORN_ACTIVE_SNAPSHOT_STATUSES)
-
-        on_assignment = []
-        upcoming = []
-
-        # ============================================================
-        # Bullhorn — currently active (started + not yet ended)
-        # ============================================================
-        try:
-            cursor.execute(f'''
-                SELECT
-                    'Bullhorn' AS source_system,
-                    CAST(p.placementID AS NVARCHAR(50)) AS position_id,
-                    LTRIM(RTRIM(ISNULL(c.firstName, '') + ' ' + ISNULL(c.lastName, ''))) AS candidate_name,
-                    'GHR' AS agency,
-                    cc.name AS facility,
-                    ({system_case}) AS system,
-                    p.customText1 AS specialty,
-                    CAST(p.dateBegin AS DATE) AS startDate,
-                    CAST(p.dateEnd AS DATE) AS endDate,
-                    p.status AS status
-                FROM dbo.View_Placement p
-                LEFT JOIN dbo.View_Candidate c ON p.candidateID = c.candidateID
-                LEFT JOIN dbo.View_ClientCorporation cc ON p.clientCorporationID = cc.clientCorporationID
-                WHERE p.isDeleted = 0
-                    AND p.status IN ({status_list})
-                    AND p.dateBegin IS NOT NULL
-                    AND p.dateBegin <= GETDATE()
-                    AND (p.dateEnd IS NULL OR p.dateEnd >= GETDATE())
-                    AND {scope_filter}
-            ''')
-            columns = [column[0] for column in cursor.description]
-            for row in cursor.fetchall():
-                row_dict = dict(zip(columns, row))
-                if row_dict.get('startDate'):
-                    row_dict['startDate'] = row_dict['startDate'].isoformat() if hasattr(row_dict['startDate'], 'isoformat') else str(row_dict['startDate'])
-                if row_dict.get('endDate'):
-                    row_dict['endDate'] = row_dict['endDate'].isoformat() if hasattr(row_dict['endDate'], 'isoformat') else str(row_dict['endDate'])
-                on_assignment.append(row_dict)
-        except Exception as e:
-            print(f"Error loading Bullhorn active assignments: {e}")
-            import traceback; traceback.print_exc()
-
-        # ============================================================
-        # Bullhorn — upcoming starts within the next 30 days
-        # ============================================================
-        try:
-            cursor.execute(f'''
-                SELECT
-                    'Bullhorn' AS source_system,
-                    CAST(p.placementID AS NVARCHAR(50)) AS position_id,
-                    LTRIM(RTRIM(ISNULL(c.firstName, '') + ' ' + ISNULL(c.lastName, ''))) AS candidate_name,
-                    'GHR' AS agency,
-                    cc.name AS facility,
-                    ({system_case}) AS system,
-                    p.customText1 AS specialty,
-                    CAST(p.dateBegin AS DATE) AS startDate,
-                    CAST(p.dateEnd AS DATE) AS endDate,
-                    p.status AS status
-                FROM dbo.View_Placement p
-                LEFT JOIN dbo.View_Candidate c ON p.candidateID = c.candidateID
-                LEFT JOIN dbo.View_ClientCorporation cc ON p.clientCorporationID = cc.clientCorporationID
-                WHERE p.isDeleted = 0
-                    AND p.status IN ({status_list})
-                    AND p.dateBegin IS NOT NULL
-                    AND p.dateBegin > GETDATE()
-                    AND p.dateBegin <= DATEADD(DAY, 30, GETDATE())
-                    AND {scope_filter}
-            ''')
-            columns = [column[0] for column in cursor.description]
-            for row in cursor.fetchall():
-                row_dict = dict(zip(columns, row))
-                if row_dict.get('startDate'):
-                    row_dict['startDate'] = row_dict['startDate'].isoformat() if hasattr(row_dict['startDate'], 'isoformat') else str(row_dict['startDate'])
-                if row_dict.get('endDate'):
-                    row_dict['endDate'] = row_dict['endDate'].isoformat() if hasattr(row_dict['endDate'], 'isoformat') else str(row_dict['endDate'])
-                upcoming.append(row_dict)
-        except Exception as e:
-            print(f"Error loading Bullhorn upcoming starts: {e}")
-            import traceback; traceback.print_exc()
-
-        conn.close()
-        print(f"Returning Bullhorn stats: {len(on_assignment)} active, {len(upcoming)} upcoming")
-
-        return func.HttpResponse(
-            json.dumps({'onAssignment': on_assignment, 'upcoming': upcoming}, default=str),
-            mimetype="application/json",
-            status_code=200,
-        )
+        a, b = _bullhorn_stats_data()
+        on_assignment.extend(a); upcoming.extend(b)
     except Exception as e:
         print(f"Bullhorn stats error: {e}")
         import traceback; traceback.print_exc()
-        return func.HttpResponse(
-            json.dumps({'error': str(e), 'onAssignment': [], 'upcoming': []}),
-            mimetype="application/json",
-            status_code=500,
-        )
+        errors.append(f"bullhorn: {e}")
+    try:
+        a, b = _symplr_stats_data()
+        on_assignment.extend(a); upcoming.extend(b)
+    except Exception as e:
+        print(f"Symplr stats error: {e}")
+        import traceback; traceback.print_exc()
+        errors.append(f"symplr: {e}")
+    print(f"non-MSP stats: {len(on_assignment)} active, {len(upcoming)} upcoming (errors: {errors or 'none'})")
+    return func.HttpResponse(
+        json.dumps({'onAssignment': on_assignment, 'upcoming': upcoming}, default=str),
+        mimetype="application/json",
+        status_code=200,
+    )
 
 
 def main(req: func.HttpRequest) -> func.HttpResponse:
@@ -154,7 +158,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
         return auth_error
 
     if is_non_msp():
-        return _bullhorn_stats(req)
+        return _non_msp_stats(req)
 
     try:
         conn = pyodbc.connect(
