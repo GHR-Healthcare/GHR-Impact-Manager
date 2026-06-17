@@ -5,6 +5,7 @@ import json
 import re
 from datetime import datetime
 from shared_code.auth import require_allowed_domain
+from shared_code.data_source import is_non_msp
 
 
 def main(req: func.HttpRequest) -> func.HttpResponse:
@@ -15,10 +16,21 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
 
     Frontend computes weekly metrics from this raw data:
     - Total Active Headcount, Actives Worked, % Worked, Total Shifts, Shifts/Nurse Avg
+
+    On non-MSP (Bullhorn/Symplr), there is no per-diem actuals data in either
+    source. Short-circuit with an empty payload so any stray UI hit returns
+    200 with the expected shape instead of 500ing on a missing MSP DB
+    connection.
     """
     auth_error = require_allowed_domain(req)
     if auth_error:
         return auth_error
+    if is_non_msp():
+        return func.HttpResponse(
+            json.dumps({'assignments': [], 'shifts': [], 'openOrders': []}),
+            mimetype='application/json',
+            status_code=200,
+        )
     try:
         # Optional date range params (format: YYYY-MM)
         from_month = req.params.get('from')

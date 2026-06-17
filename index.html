@@ -708,7 +708,7 @@
     const $ = (id) => document.getElementById(id);
 
     // App version - loaded from environment variable via API, with fallback
-    let APP_VERSION = '1.7.6';
+    let APP_VERSION = '1.7.7';
 
     const API_BASE_URL = '/api';
     
@@ -6609,6 +6609,10 @@
         };
 
         // Build a row for a category (expandable)
+        // Non-MSP has no Pending tab to drill into — render future-week cells
+        // as plain text so they don't dispatch a SET_VIEW('pending') that the
+        // view-toggle would just bounce back to 'list'.
+        const drillToPendingEnabled = window.store.state.dataSource !== 'non_msp';
         const buildCatRow = (cat) => {
           const catId = cat.replace(/[^a-zA-Z0-9]/g, '_');
           const systems = getSystemsForCat(cat);
@@ -6627,10 +6631,10 @@
             const isCurrent = i === currentWeekIdx;
             const isFuture = i > currentWeekIdx;
             const catEsc = cat.replace(/'/g, "\\'");
-            const ghrSpan = isFuture
+            const ghrSpan = (isFuture && drillToPendingEnabled)
               ? `<span class="text-blue-700 font-semibold cursor-pointer hover:underline" onclick="event.stopPropagation();window.__trendDrillToPending('${catEsc}',null,'GHR')">${g}${deltaSpan(g, gPrev)}</span>`
               : `<span class="text-blue-700 font-semibold">${g}${deltaSpan(g, gPrev)}</span>`;
-            const affSpan = isFuture
+            const affSpan = (isFuture && drillToPendingEnabled)
               ? `<span class="text-purple-700 font-semibold cursor-pointer hover:underline" onclick="event.stopPropagation();window.__trendDrillToPending('${catEsc}',null,'Affiliate')">${a}${deltaSpan(a, aPrev)}</span>`
               : `<span class="text-purple-700 font-semibold">${a}${deltaSpan(a, aPrev)}</span>`;
             cells += `<td class="px-2 py-1.5 border-b border-slate-100 text-center text-[10px] ${isCurrent ? 'bg-blue-50' : ''}">
@@ -6664,10 +6668,10 @@
                 const isFuture = i > currentWeekIdx;
                 const catEsc = cat.replace(/'/g, "\\'");
                 const sysEsc = sys.replace(/'/g, "\\'");
-                const ghrSpan = isFuture
+                const ghrSpan = (isFuture && drillToPendingEnabled)
                   ? `<span class="text-blue-600 cursor-pointer hover:underline" onclick="event.stopPropagation();window.__trendDrillToPending('${catEsc}','${sysEsc}','GHR')">${g}${deltaSpan(g, gPrev)}</span>`
                   : `<span class="text-blue-600">${g}${deltaSpan(g, gPrev)}</span>`;
-                const affSpan = isFuture
+                const affSpan = (isFuture && drillToPendingEnabled)
                   ? `<span class="text-purple-600 cursor-pointer hover:underline" onclick="event.stopPropagation();window.__trendDrillToPending('${catEsc}','${sysEsc}','Affiliate')">${a}${deltaSpan(a, aPrev)}</span>`
                   : `<span class="text-purple-600">${a}${deltaSpan(a, aPrev)}</span>`;
                 sysCells += `<td class="px-2 py-1 border-b border-slate-50 text-center text-[10px] ${isCurrent ? 'bg-blue-50/50' : ''}">

@@ -4,16 +4,28 @@ import os
 import json
 from datetime import datetime, date
 from shared_code.auth import require_allowed_domain
+from shared_code.data_source import is_non_msp
 
 
 def main(req: func.HttpRequest) -> func.HttpResponse:
     """
     Returns pending GHR submissions/offers from B4 and VNDLY.
     Only GHR agency submissions are included.
+
+    On non-MSP (Bullhorn/Symplr), there is no submission funnel — placements
+    appear already approved. Short-circuit with an empty payload so any stray
+    UI hit returns 200 with the expected shape instead of 500ing on a missing
+    MSP DB connection.
     """
     auth_error = require_allowed_domain(req)
     if auth_error:
         return auth_error
+    if is_non_msp():
+        return func.HttpResponse(
+            json.dumps({'submissions': [], 'errors': []}),
+            mimetype='application/json',
+            status_code=200,
+        )
     try:
         conn = pyodbc.connect(
             f"DRIVER={{ODBC Driver 17 for SQL Server}};"
