@@ -33,7 +33,10 @@ def _non_msp_mappings_response():
         mappings.append({
             'id': idx + 1,
             'system_name': entry['system_name'],
-            'client_ids': entry['client_ids'],
+            # Symplr config uses 'master_ids' (v1.7.7 rename) — surface under
+            # the same 'client_ids' name as Bullhorn so the frontend doesn't
+            # branch by source.
+            'client_ids': entry['master_ids'],
             'source': 'symplr',
             'keywords': [],
             'sort_order': idx,

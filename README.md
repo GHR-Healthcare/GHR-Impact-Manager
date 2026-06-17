@@ -2,6 +2,11 @@
 
 ## Version History
 
+**1.7.10** - Fix: GetSystemMappings 500 + Symplr positions silently dropped
+- `GetSystemMappings` was throwing on non-MSP because it read `entry['client_ids']` from `SYMPLR_SYSTEM_ROLLUP` — v1.7.7 renamed that field to `master_ids`. Fixed to surface `master_ids` as `client_ids` in the JSON response shape
+- `_symplr_positions_data()` now runs each of its three queries (lt_order open / orderless open / uncovered shifts) in its own try/except. Previously, a single SQL error killed the whole Symplr positions read — the non-MSP list view was showing only the ~30 Bullhorn positions and zero Symplr
+- Fixed the uncovered-shifts query's invalid `MAX(CASE-with-subquery)` by including `lt.clientid` in `GROUP BY` so the system_case expression can run non-aggregated. Same de-MAX-ing applied to the orderless-open query
+
 **1.7.9** - GetPositions: open shifts under lt_orders
 - `GetPositions` now picks up open future shifts where the parent `lt_order` is itself NOT open (avoids double-counting requisitions we already surface). 141 such uncovered-shift slots in scope today; each lt_orderid becomes one position row with `num_positions = COUNT(open shifts)` and `time_type = 'Uncovered Shifts'`
 

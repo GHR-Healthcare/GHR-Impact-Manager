@@ -110,136 +110,157 @@ def _symplr_positions_data():
         row_dict['candidates'] = []
         return row_dict
 
-    cursor.execute(f'''
-        SELECT
-            'Symplr' AS source_system,
-            CAST(lt.lt_orderid AS NVARCHAR(50)) AS position_id,
-            ISNULL(lt.nursetype, 'Unknown') AS program,
-            pc.clientname AS facility,
-            -- Symplr title-equivalent: nursetype + specialty (e.g. "PCA — Autistic Support")
-            LTRIM(RTRIM(ISNULL(lt.nursetype, '') + ' — ' + ISNULL(lt.specialty, ''))) AS specialty,
-            CAST(lt.date_entered AS DATE) AS date_added,
-            NULL AS unit,
-            ISNULL(lt.costCenterNumber, '') AS cost_center,
-            NULL AS bill_rate,
-            1 AS bill_rate_estimated,
-            TRY_CAST(lt.HoursPerWeek AS DECIMAL(10,2)) AS shift_hours,
-            NULL AS shift_time,
-            NULL AS hiring_manager,
-            0 AS num_submissions,
-            1 AS num_positions,
-            NULL AS requisition_reason,
-            NULL AS shift_diff,
-            NULL AS min_hours,
-            CAST(lt.date_start AS DATE) AS open_start_date,
-            'Long-Term' AS time_type,
-            NULL AS start_time,
-            NULL AS end_time,
-            lt.status AS status,
-            ({sys_case}) AS health_system,
-            lt.specialty AS profession,
-            NULL AS subspecialty
-        FROM dbo.lt_order lt
-        LEFT JOIN dbo.profile_client pc ON lt.clientid = pc.recordid
-        WHERE lt.status = 'open'
-            AND {scope}
-        ORDER BY lt.date_entered DESC
-    ''')
-    columns = [column[0] for column in cursor.description]
-    rows = [_serialize(dict(zip(columns, row))) for row in cursor.fetchall()]
+    # Each of the three Symplr positions queries runs in its own try block so
+    # one bad query doesn't take down the others. Without this, a SQL error in
+    # query 3 kills the whole _symplr_positions_data() call via the outer
+    # _non_msp_positions try/except, and the Symplr book vanishes from the UI.
+    rows = []
 
-    # Orderless 'open' orders — per-shift requisitions without an lt_order
-    # parent. Aggregate by (client, specialty, nursetype) so a series of
-    # identical unfilled shifts shows as one position with shift_count.
-    cursor.execute(f'''
-        SELECT
-            'Symplr' AS source_system,
-            CAST(MAX(o.orderid) AS NVARCHAR(50)) AS position_id,
-            ISNULL(MAX(o.nursetype), 'Unknown') AS program,
-            MAX(pc.clientname) AS facility,
-            LTRIM(RTRIM(ISNULL(MAX(o.nursetype), '') + ' — ' + ISNULL(MAX(o.specialty), ''))) AS specialty,
-            CAST(MIN(o.datetimecreated) AS DATE) AS date_added,
-            NULL AS unit,
-            ISNULL(MAX(o.costCenterNumber), '') AS cost_center,
-            NULL AS bill_rate,
-            1 AS bill_rate_estimated,
-            NULL AS shift_hours,
-            NULL AS shift_time,
-            NULL AS hiring_manager,
-            0 AS num_submissions,
-            COUNT(*) AS num_positions,
-            NULL AS requisition_reason,
-            NULL AS shift_diff,
-            NULL AS min_hours,
-            CAST(MIN(o.jobdatestart) AS DATE) AS open_start_date,
-            'Per Shift' AS time_type,
-            NULL AS start_time,
-            NULL AS end_time,
-            'open' AS status,
-            MAX(({sys_case_orders})) AS health_system,
-            MAX(o.specialty) AS profession,
-            NULL AS subspecialty
-        FROM dbo.orders o
-        LEFT JOIN dbo.profile_client pc ON o.customerid = pc.recordid
-        WHERE o.status = 'open'
-            AND (o.lt_orderid IS NULL OR o.lt_orderid = 0)
-            AND o.jobdatestart >= GETDATE()
-            AND {scope_orders}
-        GROUP BY o.customerid, o.specialty, o.nursetype
-    ''')
-    columns = [column[0] for column in cursor.description]
-    rows.extend(_serialize(dict(zip(columns, row))) for row in cursor.fetchall())
+    # ---- 1. lt_order with status='open' (long-term open requisitions) ----
+    try:
+        cursor.execute(f'''
+            SELECT
+                'Symplr' AS source_system,
+                CAST(lt.lt_orderid AS NVARCHAR(50)) AS position_id,
+                ISNULL(lt.nursetype, 'Unknown') AS program,
+                pc.clientname AS facility,
+                LTRIM(RTRIM(ISNULL(lt.nursetype, '') + ' — ' + ISNULL(lt.specialty, ''))) AS specialty,
+                CAST(lt.date_entered AS DATE) AS date_added,
+                NULL AS unit,
+                ISNULL(lt.costCenterNumber, '') AS cost_center,
+                NULL AS bill_rate,
+                1 AS bill_rate_estimated,
+                TRY_CAST(lt.HoursPerWeek AS DECIMAL(10,2)) AS shift_hours,
+                NULL AS shift_time,
+                NULL AS hiring_manager,
+                0 AS num_submissions,
+                1 AS num_positions,
+                NULL AS requisition_reason,
+                NULL AS shift_diff,
+                NULL AS min_hours,
+                CAST(lt.date_start AS DATE) AS open_start_date,
+                'Long-Term' AS time_type,
+                NULL AS start_time,
+                NULL AS end_time,
+                lt.status AS status,
+                ({sys_case}) AS health_system,
+                lt.specialty AS profession,
+                NULL AS subspecialty
+            FROM dbo.lt_order lt
+            LEFT JOIN dbo.profile_client pc ON lt.clientid = pc.recordid
+            WHERE lt.status = 'open'
+                AND {scope}
+            ORDER BY lt.date_entered DESC
+        ''')
+        columns = [column[0] for column in cursor.description]
+        rows.extend(_serialize(dict(zip(columns, row))) for row in cursor.fetchall())
+    except Exception as e:
+        print(f"Symplr positions: lt_order open query failed: {e}")
+        import traceback; traceback.print_exc()
 
-    # Open shifts UNDER an lt_order — uncovered future shifts where the
-    # lt_order parent is NOT itself 'open' (those are already counted by
-    # the first query). One row per lt_orderid with num_positions = count
-    # of unfilled shifts in that lt_order.
-    cursor.execute(f'''
-        SELECT
-            'Symplr' AS source_system,
-            CAST(o.lt_orderid AS NVARCHAR(50)) AS position_id,
-            ISNULL(MAX(lt.nursetype), MAX(o.nursetype)) AS program,
-            MAX(pc.clientname) AS facility,
-            LTRIM(RTRIM(
-                ISNULL(MAX(lt.nursetype), MAX(o.nursetype)) + ' — ' +
-                ISNULL(MAX(lt.specialty), MAX(o.specialty))
-            )) AS specialty,
-            CAST(MIN(o.datetimecreated) AS DATE) AS date_added,
-            NULL AS unit,
-            ISNULL(MAX(lt.costCenterNumber), MAX(o.costCenterNumber)) AS cost_center,
-            NULL AS bill_rate,
-            1 AS bill_rate_estimated,
-            NULL AS shift_hours,
-            NULL AS shift_time,
-            NULL AS hiring_manager,
-            0 AS num_submissions,
-            COUNT(*) AS num_positions,
-            NULL AS requisition_reason,
-            NULL AS shift_diff,
-            NULL AS min_hours,
-            CAST(MIN(o.jobdatestart) AS DATE) AS open_start_date,
-            'Uncovered Shifts' AS time_type,
-            NULL AS start_time,
-            NULL AS end_time,
-            'open' AS status,
-            MAX({symplr_system_case_expr('lt.clientid')}) AS health_system,
-            MAX(lt.specialty) AS profession,
-            NULL AS subspecialty
-        FROM dbo.orders o
-        INNER JOIN dbo.lt_order lt ON o.lt_orderid = lt.lt_orderid
-        LEFT JOIN dbo.profile_client pc ON lt.clientid = pc.recordid
-        WHERE o.status = 'open'
-            AND o.lt_orderid IS NOT NULL AND o.lt_orderid <> 0
-            AND lt.status <> 'open'                                       -- avoid double-count
-            AND (o.filledby IS NULL OR o.filledby = 0)
-            AND o.jobdatestart >= GETDATE()
-            AND {symplr_scope_filter('lt.clientid')}
-        GROUP BY o.lt_orderid
-    ''')
-    columns = [column[0] for column in cursor.description]
-    rows.extend(_serialize(dict(zip(columns, row))) for row in cursor.fetchall())
+    # ---- 2. Orderless 'open' orders (lt_orderid IN (0, NULL)) ----
+    # Aggregate by (customer, specialty, nursetype) so identical unfilled
+    # shifts collapse to one row with num_positions = shift count.
+    try:
+        cursor.execute(f'''
+            SELECT
+                'Symplr' AS source_system,
+                CAST(MAX(o.orderid) AS NVARCHAR(50)) AS position_id,
+                ISNULL(MAX(o.nursetype), 'Unknown') AS program,
+                MAX(pc.clientname) AS facility,
+                LTRIM(RTRIM(ISNULL(MAX(o.nursetype), '') + ' — ' + ISNULL(MAX(o.specialty), ''))) AS specialty,
+                CAST(MIN(o.datetimecreated) AS DATE) AS date_added,
+                NULL AS unit,
+                ISNULL(MAX(o.costCenterNumber), '') AS cost_center,
+                NULL AS bill_rate,
+                1 AS bill_rate_estimated,
+                NULL AS shift_hours,
+                NULL AS shift_time,
+                NULL AS hiring_manager,
+                0 AS num_submissions,
+                COUNT(*) AS num_positions,
+                NULL AS requisition_reason,
+                NULL AS shift_diff,
+                NULL AS min_hours,
+                CAST(MIN(o.jobdatestart) AS DATE) AS open_start_date,
+                'Per Shift' AS time_type,
+                NULL AS start_time,
+                NULL AS end_time,
+                'open' AS status,
+                ({sys_case_orders}) AS health_system,
+                MAX(o.specialty) AS profession,
+                NULL AS subspecialty
+            FROM dbo.orders o
+            LEFT JOIN dbo.profile_client pc ON o.customerid = pc.recordid
+            WHERE o.status = 'open'
+                AND (o.lt_orderid IS NULL OR o.lt_orderid = 0)
+                AND o.jobdatestart >= GETDATE()
+                AND {scope_orders}
+            GROUP BY o.customerid, o.specialty, o.nursetype
+        ''')
+        columns = [column[0] for column in cursor.description]
+        rows.extend(_serialize(dict(zip(columns, row))) for row in cursor.fetchall())
+    except Exception as e:
+        print(f"Symplr positions: orderless open query failed: {e}")
+        import traceback; traceback.print_exc()
+
+    # ---- 3. Uncovered shifts under non-open lt_orders ----
+    # One row per parent lt_orderid with num_positions = unfilled shifts.
+    # Skip parents whose lt_order.status='open' (those are already in query 1).
+    # GROUP BY includes lt.clientid because the system_case expression
+    # references it and SQL Server requires GROUP BY membership for
+    # non-aggregated columns.
+    try:
+        cursor.execute(f'''
+            SELECT
+                'Symplr' AS source_system,
+                CAST(o.lt_orderid AS NVARCHAR(50)) AS position_id,
+                ISNULL(MAX(lt.nursetype), MAX(o.nursetype)) AS program,
+                MAX(pc.clientname) AS facility,
+                LTRIM(RTRIM(
+                    ISNULL(MAX(lt.nursetype), MAX(o.nursetype)) + ' — ' +
+                    ISNULL(MAX(lt.specialty), MAX(o.specialty))
+                )) AS specialty,
+                CAST(MIN(o.datetimecreated) AS DATE) AS date_added,
+                NULL AS unit,
+                ISNULL(MAX(lt.costCenterNumber), MAX(o.costCenterNumber)) AS cost_center,
+                NULL AS bill_rate,
+                1 AS bill_rate_estimated,
+                NULL AS shift_hours,
+                NULL AS shift_time,
+                NULL AS hiring_manager,
+                0 AS num_submissions,
+                COUNT(*) AS num_positions,
+                NULL AS requisition_reason,
+                NULL AS shift_diff,
+                NULL AS min_hours,
+                CAST(MIN(o.jobdatestart) AS DATE) AS open_start_date,
+                'Uncovered Shifts' AS time_type,
+                NULL AS start_time,
+                NULL AS end_time,
+                'open' AS status,
+                ({symplr_system_case_expr('lt.clientid')}) AS health_system,
+                MAX(lt.specialty) AS profession,
+                NULL AS subspecialty
+            FROM dbo.orders o
+            INNER JOIN dbo.lt_order lt ON o.lt_orderid = lt.lt_orderid
+            LEFT JOIN dbo.profile_client pc ON lt.clientid = pc.recordid
+            WHERE o.status = 'open'
+                AND o.lt_orderid IS NOT NULL AND o.lt_orderid <> 0
+                AND lt.status <> 'open'
+                AND (o.filledby IS NULL OR o.filledby = 0)
+                AND o.jobdatestart >= GETDATE()
+                AND {symplr_scope_filter('lt.clientid')}
+            GROUP BY o.lt_orderid, lt.clientid
+        ''')
+        columns = [column[0] for column in cursor.description]
+        rows.extend(_serialize(dict(zip(columns, row))) for row in cursor.fetchall())
+    except Exception as e:
+        print(f"Symplr positions: uncovered-shifts query failed: {e}")
+        import traceback; traceback.print_exc()
 
     conn.close()
+    print(f"Symplr positions: returning {len(rows)} rows")
     return rows
 
 
