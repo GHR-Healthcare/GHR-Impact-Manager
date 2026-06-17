@@ -190,6 +190,55 @@ def _symplr_positions_data():
     columns = [column[0] for column in cursor.description]
     rows.extend(_serialize(dict(zip(columns, row))) for row in cursor.fetchall())
 
+    # Open shifts UNDER an lt_order — uncovered future shifts where the
+    # lt_order parent is NOT itself 'open' (those are already counted by
+    # the first query). One row per lt_orderid with num_positions = count
+    # of unfilled shifts in that lt_order.
+    cursor.execute(f'''
+        SELECT
+            'Symplr' AS source_system,
+            CAST(o.lt_orderid AS NVARCHAR(50)) AS position_id,
+            ISNULL(MAX(lt.nursetype), MAX(o.nursetype)) AS program,
+            MAX(pc.clientname) AS facility,
+            LTRIM(RTRIM(
+                ISNULL(MAX(lt.nursetype), MAX(o.nursetype)) + ' — ' +
+                ISNULL(MAX(lt.specialty), MAX(o.specialty))
+            )) AS specialty,
+            CAST(MIN(o.datetimecreated) AS DATE) AS date_added,
+            NULL AS unit,
+            ISNULL(MAX(lt.costCenterNumber), MAX(o.costCenterNumber)) AS cost_center,
+            NULL AS bill_rate,
+            1 AS bill_rate_estimated,
+            NULL AS shift_hours,
+            NULL AS shift_time,
+            NULL AS hiring_manager,
+            0 AS num_submissions,
+            COUNT(*) AS num_positions,
+            NULL AS requisition_reason,
+            NULL AS shift_diff,
+            NULL AS min_hours,
+            CAST(MIN(o.jobdatestart) AS DATE) AS open_start_date,
+            'Uncovered Shifts' AS time_type,
+            NULL AS start_time,
+            NULL AS end_time,
+            'open' AS status,
+            MAX({symplr_system_case_expr('lt.clientid')}) AS health_system,
+            MAX(lt.specialty) AS profession,
+            NULL AS subspecialty
+        FROM dbo.orders o
+        INNER JOIN dbo.lt_order lt ON o.lt_orderid = lt.lt_orderid
+        LEFT JOIN dbo.profile_client pc ON lt.clientid = pc.recordid
+        WHERE o.status = 'open'
+            AND o.lt_orderid IS NOT NULL AND o.lt_orderid <> 0
+            AND lt.status <> 'open'                                       -- avoid double-count
+            AND (o.filledby IS NULL OR o.filledby = 0)
+            AND o.jobdatestart >= GETDATE()
+            AND {symplr_scope_filter('lt.clientid')}
+        GROUP BY o.lt_orderid
+    ''')
+    columns = [column[0] for column in cursor.description]
+    rows.extend(_serialize(dict(zip(columns, row))) for row in cursor.fetchall())
+
     conn.close()
     return rows
 
