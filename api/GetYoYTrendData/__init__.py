@@ -80,13 +80,20 @@ def _bullhorn_yoy_data():
 
 
 def _symplr_yoy_data():
-    """Returns YoY weekly headcount rows from Symplr. Raises on error."""
+    """Returns YoY weekly headcount rows from Symplr. Raises on error.
+
+    Placements CTE unions two sources: lt_order multi-week placements and
+    orderless filled orders (lt_orderid IN (0, NULL)) aggregated by
+    worker+client.
+    """
     conn = get_symplr_conn()
     if conn is None:
         return []
     cursor = conn.cursor()
     sys_case = symplr_system_case_expr('lt.clientid')
     scope = symplr_scope_filter('lt.clientid')
+    sys_case_orders = symplr_system_case_expr('o.customerid')
+    scope_orders = symplr_scope_filter('o.customerid')
 
     cursor.execute(f'''
         ;WITH Weeks AS (
@@ -113,6 +120,27 @@ def _symplr_yoy_data():
                 AND lt.date_start IS NOT NULL
                 AND lt.date_start >= DATEADD(WEEK, -62, GETDATE())
                 AND {scope}
+
+            UNION ALL
+
+            SELECT
+                NULL AS lt_orderid,
+                LOWER(LTRIM(RTRIM(ISNULL(MAX(pt.firstname),'') + ' ' + ISNULL(MAX(pt.lastname),'')))) AS worker,
+                ({sys_case_orders}) AS system,
+                MAX(pc.clientname) AS facility,
+                ISNULL(MAX(o.nursetype), 'Unknown') AS category,
+                CAST(MIN(o.jobdatestart) AS DATE) AS sd,
+                CAST(MAX(o.jobdateend)   AS DATE) AS ed
+            FROM dbo.orders o
+            LEFT JOIN dbo.profile_client pc ON o.customerid = pc.recordid
+            LEFT JOIN dbo.profile_temp   pt ON o.filledby   = pt.recordid
+            WHERE o.status = 'filled'
+                AND (o.lt_orderid IS NULL OR o.lt_orderid = 0)
+                AND o.filledby IS NOT NULL AND o.filledby > 0
+                AND o.jobdatestart IS NOT NULL
+                AND o.jobdatestart >= DATEADD(WEEK, -62, GETDATE())
+                AND {scope_orders}
+            GROUP BY o.customerid, o.filledby
         )
         SELECT
             CONVERT(VARCHAR(10), w.week_start, 23) AS week_start,

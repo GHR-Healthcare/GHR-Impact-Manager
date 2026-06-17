@@ -159,6 +159,48 @@ def _symplr_trend_data():
         assignments.append(row_dict)
 
     # ============================================================
+    # Symplr — Orderless filled orders (lt_orderid IN (0, NULL))
+    # Per-shift bookings without an lt_order parent. Aggregate by
+    # (worker, client) so a multi-shift assignment collapses into one row.
+    # ============================================================
+    system_case_orders = symplr_system_case_expr('o.customerid')
+    scope_filter_orders = symplr_scope_filter('o.customerid')
+    cursor.execute(f'''
+        SELECT
+            'Symplr' AS source_system,
+            LTRIM(RTRIM(ISNULL(MAX(pt.firstname), '') + ' ' + ISNULL(MAX(pt.lastname), ''))) AS worker_name,
+            ({system_case_orders}) AS system,
+            MAX(pc.clientname) AS facility,
+            'GHR' AS agency,
+            MAX(o.specialty) AS specialty,
+            MAX(o.nursetype) AS category,
+            NULL AS pm,
+            'filled' AS status,
+            NULL AS bill_rate,
+            NULL AS weekly_hours,
+            CAST(MIN(o.jobdatestart) AS DATE) AS startDate,
+            CAST(MAX(o.jobdateend)   AS DATE) AS endDate
+        FROM dbo.orders o
+        LEFT JOIN dbo.profile_client pc ON o.customerid = pc.recordid
+        LEFT JOIN dbo.profile_temp   pt ON o.filledby   = pt.recordid
+        WHERE o.status = 'filled'
+            AND (o.lt_orderid IS NULL OR o.lt_orderid = 0)
+            AND o.filledby IS NOT NULL AND o.filledby > 0
+            AND o.jobdatestart IS NOT NULL
+            AND (o.jobdateend IS NULL OR o.jobdateend >= DATEADD(WEEK, -4, GETDATE()))
+            AND {scope_filter_orders}
+        GROUP BY o.customerid, o.filledby
+    ''')
+    columns = [column[0] for column in cursor.description]
+    for row in cursor.fetchall():
+        row_dict = dict(zip(columns, row))
+        if row_dict.get('startDate'):
+            row_dict['startDate'] = row_dict['startDate'].isoformat() if hasattr(row_dict['startDate'], 'isoformat') else str(row_dict['startDate'])
+        if row_dict.get('endDate'):
+            row_dict['endDate'] = row_dict['endDate'].isoformat() if hasattr(row_dict['endDate'], 'isoformat') else str(row_dict['endDate'])
+        assignments.append(row_dict)
+
+    # ============================================================
     # Symplr — Weekly ACTUAL revenue from shift-level orders table
     # Symplr is the only source with real billed dollars per shift —
     # bucket by week of jobdatestart and sum totalbillamount.

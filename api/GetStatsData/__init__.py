@@ -72,15 +72,30 @@ def _bullhorn_stats_data():
 
 
 def _symplr_stats_data():
-    """Returns (on_assignment[], upcoming[]) for the Symplr book. Raises on error."""
+    """Returns (on_assignment[], upcoming[]) for the Symplr book. Raises on error.
+
+    Two sources are unioned: lt_order (multi-week placements) and orderless
+    filled orders (per-shift bookings with lt_orderid IN (0, NULL)) — the
+    latter aggregated by worker+client so each shift series collapses to one
+    assignment row.
+    """
     conn = get_symplr_conn()
     if conn is None:
         return [], []
     cursor = conn.cursor()
     sys_case = symplr_system_case_expr('lt.clientid')
     scope = symplr_scope_filter('lt.clientid')
+    sys_case_orders = symplr_system_case_expr('o.customerid')
+    scope_orders = symplr_scope_filter('o.customerid')
 
-    def _fetch_rows(date_clause):
+    def _serialize(row_dict):
+        if row_dict.get('startDate'):
+            row_dict['startDate'] = row_dict['startDate'].isoformat() if hasattr(row_dict['startDate'], 'isoformat') else str(row_dict['startDate'])
+        if row_dict.get('endDate'):
+            row_dict['endDate'] = row_dict['endDate'].isoformat() if hasattr(row_dict['endDate'], 'isoformat') else str(row_dict['endDate'])
+        return row_dict
+
+    def _fetch_lt_rows(date_clause):
         cursor.execute(f'''
             SELECT
                 'Symplr' AS source_system,
@@ -102,18 +117,47 @@ def _symplr_stats_data():
                 AND {scope}
         ''')
         columns = [column[0] for column in cursor.description]
-        out = []
-        for row in cursor.fetchall():
-            row_dict = dict(zip(columns, row))
-            if row_dict.get('startDate'):
-                row_dict['startDate'] = row_dict['startDate'].isoformat() if hasattr(row_dict['startDate'], 'isoformat') else str(row_dict['startDate'])
-            if row_dict.get('endDate'):
-                row_dict['endDate'] = row_dict['endDate'].isoformat() if hasattr(row_dict['endDate'], 'isoformat') else str(row_dict['endDate'])
-            out.append(row_dict)
-        return out
+        return [_serialize(dict(zip(columns, row))) for row in cursor.fetchall()]
 
-    on_assignment = _fetch_rows("lt.date_start <= GETDATE() AND (lt.date_end IS NULL OR lt.date_end >= GETDATE())")
-    upcoming = _fetch_rows("lt.date_start > GETDATE() AND lt.date_start <= DATEADD(DAY, 30, GETDATE())")
+    def _fetch_order_rows(date_clause):
+        """Orderless filled orders aggregated by worker+client.
+        `date_clause` filters individual order shifts (e.g. happening now or
+        starting in the next 30 days); aggregation produces one row per
+        worker-client with min/max dates across qualifying shifts."""
+        cursor.execute(f'''
+            SELECT
+                'Symplr' AS source_system,
+                CAST(o.customerid AS NVARCHAR(50)) AS position_id,
+                LTRIM(RTRIM(ISNULL(MAX(pt.firstname), '') + ' ' + ISNULL(MAX(pt.lastname), ''))) AS candidate_name,
+                'GHR' AS agency,
+                MAX(pc.clientname) AS facility,
+                ({sys_case_orders}) AS system,
+                MAX(o.specialty) AS specialty,
+                CAST(MIN(o.jobdatestart) AS DATE) AS startDate,
+                CAST(MAX(o.jobdateend)   AS DATE) AS endDate,
+                'filled' AS status
+            FROM dbo.orders o
+            LEFT JOIN dbo.profile_client pc ON o.customerid = pc.recordid
+            LEFT JOIN dbo.profile_temp   pt ON o.filledby   = pt.recordid
+            WHERE o.status = 'filled'
+                AND (o.lt_orderid IS NULL OR o.lt_orderid = 0)
+                AND o.filledby IS NOT NULL AND o.filledby > 0
+                AND o.jobdatestart IS NOT NULL
+                AND {date_clause}
+                AND {scope_orders}
+            GROUP BY o.customerid, o.filledby
+        ''')
+        columns = [column[0] for column in cursor.description]
+        return [_serialize(dict(zip(columns, row))) for row in cursor.fetchall()]
+
+    on_assignment = (
+        _fetch_lt_rows("lt.date_start <= GETDATE() AND (lt.date_end IS NULL OR lt.date_end >= GETDATE())")
+        + _fetch_order_rows("o.jobdatestart <= GETDATE() AND (o.jobdateend IS NULL OR o.jobdateend >= GETDATE())")
+    )
+    upcoming = (
+        _fetch_lt_rows("lt.date_start > GETDATE() AND lt.date_start <= DATEADD(DAY, 30, GETDATE())")
+        + _fetch_order_rows("o.jobdatestart > GETDATE() AND o.jobdatestart <= DATEADD(DAY, 30, GETDATE())")
+    )
     conn.close()
     return on_assignment, upcoming
 

@@ -83,13 +83,32 @@ def _bullhorn_positions_data():
 
 
 def _symplr_positions_data():
-    """Returns open Symplr lt_order rows. Raises on error."""
+    """Returns open Symplr positions. Two sources are unioned:
+      - lt_order rows with status='open' (long-term open requisitions)
+      - Orderless 'open' orders (lt_orderid IN (0, NULL)) aggregated by
+        (customer, specialty, nursetype) so a batch of identical unfilled
+        shifts collapses into one position row with num_positions = shift count.
+    """
     conn = get_symplr_conn()
     if conn is None:
         return []
     cursor = conn.cursor()
     sys_case = symplr_system_case_expr('lt.clientid')
     scope = symplr_scope_filter('lt.clientid')
+    sys_case_orders = symplr_system_case_expr('o.customerid')
+    scope_orders = symplr_scope_filter('o.customerid')
+
+    def _serialize(row_dict):
+        if row_dict.get('date_added'):
+            row_dict['date_added'] = row_dict['date_added'].isoformat() if hasattr(row_dict['date_added'], 'isoformat') else str(row_dict['date_added'])
+        if row_dict.get('open_start_date'):
+            row_dict['open_start_date'] = row_dict['open_start_date'].isoformat() if hasattr(row_dict['open_start_date'], 'isoformat') else str(row_dict['open_start_date'])
+        row_dict['ghrSubs'] = 0
+        row_dict['avSubs'] = 0
+        row_dict['ghrDeclines'] = 0
+        row_dict['avDeclines'] = 0
+        row_dict['candidates'] = []
+        return row_dict
 
     cursor.execute(f'''
         SELECT
@@ -127,19 +146,50 @@ def _symplr_positions_data():
         ORDER BY lt.date_entered DESC
     ''')
     columns = [column[0] for column in cursor.description]
-    rows = []
-    for row in cursor.fetchall():
-        row_dict = dict(zip(columns, row))
-        if row_dict.get('date_added'):
-            row_dict['date_added'] = row_dict['date_added'].isoformat() if hasattr(row_dict['date_added'], 'isoformat') else str(row_dict['date_added'])
-        if row_dict.get('open_start_date'):
-            row_dict['open_start_date'] = row_dict['open_start_date'].isoformat() if hasattr(row_dict['open_start_date'], 'isoformat') else str(row_dict['open_start_date'])
-        row_dict['ghrSubs'] = 0
-        row_dict['avSubs'] = 0
-        row_dict['ghrDeclines'] = 0
-        row_dict['avDeclines'] = 0
-        row_dict['candidates'] = []
-        rows.append(row_dict)
+    rows = [_serialize(dict(zip(columns, row))) for row in cursor.fetchall()]
+
+    # Orderless 'open' orders — per-shift requisitions without an lt_order
+    # parent. Aggregate by (client, specialty, nursetype) so a series of
+    # identical unfilled shifts shows as one position with shift_count.
+    cursor.execute(f'''
+        SELECT
+            'Symplr' AS source_system,
+            CAST(MAX(o.orderid) AS NVARCHAR(50)) AS position_id,
+            ISNULL(MAX(o.nursetype), 'Unknown') AS program,
+            MAX(pc.clientname) AS facility,
+            LTRIM(RTRIM(ISNULL(MAX(o.nursetype), '') + ' — ' + ISNULL(MAX(o.specialty), ''))) AS specialty,
+            CAST(MIN(o.datetimecreated) AS DATE) AS date_added,
+            NULL AS unit,
+            ISNULL(MAX(o.costCenterNumber), '') AS cost_center,
+            NULL AS bill_rate,
+            1 AS bill_rate_estimated,
+            NULL AS shift_hours,
+            NULL AS shift_time,
+            NULL AS hiring_manager,
+            0 AS num_submissions,
+            COUNT(*) AS num_positions,
+            NULL AS requisition_reason,
+            NULL AS shift_diff,
+            NULL AS min_hours,
+            CAST(MIN(o.jobdatestart) AS DATE) AS open_start_date,
+            'Per Shift' AS time_type,
+            NULL AS start_time,
+            NULL AS end_time,
+            'open' AS status,
+            MAX(({sys_case_orders})) AS health_system,
+            MAX(o.specialty) AS profession,
+            NULL AS subspecialty
+        FROM dbo.orders o
+        LEFT JOIN dbo.profile_client pc ON o.customerid = pc.recordid
+        WHERE o.status = 'open'
+            AND (o.lt_orderid IS NULL OR o.lt_orderid = 0)
+            AND o.jobdatestart >= GETDATE()
+            AND {scope_orders}
+        GROUP BY o.customerid, o.specialty, o.nursetype
+    ''')
+    columns = [column[0] for column in cursor.description]
+    rows.extend(_serialize(dict(zip(columns, row))) for row in cursor.fetchall())
+
     conn.close()
     return rows
 
