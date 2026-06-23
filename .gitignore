@@ -1,3 +1,15 @@
 PRN Book.xlsx
 Trend Lines.xlsx
 GHR_vs_Other_PerDiem_Analysis.xlsx
+
+# Python bytecode + dev caches (auto-generated, never commit)
+__pycache__/
+*.pyc
+*.pyo
+
+# Azure Functions local-dev artifacts
+local.settings.json
+.python_packages/
+.venv/
+bin/
+obj/
