@@ -2,6 +2,12 @@
 
 ## Version History
 
+**1.8.0** - Non-MSP: backend emits `division` + `region` fields (PR 1 of 2)
+- All non-MSP endpoints now return `division` (from Bullhorn `customTextBlock1` per placement/JobOrder, from Symplr rollup config per system) and `region` (Symplr `profile_client.state`)
+- New `build_division_case_expr` helper in `symplr_systems.py` parallels `build_system_case_expr`
+- `GetSystemMappings` exposes `division` per system in its JSON
+- Backend only — frontend filter UI changes coming in PR 2
+
 **1.7.10** - Fix: GetSystemMappings 500 + Symplr positions silently dropped
 - `GetSystemMappings` was throwing on non-MSP because it read `entry['client_ids']` from `SYMPLR_SYSTEM_ROLLUP` — v1.7.7 renamed that field to `master_ids`. Fixed to surface `master_ids` as `client_ids` in the JSON response shape
 - `_symplr_positions_data()` now runs each of its three queries (lt_order open / orderless open / uncovered shifts) in its own try/except. Previously, a single SQL error killed the whole Symplr positions read — the non-MSP list view was showing only the ~30 Bullhorn positions and zero Symplr

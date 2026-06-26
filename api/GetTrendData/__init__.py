@@ -11,6 +11,7 @@ from shared_code.bullhorn_systems import (
 from shared_code.symplr_systems import (
     build_system_case_expr as symplr_system_case_expr,
     build_scope_filter as symplr_scope_filter,
+    build_division_case_expr as symplr_division_case_expr,
 )
 
 
@@ -46,6 +47,8 @@ def _bullhorn_trend_data():
             'GHR' AS agency,
             p.customText1 AS specialty,
             p.employmentType AS category,
+            p.customTextBlock1 AS division,
+            NULL AS region,
             p.customText11 AS pm,
             p.status AS status,
             TRY_CAST(p.clientBillRate AS DECIMAL(10,2)) AS bill_rate,
@@ -121,6 +124,7 @@ def _symplr_trend_data():
     cursor = conn.cursor()
     system_case = symplr_system_case_expr('lt.clientid')
     scope_filter = symplr_scope_filter('lt.clientid')
+    division_case = symplr_division_case_expr('lt.clientid')
 
     # ============================================================
     # Symplr — Long-term orders (filled placements) in rolling window
@@ -135,6 +139,8 @@ def _symplr_trend_data():
             'GHR' AS agency,
             lt.specialty AS specialty,
             lt.nursetype AS category,
+            ({division_case}) AS division,
+            pc.state AS region,
             NULL AS pm,
             lt.status AS status,
             NULL AS bill_rate,
@@ -165,6 +171,7 @@ def _symplr_trend_data():
     # ============================================================
     system_case_orders = symplr_system_case_expr('o.customerid')
     scope_filter_orders = symplr_scope_filter('o.customerid')
+    division_case_orders = symplr_division_case_expr('o.customerid')
     cursor.execute(f'''
         SELECT
             'Symplr' AS source_system,
@@ -174,6 +181,8 @@ def _symplr_trend_data():
             'GHR' AS agency,
             MAX(o.specialty) AS specialty,
             MAX(o.nursetype) AS category,
+            ({division_case_orders}) AS division,
+            MAX(pc.state) AS region,
             NULL AS pm,
             'filled' AS status,
             NULL AS bill_rate,

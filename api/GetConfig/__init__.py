@@ -11,7 +11,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
     try:
         config = {
             'defaultMargin': os.environ.get('DEFAULT_MARGIN', '25'),
-            'appVersion': os.environ.get('APP_VERSION', '1.7.10'),
+            'appVersion': os.environ.get('APP_VERSION', '1.8.0'),
             # 'msp' (default) or 'non_msp' — frontend uses this to hide tabs
             # that don't apply to the non-MSP instance (Pending, Per Diem).
             'dataSource': get_data_source(),

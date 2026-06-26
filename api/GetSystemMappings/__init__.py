@@ -23,6 +23,10 @@ def _non_msp_mappings_response():
             'system_name': entry['system_name'],
             'client_ids': entry['client_ids'],
             'source': 'bullhorn',
+            # Division for Bullhorn is per-placement (View_Placement.customTextBlock1)
+            # rather than per-account, so the rollup config doesn't carry it.
+            # Frontend builds the division filter dropdown from actual record data.
+            'division': entry.get('division'),
             'keywords': [],
             'sort_order': idx,
             'perdiem_breakout': 0,
@@ -38,6 +42,7 @@ def _non_msp_mappings_response():
             # branch by source.
             'client_ids': entry['master_ids'],
             'source': 'symplr',
+            'division': entry.get('division'),
             'keywords': [],
             'sort_order': idx,
             'perdiem_breakout': 0,

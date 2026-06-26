@@ -13,6 +13,7 @@ from shared_code.bullhorn_systems import (
 from shared_code.symplr_systems import (
     build_system_case_expr as symplr_system_case_expr,
     build_scope_filter as symplr_scope_filter,
+    build_division_case_expr as symplr_division_case_expr,
 )
 
 # Mapping of B4 health system names to VNDLY health system names
@@ -81,6 +82,8 @@ def _bullhorn_financial_data(date_from_sql: str, date_to_sql: str):
                 cc.name AS facility,
                 ISNULL(p.employmentType, 'Unknown') AS category,
                 ({BULLHORN_SERVICE_LINE_CASE.strip()}) AS service_line,
+                ISNULL(p.customTextBlock1, 'Unknown') AS division,
+                CAST(NULL AS NVARCHAR(50)) AS region,
                 LTRIM(RTRIM(ISNULL(c.firstName, '') + ' ' + ISNULL(c.lastName, ''))) AS worker_name,
                 ISNULL(p.clientBillRate, 0) * ISNULL(p.hoursPerDay, 0) * 5 AS weekly_revenue,
                 ISNULL(p.hoursPerDay, 0) * 5 AS weekly_hours,
@@ -101,14 +104,14 @@ def _bullhorn_financial_data(date_from_sql: str, date_to_sql: str):
         )
         SELECT
             'Bullhorn' AS source_system,
-            month, health_system, facility, category, service_line,
+            month, health_system, facility, category, service_line, division, region,
             'GHR' AS vendor_type,
             COUNT(DISTINCT worker_name) AS headcount,
             SUM(weekly_revenue) AS estimated_billing,
             SUM(weekly_hours) AS hours_worked,
             SUM(weekly_margin) AS gross_margin
         FROM PlacementWeeks
-        GROUP BY month, health_system, facility, category, service_line
+        GROUP BY month, health_system, facility, category, service_line, division, region
         ORDER BY month, health_system, facility
     ''')
     columns = [column[0] for column in cursor.description]
@@ -150,6 +153,7 @@ def _symplr_financial_data(date_from_sql: str, date_to_sql: str):
     cursor = conn.cursor()
     sym_scope_o = symplr_scope_filter('o.customerid')
     sym_case_o = symplr_system_case_expr('o.customerid')
+    sym_division_o = symplr_division_case_expr('o.customerid')
 
     # Aggregate actual billed shifts by month + (system, facility from join, category).
     # Workers come from lt_order so headcount is meaningful.
@@ -161,6 +165,8 @@ def _symplr_financial_data(date_from_sql: str, date_to_sql: str):
             pc.clientname AS facility,
             ISNULL(lt.nursetype, 'Unknown') AS category,
             ({SYMPLR_SERVICE_LINE_CASE.strip()}) AS service_line,
+            ISNULL(({sym_division_o}), 'Unknown') AS division,
+            pc.state AS region,
             'GHR' AS vendor_type,
             COUNT(DISTINCT lt.tempid) AS headcount,
             SUM(ISNULL(o.totalbillamount, 0)) AS estimated_billing,
@@ -178,7 +184,9 @@ def _symplr_financial_data(date_from_sql: str, date_to_sql: str):
             ({sym_case_o}),
             pc.clientname,
             ISNULL(lt.nursetype, 'Unknown'),
-            ({SYMPLR_SERVICE_LINE_CASE.strip()})
+            ({SYMPLR_SERVICE_LINE_CASE.strip()}),
+            ({sym_division_o}),
+            pc.state
         ORDER BY month, health_system, facility
     ''')
     columns = [column[0] for column in cursor.description]

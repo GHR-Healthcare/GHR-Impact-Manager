@@ -11,6 +11,7 @@ from shared_code.bullhorn_systems import (
 from shared_code.symplr_systems import (
     build_system_case_expr as symplr_system_case_expr,
     build_scope_filter as symplr_scope_filter,
+    build_division_case_expr as symplr_division_case_expr,
 )
 
 
@@ -49,6 +50,8 @@ def _bullhorn_hours_data():
             cc.name AS facility_name,
             NULL AS work_site,
             ISNULL(p.employmentType, 'Unknown') AS labor_type,
+            p.customTextBlock1 AS division,
+            NULL AS region,
             CAST(w.week_start AS DATE) AS billing_week_start,
             DATEADD(DAY, 6, CAST(w.week_start AS DATE)) AS billing_week_end,
             DATEADD(DAY, 6, CAST(w.week_start AS DATE)) AS item_date,
@@ -94,6 +97,7 @@ def _symplr_hours_data():
     cursor = conn.cursor()
     sys_case = symplr_system_case_expr('o.customerid')
     scope = symplr_scope_filter('o.customerid')
+    division_case = symplr_division_case_expr('o.customerid')
 
     cursor.execute(f'''
         SELECT
@@ -104,6 +108,8 @@ def _symplr_hours_data():
             pc.clientname AS facility_name,
             NULL AS work_site,
             ISNULL(lt.nursetype, 'Unknown') AS labor_type,
+            ({division_case}) AS division,
+            pc.state AS region,
             CAST(DATEADD(DAY, 1 - DATEPART(WEEKDAY, CAST(o.jobdatestart AS DATE)),
                          CAST(o.jobdatestart AS DATE)) AS DATE) AS billing_week_start,
             CAST(DATEADD(DAY, 7 - DATEPART(WEEKDAY, CAST(o.jobdatestart AS DATE)),

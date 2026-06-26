@@ -12,6 +12,7 @@ from shared_code.bullhorn_systems import (
 from shared_code.symplr_systems import (
     build_system_case_expr as symplr_system_case_expr,
     build_scope_filter as symplr_scope_filter,
+    build_division_case_expr as symplr_division_case_expr,
 )
 
 
@@ -42,6 +43,8 @@ def _bullhorn_stats_data():
                 cc.name AS facility,
                 ({system_case}) AS system,
                 p.customText1 AS specialty,
+                p.customTextBlock1 AS division,
+                NULL AS region,
                 CAST(p.dateBegin AS DATE) AS startDate,
                 CAST(p.dateEnd AS DATE) AS endDate,
                 p.status AS status
@@ -85,8 +88,10 @@ def _symplr_stats_data():
     cursor = conn.cursor()
     sys_case = symplr_system_case_expr('lt.clientid')
     scope = symplr_scope_filter('lt.clientid')
+    division_case = symplr_division_case_expr('lt.clientid')
     sys_case_orders = symplr_system_case_expr('o.customerid')
     scope_orders = symplr_scope_filter('o.customerid')
+    division_case_orders = symplr_division_case_expr('o.customerid')
 
     def _serialize(row_dict):
         if row_dict.get('startDate'):
@@ -105,6 +110,8 @@ def _symplr_stats_data():
                 pc.clientname AS facility,
                 ({sys_case}) AS system,
                 lt.specialty AS specialty,
+                ({division_case}) AS division,
+                pc.state AS region,
                 CAST(lt.date_start AS DATE) AS startDate,
                 CAST(lt.date_end AS DATE) AS endDate,
                 lt.status AS status
@@ -133,6 +140,8 @@ def _symplr_stats_data():
                 MAX(pc.clientname) AS facility,
                 ({sys_case_orders}) AS system,
                 MAX(o.specialty) AS specialty,
+                ({division_case_orders}) AS division,
+                MAX(pc.state) AS region,
                 CAST(MIN(o.jobdatestart) AS DATE) AS startDate,
                 CAST(MAX(o.jobdateend)   AS DATE) AS endDate,
                 'filled' AS status

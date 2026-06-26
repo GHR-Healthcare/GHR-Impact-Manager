@@ -11,6 +11,7 @@ from shared_code.bullhorn_systems import (
 from shared_code.symplr_systems import (
     build_system_case_expr as symplr_system_case_expr,
     build_scope_filter as symplr_scope_filter,
+    build_division_case_expr as symplr_division_case_expr,
 )
 
 
@@ -55,7 +56,9 @@ def _bullhorn_positions_data():
             jo.status AS status,
             ({system_case}) AS health_system,
             jo.customText1 AS profession,
-            jo.customText2 AS subspecialty
+            jo.customText2 AS subspecialty,
+            jo.customTextBlock1 AS division,
+            NULL AS region
         FROM dbo.View_JobOrder jo
         LEFT JOIN dbo.View_ClientCorporation cc ON jo.clientCorporationID = cc.clientCorporationID
         LEFT JOIN dbo.View_CorporateUser u ON jo.ownerID = u.corporateUserID
@@ -95,8 +98,10 @@ def _symplr_positions_data():
     cursor = conn.cursor()
     sys_case = symplr_system_case_expr('lt.clientid')
     scope = symplr_scope_filter('lt.clientid')
+    division_case = symplr_division_case_expr('lt.clientid')
     sys_case_orders = symplr_system_case_expr('o.customerid')
     scope_orders = symplr_scope_filter('o.customerid')
+    division_case_orders = symplr_division_case_expr('o.customerid')
 
     def _serialize(row_dict):
         if row_dict.get('date_added'):
@@ -145,7 +150,9 @@ def _symplr_positions_data():
                 lt.status AS status,
                 ({sys_case}) AS health_system,
                 lt.specialty AS profession,
-                NULL AS subspecialty
+                NULL AS subspecialty,
+                ({division_case}) AS division,
+                pc.state AS region
             FROM dbo.lt_order lt
             LEFT JOIN dbo.profile_client pc ON lt.clientid = pc.recordid
             WHERE lt.status = 'open'
@@ -189,7 +196,9 @@ def _symplr_positions_data():
                 'open' AS status,
                 ({sys_case_orders}) AS health_system,
                 MAX(o.specialty) AS profession,
-                NULL AS subspecialty
+                NULL AS subspecialty,
+                ({division_case_orders}) AS division,
+                MAX(pc.state) AS region
             FROM dbo.orders o
             LEFT JOIN dbo.profile_client pc ON o.customerid = pc.recordid
             WHERE o.status = 'open'
@@ -239,9 +248,11 @@ def _symplr_positions_data():
                 NULL AS start_time,
                 NULL AS end_time,
                 'open' AS status,
-                ({symplr_system_case_expr('lt.clientid')}) AS health_system,
+                ({sys_case}) AS health_system,
                 MAX(lt.specialty) AS profession,
-                NULL AS subspecialty
+                NULL AS subspecialty,
+                ({division_case}) AS division,
+                MAX(pc.state) AS region
             FROM dbo.orders o
             INNER JOIN dbo.lt_order lt ON o.lt_orderid = lt.lt_orderid
             LEFT JOIN dbo.profile_client pc ON lt.clientid = pc.recordid
@@ -250,7 +261,7 @@ def _symplr_positions_data():
                 AND lt.status <> 'open'
                 AND (o.filledby IS NULL OR o.filledby = 0)
                 AND o.jobdatestart >= GETDATE()
-                AND {symplr_scope_filter('lt.clientid')}
+                AND {scope}
             GROUP BY o.lt_orderid, lt.clientid
         ''')
         columns = [column[0] for column in cursor.description]

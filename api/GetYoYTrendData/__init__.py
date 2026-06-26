@@ -11,6 +11,7 @@ from shared_code.bullhorn_systems import (
 from shared_code.symplr_systems import (
     build_system_case_expr as symplr_system_case_expr,
     build_scope_filter as symplr_scope_filter,
+    build_division_case_expr as symplr_division_case_expr,
 )
 
 
@@ -46,6 +47,8 @@ def _bullhorn_yoy_data():
                 ({system_case}) AS system,
                 cc.name AS facility,
                 ISNULL(p.employmentType, 'Unknown') AS category,
+                ISNULL(p.customTextBlock1, 'Unknown') AS division,
+                CAST(NULL AS NVARCHAR(50)) AS region,
                 CAST(p.dateBegin AS DATE) AS sd,
                 CAST(p.dateEnd AS DATE) AS ed
             FROM dbo.View_Placement p
@@ -59,14 +62,14 @@ def _bullhorn_yoy_data():
         )
         SELECT
             CONVERT(VARCHAR(10), w.week_start, 23) AS week_start,
-            p.system, p.category, p.facility,
+            p.system, p.category, p.facility, p.division, p.region,
             'GHR' AS vendor_type,
             COUNT(DISTINCT p.worker) AS headcount
         FROM Weeks w
         INNER JOIN Placements p
             ON p.sd <= DATEADD(DAY, 6, w.week_start)
             AND (p.ed IS NULL OR p.ed >= w.week_start)
-        GROUP BY w.week_start, p.system, p.category, p.facility
+        GROUP BY w.week_start, p.system, p.category, p.facility, p.division, p.region
         ORDER BY w.week_start, p.system
     ''')
     columns = [column[0] for column in cursor.description]
@@ -92,8 +95,10 @@ def _symplr_yoy_data():
     cursor = conn.cursor()
     sys_case = symplr_system_case_expr('lt.clientid')
     scope = symplr_scope_filter('lt.clientid')
+    division_case = symplr_division_case_expr('lt.clientid')
     sys_case_orders = symplr_system_case_expr('o.customerid')
     scope_orders = symplr_scope_filter('o.customerid')
+    division_case_orders = symplr_division_case_expr('o.customerid')
 
     cursor.execute(f'''
         ;WITH Weeks AS (
@@ -111,6 +116,8 @@ def _symplr_yoy_data():
                 ({sys_case}) AS system,
                 pc.clientname AS facility,
                 ISNULL(lt.nursetype, 'Unknown') AS category,
+                ISNULL(({division_case}), 'Unknown') AS division,
+                pc.state AS region,
                 CAST(lt.date_start AS DATE) AS sd,
                 CAST(lt.date_end AS DATE) AS ed
             FROM dbo.lt_order lt
@@ -129,6 +136,8 @@ def _symplr_yoy_data():
                 ({sys_case_orders}) AS system,
                 MAX(pc.clientname) AS facility,
                 ISNULL(MAX(o.nursetype), 'Unknown') AS category,
+                ISNULL(({division_case_orders}), 'Unknown') AS division,
+                MAX(pc.state) AS region,
                 CAST(MIN(o.jobdatestart) AS DATE) AS sd,
                 CAST(MAX(o.jobdateend)   AS DATE) AS ed
             FROM dbo.orders o
@@ -144,14 +153,14 @@ def _symplr_yoy_data():
         )
         SELECT
             CONVERT(VARCHAR(10), w.week_start, 23) AS week_start,
-            p.system, p.category, p.facility,
+            p.system, p.category, p.facility, p.division, p.region,
             'GHR' AS vendor_type,
             COUNT(DISTINCT p.worker) AS headcount
         FROM Weeks w
         INNER JOIN Placements p
             ON p.sd <= DATEADD(DAY, 6, w.week_start)
             AND (p.ed IS NULL OR p.ed >= w.week_start)
-        GROUP BY w.week_start, p.system, p.category, p.facility
+        GROUP BY w.week_start, p.system, p.category, p.facility, p.division, p.region
         ORDER BY w.week_start, p.system
     ''')
     columns = [column[0] for column in cursor.description]

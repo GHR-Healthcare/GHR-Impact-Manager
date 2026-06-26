@@ -29,10 +29,12 @@ DCIU specifically owns 5 masters:
 # roll up to it. Children whose MasterClientID points at any of these masters
 # are auto-included via the scope filter / case expression below.
 # Order here determines the default sort order in the breakdown tables.
+# `division` is the internal GHR team owning the book of business — used as a
+# top-level filter dimension in the dashboard.
 SYMPLR_SYSTEM_ROLLUP = [
-    {'system_name': 'Reading School District',   'master_ids': [5890, 26917, 40136]},
-    {'system_name': 'Allentown School District', 'master_ids': [5685, 34792, 34793]},
-    {'system_name': 'DCIU',                      'master_ids': [5874, 14146, 84531, 122454, 122455]},
+    {'system_name': 'Reading School District',   'division': 'Education', 'master_ids': [5890, 26917, 40136]},
+    {'system_name': 'Allentown School District', 'division': 'Education', 'master_ids': [5685, 34792, 34793]},
+    {'system_name': 'DCIU',                      'division': 'Education', 'master_ids': [5874, 14146, 84531, 122454, 122455]},
 ]
 
 
@@ -90,3 +92,19 @@ def build_scope_filter(column_name: str = 'lt.clientid') -> str:
     """
     sub = _expansion_subquery(all_in_scope_master_ids())
     return f'{column_name} IN ({sub})'
+
+
+def build_division_case_expr(column_name: str = 'lt.clientid') -> str:
+    """
+    Returns a SQL CASE WHEN ... expression that maps a Symplr client ID column
+    to its division (the internal GHR team owning that book of business).
+    Uses the same MasterClientID expansion as build_system_case_expr.
+    """
+    parts = ['CASE']
+    for entry in SYMPLR_SYSTEM_ROLLUP:
+        division_safe = entry['division'].replace("'", "''")
+        sub = _expansion_subquery(entry['master_ids'])
+        parts.append(f"    WHEN {column_name} IN ({sub}) THEN '{division_safe}'")
+    parts.append('    ELSE NULL')
+    parts.append('END')
+    return '\n'.join(parts)
