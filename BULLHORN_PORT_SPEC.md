@@ -1,11 +1,124 @@
-# Non-MSP Instance Port Spec (Bullhorn)
+# Non-MSP Instance Port Spec (Bullhorn + Symplr)
 
-Status: **draft** · Author: Mike Jones + Claude · Last updated: 2026-06-01
+Status: **in flight** · Last updated: 2026-06-29
 
-This is the implementation spec for running a parallel instance of GHR Impact
-Manager that points at the Bullhorn data source (non-MSP book of business)
-instead of B4/VNDLY (MSP book). It is the output of a discovery pass against
-the Bullhorn mirror DB on 2026-06-01.
+The original June 1 spec is preserved below (§1–§11). Most of the port has
+shipped — see "Current status" for what's live, what's in flight, and what's
+left. The spec sections in §1–§11 are historical context; some of their
+choices have evolved (e.g. dispatch flag is `non_msp` not `bullhorn`, Symplr
+was pulled forward into the same instance, etc.).
+
+---
+
+## Current status (read this first)
+
+### What's live
+
+- **Dispatch architecture**: single `main` branch, env-flag `DATA_SOURCE` =
+  `msp` (default) or `non_msp`. Non-MSP unifies Bullhorn (Rev Cycle + Locums)
+  and Symplr (Education) inside the same instance. Two SWAs in production:
+  - MSP — `ghr-impact-manager`, custom domain `impactmgr.ghrhealthcare.com`
+  - Non-MSP — `ghr-nonmsp-impactmgr`, custom domain `impactmgr-nonmsp.ghrhealthcare.com`
+- **All non-MSP endpoints ported and unioned across Bullhorn + Symplr**:
+  GetTrendData, GetStatsData, GetYoYTrendData, GetFinancialData, GetHoursData,
+  GetPositions, GetSystemMappings. GetPendingData and GetPerDiemData
+  short-circuit to empty on non-MSP (the concepts don't apply).
+- **Symplr rollup expanded by `MasterClientID`** so sub-orgs of DCIU/Reading/
+  Allentown auto-include (`shared_code/symplr_systems.py`). Three Education
+  districts in scope today; the master-id list is the source of truth.
+- **Symplr orderless orders folded into headcount** — `orders` rows with
+  `lt_orderid IN (0, NULL)` are unioned into Trend/Stats/YoY/Positions,
+  aggregated by worker+client.
+- **GetPositions surfaces uncovered shifts under filled lt_orders** as a
+  third Symplr positions source.
+- **Auth + tenant allowlist**: `api/shared_code/auth.py` enforces a domain
+  allowlist (`ghrhealthcare.com`, `unitedanesthesia.com`, `ghreducation.com`)
+  on every endpoint via `require_allowed_domain(req)`. SWA `auth` block was
+  dropped from `staticwebapp.config.json` because the validator started
+  rejecting it on Free tier; allowlist is the replacement.
+- **Backend `division` + `region` fields on every non-MSP endpoint** (v1.8.0):
+  - Bullhorn `division` = `View_Placement.customTextBlock1` /
+    `View_JobOrder.customTextBlock1`. Values include `Allied`, `GHR Internal`,
+    `Locum Tenens`, `Nursing`, `RevCycle Workforce`, `Search`, `Technology`,
+    `United`, `Workforce Solutions`.
+  - Symplr `division` = configured per system in `SYMPLR_SYSTEM_ROLLUP`
+    (all three districts → `Education`). New
+    `build_division_case_expr(column)` helper parallels the existing
+    `build_system_case_expr`.
+  - Symplr `region` = `profile_client.state`. Bullhorn `region` is `NULL` for
+    now.
+  - GetSystemMappings exposes `division` per system in its JSON.
+
+### What's in flight (PR 2)
+
+- **Frontend filter UI** on the non-MSP site:
+  - Add `filterSelection.divisions` / `professions` / `regions` Sets to
+    `window.store.state`
+  - Render Division / Profession / Region dropdowns in the filter sidebar on
+    non-MSP only
+  - Hide the hardcoded "All Nursing / All Allied" block on non-MSP
+  - Data-driven dropdown values (read from actual records, not hardcoded
+    keyword lists)
+  - Wire the new dimensions into `getFilteredJobs()`, `kpis()`, the trend /
+    stats / financial views
+  - Continue from `index.html:3470` (`setupFilters()` and `renderDropdown()`).
+    Filter HTML containers live at lines 201-216.
+
+### What's left
+
+- **Cleanup of MSP-keyword utilities** so they work source-agnostically:
+  `Utils.checkCategoryMatch` (`index.html:2201`) and
+  `Utils.matchesStatsCategoryFilter` (`index.html:2214`). Currently rely on
+  `CONSTANTS.NURSING_KEYWORDS` / `ALLIED_KEYWORDS` at line 1032.
+- **Per Diem "Loaded 0" log message** — suppress on non-MSP. Harmless but
+  alarming in the console.
+- **`POSITIONS_DB` env var** still set on the non-MSP SWA even though the
+  non-MSP code path never queries it. Safe to delete via
+  `az staticwebapp appsettings delete`.
+
+### Future (eventually-merged dashboard)
+
+- **Add `division` to the MSP side too** so the same filter dimension works
+  on both. Sets up a true unified view.
+- **`DATA_SOURCE=combined`** mode — every endpoint queries both books, UI
+  shows a Source filter alongside Division. The data-driven filter machinery
+  from PR 2 makes this much easier.
+- **Region for Bullhorn** — currently NULL. Could come from
+  `View_ClientCorporation.state` or `customText19` (city/state on placement).
+
+### Recent version history
+
+- **v1.7.5** drop SWA `auth` block + tenant domain allowlist
+- **v1.7.6** remove Pending sub-rows from Trend table
+- **v1.7.7** Symplr master expansion + Pending/Per Diem dispatch guards
+- **v1.7.8** Symplr orderless orders folded into headcount
+- **v1.7.9** GetPositions: open shifts under lt_orders
+- **v1.7.10** fix GetSystemMappings 500 + Symplr positions vanishing
+- **v1.8.0** backend emits `division` + `region` (PR 1 of 2)
+- **v1.8.1** MSP financial date-range timeout fix (B4 dedup) — *broke B4*
+- **v1.8.2** MSP financial fix that doesn't break B4 (single-statement
+  split CTE anti-join)
+
+### Key files for non-MSP work
+
+- `api/shared_code/data_source.py` — dispatch helper + connection helpers
+- `api/shared_code/bullhorn_systems.py` — Bullhorn rollup config + helpers
+- `api/shared_code/symplr_systems.py` — Symplr rollup config + helpers
+  (includes `build_division_case_expr`)
+- `api/shared_code/auth.py` — domain allowlist
+- `api/Get*/__init__.py` — endpoints, each with `is_non_msp()` branch
+- `staticwebapp.config.json` — SWA routes (no `auth` block since v1.7.5)
+- `index.html` — frontend; non-MSP-specific UI gated on
+  `window.store.state.dataSource === 'non_msp'`
+
+### Two Azure CLI things worth knowing
+
+- Both SWAs are listed under `az staticwebapp list` — names
+  `ghr-impact-manager` (MSP) and `ghr-nonmsp-impactmgr` (non-MSP). Resource
+  group is `GHR_Azure_Resources`.
+- Env vars: `az staticwebapp appsettings list --name <swa> --resource-group GHR_Azure_Resources`
+  (returns a noisy header line we have to strip with `tail -n +2` before
+  parsing as JSON).
 
 ---
 
