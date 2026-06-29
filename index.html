@@ -214,6 +214,20 @@
           <label class="block text-xs font-bold text-slate-500 mb-1 ml-1 uppercase tracking-wider">Specialty</label>
           <div class="w-full bg-white border border-slate-300 rounded-md px-3 py-2 text-sm text-slate-400">Loading...</div>
         </div>
+        <!-- Division/Profession/Region: visible only when dataSource === 'non_msp'.
+             Shown/hidden by View.setupFilters based on window.store.state.dataSource. -->
+        <div class="multi-select-container relative w-[calc(50%-6px)] sm:flex-1 min-h-[58px] hidden" id="divisionFilterContainer">
+          <label class="block text-xs font-bold text-slate-500 mb-1 ml-1 uppercase tracking-wider">Division</label>
+          <div class="w-full bg-white border border-slate-300 rounded-md px-3 py-2 text-sm text-slate-400">Loading...</div>
+        </div>
+        <div class="multi-select-container relative w-[calc(50%-6px)] sm:flex-1 min-h-[58px] hidden" id="professionFilterContainer">
+          <label class="block text-xs font-bold text-slate-500 mb-1 ml-1 uppercase tracking-wider">Profession</label>
+          <div class="w-full bg-white border border-slate-300 rounded-md px-3 py-2 text-sm text-slate-400">Loading...</div>
+        </div>
+        <div class="multi-select-container relative w-[calc(50%-6px)] sm:flex-1 min-h-[58px] hidden" id="regionFilterContainer">
+          <label class="block text-xs font-bold text-slate-500 mb-1 ml-1 uppercase tracking-wider">Region</label>
+          <div class="w-full bg-white border border-slate-300 rounded-md px-3 py-2 text-sm text-slate-400">Loading...</div>
+        </div>
 
         <div class="relative w-[calc(50%-6px)] sm:flex-1">
           <label class="block text-xs font-bold text-slate-500 mb-1 ml-1 uppercase tracking-wider">Search ID</label>
@@ -708,7 +722,7 @@
     const $ = (id) => document.getElementById(id);
 
     // App version - loaded from environment variable via API, with fallback
-    let APP_VERSION = '1.8.2';
+    let APP_VERSION = '1.8.3';
 
     const API_BASE_URL = '/api';
     
@@ -1723,6 +1737,12 @@
                 minHours: row.min_hours || '',
                 margin: row.margin || defaultMargin,
                 marginOverridden: false,  // Track if margin was manually set
+                // Non-MSP-only dimensions (NULL on MSP records, value on
+                // Bullhorn/Symplr per v1.8.0). Used by the Division /
+                // Profession / Region filter dropdowns.
+                division: String(row.division || ''),
+                profession: String(row.profession || row.specialty_name || ''),
+                region: String(row.region || ''),
                 ghrSubs: row.ghrSubs || 0,
                 avSubs: row.avSubs || 0,
                 ghrDeclines: row.ghrDeclines || 0,
@@ -3467,10 +3487,34 @@
       initFilters() {
         const s = window.store.state;
         const allFacilities = new Set(s.jobs.map(j => j.facility).filter(Boolean));
+        // On non-MSP, suppress the "All Nursing / All Allied" header on the
+        // Category dropdown — those buckets don't map to anything in the
+        // Bullhorn / Symplr books.
+        const isNonMsp = s.dataSource === 'non_msp';
         View.renderDropdown('systemFilterContainer', 'systems', s.filters.systems, false);
         View.renderDropdown('facilityFilterContainer', 'facilities', allFacilities, false);
-        View.renderDropdown('categoryFilterContainer', 'categories', s.filters.categories, true);
+        View.renderDropdown('categoryFilterContainer', 'categories', s.filters.categories, !isNonMsp);
         View.renderDropdown('specialtyFilterContainer', 'specialties', s.filters.specialties, false);
+        // Division / Profession / Region: render unconditionally but the
+        // containers are hidden via CSS on MSP (no data → empty dropdown is
+        // confusing). Visibility is toggled below.
+        View.renderDropdown('divisionFilterContainer', 'divisions', s.filters.divisions || new Set(), false);
+        View.renderDropdown('professionFilterContainer', 'professions', s.filters.professions || new Set(), false);
+        View.renderDropdown('regionFilterContainer', 'regions', s.filters.regions || new Set(), false);
+
+        // Toggle non-MSP-only filters on/off based on dataSource. Region only
+        // appears when at least one record carries it (Symplr today; Bullhorn
+        // is NULL for now) so MSP and Bullhorn-only non-MSP slices don't
+        // surface an always-empty Region picker.
+        const divEl = $('divisionFilterContainer');
+        const profEl = $('professionFilterContainer');
+        const regEl = $('regionFilterContainer');
+        const showDiv = isNonMsp && (s.filters.divisions?.size > 0);
+        const showProf = isNonMsp && (s.filters.professions?.size > 0);
+        const showReg = isNonMsp && (s.filters.regions?.size > 0);
+        if (divEl) divEl.classList.toggle('hidden', !showDiv);
+        if (profEl) profEl.classList.toggle('hidden', !showProf);
+        if (regEl) regEl.classList.toggle('hidden', !showReg);
         lucide.createIcons();
       },
 
@@ -3478,7 +3522,10 @@
         const container = $(id);
         if (!container) return;
         const sorted = Array.from(set || []).filter(x => x != null && String(x).trim() !== '').sort();
-        const labelMap = { systems: 'SYSTEM', facilities: 'FACILITY', categories: 'CATEGORY', specialties: 'SPECIALTY/DEPT' };
+        const labelMap = {
+          systems: 'SYSTEM', facilities: 'FACILITY', categories: 'CATEGORY', specialties: 'SPECIALTY/DEPT',
+          divisions: 'DIVISION', professions: 'PROFESSION', regions: 'REGION',
+        };
 
         let optionsHtml = '';
         if (isCategory) {
@@ -3534,7 +3581,12 @@
       updateFilterUI(key) {
         const set = window.store.state.filterSelection[key];
         const isAll = set.size === 0;
-        const idMap = { systems: 'systemFilterContainer', facilities: 'facilityFilterContainer', categories: 'categoryFilterContainer', specialties: 'specialtyFilterContainer' };
+        const idMap = {
+          systems: 'systemFilterContainer', facilities: 'facilityFilterContainer',
+          categories: 'categoryFilterContainer', specialties: 'specialtyFilterContainer',
+          divisions: 'divisionFilterContainer', professions: 'professionFilterContainer',
+          regions: 'regionFilterContainer',
+        };
 
         const hdr = $(`hdr-${key}`);
         if (hdr) hdr.innerText = isAll ? "All" : (set.size === 1 ? Array.from(set)[0] : `${set.size} Selected`);
@@ -3602,6 +3654,17 @@
           }
           if (excludeFilter !== 'specialties') {
             if (s.filterSelection.specialties.size > 0 && !s.filterSelection.specialties.has(Utils.cleanFilterText(job.specialty))) return false;
+          }
+          // Non-MSP cascading dimensions. On MSP these selections stay empty
+          // so the conditions are a no-op.
+          if (excludeFilter !== 'divisions') {
+            if (s.filterSelection.divisions.size > 0 && !(job.division && s.filterSelection.divisions.has(job.division))) return false;
+          }
+          if (excludeFilter !== 'professions') {
+            if (s.filterSelection.professions.size > 0 && !(job.profession && s.filterSelection.professions.has(job.profession))) return false;
+          }
+          if (excludeFilter !== 'regions') {
+            if (s.filterSelection.regions.size > 0 && !(job.region && s.filterSelection.regions.has(job.region))) return false;
           }
           return true;
         };
@@ -3794,6 +3857,13 @@
           const facMatch = s.filterSelection.facilities.size === 0 || s.filterSelection.facilities.has(j.facility);
           const specMatch = s.filterSelection.specialties.size === 0 || s.filterSelection.specialties.has(Utils.cleanFilterText(j.specialty));
           const catMatch = s.filterSelection.categories.size === 0 || Array.from(s.filterSelection.categories).some(cv => Utils.checkCategoryMatch(j.program, cv));
+          // Non-MSP filter dimensions — match by exact value. Records with
+          // empty division/profession/region pass when nothing is selected,
+          // never pass when a filter IS selected (consistent with the way
+          // facilities/categories behave).
+          const divMatch = s.filterSelection.divisions.size === 0 || (j.division && s.filterSelection.divisions.has(j.division));
+          const profMatch = s.filterSelection.professions.size === 0 || (j.profession && s.filterSelection.professions.has(j.profession));
+          const regMatch = s.filterSelection.regions.size === 0 || (j.region && s.filterSelection.regions.has(j.region));
 
           let ageMatch = true;
           if (s.filters.ageMin !== null && j.daysPast < s.filters.ageMin) ageMatch = false;
@@ -3806,10 +3876,10 @@
             const idMatch = String(j.id || '').toLowerCase().includes(s.searchQuery);
             // Optional: Search candidate names too? The user asked for "Search ID", usually strictly ID is better to avoid noise.
             // Sticking to ID per request, ensuring partial match works.
-            searchMatch = idMatch; 
+            searchMatch = idMatch;
           }
 
-          return sysMatch && facMatch && specMatch && catMatch && ageMatch && searchMatch;
+          return sysMatch && facMatch && specMatch && catMatch && divMatch && profMatch && regMatch && ageMatch && searchMatch;
         });
       },
 
@@ -4333,8 +4403,11 @@
           const facMatch = s.filterSelection.facilities.size === 0 || (r.facility && s.filterSelection.facilities.has(r.facility));
           const specMatch = s.filterSelection.specialties.size === 0 || (r.specialty && s.filterSelection.specialties.has(Utils.cleanFilterText(r.specialty)));
           const catMatch = Utils.matchesStatsCategoryFilter(r.specialty, s.filterSelection.categories);
+          const divMatch = s.filterSelection.divisions.size === 0 || (r.division && s.filterSelection.divisions.has(r.division));
+          const profMatch = s.filterSelection.professions.size === 0 || (r.profession && s.filterSelection.professions.has(r.profession));
+          const regMatch = s.filterSelection.regions.size === 0 || (r.region && s.filterSelection.regions.has(r.region));
           const isActive = r.startDate && r.startDate <= now && (!r.endDate || r.endDate >= now);
-          return sysMatch && facMatch && specMatch && catMatch && isActive;
+          return sysMatch && facMatch && specMatch && catMatch && divMatch && profMatch && regMatch && isActive;
         });
 
         const activeCount = activeContractsFiltered.length;
@@ -8773,7 +8846,13 @@
         perDiemToMonth: null,
         perDiemGHROnly: true,
         filters: { systems: new Set(), facilities: new Set(), categories: new Set(), specialties: new Set(), ageMin: null, ageMax: null, searchId: '' },
-        filterSelection: { systems: new Set(), facilities: new Set(), categories: new Set(), specialties: new Set() },
+        filterSelection: {
+          systems: new Set(), facilities: new Set(), categories: new Set(), specialties: new Set(),
+          // Non-MSP filter dimensions — populated from the API's division/region/customText fields.
+          // On MSP these stay empty; the UI hides the controls. Once the merged dashboard ships,
+          // MSP records will carry the same shape and these become live there too.
+          divisions: new Set(), professions: new Set(), regions: new Set(),
+        },
         searchQuery: '',
         view: 'list',
         expandedRows: new Set(),
@@ -8815,8 +8894,21 @@
                 ...s.jobs.map(j => Utils.cleanFilterText(j.specialty)),
                 ...allAssignments.map(a => Utils.cleanFilterText(a.specialty))
               ].filter(Boolean));
+              // Non-MSP dimensions — empty on MSP because the API doesn't emit them yet.
+              s.filters.divisions = new Set([
+                ...s.jobs.map(j => j.division),
+                ...allAssignments.map(a => a.division),
+              ].filter(Boolean));
+              s.filters.professions = new Set([
+                ...s.jobs.map(j => j.profession),
+                ...allAssignments.map(a => a.profession),
+              ].filter(Boolean));
+              s.filters.regions = new Set([
+                ...s.jobs.map(j => j.region),
+                ...allAssignments.map(a => a.region),
+              ].filter(Boolean));
 
-              ['systems', 'facilities', 'categories', 'specialties'].forEach(k => {
+              ['systems', 'facilities', 'categories', 'specialties', 'divisions', 'professions', 'regions'].forEach(k => {
                 const valid = s.filters[k];
                 const selected = s.filterSelection[k];
                 Array.from(selected).forEach(v => { if (!valid.has(v)) selected.delete(v); });
@@ -8848,6 +8940,18 @@
               s.filters.specialties = new Set([
                 ...s.jobs.map(j => Utils.cleanFilterText(j.specialty)),
                 ...allAssignments.map(a => Utils.cleanFilterText(a.specialty))
+              ].filter(Boolean));
+              s.filters.divisions = new Set([
+                ...s.jobs.map(j => j.division),
+                ...allAssignments.map(a => a.division),
+              ].filter(Boolean));
+              s.filters.professions = new Set([
+                ...s.jobs.map(j => j.profession),
+                ...allAssignments.map(a => a.profession),
+              ].filter(Boolean));
+              s.filters.regions = new Set([
+                ...s.jobs.map(j => j.region),
+                ...allAssignments.map(a => a.region),
               ].filter(Boolean));
 
               View.initFilters();

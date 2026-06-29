@@ -2,6 +2,14 @@
 
 ## Version History
 
+**1.8.3** - Non-MSP: Division / Profession / Region filter UI (PR 2 of 2)
+- New filter dropdowns visible only on the non-MSP instance: Division, Profession, Region
+- Data-driven: dropdown values come from actual records (Bullhorn `customTextBlock1`, Symplr rollup, Symplr `profile_client.state`)
+- "All Nursing / All Allied" header suppressed on non-MSP (the MSP keyword buckets don't map to Bullhorn/Symplr categories)
+- Filter logic wired into `getFilteredJobs` (list view), `kpis` (Stats KPI tiles), and cascading dropdown narrowing
+- MSP UI unchanged — the new selections stay empty on MSP so their match conditions are no-ops
+- Job records on the frontend now carry `division`, `profession`, `region` fields (populated from API on non-MSP, empty strings on MSP)
+
 **1.8.2** - Fix v1.8.1 regression: B4 disappeared from MSP financial
 - v1.8.1 moved the B4 dedup to a multi-statement batch (SELECT INTO #temp + CREATE INDEX + SELECT) so pyodbc tripped on the result-set handling and returned 0 B4 rows
 - Reverted to a single-statement CTE but kept the optimizer-friendly anti-join. Split B4 into two CTE branches: B4NonTransitioned (no join, fast path for the bulk of rows) and B4TransitionedKept (LEFT JOIN against the dedup keys, restricted to Cooper / RUMC / Holy Redeemer)
