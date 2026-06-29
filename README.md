@@ -2,6 +2,11 @@
 
 ## Version History
 
+**1.8.2** - Fix v1.8.1 regression: B4 disappeared from MSP financial
+- v1.8.1 moved the B4 dedup to a multi-statement batch (SELECT INTO #temp + CREATE INDEX + SELECT) so pyodbc tripped on the result-set handling and returned 0 B4 rows
+- Reverted to a single-statement CTE but kept the optimizer-friendly anti-join. Split B4 into two CTE branches: B4NonTransitioned (no join, fast path for the bulk of rows) and B4TransitionedKept (LEFT JOIN against the dedup keys, restricted to Cooper / RUMC / Holy Redeemer)
+- Same logical result as the original NOT EXISTS, no temp table, stable plan across date ranges
+
 **1.8.1** - Fix MSP financial: optimize B4 dedup so date-range changes don't gateway-timeout
 - The transitioned-system dedup CTE (NOT EXISTS against `VNDLYTransitionedKeys`) was plan-sensitive — small changes in the from/to date range could flip SQL Server's plan choice and push the query past the 45s SWA gateway timeout, returning 500 to the frontend (which kept the stale default data)
 - Materialized the VNDLY keys into a `#vndly_keys` temp table with an index on `(sys_canon, norm_worker, cycle_start, cycle_end)`, and switched the dedup from `NOT EXISTS` to `LEFT JOIN ... WHERE v.sys_canon IS NULL` so the optimizer uses a stable seek every time

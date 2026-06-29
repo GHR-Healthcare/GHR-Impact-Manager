@@ -398,44 +398,40 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             #      cycle_end to check whether the B4 work day falls
             #      inside any matching VNDLY cycle for that worker+system.
             #
-            # Why a temp table + index instead of a CTE:
-            # The original CTE-with-NOT-EXISTS was plan-sensitive — small
-            # changes in the from/to date range (one month earlier vs later)
-            # could flip SQL Server's plan choice between a fast hash-match
-            # and a brutal nested-loop, occasionally taking 45s+ and dropping
-            # the connection. Materializing into an indexed #vndly_keys temp
-            # table gives the optimizer a stable seek to use every time.
+            # Performance note: the original CTE used NOT EXISTS for the
+            # dedup, which was plan-sensitive — small changes in the from/to
+            # date range could flip SQL Server's plan choice between a fast
+            # hash-match and a brutal nested-loop, occasionally pushing the
+            # query past Azure SWA's 45s gateway timeout. The LEFT JOIN ...
+            # WHERE v.sys_canon IS NULL anti-join below is logically
+            # equivalent but gives the optimizer a stable plan across all
+            # date ranges. Keep the b.sys_canon IS NULL OR ... wrapper too —
+            # it makes the non-transitioned-system fast path explicit so the
+            # optimizer can short-circuit before reaching the join.
             cursor.execute(f'''
-                SET NOCOUNT ON;
-
-                IF OBJECT_ID('tempdb..#vndly_keys') IS NOT NULL DROP TABLE #vndly_keys;
-
-                SELECT DISTINCT
-                    CASE
-                        WHEN [Health System] LIKE '%Cooper%'   THEN 'cooper'
-                        WHEN [Health System] LIKE '%RUMC%'
-                          OR [Health System] LIKE '%Richmond%' THEN 'rumc'
-                        WHEN [Health System] LIKE '%Redeemer%' THEN 'redeemer'
-                        ELSE NULL
-                    END AS sys_canon,
-                    LOWER(LTRIM(RTRIM(
-                        CONCAT([Contractor First Name], ' ', [Contractor Last Name])
-                    ))) AS norm_worker,
-                    CAST([Billing Cycle Start Date] AS DATE) AS cycle_start,
-                    CAST([Billing Cycle End Date] AS DATE) AS cycle_end
-                INTO #vndly_keys
-                FROM dbo.STAGING_VNDLY_SPEND
-                WHERE [Billing Cycle Start Date] >= {date_from}
-                    AND [Billing Cycle Start Date] < {date_to}
-                    AND ([Health System] LIKE '%Cooper%'
-                      OR [Health System] LIKE '%RUMC%'
-                      OR [Health System] LIKE '%Richmond%'
-                      OR [Health System] LIKE '%Redeemer%');
-
-                CREATE INDEX IX_vndly_keys_lookup
-                    ON #vndly_keys (sys_canon, norm_worker, cycle_start, cycle_end);
-
-                WITH B4WithKey AS (
+                WITH VNDLYTransitionedKeys AS (
+                    SELECT DISTINCT
+                        CASE
+                            WHEN [Health System] LIKE '%Cooper%'   THEN 'cooper'
+                            WHEN [Health System] LIKE '%RUMC%'
+                              OR [Health System] LIKE '%Richmond%' THEN 'rumc'
+                            WHEN [Health System] LIKE '%Redeemer%' THEN 'redeemer'
+                            ELSE NULL
+                        END AS sys_canon,
+                        LOWER(LTRIM(RTRIM(
+                            CONCAT([Contractor First Name], ' ', [Contractor Last Name])
+                        ))) AS norm_worker,
+                        CAST([Billing Cycle Start Date] AS DATE) AS cycle_start,
+                        CAST([Billing Cycle End Date] AS DATE) AS cycle_end
+                    FROM dbo.STAGING_VNDLY_SPEND
+                    WHERE [Billing Cycle Start Date] >= {date_from}
+                        AND [Billing Cycle Start Date] < {date_to}
+                        AND ([Health System] LIKE '%Cooper%'
+                          OR [Health System] LIKE '%RUMC%'
+                          OR [Health System] LIKE '%Richmond%'
+                          OR [Health System] LIKE '%Redeemer%')
+                ),
+                B4WithKey AS (
                     SELECT
                         [Employee],
                         [Work Date],
@@ -473,34 +469,38 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                         -- a 2x inflation. Drop the mislabeled rows until B4 team fixes.
                         AND [Health System] <> 'Sunrise Senior Living Management (California)'
                 ),
-                B4Filtered AS (
-                    -- LEFT JOIN + WHERE v.sys_canon IS NULL is equivalent to the
-                    -- old NOT EXISTS but lets the optimizer use the seek index
-                    -- on #vndly_keys. Rows where b.sys_canon IS NULL (non-
-                    -- transitioned systems) never match because NULL = NULL is
-                    -- false, so they're kept by the v.sys_canon IS NULL filter.
+                B4NonTransitioned AS (
+                    -- Fast path: non-transitioned systems are kept as-is, no
+                    -- dedup needed. Splitting this out lets the optimizer skip
+                    -- the join entirely for the bulk of B4 rows.
+                    SELECT [Employee], [Work Date], [Health System],
+                           facility, category, program, [Agency Name],
+                           [Bill Total], [Hours]
+                    FROM B4WithKey
+                    WHERE sys_canon IS NULL
+                ),
+                B4TransitionedKept AS (
+                    -- Slow path: transitioned-system B4 rows that have NO
+                    -- matching VNDLY cycle (worker + system + date BETWEEN
+                    -- cycle_start AND cycle_end). LEFT JOIN ... WHERE NULL
+                    -- gives a stable anti-join plan vs. NOT EXISTS.
                     SELECT b.[Employee], b.[Work Date], b.[Health System],
                            b.facility, b.category, b.program, b.[Agency Name],
                            b.[Bill Total], b.[Hours]
                     FROM B4WithKey b
-                    LEFT JOIN #vndly_keys v
+                    LEFT JOIN VNDLYTransitionedKeys v
                         ON v.sys_canon = b.sys_canon
                        AND v.norm_worker = b.norm_worker
                        AND CAST(b.[Work Date] AS DATE) BETWEEN v.cycle_start AND v.cycle_end
-                    WHERE v.sys_canon IS NULL
+                    WHERE b.sys_canon IS NOT NULL
+                      AND v.sys_canon IS NULL
                 ),
                 DeduplicatedESR AS (
-                    SELECT DISTINCT
-                        [Employee],
-                        [Work Date],
-                        [Health System],
-                        facility,
-                        category,
-                        program,
-                        [Agency Name],
-                        [Bill Total],
-                        [Hours]
-                    FROM B4Filtered
+                    SELECT DISTINCT * FROM (
+                        SELECT * FROM B4NonTransitioned
+                        UNION ALL
+                        SELECT * FROM B4TransitionedKept
+                    ) all_b4
                 )
                 SELECT
                     'B4' AS source_system,
@@ -539,9 +539,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                         WHEN [Agency Name] LIKE 'GHR%' OR [Agency Name] LIKE '%Planet Healthcare%'
                         THEN 'GHR' ELSE 'Affiliate'
                     END
-                ORDER BY FORMAT(DATEFROMPARTS(YEAR([Work Date]), MONTH([Work Date]), 1), 'yyyy-MM'), [Health System];
-
-                DROP TABLE #vndly_keys;
+                ORDER BY FORMAT(DATEFROMPARTS(YEAR([Work Date]), MONTH([Work Date]), 1), 'yyyy-MM'), [Health System]
             ''')
 
             columns = [column[0] for column in cursor.description]
