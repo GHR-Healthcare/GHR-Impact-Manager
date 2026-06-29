@@ -2,6 +2,11 @@
 
 ## Version History
 
+**1.8.1** - Fix MSP financial: optimize B4 dedup so date-range changes don't gateway-timeout
+- The transitioned-system dedup CTE (NOT EXISTS against `VNDLYTransitionedKeys`) was plan-sensitive — small changes in the from/to date range could flip SQL Server's plan choice and push the query past the 45s SWA gateway timeout, returning 500 to the frontend (which kept the stale default data)
+- Materialized the VNDLY keys into a `#vndly_keys` temp table with an index on `(sys_canon, norm_worker, cycle_start, cycle_end)`, and switched the dedup from `NOT EXISTS` to `LEFT JOIN ... WHERE v.sys_canon IS NULL` so the optimizer uses a stable seek every time
+- Equivalent results; faster and deterministic regardless of date range
+
 **1.8.0** - Non-MSP: backend emits `division` + `region` fields (PR 1 of 2)
 - All non-MSP endpoints now return `division` (from Bullhorn `customTextBlock1` per placement/JobOrder, from Symplr rollup config per system) and `region` (Symplr `profile_client.state`)
 - New `build_division_case_expr` helper in `symplr_systems.py` parallels `build_system_case_expr`
