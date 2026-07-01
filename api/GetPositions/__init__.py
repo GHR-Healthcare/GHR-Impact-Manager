@@ -65,6 +65,9 @@ def _bullhorn_positions_data():
         LEFT JOIN dbo.View_CorporateUser u ON jo.ownerID = u.corporateUserID
         WHERE jo.isDeleted = 0
             AND jo.status IN ({status_list})
+            -- Only surface job orders opened within the last 45 days —
+            -- older postings are stale and clutter the list.
+            AND jo.dateAdded >= DATEADD(DAY, -45, GETDATE())
             AND {scope_filter}
         ORDER BY jo.dateAdded DESC
     ''')
@@ -157,6 +160,7 @@ def _symplr_positions_data():
             FROM dbo.lt_order lt
             LEFT JOIN dbo.profile_client pc ON lt.clientid = pc.recordid
             WHERE lt.status = 'open'
+                AND lt.date_entered >= DATEADD(DAY, -45, GETDATE())
                 AND {scope}
             ORDER BY lt.date_entered DESC
         ''')
@@ -205,6 +209,7 @@ def _symplr_positions_data():
             WHERE o.status = 'open'
                 AND (o.lt_orderid IS NULL OR o.lt_orderid = 0)
                 AND o.jobdatestart >= GETDATE()
+                AND o.datetimecreated >= DATEADD(DAY, -45, GETDATE())
                 AND {scope_orders}
             GROUP BY o.customerid, o.specialty, o.nursetype
         ''')
@@ -262,6 +267,7 @@ def _symplr_positions_data():
                 AND lt.status <> 'open'
                 AND (o.filledby IS NULL OR o.filledby = 0)
                 AND o.jobdatestart >= GETDATE()
+                AND o.datetimecreated >= DATEADD(DAY, -45, GETDATE())
                 AND {scope}
             GROUP BY o.lt_orderid, lt.clientid
         ''')

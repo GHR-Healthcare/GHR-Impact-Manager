@@ -233,23 +233,30 @@ def _symplr_trend_data():
     # ============================================================
     weekly_revenue = []
     try:
+        # Precompute week_start and system in a CTE so the GROUP BY can
+        # reference plain columns. SQL Server treats each interpolation of a
+        # CASE-with-subquery as a distinct expression, so the previous
+        # GROUP BY {system_case_expr} pattern failed to match the SELECT
+        # instance (error 42000 code 144, "column not in aggregate/GROUP BY").
         cursor.execute(f'''
-            SELECT
-                CONVERT(VARCHAR(10),
+            WITH RevenueSource AS (
+                SELECT
                     DATEADD(DAY, 1 - DATEPART(WEEKDAY, CAST(o.jobdatestart AS DATE)),
-                            CAST(o.jobdatestart AS DATE)),
-                    23) AS week_start,
-                ({symplr_system_case_expr('o.customerid')}) AS system,
+                            CAST(o.jobdatestart AS DATE)) AS week_start_date,
+                    ({symplr_system_case_expr('o.customerid')}) AS system,
+                    o.totalbillamount
+                FROM dbo.orders o
+                WHERE o.jobdatestart IS NOT NULL
+                    AND CAST(o.jobdatestart AS DATE) >= DATEADD(WEEK, -8, GETDATE())
+                    AND {symplr_scope_filter('o.customerid')}
+            )
+            SELECT
+                CONVERT(VARCHAR(10), week_start_date, 23) AS week_start,
+                system,
                 'GHR' AS vendor_type,
-                SUM(ISNULL(o.totalbillamount, 0)) AS revenue
-            FROM dbo.orders o
-            WHERE o.jobdatestart IS NOT NULL
-                AND CAST(o.jobdatestart AS DATE) >= DATEADD(WEEK, -8, GETDATE())
-                AND {symplr_scope_filter('o.customerid')}
-            GROUP BY
-                DATEADD(DAY, 1 - DATEPART(WEEKDAY, CAST(o.jobdatestart AS DATE)),
-                        CAST(o.jobdatestart AS DATE)),
-                ({symplr_system_case_expr('o.customerid')})
+                SUM(ISNULL(totalbillamount, 0)) AS revenue
+            FROM RevenueSource
+            GROUP BY week_start_date, system
         ''')
         for row in cursor.fetchall():
             weekly_revenue.append({

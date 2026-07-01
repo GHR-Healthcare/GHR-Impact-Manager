@@ -2,6 +2,10 @@
 
 ## Version History
 
+**1.8.5** - Fix Symplr revenue GROUP BY + cap non-MSP open positions to 45 days
+- Symplr trend `weekly_revenue` query was erroring 42000/144 (column not in aggregate/GROUP BY). Root cause: SQL Server treats each interpolation of a CASE-with-subquery as a distinct expression, so the SELECT and GROUP BY instances didn't match. Precomputed week_start and system in a CTE so GROUP BY references plain columns.
+- Non-MSP open positions now capped to items opened in the last 45 days across all four sources: Bullhorn `View_JobOrder.dateAdded`, Symplr `lt_order.date_entered` (status='open'), Symplr orderless `orders.datetimecreated` (status='open'), and Symplr uncovered shifts under filled lt_orders (`orders.datetimecreated`). Stale postings drop off automatically.
+
 **1.8.4** - Non-MSP filter fixes: Bullhorn division source + Symplr trend visibility
 - Bullhorn `division` now sourced from `View_ClientCorporation.customTextBlock1` (client-level, comma-separated list) instead of `View_Placement.customTextBlock1` which is always NULL. Applied across GetTrendData, GetStatsData, GetYoYTrendData, GetFinancialData, GetHoursData, GetPositions.
 - Frontend `Utils.matchesSelectedDivisions` splits the comma-separated string when building the dropdown values and when matching records against selected divisions. A client tagged "Allied,Nursing,RevCycle Workforce" matches any of those three filter selections.
