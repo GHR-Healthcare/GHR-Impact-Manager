@@ -43,7 +43,8 @@ def _bullhorn_stats_data():
                 cc.name AS facility,
                 ({system_case}) AS system,
                 p.customText1 AS specialty,
-                p.customTextBlock1 AS division,
+                -- Division lives on the client (see GetTrendData note).
+                cc.customTextBlock1 AS division,
                 NULL AS region,
                 CAST(p.dateBegin AS DATE) AS startDate,
                 CAST(p.dateEnd AS DATE) AS endDate,

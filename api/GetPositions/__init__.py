@@ -57,7 +57,8 @@ def _bullhorn_positions_data():
             ({system_case}) AS health_system,
             jo.customText1 AS profession,
             jo.customText2 AS subspecialty,
-            jo.customTextBlock1 AS division,
+            -- Division lives on the client (see GetTrendData note).
+            cc.customTextBlock1 AS division,
             NULL AS region
         FROM dbo.View_JobOrder jo
         LEFT JOIN dbo.View_ClientCorporation cc ON jo.clientCorporationID = cc.clientCorporationID

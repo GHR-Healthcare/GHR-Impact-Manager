@@ -82,7 +82,8 @@ def _bullhorn_financial_data(date_from_sql: str, date_to_sql: str):
                 cc.name AS facility,
                 ISNULL(p.employmentType, 'Unknown') AS category,
                 ({BULLHORN_SERVICE_LINE_CASE.strip()}) AS service_line,
-                ISNULL(p.customTextBlock1, 'Unknown') AS division,
+                -- Division lives on the client (see GetTrendData note).
+                ISNULL(cc.customTextBlock1, 'Unknown') AS division,
                 CAST(NULL AS NVARCHAR(50)) AS region,
                 LTRIM(RTRIM(ISNULL(c.firstName, '') + ' ' + ISNULL(c.lastName, ''))) AS worker_name,
                 ISNULL(p.clientBillRate, 0) * ISNULL(p.hoursPerDay, 0) * 5 AS weekly_revenue,

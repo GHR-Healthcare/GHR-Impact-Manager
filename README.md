@@ -2,6 +2,12 @@
 
 ## Version History
 
+**1.8.4** - Non-MSP filter fixes: Bullhorn division source + Symplr trend visibility
+- Bullhorn `division` now sourced from `View_ClientCorporation.customTextBlock1` (client-level, comma-separated list) instead of `View_Placement.customTextBlock1` which is always NULL. Applied across GetTrendData, GetStatsData, GetYoYTrendData, GetFinancialData, GetHoursData, GetPositions.
+- Frontend `Utils.matchesSelectedDivisions` splits the comma-separated string when building the dropdown values and when matching records against selected divisions. A client tagged "Allied,Nursing,RevCycle Workforce" matches any of those three filter selections.
+- Division filter dropdown moved to first slot on non-MSP (was after Specialty)
+- `_symplr_trend_data` now wraps each of its three queries (lt_order / orderless orders / weekly revenue) in its own try/except so one bad query doesn't zero out the Symplr contribution. Errors are surfaced in the JSON response for diagnosis.
+
 **1.8.3** - Non-MSP: Division / Profession / Region filter UI (PR 2 of 2)
 - New filter dropdowns visible only on the non-MSP instance: Division, Profession, Region
 - Data-driven: dropdown values come from actual records (Bullhorn `customTextBlock1`, Symplr rollup, Symplr `profile_client.state`)

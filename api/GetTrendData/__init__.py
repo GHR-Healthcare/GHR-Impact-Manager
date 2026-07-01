@@ -47,7 +47,11 @@ def _bullhorn_trend_data():
             'GHR' AS agency,
             p.customText1 AS specialty,
             p.employmentType AS category,
-            p.customTextBlock1 AS division,
+            -- Division lives on the client (View_ClientCorporation.customTextBlock1),
+            -- not the placement — customTextBlock1 on View_Placement is always NULL.
+            -- Values arrive as a comma-separated list (e.g. "Allied,Nursing,RevCycle Workforce")
+            -- because a single client can be serviced by multiple GHR internal teams.
+            cc.customTextBlock1 AS division,
             NULL AS region,
             p.customText11 AS pm,
             p.status AS status,
@@ -119,50 +123,58 @@ def _symplr_trend_data():
     """
     conn = get_symplr_conn()
     if conn is None:
-        return {'assignments': [], 'weekly_revenue': []}
+        return {'assignments': [], 'weekly_revenue': [], 'errors': ['symplr_conn_none']}
 
     cursor = conn.cursor()
     system_case = symplr_system_case_expr('lt.clientid')
     scope_filter = symplr_scope_filter('lt.clientid')
     division_case = symplr_division_case_expr('lt.clientid')
+    # Each of the three queries below runs in its own try/except so one bad
+    # one doesn't zero out the whole Symplr contribution to trend.
+    errors = []
 
     # ============================================================
     # Symplr — Long-term orders (filled placements) in rolling window
     # ============================================================
     assignments = []
-    cursor.execute(f'''
-        SELECT
-            'Symplr' AS source_system,
-            LTRIM(RTRIM(ISNULL(pt.firstname, '') + ' ' + ISNULL(pt.lastname, ''))) AS worker_name,
-            ({system_case}) AS system,
-            pc.clientname AS facility,
-            'GHR' AS agency,
-            lt.specialty AS specialty,
-            lt.nursetype AS category,
-            ({division_case}) AS division,
-            pc.state AS region,
-            NULL AS pm,
-            lt.status AS status,
-            NULL AS bill_rate,
-            TRY_CAST(lt.HoursPerWeek AS DECIMAL(10,2)) AS weekly_hours,
-            CAST(lt.date_start AS DATE) AS startDate,
-            CAST(lt.date_end AS DATE) AS endDate
-        FROM dbo.lt_order lt
-        LEFT JOIN dbo.profile_client pc ON lt.clientid = pc.recordid
-        LEFT JOIN dbo.profile_temp pt ON lt.tempid = pt.recordid
-        WHERE lt.status = 'filled'
-            AND lt.date_start IS NOT NULL
-            AND (lt.date_end IS NULL OR lt.date_end >= DATEADD(WEEK, -4, GETDATE()))
-            AND {scope_filter}
-    ''')
-    columns = [column[0] for column in cursor.description]
-    for row in cursor.fetchall():
-        row_dict = dict(zip(columns, row))
-        if row_dict.get('startDate'):
-            row_dict['startDate'] = row_dict['startDate'].isoformat() if hasattr(row_dict['startDate'], 'isoformat') else str(row_dict['startDate'])
-        if row_dict.get('endDate'):
-            row_dict['endDate'] = row_dict['endDate'].isoformat() if hasattr(row_dict['endDate'], 'isoformat') else str(row_dict['endDate'])
-        assignments.append(row_dict)
+    try:
+        cursor.execute(f'''
+            SELECT
+                'Symplr' AS source_system,
+                LTRIM(RTRIM(ISNULL(pt.firstname, '') + ' ' + ISNULL(pt.lastname, ''))) AS worker_name,
+                ({system_case}) AS system,
+                pc.clientname AS facility,
+                'GHR' AS agency,
+                lt.specialty AS specialty,
+                lt.nursetype AS category,
+                ({division_case}) AS division,
+                pc.state AS region,
+                NULL AS pm,
+                lt.status AS status,
+                NULL AS bill_rate,
+                TRY_CAST(lt.HoursPerWeek AS DECIMAL(10,2)) AS weekly_hours,
+                CAST(lt.date_start AS DATE) AS startDate,
+                CAST(lt.date_end AS DATE) AS endDate
+            FROM dbo.lt_order lt
+            LEFT JOIN dbo.profile_client pc ON lt.clientid = pc.recordid
+            LEFT JOIN dbo.profile_temp pt ON lt.tempid = pt.recordid
+            WHERE lt.status = 'filled'
+                AND lt.date_start IS NOT NULL
+                AND (lt.date_end IS NULL OR lt.date_end >= DATEADD(WEEK, -4, GETDATE()))
+                AND {scope_filter}
+        ''')
+        columns = [column[0] for column in cursor.description]
+        for row in cursor.fetchall():
+            row_dict = dict(zip(columns, row))
+            if row_dict.get('startDate'):
+                row_dict['startDate'] = row_dict['startDate'].isoformat() if hasattr(row_dict['startDate'], 'isoformat') else str(row_dict['startDate'])
+            if row_dict.get('endDate'):
+                row_dict['endDate'] = row_dict['endDate'].isoformat() if hasattr(row_dict['endDate'], 'isoformat') else str(row_dict['endDate'])
+            assignments.append(row_dict)
+    except Exception as e:
+        errors.append(f"symplr_lt_order: {e}")
+        print(f"Symplr trend lt_order query failed: {e}")
+        import traceback; traceback.print_exc()
 
     # ============================================================
     # Symplr — Orderless filled orders (lt_orderid IN (0, NULL))
@@ -172,42 +184,47 @@ def _symplr_trend_data():
     system_case_orders = symplr_system_case_expr('o.customerid')
     scope_filter_orders = symplr_scope_filter('o.customerid')
     division_case_orders = symplr_division_case_expr('o.customerid')
-    cursor.execute(f'''
-        SELECT
-            'Symplr' AS source_system,
-            LTRIM(RTRIM(ISNULL(MAX(pt.firstname), '') + ' ' + ISNULL(MAX(pt.lastname), ''))) AS worker_name,
-            ({system_case_orders}) AS system,
-            MAX(pc.clientname) AS facility,
-            'GHR' AS agency,
-            MAX(o.specialty) AS specialty,
-            MAX(o.nursetype) AS category,
-            ({division_case_orders}) AS division,
-            MAX(pc.state) AS region,
-            NULL AS pm,
-            'filled' AS status,
-            NULL AS bill_rate,
-            NULL AS weekly_hours,
-            CAST(MIN(o.jobdatestart) AS DATE) AS startDate,
-            CAST(MAX(o.jobdateend)   AS DATE) AS endDate
-        FROM dbo.orders o
-        LEFT JOIN dbo.profile_client pc ON o.customerid = pc.recordid
-        LEFT JOIN dbo.profile_temp   pt ON o.filledby   = pt.recordid
-        WHERE o.status = 'filled'
-            AND (o.lt_orderid IS NULL OR o.lt_orderid = 0)
-            AND o.filledby IS NOT NULL AND o.filledby > 0
-            AND o.jobdatestart IS NOT NULL
-            AND (o.jobdateend IS NULL OR o.jobdateend >= DATEADD(WEEK, -4, GETDATE()))
-            AND {scope_filter_orders}
-        GROUP BY o.customerid, o.filledby
-    ''')
-    columns = [column[0] for column in cursor.description]
-    for row in cursor.fetchall():
-        row_dict = dict(zip(columns, row))
-        if row_dict.get('startDate'):
-            row_dict['startDate'] = row_dict['startDate'].isoformat() if hasattr(row_dict['startDate'], 'isoformat') else str(row_dict['startDate'])
-        if row_dict.get('endDate'):
-            row_dict['endDate'] = row_dict['endDate'].isoformat() if hasattr(row_dict['endDate'], 'isoformat') else str(row_dict['endDate'])
-        assignments.append(row_dict)
+    try:
+        cursor.execute(f'''
+            SELECT
+                'Symplr' AS source_system,
+                LTRIM(RTRIM(ISNULL(MAX(pt.firstname), '') + ' ' + ISNULL(MAX(pt.lastname), ''))) AS worker_name,
+                ({system_case_orders}) AS system,
+                MAX(pc.clientname) AS facility,
+                'GHR' AS agency,
+                MAX(o.specialty) AS specialty,
+                MAX(o.nursetype) AS category,
+                ({division_case_orders}) AS division,
+                MAX(pc.state) AS region,
+                NULL AS pm,
+                'filled' AS status,
+                NULL AS bill_rate,
+                NULL AS weekly_hours,
+                CAST(MIN(o.jobdatestart) AS DATE) AS startDate,
+                CAST(MAX(o.jobdateend)   AS DATE) AS endDate
+            FROM dbo.orders o
+            LEFT JOIN dbo.profile_client pc ON o.customerid = pc.recordid
+            LEFT JOIN dbo.profile_temp   pt ON o.filledby   = pt.recordid
+            WHERE o.status = 'filled'
+                AND (o.lt_orderid IS NULL OR o.lt_orderid = 0)
+                AND o.filledby IS NOT NULL AND o.filledby > 0
+                AND o.jobdatestart IS NOT NULL
+                AND (o.jobdateend IS NULL OR o.jobdateend >= DATEADD(WEEK, -4, GETDATE()))
+                AND {scope_filter_orders}
+            GROUP BY o.customerid, o.filledby
+        ''')
+        columns = [column[0] for column in cursor.description]
+        for row in cursor.fetchall():
+            row_dict = dict(zip(columns, row))
+            if row_dict.get('startDate'):
+                row_dict['startDate'] = row_dict['startDate'].isoformat() if hasattr(row_dict['startDate'], 'isoformat') else str(row_dict['startDate'])
+            if row_dict.get('endDate'):
+                row_dict['endDate'] = row_dict['endDate'].isoformat() if hasattr(row_dict['endDate'], 'isoformat') else str(row_dict['endDate'])
+            assignments.append(row_dict)
+    except Exception as e:
+        errors.append(f"symplr_orderless: {e}")
+        print(f"Symplr trend orderless orders query failed: {e}")
+        import traceback; traceback.print_exc()
 
     # ============================================================
     # Symplr — Weekly ACTUAL revenue from shift-level orders table
@@ -215,35 +232,40 @@ def _symplr_trend_data():
     # bucket by week of jobdatestart and sum totalbillamount.
     # ============================================================
     weekly_revenue = []
-    cursor.execute(f'''
-        SELECT
-            CONVERT(VARCHAR(10),
+    try:
+        cursor.execute(f'''
+            SELECT
+                CONVERT(VARCHAR(10),
+                    DATEADD(DAY, 1 - DATEPART(WEEKDAY, CAST(o.jobdatestart AS DATE)),
+                            CAST(o.jobdatestart AS DATE)),
+                    23) AS week_start,
+                ({symplr_system_case_expr('o.customerid')}) AS system,
+                'GHR' AS vendor_type,
+                SUM(ISNULL(o.totalbillamount, 0)) AS revenue
+            FROM dbo.orders o
+            WHERE o.jobdatestart IS NOT NULL
+                AND CAST(o.jobdatestart AS DATE) >= DATEADD(WEEK, -8, GETDATE())
+                AND {symplr_scope_filter('o.customerid')}
+            GROUP BY
                 DATEADD(DAY, 1 - DATEPART(WEEKDAY, CAST(o.jobdatestart AS DATE)),
                         CAST(o.jobdatestart AS DATE)),
-                23) AS week_start,
-            ({symplr_system_case_expr('o.customerid')}) AS system,
-            'GHR' AS vendor_type,
-            SUM(ISNULL(o.totalbillamount, 0)) AS revenue
-        FROM dbo.orders o
-        WHERE o.jobdatestart IS NOT NULL
-            AND CAST(o.jobdatestart AS DATE) >= DATEADD(WEEK, -8, GETDATE())
-            AND {symplr_scope_filter('o.customerid')}
-        GROUP BY
-            DATEADD(DAY, 1 - DATEPART(WEEKDAY, CAST(o.jobdatestart AS DATE)),
-                    CAST(o.jobdatestart AS DATE)),
-            ({symplr_system_case_expr('o.customerid')})
-    ''')
-    for row in cursor.fetchall():
-        weekly_revenue.append({
-            'source_system': 'Symplr',
-            'week_start': row[0],
-            'system': row[1],
-            'vendor_type': row[2],
-            'revenue': float(row[3] or 0),
-        })
+                ({symplr_system_case_expr('o.customerid')})
+        ''')
+        for row in cursor.fetchall():
+            weekly_revenue.append({
+                'source_system': 'Symplr',
+                'week_start': row[0],
+                'system': row[1],
+                'vendor_type': row[2],
+                'revenue': float(row[3] or 0),
+            })
+    except Exception as e:
+        errors.append(f"symplr_revenue: {e}")
+        print(f"Symplr trend weekly_revenue query failed: {e}")
+        import traceback; traceback.print_exc()
 
     conn.close()
-    return {'assignments': assignments, 'weekly_revenue': weekly_revenue}
+    return {'assignments': assignments, 'weekly_revenue': weekly_revenue, 'errors': errors}
 
 
 def _non_msp_trend(req: func.HttpRequest) -> func.HttpResponse:
@@ -269,6 +291,10 @@ def _non_msp_trend(req: func.HttpRequest) -> func.HttpResponse:
         sp = _symplr_trend_data()
         assignments.extend(sp['assignments'])
         weekly_revenue.extend(sp['weekly_revenue'])
+        # Surface per-query errors so the frontend / a diagnostic can see them
+        # without needing Function App log access.
+        for e in sp.get('errors') or []:
+            errors.append(e)
     except Exception as e:
         print(f"Symplr trend error: {e}")
         import traceback; traceback.print_exc()
@@ -280,6 +306,7 @@ def _non_msp_trend(req: func.HttpRequest) -> func.HttpResponse:
             'assignments': assignments,
             'pending': [],
             'weekly_revenue': weekly_revenue,
+            'errors': errors,
         }, default=str),
         mimetype="application/json",
         status_code=200,

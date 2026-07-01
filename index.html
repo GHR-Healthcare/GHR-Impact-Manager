@@ -198,6 +198,12 @@
     <!-- Bottom row: Filters, Search, Buttons -->
     <div class="flex justify-end">
       <div class="flex flex-wrap items-end gap-3 w-full lg:w-auto lg:min-w-[50%]" id="controlsArea">
+        <!-- Division: first slot on non-MSP (dataSource === 'non_msp'), hidden on MSP.
+             Shown/hidden by View.initFilters based on window.store.state.dataSource. -->
+        <div class="multi-select-container relative w-[calc(50%-6px)] sm:flex-1 min-h-[58px] hidden" id="divisionFilterContainer">
+          <label class="block text-xs font-bold text-slate-500 mb-1 ml-1 uppercase tracking-wider">Division</label>
+          <div class="w-full bg-white border border-slate-300 rounded-md px-3 py-2 text-sm text-slate-400">Loading...</div>
+        </div>
         <div class="multi-select-container relative w-[calc(50%-6px)] sm:flex-1 min-h-[58px]" id="systemFilterContainer">
           <label class="block text-xs font-bold text-slate-500 mb-1 ml-1 uppercase tracking-wider">System</label>
           <div class="w-full bg-white border border-slate-300 rounded-md px-3 py-2 text-sm text-slate-400">Loading...</div>
@@ -212,12 +218,6 @@
         </div>
         <div class="multi-select-container relative w-[calc(50%-6px)] sm:flex-1 min-h-[58px]" id="specialtyFilterContainer">
           <label class="block text-xs font-bold text-slate-500 mb-1 ml-1 uppercase tracking-wider">Specialty</label>
-          <div class="w-full bg-white border border-slate-300 rounded-md px-3 py-2 text-sm text-slate-400">Loading...</div>
-        </div>
-        <!-- Division/Profession/Region: visible only when dataSource === 'non_msp'.
-             Shown/hidden by View.setupFilters based on window.store.state.dataSource. -->
-        <div class="multi-select-container relative w-[calc(50%-6px)] sm:flex-1 min-h-[58px] hidden" id="divisionFilterContainer">
-          <label class="block text-xs font-bold text-slate-500 mb-1 ml-1 uppercase tracking-wider">Division</label>
           <div class="w-full bg-white border border-slate-300 rounded-md px-3 py-2 text-sm text-slate-400">Loading...</div>
         </div>
         <div class="multi-select-container relative w-[calc(50%-6px)] sm:flex-1 min-h-[58px] hidden" id="professionFilterContainer">
@@ -722,7 +722,7 @@
     const $ = (id) => document.getElementById(id);
 
     // App version - loaded from environment variable via API, with fallback
-    let APP_VERSION = '1.8.3';
+    let APP_VERSION = '1.8.4';
 
     const API_BASE_URL = '/api';
     
@@ -2136,6 +2136,19 @@
        * Check if a record matches any of the selected health systems
        * More robust matching that checks healthSystem, raw system value, and facility keywords
        */
+      /**
+       * Match a record against the selected Division filter. Bullhorn division
+       * comes as a comma-separated list (e.g. "Allied,Nursing,RevCycle Workforce")
+       * because a single client can be serviced by multiple GHR teams. Symplr
+       * emits a single value ("Education"). Returns true if any of the record's
+       * divisions is in the selection set.
+       */
+      matchesSelectedDivisions(recordDivision, selectedDivisions) {
+        if (!selectedDivisions || selectedDivisions.size === 0) return true;
+        if (!recordDivision) return false;
+        return String(recordDivision).split(',').some(d => selectedDivisions.has(d.trim()));
+      },
+
       matchesSelectedSystems(record, selectedSystems) {
         if (selectedSystems.size === 0) return true;
 
@@ -3658,7 +3671,7 @@
           // Non-MSP cascading dimensions. On MSP these selections stay empty
           // so the conditions are a no-op.
           if (excludeFilter !== 'divisions') {
-            if (s.filterSelection.divisions.size > 0 && !(job.division && s.filterSelection.divisions.has(job.division))) return false;
+            if (!Utils.matchesSelectedDivisions(job.division, s.filterSelection.divisions)) return false;
           }
           if (excludeFilter !== 'professions') {
             if (s.filterSelection.professions.size > 0 && !(job.profession && s.filterSelection.professions.has(job.profession))) return false;
@@ -3861,7 +3874,7 @@
           // empty division/profession/region pass when nothing is selected,
           // never pass when a filter IS selected (consistent with the way
           // facilities/categories behave).
-          const divMatch = s.filterSelection.divisions.size === 0 || (j.division && s.filterSelection.divisions.has(j.division));
+          const divMatch = Utils.matchesSelectedDivisions(j.division, s.filterSelection.divisions);
           const profMatch = s.filterSelection.professions.size === 0 || (j.profession && s.filterSelection.professions.has(j.profession));
           const regMatch = s.filterSelection.regions.size === 0 || (j.region && s.filterSelection.regions.has(j.region));
 
@@ -4403,7 +4416,7 @@
           const facMatch = s.filterSelection.facilities.size === 0 || (r.facility && s.filterSelection.facilities.has(r.facility));
           const specMatch = s.filterSelection.specialties.size === 0 || (r.specialty && s.filterSelection.specialties.has(Utils.cleanFilterText(r.specialty)));
           const catMatch = Utils.matchesStatsCategoryFilter(r.specialty, s.filterSelection.categories);
-          const divMatch = s.filterSelection.divisions.size === 0 || (r.division && s.filterSelection.divisions.has(r.division));
+          const divMatch = Utils.matchesSelectedDivisions(r.division, s.filterSelection.divisions);
           const profMatch = s.filterSelection.professions.size === 0 || (r.profession && s.filterSelection.professions.has(r.profession));
           const regMatch = s.filterSelection.regions.size === 0 || (r.region && s.filterSelection.regions.has(r.region));
           const isActive = r.startDate && r.startDate <= now && (!r.endDate || r.endDate >= now);
@@ -8895,10 +8908,17 @@
                 ...allAssignments.map(a => Utils.cleanFilterText(a.specialty))
               ].filter(Boolean));
               // Non-MSP dimensions — empty on MSP because the API doesn't emit them yet.
-              s.filters.divisions = new Set([
-                ...s.jobs.map(j => j.division),
-                ...allAssignments.map(a => a.division),
-              ].filter(Boolean));
+              // Bullhorn division comes as a comma-separated list per CLIENT
+              // (customTextBlock1 on View_ClientCorporation), because a single
+              // account can be serviced by multiple GHR internal teams. Split
+              // + trim to build the dropdown from unique divisions.
+              s.filters.divisions = new Set();
+              [...s.jobs, ...allAssignments].forEach(r => {
+                (r.division || '').split(',').forEach(d => {
+                  const trimmed = d.trim();
+                  if (trimmed) s.filters.divisions.add(trimmed);
+                });
+              });
               s.filters.professions = new Set([
                 ...s.jobs.map(j => j.profession),
                 ...allAssignments.map(a => a.profession),
@@ -8941,10 +8961,17 @@
                 ...s.jobs.map(j => Utils.cleanFilterText(j.specialty)),
                 ...allAssignments.map(a => Utils.cleanFilterText(a.specialty))
               ].filter(Boolean));
-              s.filters.divisions = new Set([
-                ...s.jobs.map(j => j.division),
-                ...allAssignments.map(a => a.division),
-              ].filter(Boolean));
+              // Bullhorn division comes as a comma-separated list per CLIENT
+              // (customTextBlock1 on View_ClientCorporation), because a single
+              // account can be serviced by multiple GHR internal teams. Split
+              // + trim to build the dropdown from unique divisions.
+              s.filters.divisions = new Set();
+              [...s.jobs, ...allAssignments].forEach(r => {
+                (r.division || '').split(',').forEach(d => {
+                  const trimmed = d.trim();
+                  if (trimmed) s.filters.divisions.add(trimmed);
+                });
+              });
               s.filters.professions = new Set([
                 ...s.jobs.map(j => j.profession),
                 ...allAssignments.map(a => a.profession),

@@ -50,7 +50,8 @@ def _bullhorn_hours_data():
             cc.name AS facility_name,
             NULL AS work_site,
             ISNULL(p.employmentType, 'Unknown') AS labor_type,
-            p.customTextBlock1 AS division,
+            -- Division lives on the client (see GetTrendData note).
+            cc.customTextBlock1 AS division,
             NULL AS region,
             CAST(w.week_start AS DATE) AS billing_week_start,
             DATEADD(DAY, 6, CAST(w.week_start AS DATE)) AS billing_week_end,

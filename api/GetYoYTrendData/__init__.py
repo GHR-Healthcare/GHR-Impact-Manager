@@ -47,7 +47,8 @@ def _bullhorn_yoy_data():
                 ({system_case}) AS system,
                 cc.name AS facility,
                 ISNULL(p.employmentType, 'Unknown') AS category,
-                ISNULL(p.customTextBlock1, 'Unknown') AS division,
+                -- Division lives on the client (see GetTrendData note).
+                ISNULL(cc.customTextBlock1, 'Unknown') AS division,
                 CAST(NULL AS NVARCHAR(50)) AS region,
                 CAST(p.dateBegin AS DATE) AS sd,
                 CAST(p.dateEnd AS DATE) AS ed
