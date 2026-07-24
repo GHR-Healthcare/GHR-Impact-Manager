@@ -722,7 +722,7 @@
     const $ = (id) => document.getElementById(id);
 
     // App version - loaded from environment variable via API, with fallback
-    let APP_VERSION = '1.8.5';
+    let APP_VERSION = '1.8.6';
 
     const API_BASE_URL = '/api';
     
@@ -1318,6 +1318,11 @@
                     // 'msp' (default) or 'non_msp'. Tab visibility logic in
                     // viewToggle() reads window.store.state.dataSource.
                     window.store.state.dataSource = config.dataSource || 'msp';
+                    // Reflect the instance in the browser tab title so users
+                    // can tell MSP vs Non-MSP apart when both are open.
+                    document.title = window.store.state.dataSource === 'non_msp'
+                      ? 'GHR Impact Manager — Non-MSP'
+                      : 'GHR Impact Manager';
                     // Re-run viewToggle so Pending / Per Diem buttons hide on
                     // the non-MSP instance now that we know which flavor we are.
                     if (typeof View !== 'undefined' && View.viewToggle) {
