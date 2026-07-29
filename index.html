@@ -166,9 +166,11 @@
         <h1 class="text-xl sm:text-3xl font-bold text-slate-900 flex items-center gap-2 sm:gap-3">
           <i data-lucide="activity" class="text-blue-600 w-6 h-6 sm:w-8 sm:h-8"></i>
           GHR Impact Manager
+          <!-- Instance badge — reveal + label from /api/get-config's dataSource. -->
+          <span id="instanceBadge" class="hidden text-[10px] sm:text-xs font-semibold uppercase tracking-wide px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-700 border border-indigo-200"></span>
           <span id="versionDisplay" class="text-xs font-normal text-slate-400 ml-1"></span>
         </h1>
-        <p class="text-slate-500 text-xs sm:text-base mt-1 hidden sm:block">High-Performance Optimization Build</p>
+        <p id="appSubtitle" class="text-slate-500 text-xs sm:text-base mt-1 hidden sm:block">High-Performance Optimization Build</p>
       </div>
       
       <!-- User Display & Logout - Top Right -->
@@ -1363,9 +1365,24 @@
                     window.store.state.dataSource = config.dataSource || 'msp';
                     // Reflect the instance in the browser tab title so users
                     // can tell MSP vs Non-MSP apart when both are open.
-                    document.title = window.store.state.dataSource === 'non_msp'
+                    const isNonMspHeader = window.store.state.dataSource === 'non_msp';
+                    document.title = isNonMspHeader
                       ? 'GHR Impact Manager — Non-MSP'
                       : 'GHR Impact Manager';
+                    // Same signal, on the header itself — pill next to the title
+                    // + subtitle swap so nobody has to check the browser tab to
+                    // know which instance they're on.
+                    const badge = document.getElementById('instanceBadge');
+                    if (badge) {
+                        badge.textContent = isNonMspHeader ? 'Non-MSP' : 'MSP';
+                        badge.classList.remove('hidden');
+                    }
+                    const subtitle = document.getElementById('appSubtitle');
+                    if (subtitle) {
+                        subtitle.textContent = isNonMspHeader
+                          ? 'Non-MSP · Bullhorn + Symplr Education book'
+                          : 'High-Performance Optimization Build';
+                    }
                     // Re-run viewToggle so Pending / Per Diem buttons hide on
                     // the non-MSP instance now that we know which flavor we are.
                     if (typeof View !== 'undefined' && View.viewToggle) {
