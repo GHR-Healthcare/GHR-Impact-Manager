@@ -48,6 +48,32 @@ def get_bullhorn_conn():
     )
 
 
+def get_appdb_conn():
+    """
+    pyodbc connection to the writable app-config DB (impactmgr schema).
+    Used for tables owned by this app: changes, history_snapshots,
+    system_mappings, bullhorn_client_allowlist.
+
+    Returns None if DB_HOST / APPDB / DB_USER / DB_PASSWORD aren't configured
+    (e.g. local dev without the app DB). Callers should treat that as
+    "app-managed config unavailable, fall back to code-managed defaults".
+    """
+    host = os.environ.get('DB_HOST')
+    db = os.environ.get('APPDB')
+    user = os.environ.get('DB_USER')
+    pwd = os.environ.get('DB_PASSWORD')
+    if not all([host, db, user, pwd]):
+        return None
+    return pyodbc.connect(
+        f"DRIVER={{ODBC Driver 17 for SQL Server}};"
+        f"SERVER={host};"
+        f"DATABASE={db};"
+        f"UID={user};"
+        f"PWD={pwd};"
+        f"TrustServerCertificate=yes"
+    )
+
+
 def get_symplr_conn():
     """
     pyodbc connection to the Symplr DB. Returns None if Symplr env vars aren't

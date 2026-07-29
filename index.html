@@ -178,6 +178,12 @@
           <div id="connectionDot" class="w-2 h-2 rounded-full bg-emerald-500"></div>
           <span id="connectionText" class="text-xs text-slate-500 hidden sm:inline">Connected</span>
         </div>
+        <!-- MSP <-> non-MSP toggle. Wired in JS after /api/get-config lands.
+             Hidden until we know the other instance URL. -->
+        <a id="instanceToggleBtn" href="#" class="hidden items-center gap-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 px-2 sm:px-3 rounded-md shadow-sm text-xs sm:text-sm font-semibold transition-colors h-[32px] sm:h-[38px]" title="Switch dashboards">
+          <i data-lucide="arrow-left-right" class="w-4 h-4"></i>
+          <span id="instanceToggleLabel" class="hidden sm:inline">Switch</span>
+        </a>
         <button onclick="openSettingsModal()"
                 class="flex items-center gap-1 bg-slate-100 hover:bg-slate-200 text-slate-600 px-2 sm:px-3 rounded-md shadow-sm text-sm font-medium transition-colors h-[32px] sm:h-[38px]"
                 title="Settings">
@@ -337,6 +343,10 @@
           class="px-4 py-2 text-sm font-semibold rounded-t-md text-slate-500 hover:text-slate-700">
           <i data-lucide="user-check" class="w-4 h-4 inline-block mr-1"></i> Program Managers
         </button>
+        <button id="settingsTabAllowlist" onclick="switchSettingsTab('allowlist')"
+          class="px-4 py-2 text-sm font-semibold rounded-t-md text-slate-500 hover:text-slate-700 hidden">
+          <i data-lucide="list-plus" class="w-4 h-4 inline-block mr-1"></i> Non-MSP Clients
+        </button>
       </div>
 
       <!-- Health Systems Tab -->
@@ -406,6 +416,39 @@
               <!-- PM mappings loaded here -->
             </tbody>
           </table>
+        </div>
+      </div>
+
+      <!-- Non-MSP Client Allowlist Tab (visible only on non-MSP) -->
+      <div id="settingsPanelAllowlist" class="p-6 overflow-y-auto hidden">
+        <p class="text-sm text-slate-500 mb-4">
+          Force-include specific Bullhorn <span class="font-mono">clientCorporationID</span> values in the dashboard even when headcount is currently 0.
+          Any client with <em>active</em> placements is already pulled in automatically — this list is for edge cases (e.g. a client between contracts that leadership still wants visibility on).
+        </p>
+
+        <div class="border rounded-lg overflow-hidden mb-4">
+          <table class="w-full text-sm">
+            <thead class="bg-slate-100">
+              <tr>
+                <th class="text-left p-3 font-semibold text-slate-700 w-40">Client ID</th>
+                <th class="text-left p-3 font-semibold text-slate-700 w-72">Display Name Override <span class="font-normal text-xs text-slate-400">(optional)</span></th>
+                <th class="text-left p-3 font-semibold text-slate-700">Notes <span class="font-normal text-xs text-slate-400">(optional)</span></th>
+                <th class="w-16 p-3"></th>
+              </tr>
+            </thead>
+            <tbody id="allowlistTableBody" class="divide-y">
+              <!-- Allowlist rows loaded here -->
+            </tbody>
+          </table>
+        </div>
+
+        <div class="flex justify-between items-center">
+          <button onclick="addAllowlistRow()" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded text-sm font-medium flex items-center gap-1">
+            <i data-lucide="plus" class="w-4 h-4"></i> Add Client ID
+          </button>
+          <p class="text-xs text-slate-500">
+            Save applies all rows. Removing a row here drops it from the forced list (auto-inclusion still applies if the client has active headcount).
+          </p>
         </div>
       </div>
       
@@ -722,7 +765,7 @@
     const $ = (id) => document.getElementById(id);
 
     // App version - loaded from environment variable via API, with fallback
-    let APP_VERSION = '1.8.6';
+    let APP_VERSION = '2.0.0';
 
     const API_BASE_URL = '/api';
     
@@ -1327,6 +1370,18 @@
                     // the non-MSP instance now that we know which flavor we are.
                     if (typeof View !== 'undefined' && View.viewToggle) {
                         View.viewToggle();
+                    }
+                    // Reveal the sibling-instance toggle if the config gave us
+                    // a URL. Hidden by default so a misconfigured deploy doesn't
+                    // show a dead link.
+                    const toggleBtn = document.getElementById('instanceToggleBtn');
+                    const toggleLabel = document.getElementById('instanceToggleLabel');
+                    if (toggleBtn && config.otherInstanceUrl) {
+                        toggleBtn.href = config.otherInstanceUrl;
+                        toggleBtn.title = `Switch to ${config.otherInstanceLabel || 'other'} dashboard`;
+                        if (toggleLabel) toggleLabel.textContent = `View ${config.otherInstanceLabel || 'other'}`;
+                        toggleBtn.classList.remove('hidden');
+                        toggleBtn.classList.add('flex');
                     }
                 }
             } catch (configError) {
@@ -6258,7 +6313,9 @@
           const catMatch = matchesTrendCategory(r.category);
           const specMatch = s.filterSelection.specialties.size === 0 ||
             Array.from(s.filterSelection.specialties).some(sp => sp.toLowerCase() === (r.specialty || '').toLowerCase());
-          return sysMatch && facMatch && catMatch && specMatch;
+          const divMatch = Utils.matchesSelectedDivisions(r.division, s.filterSelection.divisions);
+          const regMatch = s.filterSelection.regions.size === 0 || (r.region && s.filterSelection.regions.has(r.region));
+          return sysMatch && facMatch && catMatch && specMatch && divMatch && regMatch;
         };
         const filtered = deduped.filter(filterRow);
         const filteredPending = allPending.filter(filterRow);
@@ -6704,6 +6761,8 @@
         // as plain text so they don't dispatch a SET_VIEW('pending') that the
         // view-toggle would just bounce back to 'list'.
         const drillToPendingEnabled = window.store.state.dataSource !== 'non_msp';
+        // Non-MSP: no Affiliate concept. Show a single total per cell instead of "GHR / Aff".
+        const hideAffiliateSplit = window.store.state.dataSource === 'non_msp';
         const buildCatRow = (cat) => {
           const catId = cat.replace(/[^a-zA-Z0-9]/g, '_');
           const systems = getSystemsForCat(cat);
@@ -6728,17 +6787,15 @@
             const affSpan = (isFuture && drillToPendingEnabled)
               ? `<span class="text-purple-700 font-semibold cursor-pointer hover:underline" onclick="event.stopPropagation();window.__trendDrillToPending('${catEsc}',null,'Affiliate')">${a}${deltaSpan(a, aPrev)}</span>`
               : `<span class="text-purple-700 font-semibold">${a}${deltaSpan(a, aPrev)}</span>`;
-            cells += `<td class="px-2 py-1.5 border-b border-slate-100 text-center text-[10px] ${isCurrent ? 'bg-blue-50' : ''}">
-              ${ghrSpan}
-              <span class="text-slate-300 mx-0.5">/</span>
-              ${affSpan}
-            </td>`;
+            const cellInner = hideAffiliateSplit
+              ? ghrSpan
+              : `${ghrSpan}<span class="text-slate-300 mx-0.5">/</span>${affSpan}`;
+            cells += `<td class="px-2 py-1.5 border-b border-slate-100 text-center text-[10px] ${isCurrent ? 'bg-blue-50' : ''}">${cellInner}</td>`;
             if (isCurrent) {
-              cells += `<td class="px-2 py-1.5 border-b border-slate-100 text-center text-[10px] trend-avg-col bg-amber-50 border-l border-r border-amber-200">
-                <span class="text-blue-700 font-semibold">${avgG != null ? avgG : '—'}</span>
-                <span class="text-slate-300 mx-0.5">/</span>
-                <span class="text-purple-700 font-semibold">${avgA != null ? avgA : '—'}</span>
-              </td>`;
+              const avgInner = hideAffiliateSplit
+                ? `<span class="text-blue-700 font-semibold">${avgG != null ? avgG : '—'}</span>`
+                : `<span class="text-blue-700 font-semibold">${avgG != null ? avgG : '—'}</span><span class="text-slate-300 mx-0.5">/</span><span class="text-purple-700 font-semibold">${avgA != null ? avgA : '—'}</span>`;
+              cells += `<td class="px-2 py-1.5 border-b border-slate-100 text-center text-[10px] trend-avg-col bg-amber-50 border-l border-r border-amber-200">${avgInner}</td>`;
             }
           });
 
@@ -6765,17 +6822,15 @@
                 const affSpan = (isFuture && drillToPendingEnabled)
                   ? `<span class="text-purple-600 cursor-pointer hover:underline" onclick="event.stopPropagation();window.__trendDrillToPending('${catEsc}','${sysEsc}','Affiliate')">${a}${deltaSpan(a, aPrev)}</span>`
                   : `<span class="text-purple-600">${a}${deltaSpan(a, aPrev)}</span>`;
-                sysCells += `<td class="px-2 py-1 border-b border-slate-50 text-center text-[10px] ${isCurrent ? 'bg-blue-50/50' : ''}">
-                  ${ghrSpan}
-                  <span class="text-slate-200 mx-0.5">/</span>
-                  ${affSpan}
-                </td>`;
+                const sysCellInner = hideAffiliateSplit
+                  ? ghrSpan
+                  : `${ghrSpan}<span class="text-slate-200 mx-0.5">/</span>${affSpan}`;
+                sysCells += `<td class="px-2 py-1 border-b border-slate-50 text-center text-[10px] ${isCurrent ? 'bg-blue-50/50' : ''}">${sysCellInner}</td>`;
                 if (isCurrent) {
-                  sysCells += `<td class="px-2 py-1 border-b border-slate-50 text-center text-[10px] trend-avg-col bg-amber-50 border-l border-r border-amber-200">
-                    <span class="text-blue-600">${sAvgG != null ? sAvgG : '—'}</span>
-                    <span class="text-slate-200 mx-0.5">/</span>
-                    <span class="text-purple-600">${sAvgA != null ? sAvgA : '—'}</span>
-                  </td>`;
+                  const sAvgInner = hideAffiliateSplit
+                    ? `<span class="text-blue-600">${sAvgG != null ? sAvgG : '—'}</span>`
+                    : `<span class="text-blue-600">${sAvgG != null ? sAvgG : '—'}</span><span class="text-slate-200 mx-0.5">/</span><span class="text-purple-600">${sAvgA != null ? sAvgA : '—'}</span>`;
+                  sysCells += `<td class="px-2 py-1 border-b border-slate-50 text-center text-[10px] trend-avg-col bg-amber-50 border-l border-r border-amber-200">${sAvgInner}</td>`;
                 }
               });
               rows += `<tr class="cat-sys-${catId} hidden bg-slate-25 hover:bg-slate-50">${sysCells}</tr>`;
@@ -6837,17 +6892,15 @@
             const gPrev = i > 0 ? weekData[i - 1].ghr : null;
             const aPrev = i > 0 ? weekData[i - 1].aff : null;
             const isCurrent = i === currentWeekIdx;
-            cells += `<td class="px-2 py-1.5 border-b border-slate-200 text-center text-[11px] font-bold ${isCurrent ? 'bg-blue-50' : ''}">
-              <span class="text-blue-700">${g}${deltaSpan(g, gPrev)}</span>
-              <span class="text-slate-300 mx-0.5">/</span>
-              <span class="text-purple-700">${a}${deltaSpan(a, aPrev)}</span>
-            </td>`;
+            const totalInner = hideAffiliateSplit
+              ? `<span class="text-blue-700">${g}${deltaSpan(g, gPrev)}</span>`
+              : `<span class="text-blue-700">${g}${deltaSpan(g, gPrev)}</span><span class="text-slate-300 mx-0.5">/</span><span class="text-purple-700">${a}${deltaSpan(a, aPrev)}</span>`;
+            cells += `<td class="px-2 py-1.5 border-b border-slate-200 text-center text-[11px] font-bold ${isCurrent ? 'bg-blue-50' : ''}">${totalInner}</td>`;
             if (isCurrent) {
-              cells += `<td class="px-2 py-1.5 border-b border-slate-200 text-center text-[11px] font-bold trend-avg-col bg-amber-50 border-l border-r border-amber-200">
-                <span class="text-blue-700">${avgG != null ? avgG : '—'}</span>
-                <span class="text-slate-300 mx-0.5">/</span>
-                <span class="text-purple-700">${avgA != null ? avgA : '—'}</span>
-              </td>`;
+              const totalAvgInner = hideAffiliateSplit
+                ? `<span class="text-blue-700">${avgG != null ? avgG : '—'}</span>`
+                : `<span class="text-blue-700">${avgG != null ? avgG : '—'}</span><span class="text-slate-300 mx-0.5">/</span><span class="text-purple-700">${avgA != null ? avgA : '—'}</span>`;
+              cells += `<td class="px-2 py-1.5 border-b border-slate-200 text-center text-[11px] font-bold trend-avg-col bg-amber-50 border-l border-r border-amber-200">${totalAvgInner}</td>`;
             }
           });
           return `<tr class="bg-slate-50">${cells}</tr>`;
@@ -6940,7 +6993,10 @@
 
         // Total col count: weeks + 1 (avg col after current week) + 1 (label col)
         const totalCols = weeks.length + 2;
-        let catTableBodyParts = [buildCaptureRow(), buildTotalRow()];
+        // GHR Capture % is meaningless on non-MSP (everything is GHR by definition).
+        let catTableBodyParts = hideAffiliateSplit
+          ? [buildTotalRow()]
+          : [buildCaptureRow(), buildTotalRow()];
         const assignedCats = new Set();
         catGroupDefs.forEach(group => {
           const groupCats = sortedCats.filter(c => !assignedCats.has(c) && group.match(c));
@@ -7038,7 +7094,7 @@
           });
           return `<tr class="bg-slate-50">${cells}</tr>`;
         })();
-        const sysTableBody = buildCaptureRow() + sysTableTotalRow + sortedSystems.map(buildSysRow).join('');
+        const sysTableBody = (hideAffiliateSplit ? '' : buildCaptureRow()) + sysTableTotalRow + sortedSystems.map(buildSysRow).join('');
 
         // ── PM view ────────────────────────────────────────────────────────────
         const allPMs = new Set();
@@ -7120,7 +7176,7 @@
           return rows;
         };
         const pmTableTotalRow = sysTableTotalRow; // same total
-        const pmTableBody = buildCaptureRow() + pmTableTotalRow + sortedPMs.map(buildPMRow).join('');
+        const pmTableBody = (hideAffiliateSplit ? '' : buildCaptureRow()) + pmTableTotalRow + sortedPMs.map(buildPMRow).join('');
 
         // ── Vendor view (Affiliate vendors only) ───────────────────────────────
         const allVendors = new Set();
@@ -7196,7 +7252,7 @@
           });
           return `<tr class="bg-slate-50">${cells}</tr>`;
         })();
-        const vendorTableBody = buildCaptureRow() + vendorTableTotalRow + sortedVendors.map(buildVendorRow).join('');
+        const vendorTableBody = (hideAffiliateSplit ? '' : buildCaptureRow()) + vendorTableTotalRow + sortedVendors.map(buildVendorRow).join('');
 
         // Weekly summary rows: Total HC, GHR, Affiliate, Pipeline, Trend Projection
         const summaryRows = [
@@ -7266,7 +7322,7 @@
           <div class="mt-6">
             <div class="flex items-center gap-2 mb-2">
               <h3 class="text-sm font-bold text-slate-600" id="trendBreakdownLabel">Category</h3>
-              <span class="text-slate-400 text-[10px]"><span class="text-blue-600">GHR</span> / <span class="text-purple-600">Affiliate</span></span>
+              ${hideAffiliateSplit ? '' : `<span class="text-slate-400 text-[10px]"><span class="text-blue-600">GHR</span> / <span class="text-purple-600">Affiliate</span></span>`}
             </div>
             <div class="rounded-lg border border-slate-200 overflow-x-auto">
               <table class="w-full text-xs">
@@ -7335,10 +7391,25 @@
             .filter(r => r.source_system === 'VNDLY')
             .map(r => `${Utils.getHealthSystem(null, r.system)}|${r.week_start}`)
         );
+        // When a Division filter is active on the non-MSP side, revenue rows
+        // (which aren't division-tagged) get filtered by source_system: Bullhorn
+        // sources map to Rev Cycle / Locums / Allied / etc.; Symplr = Education.
+        const selectedDivs = s.filterSelection.divisions;
+        const divFilterActive = selectedDivs && selectedDivs.size > 0;
+        const bullhornDivSelected = divFilterActive &&
+          Array.from(selectedDivs).some(d => d && d.toLowerCase() !== 'education');
+        const educationDivSelected = divFilterActive && selectedDivs.has('Education');
         const revenueByWeek = new Map();  // week_start → {ghr, aff}
         weeklyRevenueRows.forEach(r => {
           const sys = Utils.getHealthSystem(null, r.system);
           if (s.filterSelection.systems.size > 0 && !s.filterSelection.systems.has(sys)) return;
+          if (divFilterActive) {
+            const src = r.source_system;
+            const isBullhornSrc = src === 'Bullhorn';
+            const isSymplrSrc = src === 'Symplr';
+            if (isSymplrSrc && !educationDivSelected) return;
+            if (isBullhornSrc && !bullhornDivSelected) return;
+          }
           if (r.source_system === 'B4' && transitionedSystems.has(sys)) {
             if (vndlyRevenueWeeks.has(`${sys}|${r.week_start}`)) return;
           }
@@ -7536,16 +7607,21 @@
         const DASH_PIPELINE = [2, 3];
         const DASH_PENDING = [9, 3, 3, 3];
         const DASH_PROJECTION = [14, 6];
+        // Non-MSP has no GHR vs Affiliate distinction — everything is GHR direct staffing.
+        // Drop the GHR/Affiliate series entirely; keep Total + Revenue.
+        const isNonMspTrend = s.dataSource === 'non_msp';
         const categoryChartDatasets = [
           { label: 'Total Headcount', data: actualsData, borderColor: '#64748b', backgroundColor: 'rgba(100,116,139,0.08)', fill: true, tension: 0.3, pointRadius: 5 },
           { label: 'Total Pipeline', data: pipelineData, borderColor: '#64748b', fill: false, tension: 0.3, pointRadius: 4, borderDash: DASH_PIPELINE, hideFromLegend: true },
           { label: 'Total Unconfirmed', data: pipelineWithPendingData, borderColor: '#64748b', fill: false, tension: 0.3, pointRadius: 4, borderDash: DASH_PENDING },
-          { label: 'GHR', data: ghrActualsData, borderColor: '#3b82f6', backgroundColor: 'rgba(59,130,246,0.1)', fill: false, tension: 0.3, pointRadius: 4 },
-          { label: 'GHR Pipeline', data: ghrPipelineData, borderColor: '#3b82f6', fill: false, tension: 0.3, pointRadius: 3, borderDash: DASH_PIPELINE, hideFromLegend: true },
-          { label: 'GHR Unconfirmed', data: pendingGhrData, borderColor: '#3b82f6', fill: false, tension: 0.3, pointRadius: 3, borderDash: DASH_PENDING },
-          { label: 'Affiliate', data: affActualsData, borderColor: '#8b5cf6', backgroundColor: 'rgba(139,92,246,0.1)', fill: false, tension: 0.3, pointRadius: 4 },
-          { label: 'Affiliate Pipeline', data: affPipelineData, borderColor: '#8b5cf6', fill: false, tension: 0.3, pointRadius: 3, borderDash: DASH_PIPELINE, hideFromLegend: true },
-          { label: 'Affiliate Unconfirmed', data: pendingAffData, borderColor: '#8b5cf6', fill: false, tension: 0.3, pointRadius: 3, borderDash: DASH_PENDING },
+          ...(isNonMspTrend ? [] : [
+            { label: 'GHR', data: ghrActualsData, borderColor: '#3b82f6', backgroundColor: 'rgba(59,130,246,0.1)', fill: false, tension: 0.3, pointRadius: 4 },
+            { label: 'GHR Pipeline', data: ghrPipelineData, borderColor: '#3b82f6', fill: false, tension: 0.3, pointRadius: 3, borderDash: DASH_PIPELINE, hideFromLegend: true },
+            { label: 'GHR Unconfirmed', data: pendingGhrData, borderColor: '#3b82f6', fill: false, tension: 0.3, pointRadius: 3, borderDash: DASH_PENDING },
+            { label: 'Affiliate', data: affActualsData, borderColor: '#8b5cf6', backgroundColor: 'rgba(139,92,246,0.1)', fill: false, tension: 0.3, pointRadius: 4 },
+            { label: 'Affiliate Pipeline', data: affPipelineData, borderColor: '#8b5cf6', fill: false, tension: 0.3, pointRadius: 3, borderDash: DASH_PIPELINE, hideFromLegend: true },
+            { label: 'Affiliate Unconfirmed', data: pendingAffData, borderColor: '#8b5cf6', fill: false, tension: 0.3, pointRadius: 3, borderDash: DASH_PENDING },
+          ]),
           { label: 'Revenue', data: revenueTotalData, borderColor: '#d97706', backgroundColor: 'rgba(217,119,6,0.08)', fill: false, tension: 0.3, pointRadius: 4, borderWidth: 2, yAxisID: 'y1' },
           { label: 'Revenue (projected)', data: revenueProjectedData, borderColor: '#d97706', fill: false, tension: 0.3, pointRadius: 3, borderWidth: 2, borderDash: DASH_PENDING, yAxisID: 'y1', hideFromLegend: true },
         ];
@@ -8173,6 +8249,8 @@
           const isGhr = isGHRAgencyLocal(r.agency);
           if (drill && drill.agency && (drill.agency === 'GHR') !== isGhr) return;
           if (!trendCatMatch(r)) return;
+          if (!Utils.matchesSelectedDivisions(r.division, s.filterSelection.divisions)) return;
+          if (s.filterSelection.regions.size > 0 && !(r.region && s.filterSelection.regions.has(r.region))) return;
 
           const bk = trendStatusBucket(r.status);
           if (!bk) return;
@@ -8199,6 +8277,8 @@
           const isGhr = isGHRAgencyLocal(r.agency);
           if (drill && drill.agency && (drill.agency === 'GHR') !== isGhr) return false;
           if (!trendCatMatch(r)) return false;
+          if (!Utils.matchesSelectedDivisions(r.division, s.filterSelection.divisions)) return false;
+          if (s.filterSelection.regions.size > 0 && !(r.region && s.filterSelection.regions.has(r.region))) return false;
           return true;
         };
 
@@ -9717,22 +9797,32 @@
     // SETTINGS MODAL FUNCTIONS
     
     let currentMappings = [];
-    
+
     let currentPMMappings = [];
 
+    // Non-MSP client allowlist. Loaded lazily when the Settings modal opens.
+    let currentAllowlist = [];
+
     window.switchSettingsTab = function(tab) {
-        const isSystems = tab === 'systems';
-        document.getElementById('settingsPanelSystems').classList.toggle('hidden', !isSystems);
-        document.getElementById('settingsPanelPM').classList.toggle('hidden', isSystems);
-        const sysBtn = document.getElementById('settingsTabSystems');
-        const pmBtn = document.getElementById('settingsTabPM');
-        if (isSystems) {
-            sysBtn.className = 'px-4 py-2 text-sm font-semibold rounded-t-md border border-b-0 border-slate-200 bg-white text-blue-700 -mb-px z-10';
-            pmBtn.className = 'px-4 py-2 text-sm font-semibold rounded-t-md text-slate-500 hover:text-slate-700';
-        } else {
-            pmBtn.className = 'px-4 py-2 text-sm font-semibold rounded-t-md border border-b-0 border-slate-200 bg-white text-blue-700 -mb-px z-10';
-            sysBtn.className = 'px-4 py-2 text-sm font-semibold rounded-t-md text-slate-500 hover:text-slate-700';
-        }
+        const panels = {
+            systems:   document.getElementById('settingsPanelSystems'),
+            pm:        document.getElementById('settingsPanelPM'),
+            allowlist: document.getElementById('settingsPanelAllowlist'),
+        };
+        const buttons = {
+            systems:   document.getElementById('settingsTabSystems'),
+            pm:        document.getElementById('settingsTabPM'),
+            allowlist: document.getElementById('settingsTabAllowlist'),
+        };
+        const activeCls = 'px-4 py-2 text-sm font-semibold rounded-t-md border border-b-0 border-slate-200 bg-white text-blue-700 -mb-px z-10';
+        const inactiveCls = 'px-4 py-2 text-sm font-semibold rounded-t-md text-slate-500 hover:text-slate-700';
+        Object.entries(panels).forEach(([k, el]) => { if (el) el.classList.toggle('hidden', k !== tab); });
+        Object.entries(buttons).forEach(([k, el]) => {
+            if (!el) return;
+            const wasHidden = el.classList.contains('hidden');
+            el.className = k === tab ? activeCls : inactiveCls;
+            if (wasHidden) el.classList.add('hidden');
+        });
         lucide.createIcons();
     };
 
@@ -9748,6 +9838,10 @@
         document.querySelectorAll('#settingsPanelSystems button[onclick="addMappingRow()"], #settingsPanelSystems button[onclick="resetMappingsToDefaults()"]').forEach(b => {
             b.classList.toggle('hidden', isNonMsp);
         });
+
+        // Non-MSP Clients tab is only relevant when running the non-MSP dashboard
+        const allowlistTab = document.getElementById('settingsTabAllowlist');
+        if (allowlistTab) allowlistTab.classList.toggle('hidden', !isNonMsp);
 
         lucide.createIcons();
 
@@ -9787,8 +9881,25 @@
 
         renderMappingsTable();
         renderPMMappingsTable();
+
+        // Load non-MSP client allowlist (only on non-MSP dashboard)
+        if (isNonMsp) {
+            try {
+                const alResponse = await fetch(`${API_BASE_URL}/client-allowlist`);
+                if (alResponse.ok) {
+                    const alData = await alResponse.json();
+                    currentAllowlist = alData.allowlist || [];
+                } else {
+                    currentAllowlist = [];
+                }
+            } catch (e) {
+                console.warn('Could not load client allowlist:', e);
+                currentAllowlist = [];
+            }
+            renderAllowlistTable();
+        }
     };
-    
+
     window.closeSettingsModal = function() {
         document.getElementById('settingsModal').classList.add('hidden');
     };
@@ -10066,6 +10177,64 @@
         event.target.value = ''; // Reset file input
     };
     
+    function _escapeAttr(v) {
+        return String(v == null ? '' : v).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }
+
+    function renderAllowlistTable() {
+        const tbody = document.getElementById('allowlistTableBody');
+        if (!tbody) return;
+        if (!currentAllowlist.length) {
+            tbody.innerHTML = `<tr><td colspan="4" class="p-6 text-center text-sm text-slate-400 italic">
+                No manual client IDs. Auto-inclusion still applies for any Bullhorn client with active headcount.
+            </td></tr>`;
+            return;
+        }
+        tbody.innerHTML = currentAllowlist.map((row, idx) => `
+            <tr data-allowlist-idx="${idx}">
+                <td class="p-2"><input type="number" min="0" step="1" class="w-full p-2 border border-slate-300 rounded text-sm allowlist-client-id" value="${_escapeAttr(row.client_id)}" placeholder="e.g. 12345"></td>
+                <td class="p-2"><input type="text" class="w-full p-2 border border-slate-300 rounded text-sm allowlist-display-name" value="${_escapeAttr(row.display_name || '')}" placeholder="Falls back to Bullhorn client name"></td>
+                <td class="p-2"><input type="text" class="w-full p-2 border border-slate-300 rounded text-sm allowlist-notes" value="${_escapeAttr(row.notes || '')}" placeholder="Why is this client on the list?"></td>
+                <td class="p-2 text-center"><button onclick="removeAllowlistRow(${idx})" class="text-slate-400 hover:text-red-600" title="Remove"><i data-lucide="trash-2" class="w-4 h-4"></i></button></td>
+            </tr>
+        `).join('');
+        lucide.createIcons();
+    }
+
+    window.addAllowlistRow = function() {
+        // Persist any in-progress edits so they aren't lost when we re-render
+        currentAllowlist = collectAllowlistFromDOM({ allowBlank: true });
+        currentAllowlist.push({ client_id: '', display_name: '', notes: '' });
+        renderAllowlistTable();
+    };
+
+    window.removeAllowlistRow = function(idx) {
+        currentAllowlist = collectAllowlistFromDOM({ allowBlank: true });
+        currentAllowlist.splice(idx, 1);
+        renderAllowlistTable();
+    };
+
+    function collectAllowlistFromDOM({ allowBlank = false } = {}) {
+        const rows = document.querySelectorAll('#allowlistTableBody tr[data-allowlist-idx]');
+        const out = [];
+        rows.forEach(tr => {
+            const idInput = tr.querySelector('.allowlist-client-id');
+            const displayInput = tr.querySelector('.allowlist-display-name');
+            const notesInput = tr.querySelector('.allowlist-notes');
+            const raw = idInput ? idInput.value.trim() : '';
+            const cid = raw === '' ? null : Number(raw);
+            if (!allowBlank) {
+                if (raw === '' || !Number.isFinite(cid) || cid <= 0) return;
+            }
+            out.push({
+                client_id: raw === '' ? '' : cid,
+                display_name: (displayInput ? displayInput.value.trim() : '') || null,
+                notes: (notesInput ? notesInput.value.trim() : '') || null,
+            });
+        });
+        return out;
+    }
+
     window.saveSettings = async function() {
         try {
             // Non-MSP: system mappings rollup is code-managed (shared_code/
@@ -10079,16 +10248,25 @@
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ mappings: currentMappings })
                 });
-            const [sysResp, pmResp] = await Promise.all([
+            // Non-MSP client allowlist. MSP has no such endpoint, so no-op there.
+            const allowlistPromise = isNonMsp
+                ? fetch(`${API_BASE_URL}/client-allowlist`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ allowlist: collectAllowlistFromDOM() })
+                })
+                : Promise.resolve({ ok: true });
+            const [sysResp, pmResp, allowlistResp] = await Promise.all([
                 sysPromise,
                 fetch(`${API_BASE_URL}/pm-mappings`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ mappings: collectPMMappingsFromDOM() })
-                })
+                }),
+                allowlistPromise,
             ]);
 
-            if (sysResp.ok && pmResp.ok) {
+            if (sysResp.ok && pmResp.ok && allowlistResp.ok) {
                 // Update CONSTANTS with new system mappings
                 CONSTANTS.HEALTH_SYSTEM_MAPPINGS = currentMappings.map(m => ({
                     keywords: Array.isArray(m.keywords) ? m.keywords : [m.keywords],
@@ -10109,7 +10287,8 @@
                     await window.loadDataFromDatabase();
                 }
             } else {
-                const err = await (sysResp.ok ? pmResp : sysResp).json();
+                const failed = !sysResp.ok ? sysResp : (!pmResp.ok ? pmResp : allowlistResp);
+                const err = await failed.json().catch(() => ({}));
                 throw new Error(err.error || 'Save failed');
             }
         } catch (error) {

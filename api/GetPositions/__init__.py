@@ -3,10 +3,11 @@ import pyodbc
 import os
 import json
 from shared_code.auth import require_allowed_domain
-from shared_code.data_source import is_non_msp, get_bullhorn_conn, get_symplr_conn
+from shared_code.data_source import is_non_msp, get_bullhorn_conn, get_symplr_conn, get_appdb_conn
 from shared_code.bullhorn_systems import (
     build_system_case_expr,
     build_scope_filter,
+    resolve_scope_client_ids,
 )
 from shared_code.symplr_systems import (
     build_system_case_expr as symplr_system_case_expr,
@@ -25,8 +26,14 @@ def _bullhorn_positions_data():
     """Returns open Bullhorn job orders. Raises on error."""
     conn = get_bullhorn_conn()
     cursor = conn.cursor()
+    app_conn = get_appdb_conn()
+    try:
+        scope_ids = resolve_scope_client_ids(cursor, app_conn)
+    finally:
+        if app_conn is not None:
+            app_conn.close()
     system_case = build_system_case_expr('jo.clientCorporationID')
-    scope_filter = build_scope_filter('jo.clientCorporationID')
+    scope_filter = build_scope_filter('jo.clientCorporationID', client_ids=scope_ids)
     status_list = ', '.join("'" + s + "'" for s in BULLHORN_OPEN_JO_STATUSES)
 
     cursor.execute(f'''

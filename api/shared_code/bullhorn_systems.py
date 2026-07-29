@@ -1,33 +1,56 @@
 """
-Bullhorn account rollup.
+Bullhorn account rollup + dynamic scope resolution.
 
-Maps Bullhorn clientCorporationID → display name for the 8 non-MSP accounts
-in the Bullhorn book. The current dashboard treats display name as a
-"Health System" — same dimension that B4/VNDLY rollup feeds on the MSP side.
+The non-MSP dashboard's Bullhorn scope is now the UNION of three sources:
 
-Symplr (Education) book — Reading SD, Allentown SD, DCIU — is in a separate
-data source and not in this file. Will be added under shared_code/symplr_systems.py
-once we have a Symplr connection.
+  1. Hardcoded rollup (BULLHORN_SYSTEM_ROLLUP below): maps specific
+     clientCorporationIDs to a display "system_name" (e.g. Cone Health's
+     4 IDs all roll up to one "Cone Health" row).
+  2. Manual allowlist stored in impactmgr.bullhorn_client_allowlist: IDs
+     leaders explicitly forced in from the Settings UI, regardless of
+     current headcount. These render under their raw View_ClientCorporation.name.
+  3. Auto-active: any clientCorporationID with an on-assignment placement
+     right now (status IN ('Approved','Onboarding') AND today between
+     dateBegin/dateEnd) AND whose client is tagged with at least one
+     non-MSP division on cc.customTextBlock1. Also render under raw
+     cc.name unless mapped in (1).
 
-Source: locked in with stakeholders 2026-06-XX based on top-12 non-MSP
-account list. Active-placement counts captured during ID verification:
+Symplr (Education) is a separate source and lives in symplr_systems.py.
 
-  Orlando Health    : 144
-  Solventum         :  61
-  Montefiore        :  51
-  Cone Health       :  38
-  Memorial Hermann  :  28
-  Lakeland Regional :  28
-  University of Miami: 20
-  CarolinaEast      :  15
-
-Duke Health was on the original top-12 list but is dropped — 1 active
-placement total, most volume in Completed/Termination status (closed
-historical book, not actively serviced).
+NON_MSP_DIVISIONS is the whitelist that gates auto-scope. Without it,
+"any active client" pulls in ~400 clients including Education (Symplr's
+territory), untagged historical clients, and internal / LTC-location
+buckets that aren't part of the non-MSP book.
 """
+
+# Division tokens that count a client as "non-MSP" for auto-scope purposes.
+# A client is auto-included only if its cc.customTextBlock1 (a comma-
+# separated list) contains AT LEAST ONE of these tokens.
+#
+# Deliberately EXCLUDED tokens that appear in the data but aren't non-MSP:
+#   - Education        (Symplr's territory, not Bullhorn's)
+#   - (null / '')      (untagged records, mostly historical)
+#   - GHR Internal     (internal ops, not client-facing)
+#   - Travel Nursing / Texas / Texas Nursing / PRN Allied / Plymouth Meeting LTC /
+#     Pittsburgh LTC   (legacy or location-specific tags, low volume)
+NON_MSP_DIVISIONS = {
+    'Allied',
+    'Nursing',
+    'RevCycle Workforce',
+    'United',
+    'Locum Tenens',
+    'Technology',
+    'Search',
+    'Workforce Solutions',
+    'Planet Healthcare',
+    'Acute',
+    'Human Services',
+}
 
 # system_name → list of Bullhorn clientCorporationIDs that roll up to it.
 # Order here determines the default sort order in the Trend / breakdown tables.
+# Anything NOT in this map that gets scoped in (via allowlist or headcount)
+# renders under cc.name — the CASE expression's ELSE branch handles that.
 BULLHORN_SYSTEM_ROLLUP = [
     {'system_name': 'Orlando Health',       'client_ids': [8227]},
     {'system_name': 'Solventum',            'client_ids': [2566]},
@@ -40,8 +63,6 @@ BULLHORN_SYSTEM_ROLLUP = [
 ]
 
 
-# Flattened reverse-lookup: clientCorporationID → system_name.
-# Used by every Bullhorn endpoint to label rows.
 def _build_reverse_map():
     out = {}
     for entry in BULLHORN_SYSTEM_ROLLUP:
@@ -59,45 +80,139 @@ def get_system_for_client_id(client_id):
 
 
 def all_in_scope_client_ids():
-    """Flat list of every clientCorporationID in scope for the non-MSP dashboard."""
+    """Flat list of every hardcoded rollup clientCorporationID.
+
+    Kept for backward compatibility. The effective scope now also includes
+    the manual allowlist and auto-active clients — use resolve_scope_client_ids
+    from within an endpoint that has DB connections available.
+    """
     return list(CLIENT_ID_TO_SYSTEM.keys())
 
 
-def build_system_case_expr(column_name: str = 'p.clientCorporationID') -> str:
+def get_manual_allowlist_ids(app_conn):
     """
-    Returns a SQL CASE WHEN ... expression that maps clientCorporationID to
-    its rolled-up system_name. Use this in any Bullhorn query that needs
-    a 'health_system' column.
+    Read manual-add client IDs from impactmgr.bullhorn_client_allowlist.
 
-    Example:
-        cursor.execute(f'''
-            SELECT {build_system_case_expr()} AS health_system, ...
-            FROM dbo.View_Placement p ...
-        ''')
+    Returns an empty set if:
+      - app_conn is None (DB not configured — dev/local)
+      - the table doesn't exist yet (first run before ensure_schema)
+      - any query error (logged, non-fatal — we fall back to hardcoded + auto)
+    """
+    if app_conn is None:
+        return set()
+    try:
+        cursor = app_conn.cursor()
+        cursor.execute("""
+            IF EXISTS (
+                SELECT 1 FROM sys.tables
+                WHERE name = 'bullhorn_client_allowlist' AND schema_id = SCHEMA_ID('impactmgr')
+            )
+                SELECT client_id FROM impactmgr.bullhorn_client_allowlist
+            ELSE
+                SELECT TOP 0 CAST(NULL AS INT) AS client_id
+        """)
+        return {int(row[0]) for row in cursor.fetchall() if row[0] is not None}
+    except Exception as e:
+        # Non-fatal — hardcoded rollup + auto-active still keep the dashboard populated.
+        print(f"get_manual_allowlist_ids: swallowed error, returning empty set: {e}")
+        return set()
+
+
+def discover_active_client_ids(bullhorn_cursor):
+    """
+    Any clientCorporationID with a placement that's on-assignment RIGHT NOW
+    AND whose client is tagged with at least one non-MSP division.
+
+    Matches how KPIs count headcount: status IN (Approved, Onboarding) with
+    today falling between dateBegin and dateEnd. Cheap single query on an
+    indexed status column.
+
+    Division filter uses STRING_SPLIT against NON_MSP_DIVISIONS. Without it,
+    the auto-scope would balloon from ~90 non-MSP accounts to ~400 including
+    Education-only and untagged historical records.
+    """
+    try:
+        # Build the whitelist as a comma-separated SQL literal. All tokens
+        # are hardcoded, safe to inline.
+        divisions_sql = ', '.join(
+            "'" + d.replace("'", "''") + "'" for d in sorted(NON_MSP_DIVISIONS)
+        )
+        bullhorn_cursor.execute(f"""
+            SELECT DISTINCT p.clientCorporationID
+            FROM dbo.View_Placement p
+            INNER JOIN dbo.View_ClientCorporation cc
+                ON p.clientCorporationID = cc.clientCorporationID
+            WHERE p.isDeleted = 0
+              AND p.status IN ('Approved','Onboarding')
+              AND p.dateBegin <= CAST(GETDATE() AS DATE)
+              AND (p.dateEnd IS NULL OR p.dateEnd >= CAST(GETDATE() AS DATE))
+              AND cc.customTextBlock1 IS NOT NULL
+              AND cc.customTextBlock1 <> ''
+              AND EXISTS (
+                  SELECT 1
+                  FROM STRING_SPLIT(cc.customTextBlock1, ',') s
+                  WHERE LTRIM(RTRIM(s.value)) IN ({divisions_sql})
+              )
+        """)
+        return {int(row[0]) for row in bullhorn_cursor.fetchall() if row[0] is not None}
+    except Exception as e:
+        print(f"discover_active_client_ids: swallowed error, returning empty set: {e}")
+        return set()
+
+
+def resolve_scope_client_ids(bullhorn_cursor, app_conn=None):
+    """
+    The full effective scope: hardcoded rollup ∪ manual allowlist ∪ auto-active.
+
+    Call this once at the top of every non-MSP endpoint, then pass the
+    resulting set into build_scope_filter(). Both DB connections should be
+    from the caller's already-open connections so we don't churn extra logins.
+    """
+    return (
+        set(CLIENT_ID_TO_SYSTEM.keys())
+        | get_manual_allowlist_ids(app_conn)
+        | discover_active_client_ids(bullhorn_cursor)
+    )
+
+
+def build_system_case_expr(column_name='p.clientCorporationID', fallback_name_column='cc.name'):
+    """
+    SQL CASE that maps clientCorporationID → rolled-up system_name. IDs not
+    in the hardcoded rollup fall through to `fallback_name_column` (defaults
+    to cc.name — every non-MSP query already JOINs View_ClientCorporation cc,
+    so this Just Works).
+
+    Callers that don't join cc must pass their own fallback_name_column, or
+    pass 'NULL' to preserve the old behavior of returning NULL for unmapped IDs.
     """
     parts = ['CASE']
     for entry in BULLHORN_SYSTEM_ROLLUP:
         ids = ', '.join(str(i) for i in entry['client_ids'])
-        # system_name is hard-coded data, safe to inline. Still single-quote-escape
-        # in case future names contain apostrophes (e.g. "Children's").
+        # system_name is hard-coded, safe to inline. Single-quote-escape in case
+        # a future entry contains an apostrophe (e.g. "Children's").
         name_safe = entry['system_name'].replace("'", "''")
         parts.append(f"    WHEN {column_name} IN ({ids}) THEN '{name_safe}'")
-    parts.append('    ELSE NULL')
+    parts.append(f'    ELSE {fallback_name_column}')
     parts.append('END')
     return '\n'.join(parts)
 
 
-def build_scope_filter(column_name: str = 'p.clientCorporationID') -> str:
+def build_scope_filter(column_name='p.clientCorporationID', client_ids=None):
     """
-    Returns a SQL fragment to filter placements to in-scope non-MSP accounts.
+    SQL fragment `{col} IN (...)` restricting placements to in-scope non-MSP
+    accounts.
 
-    Example:
-        cursor.execute(f'''
-            SELECT ... FROM dbo.View_Placement p
-            WHERE p.isDeleted = 0
-              AND {build_scope_filter()}
-              ...
-        ''')
+    Pass `client_ids` (a set/list) computed via resolve_scope_client_ids to
+    get the full dynamic scope. Omit `client_ids` for legacy behavior
+    (hardcoded rollup only) — useful for tests or when the app DB is offline.
+
+    If the effective set is empty, returns '1 = 0' so the query returns
+    zero rows rather than accidentally matching everything.
     """
-    ids = ', '.join(str(i) for i in all_in_scope_client_ids())
-    return f'{column_name} IN ({ids})'
+    if client_ids is None:
+        client_ids = all_in_scope_client_ids()
+    ids_list = sorted(set(int(i) for i in client_ids if i is not None))
+    if not ids_list:
+        return '1 = 0'
+    ids_str = ', '.join(str(i) for i in ids_list)
+    return f'{column_name} IN ({ids_str})'

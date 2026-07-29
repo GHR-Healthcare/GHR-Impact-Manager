@@ -2,6 +2,25 @@
 
 ## Version History
 
+**2.0.0** - Non-MSP overhaul: dynamic scope, admin allowlist, cross-instance toggle, GHR/Affiliate strip
+- **Dynamic Bullhorn scope.** Replaces the hardcoded 8-account rollup with a runtime UNION of three sources: (1) hardcoded rollup in `BULLHORN_SYSTEM_ROLLUP` — kept as-is, still defines display groupings like Cone Health = 4 IDs; (2) `impactmgr.bullhorn_client_allowlist` — new table, leader-editable via Settings → "Non-MSP Clients"; (3) auto-active — any Bullhorn client with an on-assignment placement right now AND whose `cc.customTextBlock1` contains at least one non-MSP division token (`NON_MSP_DIVISIONS`: Allied, Nursing, RevCycle Workforce, United, Locum Tenens, Technology, Search, Workforce Solutions, Planet Healthcare, Acute, Human Services). Without the division whitelist the auto-scope pulled in ~400 clients including Education-only and untagged historical records.
+- **build_system_case_expr** now falls back to `cc.name` for IDs not in the hardcoded rollup, so auto-added / allowlisted clients render under their raw Bullhorn client name in Trend / Stats / Financials. Added missing `LEFT JOIN cc` on `GetTrendData.weekly_revenue` query so the fallback works there too.
+- **New Function `GetClientAllowlist`** (`GET`/`POST /api/client-allowlist`) — non-MSP only, backed by `impactmgr.bullhorn_client_allowlist`. Follows the same "POST replaces all" pattern as `system-mappings`. Table auto-creates via `ensure_schema()` on first call.
+- **Every non-MSP endpoint** (GetTrendData, GetPositions, GetStatsData, GetHoursData, GetFinancialData, GetYoYTrendData) now resolves the effective scope at the start of the request via `resolve_scope_client_ids(bullhorn_cursor, app_conn)` and passes the ID set into `build_scope_filter`. If the app DB is unreachable, the manual allowlist silently falls back to empty (auto-active + hardcoded rollup still populate the dashboard).
+- **Settings modal** gains a third tab, "Non-MSP Clients", visible only on the non-MSP instance. Add/remove client IDs with optional display-name override and notes; POST saves the full list.
+- **GHR ↔ Affiliate strip on non-MSP UI.** All non-MSP records are GHR direct staffing, so the GHR vs Affiliate distinction is meaningless there. On the non-MSP instance the Trend chart now hides the GHR + Affiliate series (keeps Total headcount + Revenue), the Category / Account / PM / Vendor breakdown tables drop the "GHR / Affiliate" split cells and the "GHR Capture %" row, and the "Category" heading no longer shows the split legend.
+- **MSP ↔ non-MSP instance toggle** in the header. Reads `otherInstanceUrl` and `otherInstanceLabel` from `/api/get-config`; each instance's Azure config sets `OTHER_INSTANCE_URL` pointing at its sibling. Falls back to the ghrhealthcare.com custom hostnames so a fresh deploy still works before the env var is set. Hidden if config has no URL.
+- **Azure env vars bumped** on both instances: `APP_VERSION=2.0.0`, `OTHER_INSTANCE_URL` cross-linked between `impactmgr.ghrhealthcare.com` and `impactmgr-nonmsp.ghrhealthcare.com`.
+- **New helper** `get_appdb_conn()` in `data_source.py` — reads `DB_HOST` / `APPDB` / `DB_USER` / `DB_PASSWORD`; returns None if unset (dev/local safe).
+
+Diagnostic snapshot at time of ship (2026-07-29): non-MSP scope resolves to 388 auto-active + 15 hardcoded = 388 unique client IDs. Bullhorn categories flowing through: Travel (1,115), Remote (623), Local (550), PRN (339), Permanent (218). Total trend rows: ~2,845.
+
+Deferred to a follow-up: (1) non-MSP-specific `catGroupDefs` so Bullhorn's Travel/PRN/Remote/Local/Permanent categories get their own breakdown rows instead of falling into "Other"; (2) rework of non-MSP KPI card labels ("GHR / Overall Fill / Active", "Active Sub Mix (GHR% / AV%)") which still show GHR/Affiliate framing.
+
+**1.8.7** - Wire Division / Region filters into Trend tab
+- Trend tab's `filterRow` only checked systems/facilities/categories/specialties, so picking Division = Rev Cycle did nothing and Symplr (Education) rows stayed in the chart, category breakdown, and outlook. Now filters by `division` (via `Utils.matchesSelectedDivisions`, which splits Bullhorn's comma-separated `customTextBlock1`) and `region`. Applied in three places: the assignment/pending `filterRow`, the Outlook forecast iteration over `trendData.assignments`, and `passesPendingFilters`.
+- Weekly revenue overlay (orange line) also now respects Division. Revenue rows aren't division-tagged, so when a Division filter is active we infer from `source_system`: Symplr rows count only when Education is selected; Bullhorn rows count only when a non-Education division is selected.
+
 **1.8.6** - Non-MSP browser tab title
 - Sets `document.title` to "GHR Impact Manager — Non-MSP" on the non-MSP instance (was "GHR Impact Manager" on both, so they were indistinguishable when open in adjacent tabs). MSP unchanged.
 
