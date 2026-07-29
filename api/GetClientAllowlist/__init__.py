@@ -99,10 +99,12 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
 
     conn = get_appdb_conn()
     if conn is None:
+        # Internal misconfig — user-facing message stays generic.
+        print("GetClientAllowlist: app DB not configured (DB_HOST/APPDB/DB_USER/DB_PASSWORD missing)")
         return func.HttpResponse(
-            json.dumps({'error': 'App DB not configured (DB_HOST/APPDB/DB_USER/DB_PASSWORD missing)'}),
+            json.dumps({'error': 'This feature is temporarily unavailable. Please try again later.'}),
             mimetype="application/json",
-            status_code=500,
+            status_code=503,
         )
 
     try:
@@ -192,10 +194,12 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
         )
 
     except Exception as e:
+        # Full details go to server logs; surface a generic message to the UI.
         import traceback
         traceback.print_exc()
+        print(f"GetClientAllowlist: unhandled error: {e}")
         return func.HttpResponse(
-            json.dumps({'error': str(e)}),
+            json.dumps({'error': 'Something went wrong saving the allowlist. Please try again.'}),
             mimetype="application/json",
             status_code=500,
         )

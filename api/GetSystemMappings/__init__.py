@@ -93,7 +93,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
     if is_non_msp():
         if req.method == 'POST':
             return func.HttpResponse(
-                json.dumps({'error': 'System mappings are code-managed on the non-MSP instance'}),
+                json.dumps({'error': 'Health system groupings can\'t be edited on the non-MSP dashboard. Use the Non-MSP Clients tab to add specific accounts.'}),
                 mimetype="application/json",
                 status_code=405,
             )

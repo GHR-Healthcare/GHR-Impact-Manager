@@ -355,13 +355,11 @@
       <div id="settingsPanelSystems" class="p-6 overflow-y-auto">
         <p class="text-sm text-slate-500 mb-4">Map facility name keywords to normalized health system names. Keywords are matched case-insensitively.</p>
 
-        <!-- Non-MSP banner: rollup is code-managed (shared_code/bullhorn_systems.py).
-             Shown via JS when dataSource === 'non_msp'. -->
+        <!-- Non-MSP: system rollup isn't editable from this screen. Direct
+             users to the Non-MSP Clients tab where they can add accounts. -->
         <div id="systemMappingsCodeManagedBanner" class="hidden mb-4 p-3 bg-amber-50 border border-amber-200 rounded text-sm text-amber-800">
           <i data-lucide="info" class="w-4 h-4 inline-block mr-1"></i>
-          The non-MSP account rollup is code-managed. Edit
-          <code class="px-1 py-0.5 bg-amber-100 rounded text-xs">api/shared_code/bullhorn_systems.py</code>
-          and redeploy to add or remove accounts.
+          Health system groupings can't be edited here on the non-MSP dashboard. To force-include a specific account, switch to the <strong>Non-MSP Clients</strong> tab.
         </div>
 
         <div class="border rounded-lg overflow-hidden mb-4">
@@ -424,21 +422,19 @@
       <!-- Non-MSP Client Allowlist Tab (visible only on non-MSP) -->
       <div id="settingsPanelAllowlist" class="p-6 overflow-y-auto hidden">
         <p class="text-sm text-slate-500 mb-4">
-          Force-include a client in the dashboard even when it has no current headcount.
-          Pick <strong>Bullhorn</strong> (uses <span class="font-mono">clientCorporationID</span>) or <strong>Symplr</strong>
-          (uses the profile_client master <span class="font-mono">recordid</span> — child clients under that master come along).
-          Any account with <em>active</em> placements/orders is already pulled in automatically; this list covers edge cases like a client between contracts that leadership still wants visibility on.
+          Keep a specific client visible on the dashboard even when they have no active work at the moment.
+          Anyone with active placements or orders is already included automatically — this list is for accounts you want to keep an eye on regardless.
         </p>
 
         <div class="border rounded-lg overflow-hidden mb-4">
           <table class="w-full text-sm">
             <thead class="bg-slate-100">
               <tr>
-                <th class="text-left p-3 font-semibold text-slate-700 w-36">Source</th>
-                <th class="text-left p-3 font-semibold text-slate-700 w-40">Client ID</th>
-                <th class="text-left p-3 font-semibold text-slate-700 w-72">Display Name Override <span class="font-normal text-xs text-slate-400">(optional)</span></th>
+                <th class="text-left p-3 font-semibold text-slate-700 w-32">Source</th>
+                <th class="text-left p-3 font-semibold text-slate-700 w-32">Client ID</th>
+                <th class="text-left p-3 font-semibold text-slate-700 w-64">Display Name <span class="font-normal text-xs text-slate-400">(optional)</span></th>
                 <th class="text-left p-3 font-semibold text-slate-700">Notes <span class="font-normal text-xs text-slate-400">(optional)</span></th>
-                <th class="w-16 p-3"></th>
+                <th class="w-14 p-3"></th>
               </tr>
             </thead>
             <tbody id="allowlistTableBody" class="divide-y">
@@ -447,12 +443,12 @@
           </table>
         </div>
 
-        <div class="flex justify-between items-center">
-          <button onclick="addAllowlistRow()" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded text-sm font-medium flex items-center gap-1">
-            <i data-lucide="plus" class="w-4 h-4"></i> Add Client ID
+        <div class="flex justify-between items-center gap-4 flex-wrap">
+          <button onclick="addAllowlistRow()" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded text-sm font-medium flex items-center gap-1.5 whitespace-nowrap">
+            <i data-lucide="plus" class="w-4 h-4"></i> Add Client
           </button>
-          <p class="text-xs text-slate-500">
-            Save applies all rows. Removing a row here drops it from the forced list (auto-inclusion still applies if the client has active headcount).
+          <p class="text-xs text-slate-500 max-w-md">
+            Removing a row here just removes the manual override. Clients with active work are still included automatically.
           </p>
         </div>
       </div>
@@ -8753,9 +8749,11 @@
 
         const data = s.contractsData || {};
         if (data.error) {
+          // Log raw error to the console for devs; UI shows a friendly message.
+          console.error('Contracts comparison error:', data.error);
           container.innerHTML = `<div class="p-4 bg-red-50 border border-red-200 rounded text-red-700 text-sm">
-            <div class="font-semibold mb-1">Failed to load contracts comparison</div>
-            <div class="text-xs font-mono">${data.error}</div>
+            <div class="font-semibold mb-1">Couldn't load contracts comparison</div>
+            <div class="text-xs text-red-600">Please refresh the page. If the issue continues, contact the app team.</div>
           </div>`;
           return;
         }
@@ -10252,15 +10250,14 @@
         const tbody = document.getElementById('allowlistTableBody');
         if (!tbody) return;
         if (!currentAllowlist.length) {
-            tbody.innerHTML = `<tr><td colspan="5" class="p-6 text-center text-sm text-slate-400 italic">
-                No manual client IDs. Auto-inclusion still applies for any client with active headcount.
+            tbody.innerHTML = `<tr><td colspan="5" class="p-8 text-center text-sm text-slate-400 italic">
+                No clients added yet. Click <strong class="text-slate-500">Add Client</strong> below to pin an account to the dashboard.
             </td></tr>`;
             return;
         }
         tbody.innerHTML = currentAllowlist.map((row, idx) => {
             const src = (row.source || 'bullhorn').toLowerCase();
-            const idPlaceholder = src === 'symplr' ? 'Symplr master recordid' : 'Bullhorn clientCorporationID';
-            const namePlaceholder = src === 'symplr' ? 'Falls back to profile_client.clientname' : 'Falls back to Bullhorn client name';
+            const namePlaceholder = 'Leave blank to use client name from source';
             return `
             <tr data-allowlist-idx="${idx}">
                 <td class="p-2">
@@ -10269,9 +10266,9 @@
                         <option value="symplr" ${src === 'symplr' ? 'selected' : ''}>Symplr</option>
                     </select>
                 </td>
-                <td class="p-2"><input type="number" min="0" step="1" class="w-full p-2 border border-slate-300 rounded text-sm allowlist-client-id" value="${_escapeAttr(row.client_id)}" placeholder="${idPlaceholder}"></td>
+                <td class="p-2"><input type="number" min="0" step="1" class="w-full p-2 border border-slate-300 rounded text-sm allowlist-client-id" value="${_escapeAttr(row.client_id)}" placeholder="Numeric ID"></td>
                 <td class="p-2"><input type="text" class="w-full p-2 border border-slate-300 rounded text-sm allowlist-display-name" value="${_escapeAttr(row.display_name || '')}" placeholder="${namePlaceholder}"></td>
-                <td class="p-2"><input type="text" class="w-full p-2 border border-slate-300 rounded text-sm allowlist-notes" value="${_escapeAttr(row.notes || '')}" placeholder="Why is this client on the list?"></td>
+                <td class="p-2"><input type="text" class="w-full p-2 border border-slate-300 rounded text-sm allowlist-notes" value="${_escapeAttr(row.notes || '')}" placeholder="Internal note (why is this pinned?)"></td>
                 <td class="p-2 text-center"><button onclick="removeAllowlistRow(${idx})" class="text-slate-400 hover:text-red-600" title="Remove"><i data-lucide="trash-2" class="w-4 h-4"></i></button></td>
             </tr>`;
         }).join('');
