@@ -15,6 +15,7 @@ from shared_code.symplr_systems import (
     build_system_case_expr as symplr_system_case_expr,
     build_scope_filter as symplr_scope_filter,
     build_division_case_expr as symplr_division_case_expr,
+    resolve_scope_master_ids as symplr_resolve_scope,
 )
 
 # Mapping of B4 health system names to VNDLY health system names
@@ -159,7 +160,13 @@ def _symplr_financial_data(date_from_sql: str, date_to_sql: str):
     if conn is None:
         return []
     cursor = conn.cursor()
-    sym_scope_o = symplr_scope_filter('o.customerid')
+    app_conn = get_appdb_conn()
+    try:
+        symplr_master_ids = symplr_resolve_scope(app_conn)
+    finally:
+        if app_conn is not None:
+            app_conn.close()
+    sym_scope_o = symplr_scope_filter('o.customerid', master_ids=symplr_master_ids)
     sym_case_o = symplr_system_case_expr('o.customerid')
     sym_division_o = symplr_division_case_expr('o.customerid')
 

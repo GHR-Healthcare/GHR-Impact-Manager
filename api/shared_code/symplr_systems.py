@@ -46,11 +46,49 @@ def all_in_scope_master_ids():
     return out
 
 
+def get_manual_symplr_allowlist_ids(app_conn):
+    """
+    Symplr master IDs added manually via the Settings → Non-MSP Clients admin UI
+    (source='symplr' rows in impactmgr.bullhorn_client_allowlist).
+
+    Returns empty set if app DB is unreachable, the allowlist table doesn't
+    exist yet, or the `source` column hasn't been added yet (in which case
+    every row is treated as Bullhorn, so no Symplr entries exist).
+    """
+    if app_conn is None:
+        return set()
+    try:
+        cursor = app_conn.cursor()
+        cursor.execute("""
+            IF EXISTS (
+                SELECT 1 FROM sys.columns
+                WHERE object_id = OBJECT_ID('impactmgr.bullhorn_client_allowlist')
+                  AND name = 'source'
+            )
+                SELECT client_id FROM impactmgr.bullhorn_client_allowlist WHERE source = 'symplr'
+            ELSE
+                SELECT TOP 0 CAST(NULL AS INT) AS client_id
+        """)
+        return {int(row[0]) for row in cursor.fetchall() if row[0] is not None}
+    except Exception as e:
+        print(f"get_manual_symplr_allowlist_ids: swallowed error, returning empty set: {e}")
+        return set()
+
+
+def resolve_scope_master_ids(app_conn=None):
+    """
+    Effective Symplr master-ID scope: hardcoded rollup ∪ manual allowlist
+    (source='symplr' entries in the shared allowlist table). Call at the
+    top of any Symplr endpoint that needs a wider-than-hardcoded scope.
+    """
+    return set(all_in_scope_master_ids()) | get_manual_symplr_allowlist_ids(app_conn)
+
+
 def _expansion_subquery(master_ids):
     """SQL subquery that resolves to every recordid in scope of the given
     masters — the masters themselves plus any client whose MasterClientID
     points at one of them."""
-    ids = ', '.join(str(i) for i in master_ids)
+    ids = ', '.join(str(i) for i in master_ids) if master_ids else 'NULL'
     return (
         f"SELECT recordid FROM dbo.profile_client "
         f"WHERE recordid IN ({ids}) OR MasterClientID IN ({ids})"
@@ -78,19 +116,24 @@ def build_system_case_expr(column_name: str = 'lt.clientid') -> str:
     return '\n'.join(parts)
 
 
-def build_scope_filter(column_name: str = 'lt.clientid') -> str:
+def build_scope_filter(column_name: str = 'lt.clientid', master_ids=None) -> str:
     """
-    Returns a SQL fragment to filter rows to in-scope Symplr Education
-    accounts, expanding via MasterClientID.
+    SQL fragment restricting rows to Symplr accounts in scope. Uses the
+    hardcoded rollup by default; pass `master_ids` (a set/list — typically
+    from resolve_scope_master_ids) to include the manual allowlist too.
 
     Example:
         cursor.execute(f'''
             SELECT ... FROM dbo.lt_order lt
-            WHERE {build_scope_filter('lt.clientid')}
-              ...
+            WHERE {build_scope_filter('lt.clientid', master_ids=scope_master_ids)}
         ''')
     """
-    sub = _expansion_subquery(all_in_scope_master_ids())
+    if master_ids is None:
+        master_ids = all_in_scope_master_ids()
+    ids = sorted(set(int(i) for i in master_ids if i is not None))
+    if not ids:
+        return '1 = 0'
+    sub = _expansion_subquery(ids)
     return f'{column_name} IN ({sub})'
 
 

@@ -91,7 +91,12 @@ def all_in_scope_client_ids():
 
 def get_manual_allowlist_ids(app_conn):
     """
-    Read manual-add client IDs from impactmgr.bullhorn_client_allowlist.
+    Read manual-add BULLHORN client IDs from impactmgr.bullhorn_client_allowlist.
+
+    Filters by source='bullhorn' so Symplr allowlist entries in the same
+    table don't leak into Bullhorn scope. Handles both the pre-`source`
+    schema (no column → all rows counted, matching the original behavior)
+    and the post-`source` schema (WHERE source='bullhorn').
 
     Returns an empty set if:
       - app_conn is None (DB not configured — dev/local)
@@ -107,7 +112,16 @@ def get_manual_allowlist_ids(app_conn):
                 SELECT 1 FROM sys.tables
                 WHERE name = 'bullhorn_client_allowlist' AND schema_id = SCHEMA_ID('impactmgr')
             )
-                SELECT client_id FROM impactmgr.bullhorn_client_allowlist
+            BEGIN
+                IF EXISTS (
+                    SELECT 1 FROM sys.columns
+                    WHERE object_id = OBJECT_ID('impactmgr.bullhorn_client_allowlist')
+                      AND name = 'source'
+                )
+                    SELECT client_id FROM impactmgr.bullhorn_client_allowlist WHERE source = 'bullhorn'
+                ELSE
+                    SELECT client_id FROM impactmgr.bullhorn_client_allowlist
+            END
             ELSE
                 SELECT TOP 0 CAST(NULL AS INT) AS client_id
         """)

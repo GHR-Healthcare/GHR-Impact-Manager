@@ -424,14 +424,17 @@
       <!-- Non-MSP Client Allowlist Tab (visible only on non-MSP) -->
       <div id="settingsPanelAllowlist" class="p-6 overflow-y-auto hidden">
         <p class="text-sm text-slate-500 mb-4">
-          Force-include specific Bullhorn <span class="font-mono">clientCorporationID</span> values in the dashboard even when headcount is currently 0.
-          Any client with <em>active</em> placements is already pulled in automatically — this list is for edge cases (e.g. a client between contracts that leadership still wants visibility on).
+          Force-include a client in the dashboard even when it has no current headcount.
+          Pick <strong>Bullhorn</strong> (uses <span class="font-mono">clientCorporationID</span>) or <strong>Symplr</strong>
+          (uses the profile_client master <span class="font-mono">recordid</span> — child clients under that master come along).
+          Any account with <em>active</em> placements/orders is already pulled in automatically; this list covers edge cases like a client between contracts that leadership still wants visibility on.
         </p>
 
         <div class="border rounded-lg overflow-hidden mb-4">
           <table class="w-full text-sm">
             <thead class="bg-slate-100">
               <tr>
+                <th class="text-left p-3 font-semibold text-slate-700 w-36">Source</th>
                 <th class="text-left p-3 font-semibold text-slate-700 w-40">Client ID</th>
                 <th class="text-left p-3 font-semibold text-slate-700 w-72">Display Name Override <span class="font-normal text-xs text-slate-400">(optional)</span></th>
                 <th class="text-left p-3 font-semibold text-slate-700">Notes <span class="font-normal text-xs text-slate-400">(optional)</span></th>
@@ -767,7 +770,7 @@
     const $ = (id) => document.getElementById(id);
 
     // App version - loaded from environment variable via API, with fallback
-    let APP_VERSION = '2.0.0';
+    let APP_VERSION = '2.0.1';
 
     const API_BASE_URL = '/api';
     
@@ -3210,12 +3213,19 @@
           const totalHCRows = buildSheetRows(d => d.ghrHeadcount + d.affHeadcount);
 
           const wb = XLSX.utils.book_new();
-          XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(ghrBillRows), 'GHR Billings');
-          XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(affBillRows), 'Affiliate Billings');
-          XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(totalBillRows), 'Total Billings');
-          XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(fillRows), 'Fill Rates');
-          XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(ghrHCRows), 'GHR Headcounts');
-          XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(totalHCRows), 'Total Headcounts');
+          const isNonMspExport = window.store.state.dataSource === 'non_msp';
+          if (isNonMspExport) {
+            // Non-MSP is single-agency (GHR direct) — no split, no fill rate.
+            XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(totalBillRows), 'Billings');
+            XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(totalHCRows), 'Headcounts');
+          } else {
+            XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(ghrBillRows), 'GHR Billings');
+            XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(affBillRows), 'Affiliate Billings');
+            XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(totalBillRows), 'Total Billings');
+            XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(fillRows), 'Fill Rates');
+            XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(ghrHCRows), 'GHR Headcounts');
+            XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(totalHCRows), 'Total Headcounts');
+          }
 
           const timestamp = new Date().toISOString().split('T')[0];
           XLSX.writeFile(wb, `MSP_Financial_Report_${timestamp}.xlsx`);
@@ -4284,11 +4294,17 @@
             <div class="col-span-1 text-center font-bold text-slate-700 hover:text-blue-600 z-10"
                  onclick="event.stopPropagation(); window.store.dispatch('OPEN_MODAL',{type:'margin',jobId:'${job.id}',val:'${job.margin}'})">${job.margin}%</div>
             <div class="col-span-1 text-center font-bold text-slate-700">${impact}%</div>
-            <div class="col-span-1 text-center font-medium text-slate-700"><span class="text-blue-600">${job.ghrSubs}</span> <span class="text-slate-300">/</span> <span class="text-blue-600">${job.avSubs}</span></div>
+            <div class="col-span-1 text-center font-medium text-slate-700">${
+              window.store.state.dataSource === 'non_msp'
+                ? `<span class="text-blue-600">${job.ghrSubs}</span>`
+                : `<span class="text-blue-600">${job.ghrSubs}</span> <span class="text-slate-300">/</span> <span class="text-blue-600">${job.avSubs}</span>`
+            }</div>
             <div class="col-span-1 text-center font-medium text-slate-700 ${totalDeclines > 0 ? 'cursor-help hover:bg-slate-100 rounded transition-colors group-declines' : ''}"
                  onclick="${totalDeclines > 0 ? `event.stopPropagation(); window.store.dispatch('ANALYZE_DECLINES',{id:'${job.id}'})` : ''}"
                  title="${totalDeclines > 0 ? 'Click to Analyze' : ''}">
-                 <span class="text-red-500">${job.ghrDeclines}</span> <span class="text-slate-300">/</span> <span class="text-red-500">${job.avDeclines}</span>
+                 ${window.store.state.dataSource === 'non_msp'
+                    ? `<span class="text-red-500">${job.ghrDeclines}</span>`
+                    : `<span class="text-red-500">${job.ghrDeclines}</span> <span class="text-slate-300">/</span> <span class="text-red-500">${job.avDeclines}</span>`}
                  ${totalDeclines > 0 ? '<i data-lucide="pie-chart" class="w-3 h-3 text-slate-400 inline ml-1 opacity-0 group-hover:opacity-100 group-[.group-declines]:opacity-50"></i>' : ''}
             </div>
           </div>
@@ -4538,14 +4554,27 @@
         const ghrPct = totalSubs ? Math.round((ghr / totalSubs) * 100) : 0;
         const avPct = totalSubs ? Math.round((av / totalSubs) * 100) : 0;
 
-        const cards = [
-          { label: 'Avg Days Open', val: avgDays, icon: 'clock', color: 'purple', tooltip: 'Average number of days positions have been open' },
-          { label: 'Submission Pending', val: `${avgPending} Days`, icon: 'hourglass', color: 'orange', tooltip: 'Average days submissions have been pending review' },
-          { label: 'Active Sub Mix', val: `${ghrPct}% / ${avPct}%`, icon: 'users', color: 'blue', tooltip: 'GHR submissions % / Agency Vendor submissions %' },
-          { label: 'Avg Margin', val: avgMargin + '%', icon: 'trending-up', color: 'green', tooltip: 'Average margin percentage across all open positions' },
-          { label: 'Total Jobs', val: `${total} / <span class="text-red-500">${critical}</span>`, icon: 'alert-triangle', color: 'red', tooltip: 'Total open positions / Critical (aging) positions' },
-          { label: 'GHR / Overall Fill / Active', val: `${ghrFillRate}% / ${overallFillRate}% / ${activeCount}`, icon: 'check-circle', color: 'emerald', tooltip: 'GHR fill rate % / Overall fill rate % / Total active on contract' }
-        ];
+        // Non-MSP has no Agency Vendor / Affiliate concept — every submission
+        // and placement is GHR-direct. Swap the two GHR/AV-framed cards for
+        // simpler ones.
+        const isNonMspKpi = s.dataSource === 'non_msp';
+        const cards = isNonMspKpi
+          ? [
+              { label: 'Avg Days Open', val: avgDays, icon: 'clock', color: 'purple', tooltip: 'Average number of days positions have been open' },
+              { label: 'Submission Pending', val: `${avgPending} Days`, icon: 'hourglass', color: 'orange', tooltip: 'Average days submissions have been pending review' },
+              { label: 'Total Submissions', val: totalSubs.toLocaleString(), icon: 'users', color: 'blue', tooltip: 'All active submissions across visible open jobs' },
+              { label: 'Avg Margin', val: avgMargin + '%', icon: 'trending-up', color: 'green', tooltip: 'Average margin percentage across all open positions' },
+              { label: 'Total Jobs', val: `${total} / <span class="text-red-500">${critical}</span>`, icon: 'alert-triangle', color: 'red', tooltip: 'Total open positions / Critical (aging) positions' },
+              { label: 'Fill Rate / Active', val: `${overallFillRate}% / ${activeCount}`, icon: 'check-circle', color: 'emerald', tooltip: 'Overall fill rate % / Total active on contract' },
+            ]
+          : [
+              { label: 'Avg Days Open', val: avgDays, icon: 'clock', color: 'purple', tooltip: 'Average number of days positions have been open' },
+              { label: 'Submission Pending', val: `${avgPending} Days`, icon: 'hourglass', color: 'orange', tooltip: 'Average days submissions have been pending review' },
+              { label: 'Active Sub Mix', val: `${ghrPct}% / ${avPct}%`, icon: 'users', color: 'blue', tooltip: 'GHR submissions % / Agency Vendor submissions %' },
+              { label: 'Avg Margin', val: avgMargin + '%', icon: 'trending-up', color: 'green', tooltip: 'Average margin percentage across all open positions' },
+              { label: 'Total Jobs', val: `${total} / <span class="text-red-500">${critical}</span>`, icon: 'alert-triangle', color: 'red', tooltip: 'Total open positions / Critical (aging) positions' },
+              { label: 'GHR / Overall Fill / Active', val: `${ghrFillRate}% / ${overallFillRate}% / ${activeCount}`, icon: 'check-circle', color: 'emerald', tooltip: 'GHR fill rate % / Overall fill rate % / Total active on contract' },
+            ];
 
         container.innerHTML = cards.map(c => `
           <div class="bg-white p-2 sm:p-4 rounded-lg border border-slate-200 shadow-sm flex flex-col justify-between hover:shadow-md transition-shadow relative">
@@ -4873,9 +4902,10 @@
         const changeIcon = billingChange !== null ? (parseFloat(billingChange) >= 0 ? 'trending-up' : 'trending-down') : '';
         const changeColor = billingChange !== null ? (parseFloat(billingChange) >= 0 ? 'text-emerald-600' : 'text-red-600') : '';
 
+        const isNonMspFin = window.store.state.dataSource === 'non_msp';
         let html = `
           <div class="flex flex-wrap justify-between items-center gap-3 mb-4">
-            <h3 class="text-lg font-bold text-slate-800">GHR Healthcare - MSP Financial Report</h3>
+            <h3 class="text-lg font-bold text-slate-800">${isNonMspFin ? 'GHR Healthcare — Non-MSP Financial Report' : 'GHR Healthcare - MSP Financial Report'}</h3>
             <div class="flex flex-wrap items-center gap-3">
               <div class="flex items-center gap-2 text-sm">
                 <label class="font-medium text-slate-600">From:</label>
@@ -4904,7 +4934,10 @@
 
 `;
 
-        this.renderKpiCards([
+        this.renderKpiCards(isNonMspFin ? [
+          { label: `Total Billings (${monthLabel(latestMonth)})`, val: fmt(totalBilling) + (billingChange !== null ? ` <span class="${changeColor} text-xs font-normal">${parseFloat(billingChange) >= 0 ? '▲' : '▼'} ${Math.abs(billingChange)}%</span>` : ''), icon: 'dollar-sign', color: 'slate' },
+          { label: 'Headcount', val: totalGhrHC.toLocaleString(), icon: 'user-check', color: 'blue' },
+        ] : [
           { label: `Total Billings (${monthLabel(latestMonth)})`, val: fmt(totalBilling) + (billingChange !== null ? ` <span class="${changeColor} text-xs font-normal">${parseFloat(billingChange) >= 0 ? '▲' : '▼'} ${Math.abs(billingChange)}%</span>` : ''), icon: 'dollar-sign', color: 'slate' },
           { label: 'GHR Billings', val: fmt(totalGhrBilling), icon: 'building-2', color: 'blue' },
           { label: 'Affiliate Billings', val: fmt(totalAffBilling), icon: 'users', color: 'purple' },
@@ -4913,35 +4946,39 @@
           { label: 'Affiliate Headcount', val: totalAffHC.toLocaleString(), icon: 'user-check', color: 'purple' },
         ]);
 
-        // ====== MSP BILLINGS SECTION ======
+        // ====== BILLINGS SECTION ======
+        // Non-MSP: everything is GHR-direct — no Affiliate Vendor / GHR split.
+        // Show a single "Billings" table; skip the GHR + Affiliate breakout.
         html += `<div id="pdfBillingsSection" class="bg-white p-4 rounded-lg shadow-sm border border-slate-200 mb-6">
-          <h4 class="font-bold text-slate-800 mb-3 text-base">MSP Billings <span class="text-xs font-normal text-slate-400">(in dollars)</span></h4>`;
+          <h4 class="font-bold text-slate-800 mb-3 text-base">${isNonMspFin ? 'Billings' : 'MSP Billings'} <span class="text-xs font-normal text-slate-400">(in dollars)</span></h4>`;
 
-        // GHR Billings table
-        html += buildTable('GHR Billings', 'text-blue-800', 'bg-white',
-          d => d.ghrBilling, fmtDollar);
-
-        // Affiliate Vendor Billings table
-        html += buildTable('Affiliate Vendor Billings', 'text-purple-800', 'bg-white',
-          d => d.affBilling, fmtDollar);
-
-        // Total Billings table
-        html += buildTable('Total Billings', 'text-slate-800', 'bg-white',
-          d => d.ghrBilling + d.affBilling, fmtDollar);
+        if (isNonMspFin) {
+          html += buildTable('Total Billings', 'text-slate-800', 'bg-white',
+            d => (d.ghrBilling || 0) + (d.affBilling || 0), fmtDollar);
+        } else {
+          html += buildTable('GHR Billings', 'text-blue-800', 'bg-white',
+            d => d.ghrBilling, fmtDollar);
+          html += buildTable('Affiliate Vendor Billings', 'text-purple-800', 'bg-white',
+            d => d.affBilling, fmtDollar);
+          html += buildTable('Total Billings', 'text-slate-800', 'bg-white',
+            d => d.ghrBilling + d.affBilling, fmtDollar);
+        }
 
         html += `</div>`;
 
-        // ====== MSP HEADCOUNTS SECTION ======
+        // ====== HEADCOUNTS SECTION ======
         html += `<div id="pdfHeadcountSection" class="bg-white p-4 rounded-lg shadow-sm border border-slate-200 mb-6">
-          <h4 class="font-bold text-slate-800 mb-3 text-base">MSP Headcounts <span class="text-xs font-normal text-slate-400">(# of Temps Worked)</span></h4>`;
+          <h4 class="font-bold text-slate-800 mb-3 text-base">${isNonMspFin ? 'Headcounts' : 'MSP Headcounts'} <span class="text-xs font-normal text-slate-400">(# of Temps Worked)</span></h4>`;
 
-        // GHR Temps Worked table
-        html += buildTable('GHR Temps Worked', 'text-blue-800', 'bg-white',
-          d => d.ghrHeadcount, fmtNum);
-
-        // Total Temps Worked table
-        html += buildTable('Total Temps Worked', 'text-slate-800', 'bg-white',
-          d => d.ghrHeadcount + d.affHeadcount, fmtNum);
+        if (isNonMspFin) {
+          html += buildTable('Total Temps Worked', 'text-slate-800', 'bg-white',
+            d => (d.ghrHeadcount || 0) + (d.affHeadcount || 0), fmtNum);
+        } else {
+          html += buildTable('GHR Temps Worked', 'text-blue-800', 'bg-white',
+            d => d.ghrHeadcount, fmtNum);
+          html += buildTable('Total Temps Worked', 'text-slate-800', 'bg-white',
+            d => d.ghrHeadcount + d.affHeadcount, fmtNum);
+        }
 
         html += `</div>`;
 
@@ -4979,14 +5016,17 @@
         html += `<div id="pdfBillRateSection" class="bg-white p-4 rounded-lg shadow-sm border border-slate-200 mb-6">
           <h4 class="font-bold text-slate-800 mb-3 text-base">Avg Bill Rate <span class="text-xs font-normal text-slate-400">(Bill Total ÷ Hours, weighted)</span></h4>`;
 
-        html += buildTable('GHR Avg Bill Rate', 'text-blue-800', 'bg-white',
-          ghrRate, fmtRate, null, aggGhrRate);
-
-        html += buildTable('Affiliate Avg Bill Rate', 'text-purple-800', 'bg-white',
-          affRate, fmtRate, null, aggAffRate);
-
-        html += buildTable('Total Avg Bill Rate', 'text-slate-800', 'bg-white',
-          totalRate, fmtRate, null, aggTotalRate);
+        if (isNonMspFin) {
+          html += buildTable('Total Avg Bill Rate', 'text-slate-800', 'bg-white',
+            totalRate, fmtRate, null, aggTotalRate);
+        } else {
+          html += buildTable('GHR Avg Bill Rate', 'text-blue-800', 'bg-white',
+            ghrRate, fmtRate, null, aggGhrRate);
+          html += buildTable('Affiliate Avg Bill Rate', 'text-purple-800', 'bg-white',
+            affRate, fmtRate, null, aggAffRate);
+          html += buildTable('Total Avg Bill Rate', 'text-slate-800', 'bg-white',
+            totalRate, fmtRate, null, aggTotalRate);
+        }
 
         html += `</div>`;
 
@@ -5028,6 +5068,8 @@
         });
         const overallPct = overallTotal > 0 ? (overallGhr / overallTotal) * 100 : 0;
 
+        // Non-MSP fill rate is always 100% GHR by definition — skip this section.
+        if (!isNonMspFin) {
         html += `<div id="pdfFillRateSection" class="bg-white p-4 rounded-lg shadow-sm border border-slate-200 mb-6">
           <h4 class="font-bold text-slate-800 mb-3 text-base">GHR Fill Rates <span class="text-xs font-normal text-slate-400">(% of Total Billings)</span></h4>
 
@@ -5100,11 +5142,12 @@
             </div>
           </div>
         </div>`;
+        } // end of isNonMspFin guard around the GHR Fill Rates section
 
-        // ====== MSP BILLINGS TREND CHART ======
+        // ====== BILLINGS TREND CHART ======
         html += `
           <div id="pdfBillingsTrendSection" class="bg-white p-4 rounded-lg shadow-sm border border-slate-200 mb-6">
-            <h4 class="font-bold text-slate-700 mb-4">MSP Billings Trend</h4>
+            <h4 class="font-bold text-slate-700 mb-4">${isNonMspFin ? 'Billings Trend' : 'MSP Billings Trend'}</h4>
             <div class="h-96"><canvas id="billingsTrendChart"></canvas></div>
           </div>`;
 
@@ -7867,16 +7910,20 @@
         const affFillPending = pctActuals(affWithPending, false);
         const affFillProjection = projectSeries(affFillActuals);
 
+        // Non-MSP: fill rate is always 100% GHR by definition — drop the
+        // GHR + Affiliate breakout, keep only Total Fill Rate + its dashed variants.
         const fillRateChartDatasets = [
           { label: 'Total Fill Rate', data: totalFillActuals, borderColor: '#64748b', backgroundColor: 'rgba(100,116,139,0.08)', fill: true, tension: 0.3, pointRadius: 5 },
           { label: 'Total Fill Rate (Pipeline)', data: totalFillPipeline, borderColor: '#64748b', fill: false, tension: 0.3, pointRadius: 4, borderDash: DASH_PIPELINE, hideFromLegend: true },
           { label: 'Total Fill Rate (Unconfirmed)', data: totalFillPending, borderColor: '#64748b', fill: false, tension: 0.3, pointRadius: 4, borderDash: DASH_PENDING },
-          { label: 'GHR Fill Rate', data: ghrFillActuals, borderColor: '#3b82f6', backgroundColor: 'rgba(59,130,246,0.1)', fill: false, tension: 0.3, pointRadius: 5 },
-          { label: 'GHR Fill Rate (Pipeline)', data: ghrFillPipeline, borderColor: '#3b82f6', fill: false, tension: 0.3, pointRadius: 4, borderDash: DASH_PIPELINE, hideFromLegend: true },
-          { label: 'GHR Fill Rate (Unconfirmed)', data: ghrFillPending, borderColor: '#3b82f6', fill: false, tension: 0.3, pointRadius: 4, borderDash: DASH_PENDING },
-          { label: 'Affiliate Fill Rate', data: affFillActuals, borderColor: '#8b5cf6', backgroundColor: 'rgba(139,92,246,0.1)', fill: false, tension: 0.3, pointRadius: 5 },
-          { label: 'Affiliate Fill Rate (Pipeline)', data: affFillPipeline, borderColor: '#8b5cf6', fill: false, tension: 0.3, pointRadius: 4, borderDash: DASH_PIPELINE, hideFromLegend: true },
-          { label: 'Affiliate Fill Rate (Unconfirmed)', data: affFillPending, borderColor: '#8b5cf6', fill: false, tension: 0.3, pointRadius: 4, borderDash: DASH_PENDING },
+          ...(isNonMspTrend ? [] : [
+            { label: 'GHR Fill Rate', data: ghrFillActuals, borderColor: '#3b82f6', backgroundColor: 'rgba(59,130,246,0.1)', fill: false, tension: 0.3, pointRadius: 5 },
+            { label: 'GHR Fill Rate (Pipeline)', data: ghrFillPipeline, borderColor: '#3b82f6', fill: false, tension: 0.3, pointRadius: 4, borderDash: DASH_PIPELINE, hideFromLegend: true },
+            { label: 'GHR Fill Rate (Unconfirmed)', data: ghrFillPending, borderColor: '#3b82f6', fill: false, tension: 0.3, pointRadius: 4, borderDash: DASH_PENDING },
+            { label: 'Affiliate Fill Rate', data: affFillActuals, borderColor: '#8b5cf6', backgroundColor: 'rgba(139,92,246,0.1)', fill: false, tension: 0.3, pointRadius: 5 },
+            { label: 'Affiliate Fill Rate (Pipeline)', data: affFillPipeline, borderColor: '#8b5cf6', fill: false, tension: 0.3, pointRadius: 4, borderDash: DASH_PIPELINE, hideFromLegend: true },
+            { label: 'Affiliate Fill Rate (Unconfirmed)', data: affFillPending, borderColor: '#8b5cf6', fill: false, tension: 0.3, pointRadius: 4, borderDash: DASH_PENDING },
+          ]),
         ];
 
         window.updateTrendChart = function(view) {
@@ -8452,10 +8499,13 @@
           return name;
         };
 
-        // Collect unique values for each filterable column
+        // Collect unique values for each filterable column.
+        // Agency column is meaningless on non-MSP (everything is GHR direct)
+        // — drop it there.
+        const isNonMspContracts = window.store.state.dataSource === 'non_msp';
         const cols = [
           { key: 'source_system', label: 'Source', get: r => r.source_system || '—' },
-          { key: 'agency_type', label: 'Agency', get: r => r.is_ghr ? 'GHR' : 'Affiliate' },
+          ...(isNonMspContracts ? [] : [{ key: 'agency_type', label: 'Agency', get: r => r.is_ghr ? 'GHR' : 'Affiliate' }]),
           { key: 'healthSystem', label: 'System', get: r => r.healthSystem || '—' },
           { key: 'facility', label: 'Facility', get: r => r.facility || '—' },
           { key: 'worker', label: 'Worker', get: r => displayWorker(r) },
@@ -10202,26 +10252,43 @@
         const tbody = document.getElementById('allowlistTableBody');
         if (!tbody) return;
         if (!currentAllowlist.length) {
-            tbody.innerHTML = `<tr><td colspan="4" class="p-6 text-center text-sm text-slate-400 italic">
-                No manual client IDs. Auto-inclusion still applies for any Bullhorn client with active headcount.
+            tbody.innerHTML = `<tr><td colspan="5" class="p-6 text-center text-sm text-slate-400 italic">
+                No manual client IDs. Auto-inclusion still applies for any client with active headcount.
             </td></tr>`;
             return;
         }
-        tbody.innerHTML = currentAllowlist.map((row, idx) => `
+        tbody.innerHTML = currentAllowlist.map((row, idx) => {
+            const src = (row.source || 'bullhorn').toLowerCase();
+            const idPlaceholder = src === 'symplr' ? 'Symplr master recordid' : 'Bullhorn clientCorporationID';
+            const namePlaceholder = src === 'symplr' ? 'Falls back to profile_client.clientname' : 'Falls back to Bullhorn client name';
+            return `
             <tr data-allowlist-idx="${idx}">
-                <td class="p-2"><input type="number" min="0" step="1" class="w-full p-2 border border-slate-300 rounded text-sm allowlist-client-id" value="${_escapeAttr(row.client_id)}" placeholder="e.g. 12345"></td>
-                <td class="p-2"><input type="text" class="w-full p-2 border border-slate-300 rounded text-sm allowlist-display-name" value="${_escapeAttr(row.display_name || '')}" placeholder="Falls back to Bullhorn client name"></td>
+                <td class="p-2">
+                    <select class="w-full p-2 border border-slate-300 rounded text-sm allowlist-source" onchange="_onAllowlistSourceChange(${idx})">
+                        <option value="bullhorn" ${src === 'bullhorn' ? 'selected' : ''}>Bullhorn</option>
+                        <option value="symplr" ${src === 'symplr' ? 'selected' : ''}>Symplr</option>
+                    </select>
+                </td>
+                <td class="p-2"><input type="number" min="0" step="1" class="w-full p-2 border border-slate-300 rounded text-sm allowlist-client-id" value="${_escapeAttr(row.client_id)}" placeholder="${idPlaceholder}"></td>
+                <td class="p-2"><input type="text" class="w-full p-2 border border-slate-300 rounded text-sm allowlist-display-name" value="${_escapeAttr(row.display_name || '')}" placeholder="${namePlaceholder}"></td>
                 <td class="p-2"><input type="text" class="w-full p-2 border border-slate-300 rounded text-sm allowlist-notes" value="${_escapeAttr(row.notes || '')}" placeholder="Why is this client on the list?"></td>
                 <td class="p-2 text-center"><button onclick="removeAllowlistRow(${idx})" class="text-slate-400 hover:text-red-600" title="Remove"><i data-lucide="trash-2" class="w-4 h-4"></i></button></td>
-            </tr>
-        `).join('');
+            </tr>`;
+        }).join('');
         lucide.createIcons();
     }
+
+    // When the source dropdown changes, re-render so the placeholders update
+    // to reflect Bullhorn vs Symplr semantics. Preserve in-progress edits.
+    window._onAllowlistSourceChange = function(idx) {
+        currentAllowlist = collectAllowlistFromDOM({ allowBlank: true });
+        renderAllowlistTable();
+    };
 
     window.addAllowlistRow = function() {
         // Persist any in-progress edits so they aren't lost when we re-render
         currentAllowlist = collectAllowlistFromDOM({ allowBlank: true });
-        currentAllowlist.push({ client_id: '', display_name: '', notes: '' });
+        currentAllowlist.push({ client_id: '', source: 'bullhorn', display_name: '', notes: '' });
         renderAllowlistTable();
     };
 
@@ -10235,6 +10302,7 @@
         const rows = document.querySelectorAll('#allowlistTableBody tr[data-allowlist-idx]');
         const out = [];
         rows.forEach(tr => {
+            const sourceSelect = tr.querySelector('.allowlist-source');
             const idInput = tr.querySelector('.allowlist-client-id');
             const displayInput = tr.querySelector('.allowlist-display-name');
             const notesInput = tr.querySelector('.allowlist-notes');
@@ -10243,8 +10311,10 @@
             if (!allowBlank) {
                 if (raw === '' || !Number.isFinite(cid) || cid <= 0) return;
             }
+            const source = sourceSelect ? sourceSelect.value : 'bullhorn';
             out.push({
                 client_id: raw === '' ? '' : cid,
+                source: source === 'symplr' ? 'symplr' : 'bullhorn',
                 display_name: (displayInput ? displayInput.value.trim() : '') || null,
                 notes: (notesInput ? notesInput.value.trim() : '') || null,
             });

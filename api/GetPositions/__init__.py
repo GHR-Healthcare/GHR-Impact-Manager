@@ -13,6 +13,7 @@ from shared_code.symplr_systems import (
     build_system_case_expr as symplr_system_case_expr,
     build_scope_filter as symplr_scope_filter,
     build_division_case_expr as symplr_division_case_expr,
+    resolve_scope_master_ids as symplr_resolve_scope,
 )
 
 
@@ -192,11 +193,17 @@ def _symplr_positions_data():
     if conn is None:
         return []
     cursor = conn.cursor()
+    app_conn = get_appdb_conn()
+    try:
+        symplr_master_ids = symplr_resolve_scope(app_conn)
+    finally:
+        if app_conn is not None:
+            app_conn.close()
     sys_case = symplr_system_case_expr('lt.clientid')
-    scope = symplr_scope_filter('lt.clientid')
+    scope = symplr_scope_filter('lt.clientid', master_ids=symplr_master_ids)
     division_case = symplr_division_case_expr('lt.clientid')
     sys_case_orders = symplr_system_case_expr('o.customerid')
-    scope_orders = symplr_scope_filter('o.customerid')
+    scope_orders = symplr_scope_filter('o.customerid', master_ids=symplr_master_ids)
     division_case_orders = symplr_division_case_expr('o.customerid')
 
     def _serialize(row_dict):

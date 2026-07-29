@@ -13,6 +13,7 @@ from shared_code.symplr_systems import (
     build_system_case_expr as symplr_system_case_expr,
     build_scope_filter as symplr_scope_filter,
     build_division_case_expr as symplr_division_case_expr,
+    resolve_scope_master_ids as symplr_resolve_scope,
 )
 
 
@@ -134,8 +135,14 @@ def _symplr_trend_data():
         return {'assignments': [], 'weekly_revenue': [], 'errors': ['symplr_conn_none']}
 
     cursor = conn.cursor()
+    app_conn = get_appdb_conn()
+    try:
+        symplr_master_ids = symplr_resolve_scope(app_conn)
+    finally:
+        if app_conn is not None:
+            app_conn.close()
     system_case = symplr_system_case_expr('lt.clientid')
-    scope_filter = symplr_scope_filter('lt.clientid')
+    scope_filter = symplr_scope_filter('lt.clientid', master_ids=symplr_master_ids)
     division_case = symplr_division_case_expr('lt.clientid')
     # Each of the three queries below runs in its own try/except so one bad
     # one doesn't zero out the whole Symplr contribution to trend.
@@ -190,7 +197,7 @@ def _symplr_trend_data():
     # (worker, client) so a multi-shift assignment collapses into one row.
     # ============================================================
     system_case_orders = symplr_system_case_expr('o.customerid')
-    scope_filter_orders = symplr_scope_filter('o.customerid')
+    scope_filter_orders = symplr_scope_filter('o.customerid', master_ids=symplr_master_ids)
     division_case_orders = symplr_division_case_expr('o.customerid')
     try:
         cursor.execute(f'''
@@ -256,7 +263,7 @@ def _symplr_trend_data():
                 FROM dbo.orders o
                 WHERE o.jobdatestart IS NOT NULL
                     AND CAST(o.jobdatestart AS DATE) >= DATEADD(WEEK, -8, GETDATE())
-                    AND {symplr_scope_filter('o.customerid')}
+                    AND {symplr_scope_filter('o.customerid', master_ids=symplr_master_ids)}
             )
             SELECT
                 CONVERT(VARCHAR(10), week_start_date, 23) AS week_start,
