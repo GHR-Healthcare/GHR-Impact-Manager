@@ -21,6 +21,18 @@ from shared_code.symplr_systems import (
 # Archive) is terminal.
 BULLHORN_OPEN_JO_STATUSES = ('Accepting Candidates', 'On Hold')
 
+# JobSubmission.status values that mean "the candidate was rejected / withdrew
+# and this submission is closed." Anything not in here is treated as active
+# for the Active KPI; 'Placed' / 'Placement' are terminal-positive and get
+# excluded from both buckets (they're already reflected in the placements table).
+BULLHORN_DECLINED_STATUSES = (
+    'Client Rejected',
+    'GHR Rejected',
+    'Offer Rejected',
+    'Submission Withdrawn',
+)
+BULLHORN_TERMINAL_STATUSES = ('Placed', 'Placement')
+
 
 def _bullhorn_positions_data():
     """Returns open Bullhorn job orders. Raises on error."""
@@ -80,6 +92,7 @@ def _bullhorn_positions_data():
     ''')
     columns = [column[0] for column in cursor.description]
     rows = []
+    pos_by_job_id = {}
     for row in cursor.fetchall():
         row_dict = dict(zip(columns, row))
         if row_dict.get('date_added'):
@@ -92,6 +105,78 @@ def _bullhorn_positions_data():
         row_dict['avDeclines'] = 0
         row_dict['candidates'] = []
         rows.append(row_dict)
+        # position_id is the jobOrderID as string; keep an int key for the
+        # JobSubmission join below.
+        try:
+            pos_by_job_id[int(row_dict['position_id'])] = row_dict
+        except (TypeError, ValueError):
+            pass
+
+    # ── Bullhorn submissions ──────────────────────────────────────────
+    # Attach candidate submissions to the open jobs. Non-MSP has a single
+    # agency (GHR direct), so isGHR=True for all rows, avSubs / avDeclines
+    # always 0. Statuses map to isDeclined = status IN BULLHORN_DECLINED_STATUSES;
+    # BULLHORN_TERMINAL_STATUSES (Placed / Placement) are excluded from both
+    # active + decline counts because they're already reflected in placement
+    # data on the Trend + Stats tabs.
+    if pos_by_job_id:
+        try:
+            job_ids_sql = ', '.join(str(i) for i in pos_by_job_id.keys())
+            declined_sql = ', '.join("'" + s.replace("'", "''") + "'" for s in BULLHORN_DECLINED_STATUSES)
+            terminal_sql = ', '.join("'" + s.replace("'", "''") + "'" for s in BULLHORN_TERMINAL_STATUSES)
+            cursor.execute(f'''
+                SELECT
+                    js.jobOrderID,
+                    js.jobSubmissionID,
+                    LTRIM(RTRIM(ISNULL(c.firstName,'') + ' ' + ISNULL(c.lastName,''))) AS candidate_name,
+                    js.status,
+                    js.dateAdded,
+                    js.dateLastModified
+                -- Note: every other core entity in this DB has a View_* wrapper,
+                -- but JobSubmission is only exposed as the raw table.
+                FROM dbo.JobSubmission js
+                LEFT JOIN dbo.View_Candidate c ON js.candidateID = c.candidateID
+                WHERE js.isDeleted = 0
+                    AND js.jobOrderID IN ({job_ids_sql})
+                    AND js.status NOT IN ({terminal_sql})
+            ''')
+            sub_columns = [column[0] for column in cursor.description]
+            for sub_row in cursor.fetchall():
+                sub = dict(zip(sub_columns, sub_row))
+                jo_id = sub.get('jobOrderID')
+                if jo_id is None or jo_id not in pos_by_job_id:
+                    continue
+                position = pos_by_job_id[jo_id]
+                raw_status = sub.get('status') or ''
+                is_declined = raw_status in BULLHORN_DECLINED_STATUSES
+                submit_date = sub.get('dateAdded')
+                submit_iso = submit_date.isoformat() if submit_date is not None and hasattr(submit_date, 'isoformat') else None
+                candidate = {
+                    'name': sub.get('candidate_name') or 'Unknown',
+                    'agency': 'GHR',
+                    'submitDate': submit_iso,
+                    'offerDate': None,
+                    'awardedDate': None,
+                    'rto': None,
+                    'isDeclined': is_declined,
+                    'declineReason': raw_status if is_declined else None,
+                    'hospDeclineDate': submit_iso if is_declined and raw_status == 'Client Rejected' else None,
+                    'agencyDeclineDate': submit_iso if is_declined and raw_status in ('GHR Rejected', 'Offer Rejected') else None,
+                    'agencyRetractedDate': submit_iso if is_declined and raw_status == 'Submission Withdrawn' else None,
+                    'isGHR': True,
+                    'isActive': not is_declined,
+                    'status': raw_status,
+                    'date': submit_iso,
+                }
+                position['candidates'].append(candidate)
+                if is_declined:
+                    position['ghrDeclines'] += 1
+                else:
+                    position['ghrSubs'] += 1
+        except Exception as e:
+            print(f"Bullhorn positions: JobSubmission join failed: {e}")
+            import traceback; traceback.print_exc()
+
     conn.close()
     return rows
 
