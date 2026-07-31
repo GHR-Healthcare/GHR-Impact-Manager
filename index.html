@@ -766,7 +766,7 @@
     const $ = (id) => document.getElementById(id);
 
     // App version - loaded from environment variable via API, with fallback
-    let APP_VERSION = '2.0.1';
+    let APP_VERSION = '2.0.2';
 
     const API_BASE_URL = '/api';
     
@@ -1643,17 +1643,29 @@
                     if (trendData.pending) trendData.pending.forEach(normalizeTrendRow);
                     window.store.state.trendData = trendData;
                     window.store.state.trendLoaded = true;
+                    // Each source query is wrapped in its own try/except server-side, so
+                    // a 200 can still mean "half the book is missing" — e.g. Symplr env
+                    // vars unset yields errors:['symplr_conn_none'] with Bullhorn rows
+                    // only. Without surfacing this it renders as a clean, wrong chart.
+                    if (Array.isArray(trendData.errors) && trendData.errors.length) {
+                        console.warn('Trend data returned partial results:', trendData.errors);
+                        window.store.state.trendPartialErrors = trendData.errors;
+                    } else {
+                        window.store.state.trendPartialErrors = null;
+                    }
                     if (window.store.state.view === 'trend') {
                         window.store.dispatch('REFRESH_UI');
                     }
                 } else {
                     window.store.state.trendData = { assignments: [] };
                     window.store.state.trendLoaded = true;
+                    window.store.state.trendLoadError = `HTTP ${trendResponse.status} ${trendResponse.statusText}`;
                 }
             } catch (trendError) {
                 console.warn('Error loading trend data:', trendError);
                 window.store.state.trendData = { assignments: [] };
                 window.store.state.trendLoaded = true;
+                window.store.state.trendLoadError = trendError.message || String(trendError);
             }
 
             // Load pending submissions data (GHR only)
@@ -6376,6 +6388,27 @@
         const filtered = deduped.filter(filterRow);
         const filteredPending = allPending.filter(filterRow);
 
+        // Stable headcount identity per row, computed once rather than per week.
+        // Keyed by health system + canonicalized worker name so that:
+        //   - one person reported by two sources (B4 "Last, First" vs VNDLY
+        //     "First Last") collapses to a single head — the raw name never
+        //     matched across feeds, so non-transitioned systems double-counted
+        //   - two DIFFERENT people who happen to share a name at two systems stay
+        //     separate. Keying on bare name merged them, so the Total row came out
+        //     lower than the sub-rows that fed it.
+        // Rows with no usable name get a unique key, so each still counts as one
+        // head instead of every nameless row collapsing into one phantom worker
+        // (Symplr rows whose profile_temp join misses, B4 rows that render as ", ").
+        let anonSeq = 0;
+        const assignHeadcountKey = (r) => {
+          const canon = nwT(r.worker_name);
+          r.__hcKey = canon
+            ? `${r.healthSystem || 'Unknown'}|${canon}`
+            : `${r.healthSystem || 'Unknown'}|__anon${++anonSeq}`;
+        };
+        filtered.forEach(assignHeadcountKey);
+        filteredPending.forEach(assignHeadcountKey);
+
         // Build 9 week buckets: 4 back + current + 4 forward (Sun-Sat)
         const getSunday = (d) => {
           const dt = new Date(d);
@@ -6517,129 +6550,83 @@
             map[k1][k2][k3].add(val);
           };
 
-          filtered.forEach(r => {
-            const sd = r.startDate;
-            const ed = r.endDate;
-            const overlaps = sd <= end && (ed === null || ed >= start);
-            if (overlaps) {
-              const name = r.worker_name || '';
-              const cat = normalizeCategory(r.category);
-              const sys = r.healthSystem || 'Unknown';
-              const pm = resolvePM(r.facility, r.healthSystem);
-              const includeInPM = !PM_EXCLUDED_SYSTEMS.has(sys);
-              if (isGHRAgency(r.agency)) {
-                ghrNames.add(name);
-                if (!catGhr[cat]) catGhr[cat] = new Set(); catGhr[cat].add(name);
-                addToNested2(catSysGhr, cat, sys, name);
-                if (!sysGhr[sys]) sysGhr[sys] = new Set(); sysGhr[sys].add(name);
-                addToNested2(sysCatGhr, sys, cat, name);
-                if (includeInPM) {
-                  if (!pmGhr[pm]) pmGhr[pm] = new Set(); pmGhr[pm].add(name);
-                  addToNested2(pmSysGhr, pm, sys, name);
-                  addToNested3(pmSysCatGhr, pm, sys, cat, name);
-                }
-              } else {
-                affNames.add(name);
-                if (!catAff[cat]) catAff[cat] = new Set(); catAff[cat].add(name);
-                addToNested2(catSysAff, cat, sys, name);
-                if (!sysAff[sys]) sysAff[sys] = new Set(); sysAff[sys].add(name);
-                addToNested2(sysCatAff, sys, cat, name);
-                if (includeInPM) {
-                  if (!pmAff[pm]) pmAff[pm] = new Set(); pmAff[pm].add(name);
-                  addToNested2(pmSysAff, pm, sys, name);
-                  addToNested3(pmSysCatAff, pm, sys, cat, name);
-                }
-                const vendor = (r.agency || '').trim() || 'Unknown';
-                if (!vendorAff[vendor]) vendorAff[vendor] = new Set(); vendorAff[vendor].add(name);
-                addToNested2(vendorSysAff, vendor, sys, name);
-              }
-            }
-          });
-
-          // Convert sets to counts
-          const toCount1 = (m) => Object.fromEntries(Object.entries(m).map(([k,v]) => [k, v.size]));
-          const toCount2 = (m) => Object.fromEntries(Object.entries(m).map(([k,v]) => [k, toCount1(v)]));
-          const toCount3 = (m) => Object.fromEntries(Object.entries(m).map(([k,v]) => [k, toCount2(v)]));
-
-          const catGhrCounts = toCount1(catGhr);
-          const catAffCounts = toCount1(catAff);
-          const catSysGhrCounts = toCount2(catSysGhr);
-          const catSysAffCounts = toCount2(catSysAff);
-          const sysGhrCounts = toCount1(sysGhr);
-          const sysAffCounts = toCount1(sysAff);
-          const sysCatGhrCounts = toCount2(sysCatGhr);
-          const sysCatAffCounts = toCount2(sysCatAff);
-          const pmGhrCounts = toCount1(pmGhr);
-          const pmAffCounts = toCount1(pmAff);
-          const pmSysGhrCounts = toCount2(pmSysGhr);
-          const pmSysAffCounts = toCount2(pmSysAff);
-          const pmSysCatGhrCounts = toCount3(pmSysCatGhr);
-          const pmSysCatAffCounts = toCount3(pmSysCatAff);
-          const vendorAffCounts = toCount1(vendorAff);
-          const vendorSysAffCounts = toCount2(vendorSysAff);
-          // Pending headcount (future weeks only)
-          const pendingGhrNames = new Set();
-          const pendingAffNames = new Set();
-          filteredPending.forEach(r => {
-            const sd = r.startDate;
-            const ed = r.endDate;
-            const overlaps = sd <= end && (ed === null || ed >= start);
-            if (!overlaps) return;
-            const name = r.worker_name || '';
+          // Single accumulation path for a row that overlaps this week. Both the
+          // confirmed-assignments loop and the Verification-In-Progress promotion
+          // below go through this — they used to be two hand-copied blocks, which
+          // is how the promotion came to run AFTER the counts were snapshotted
+          // (totals included those workers, every breakdown excluded them).
+          const addRow = (r) => {
+            const key = r.__hcKey;
             const cat = normalizeCategory(r.category);
             const sys = r.healthSystem || 'Unknown';
             const pm = resolvePM(r.facility, r.healthSystem);
             const includeInPM = !PM_EXCLUDED_SYSTEMS.has(sys);
-
-            // Verification In Progress is far enough along that we treat it as
-            // confirmed — roll into the main GHR/Affiliate counts instead of
-            // the pending totals.
-            if (/verification\s+in\s+progress/i.test(r.status || '')) {
-              if (isGHRAgency(r.agency)) {
-                ghrNames.add(name);
-                if (!catGhr[cat]) catGhr[cat] = new Set(); catGhr[cat].add(name);
-                addToNested2(catSysGhr, cat, sys, name);
-                if (!sysGhr[sys]) sysGhr[sys] = new Set(); sysGhr[sys].add(name);
-                addToNested2(sysCatGhr, sys, cat, name);
-                if (includeInPM) {
-                  if (!pmGhr[pm]) pmGhr[pm] = new Set(); pmGhr[pm].add(name);
-                  addToNested2(pmSysGhr, pm, sys, name);
-                  addToNested3(pmSysCatGhr, pm, sys, cat, name);
-                }
-              } else {
-                affNames.add(name);
-                if (!catAff[cat]) catAff[cat] = new Set(); catAff[cat].add(name);
-                addToNested2(catSysAff, cat, sys, name);
-                if (!sysAff[sys]) sysAff[sys] = new Set(); sysAff[sys].add(name);
-                addToNested2(sysCatAff, sys, cat, name);
-                if (includeInPM) {
-                  if (!pmAff[pm]) pmAff[pm] = new Set(); pmAff[pm].add(name);
-                  addToNested2(pmSysAff, pm, sys, name);
-                  addToNested3(pmSysCatAff, pm, sys, cat, name);
-                }
-                const vendor = (r.agency || '').trim() || 'Unknown';
-                if (!vendorAff[vendor]) vendorAff[vendor] = new Set(); vendorAff[vendor].add(name);
-                addToNested2(vendorSysAff, vendor, sys, name);
+            if (isGHRAgency(r.agency)) {
+              ghrNames.add(key);
+              if (!catGhr[cat]) catGhr[cat] = new Set(); catGhr[cat].add(key);
+              addToNested2(catSysGhr, cat, sys, key);
+              if (!sysGhr[sys]) sysGhr[sys] = new Set(); sysGhr[sys].add(key);
+              addToNested2(sysCatGhr, sys, cat, key);
+              if (includeInPM) {
+                if (!pmGhr[pm]) pmGhr[pm] = new Set(); pmGhr[pm].add(key);
+                addToNested2(pmSysGhr, pm, sys, key);
+                addToNested3(pmSysCatGhr, pm, sys, cat, key);
               }
-              return;
+            } else {
+              affNames.add(key);
+              if (!catAff[cat]) catAff[cat] = new Set(); catAff[cat].add(key);
+              addToNested2(catSysAff, cat, sys, key);
+              if (!sysAff[sys]) sysAff[sys] = new Set(); sysAff[sys].add(key);
+              addToNested2(sysCatAff, sys, cat, key);
+              if (includeInPM) {
+                if (!pmAff[pm]) pmAff[pm] = new Set(); pmAff[pm].add(key);
+                addToNested2(pmSysAff, pm, sys, key);
+                addToNested3(pmSysCatAff, pm, sys, cat, key);
+              }
+              const vendor = (r.agency || '').trim() || 'Unknown';
+              if (!vendorAff[vendor]) vendorAff[vendor] = new Set(); vendorAff[vendor].add(key);
+              addToNested2(vendorSysAff, vendor, sys, key);
             }
+          };
 
-            if (isGHRAgency(r.agency)) pendingGhrNames.add(name);
-            else pendingAffNames.add(name);
+          const overlapsWeek = (r) => r.startDate <= end && (r.endDate === null || r.endDate >= start);
+
+          filtered.forEach(r => { if (overlapsWeek(r)) addRow(r); });
+
+          // Pending headcount. Verification In Progress is far enough along that we
+          // treat it as confirmed — roll it into the main counts rather than pending.
+          const pendingGhrKeys = new Set();
+          const pendingAffKeys = new Set();
+          filteredPending.forEach(r => {
+            if (!overlapsWeek(r)) return;
+            if (/verification\s+in\s+progress/i.test(r.status || '')) { addRow(r); return; }
+            if (isGHRAgency(r.agency)) pendingGhrKeys.add(r.__hcKey);
+            else pendingAffKeys.add(r.__hcKey);
           });
+
+          // Convert sets to counts — AFTER every accumulation above, so the
+          // breakdowns and the totals are always derived from the same data.
+          const toCount1 = (m) => Object.fromEntries(Object.entries(m).map(([k,v]) => [k, v.size]));
+          const toCount2 = (m) => Object.fromEntries(Object.entries(m).map(([k,v]) => [k, toCount1(v)]));
+          const toCount3 = (m) => Object.fromEntries(Object.entries(m).map(([k,v]) => [k, toCount2(v)]));
 
           return {
             ghr: ghrNames.size, aff: affNames.size, total: ghrNames.size + affNames.size,
-            catGhr: catGhrCounts, catAff: catAffCounts,
-            catSysGhr: catSysGhrCounts, catSysAff: catSysAffCounts,
-            sysGhr: sysGhrCounts, sysAff: sysAffCounts,
-            sysCatGhr: sysCatGhrCounts, sysCatAff: sysCatAffCounts,
-            pmGhr: pmGhrCounts, pmAff: pmAffCounts,
-            pmSysGhr: pmSysGhrCounts, pmSysAff: pmSysAffCounts,
-            pmSysCat: { ghr: pmSysCatGhrCounts, aff: pmSysCatAffCounts },
-            vendorAff: vendorAffCounts, vendorSysAff: vendorSysAffCounts,
-            pendingGhr: pendingGhrNames.size, pendingAff: pendingAffNames.size,
-            pendingTotal: pendingGhrNames.size + pendingAffNames.size,
+            catGhr: toCount1(catGhr), catAff: toCount1(catAff),
+            catSysGhr: toCount2(catSysGhr), catSysAff: toCount2(catSysAff),
+            sysGhr: toCount1(sysGhr), sysAff: toCount1(sysAff),
+            sysCatGhr: toCount2(sysCatGhr), sysCatAff: toCount2(sysCatAff),
+            pmGhr: toCount1(pmGhr), pmAff: toCount1(pmAff),
+            pmSysGhr: toCount2(pmSysGhr), pmSysAff: toCount2(pmSysAff),
+            pmSysCat: { ghr: toCount3(pmSysCatGhr), aff: toCount3(pmSysCatAff) },
+            vendorAff: toCount1(vendorAff), vendorSysAff: toCount2(vendorSysAff),
+            pendingGhr: pendingGhrKeys.size, pendingAff: pendingAffKeys.size,
+            pendingTotal: pendingGhrKeys.size + pendingAffKeys.size,
+            // Raw key sets retained so group subtotals can take a DISTINCT union
+            // across their categories instead of summing per-category counts
+            // (a worker in two categories would otherwise count twice).
+            catSets: { ghr: catGhr, aff: catAff },
+            catSysSets: { ghr: catSysGhr, aff: catSysAff },
           };
         });
         const weekHC = weekData.map(d => d.total);
@@ -6816,9 +6803,25 @@
         // Non-MSP has no Pending tab to drill into — render future-week cells
         // as plain text so they don't dispatch a SET_VIEW('pending') that the
         // view-toggle would just bounce back to 'list'.
-        const drillToPendingEnabled = window.store.state.dataSource !== 'non_msp';
+        // Non-MSP is a different shape of book, and several MSP concepts simply don't
+        // exist there (see BULLHORN_PORT_SPEC.md §5/§8):
+        //   - no Affiliate / Agency Vendor split — both feeds hardcode agency = 'GHR'
+        //   - no submission funnel, so no Pending/"Unconfirmed" series or Expected Starts
+        //   - no Vendor axis to group by
+        // One flag drives all of those so they can't drift apart.
+        const isNonMspTrend = window.store.state.dataSource === 'non_msp';
+        const drillToPendingEnabled = !isNonMspTrend;
         // Non-MSP: no Affiliate concept. Show a single total per cell instead of "GHR / Aff".
-        const hideAffiliateSplit = window.store.state.dataSource === 'non_msp';
+        // Both non-MSP feeds hardcode agency = 'GHR' (see GetTrendData), so `aff` is
+        // structurally always 0 there and rendering "N / 0" is pure noise.
+        const hideAffiliateSplit = isNonMspTrend;
+        // Single source of truth for the "GHR / Affiliate" cell pair. Every breakdown
+        // table renders through this so the non-MSP suppression can't be forgotten in
+        // one of the eight call sites (it previously was, in six of them).
+        const splitCell = (ghrHtml, affHtml, sepClass = 'text-slate-300') =>
+          hideAffiliateSplit
+            ? ghrHtml
+            : `${ghrHtml}<span class="${sepClass} mx-0.5">/</span>${affHtml}`;
         const buildCatRow = (cat) => {
           const catId = cat.replace(/[^a-zA-Z0-9]/g, '_');
           const systems = getSystemsForCat(cat);
@@ -6843,15 +6846,12 @@
             const affSpan = (isFuture && drillToPendingEnabled)
               ? `<span class="text-purple-700 font-semibold cursor-pointer hover:underline" onclick="event.stopPropagation();window.__trendDrillToPending('${catEsc}',null,'Affiliate')">${a}${deltaSpan(a, aPrev)}</span>`
               : `<span class="text-purple-700 font-semibold">${a}${deltaSpan(a, aPrev)}</span>`;
-            const cellInner = hideAffiliateSplit
-              ? ghrSpan
-              : `${ghrSpan}<span class="text-slate-300 mx-0.5">/</span>${affSpan}`;
-            cells += `<td class="px-2 py-1.5 border-b border-slate-100 text-center text-[10px] ${isCurrent ? 'bg-blue-50' : ''}">${cellInner}</td>`;
+            cells += `<td class="px-2 py-1.5 border-b border-slate-100 text-center text-[10px] ${isCurrent ? 'bg-blue-50' : ''}">${splitCell(ghrSpan, affSpan)}</td>`;
             if (isCurrent) {
-              const avgInner = hideAffiliateSplit
-                ? `<span class="text-blue-700 font-semibold">${avgG != null ? avgG : '—'}</span>`
-                : `<span class="text-blue-700 font-semibold">${avgG != null ? avgG : '—'}</span><span class="text-slate-300 mx-0.5">/</span><span class="text-purple-700 font-semibold">${avgA != null ? avgA : '—'}</span>`;
-              cells += `<td class="px-2 py-1.5 border-b border-slate-100 text-center text-[10px] trend-avg-col bg-amber-50 border-l border-r border-amber-200">${avgInner}</td>`;
+              cells += `<td class="px-2 py-1.5 border-b border-slate-100 text-center text-[10px] trend-avg-col bg-amber-50 border-l border-r border-amber-200">${splitCell(
+                `<span class="text-blue-700 font-semibold">${avgG != null ? avgG : '—'}</span>`,
+                `<span class="text-purple-700 font-semibold">${avgA != null ? avgA : '—'}</span>`
+              )}</td>`;
             }
           });
 
@@ -6878,15 +6878,13 @@
                 const affSpan = (isFuture && drillToPendingEnabled)
                   ? `<span class="text-purple-600 cursor-pointer hover:underline" onclick="event.stopPropagation();window.__trendDrillToPending('${catEsc}','${sysEsc}','Affiliate')">${a}${deltaSpan(a, aPrev)}</span>`
                   : `<span class="text-purple-600">${a}${deltaSpan(a, aPrev)}</span>`;
-                const sysCellInner = hideAffiliateSplit
-                  ? ghrSpan
-                  : `${ghrSpan}<span class="text-slate-200 mx-0.5">/</span>${affSpan}`;
-                sysCells += `<td class="px-2 py-1 border-b border-slate-50 text-center text-[10px] ${isCurrent ? 'bg-blue-50/50' : ''}">${sysCellInner}</td>`;
+                sysCells += `<td class="px-2 py-1 border-b border-slate-50 text-center text-[10px] ${isCurrent ? 'bg-blue-50/50' : ''}">${splitCell(ghrSpan, affSpan, 'text-slate-200')}</td>`;
                 if (isCurrent) {
-                  const sAvgInner = hideAffiliateSplit
-                    ? `<span class="text-blue-600">${sAvgG != null ? sAvgG : '—'}</span>`
-                    : `<span class="text-blue-600">${sAvgG != null ? sAvgG : '—'}</span><span class="text-slate-200 mx-0.5">/</span><span class="text-purple-600">${sAvgA != null ? sAvgA : '—'}</span>`;
-                  sysCells += `<td class="px-2 py-1 border-b border-slate-50 text-center text-[10px] trend-avg-col bg-amber-50 border-l border-r border-amber-200">${sAvgInner}</td>`;
+                  sysCells += `<td class="px-2 py-1 border-b border-slate-50 text-center text-[10px] trend-avg-col bg-amber-50 border-l border-r border-amber-200">${splitCell(
+                    `<span class="text-blue-600">${sAvgG != null ? sAvgG : '—'}</span>`,
+                    `<span class="text-purple-600">${sAvgA != null ? sAvgA : '—'}</span>`,
+                    'text-slate-200'
+                  )}</td>`;
                 }
               });
               rows += `<tr class="cat-sys-${catId} hidden bg-slate-25 hover:bg-slate-50">${sysCells}</tr>`;
@@ -6948,15 +6946,15 @@
             const gPrev = i > 0 ? weekData[i - 1].ghr : null;
             const aPrev = i > 0 ? weekData[i - 1].aff : null;
             const isCurrent = i === currentWeekIdx;
-            const totalInner = hideAffiliateSplit
-              ? `<span class="text-blue-700">${g}${deltaSpan(g, gPrev)}</span>`
-              : `<span class="text-blue-700">${g}${deltaSpan(g, gPrev)}</span><span class="text-slate-300 mx-0.5">/</span><span class="text-purple-700">${a}${deltaSpan(a, aPrev)}</span>`;
-            cells += `<td class="px-2 py-1.5 border-b border-slate-200 text-center text-[11px] font-bold ${isCurrent ? 'bg-blue-50' : ''}">${totalInner}</td>`;
+            cells += `<td class="px-2 py-1.5 border-b border-slate-200 text-center text-[11px] font-bold ${isCurrent ? 'bg-blue-50' : ''}">${splitCell(
+              `<span class="text-blue-700">${g}${deltaSpan(g, gPrev)}</span>`,
+              `<span class="text-purple-700">${a}${deltaSpan(a, aPrev)}</span>`
+            )}</td>`;
             if (isCurrent) {
-              const totalAvgInner = hideAffiliateSplit
-                ? `<span class="text-blue-700">${avgG != null ? avgG : '—'}</span>`
-                : `<span class="text-blue-700">${avgG != null ? avgG : '—'}</span><span class="text-slate-300 mx-0.5">/</span><span class="text-purple-700">${avgA != null ? avgA : '—'}</span>`;
-              cells += `<td class="px-2 py-1.5 border-b border-slate-200 text-center text-[11px] font-bold trend-avg-col bg-amber-50 border-l border-r border-amber-200">${totalAvgInner}</td>`;
+              cells += `<td class="px-2 py-1.5 border-b border-slate-200 text-center text-[11px] font-bold trend-avg-col bg-amber-50 border-l border-r border-amber-200">${splitCell(
+                `<span class="text-blue-700">${avgG != null ? avgG : '—'}</span>`,
+                `<span class="text-purple-700">${avgA != null ? avgA : '—'}</span>`
+              )}</td>`;
             }
           });
           return `<tr class="bg-slate-50">${cells}</tr>`;
@@ -6976,10 +6974,25 @@
         const buildGroupHeaderRow = (label, colSpan) =>
           `<tr class="bg-slate-200"><td colspan="${colSpan}" class="px-3 py-1 text-[10px] font-bold uppercase tracking-wider text-slate-500">${label}</td></tr>`;
 
+        // Distinct headcount across a set of categories. Summing the per-category
+        // counts double-counts anyone holding two categories in the same week (e.g. a
+        // nurse on both a travel contract and per diem), which is why subtotals never
+        // reconciled with the Total row. Union the underlying key sets instead.
+        const groupDistinct = (i, cats, side) => {
+          const seen = new Set();
+          cats.forEach(c => (weekData[i].catSets[side][c] || []).forEach(k => seen.add(k)));
+          return seen.size;
+        };
+        const groupSysDistinct = (i, cats, sys, side) => {
+          const seen = new Set();
+          cats.forEach(c => (weekData[i].catSysSets[side][c]?.[sys] || []).forEach(k => seen.add(k)));
+          return seen.size;
+        };
+
         const buildSubtotalRow = (cats, groupLabel) => {
           const subId = groupLabel.replace(/[^a-zA-Z0-9]/g, '_') + '_sub';
-          const avgG = rolling4Wk(i => cats.reduce((s, c) => s + (weekData[i].catGhr?.[c] || 0), 0));
-          const avgA = rolling4Wk(i => cats.reduce((s, c) => s + (weekData[i].catAff?.[c] || 0), 0));
+          const avgG = rolling4Wk(i => groupDistinct(i, cats, 'ghr'));
+          const avgA = rolling4Wk(i => groupDistinct(i, cats, 'aff'));
 
           // Collect all systems across all categories in this group
           const groupSystems = new Set();
@@ -6996,22 +7009,20 @@
 
           let cells = `<td class="px-3 py-1 border-b-2 border-slate-200 font-bold text-slate-700 whitespace-nowrap text-xs pl-4">${chevron}Subtotal</td>`;
           weeks.forEach((w, i) => {
-            const g = cats.reduce((s, c) => s + (weekData[i].catGhr?.[c] || 0), 0);
-            const a = cats.reduce((s, c) => s + (weekData[i].catAff?.[c] || 0), 0);
-            const gPrev = i > 0 ? cats.reduce((s, c) => s + (weekData[i-1].catGhr?.[c] || 0), 0) : null;
-            const aPrev = i > 0 ? cats.reduce((s, c) => s + (weekData[i-1].catAff?.[c] || 0), 0) : null;
+            const g = groupDistinct(i, cats, 'ghr');
+            const a = groupDistinct(i, cats, 'aff');
+            const gPrev = i > 0 ? groupDistinct(i - 1, cats, 'ghr') : null;
+            const aPrev = i > 0 ? groupDistinct(i - 1, cats, 'aff') : null;
             const isCurrent = i === currentWeekIdx;
-            cells += `<td class="px-2 py-1 border-b-2 border-slate-200 text-center text-[10px] font-bold ${isCurrent ? 'bg-blue-50' : ''}">
-              <span class="text-blue-700">${g}${deltaSpan(g, gPrev)}</span>
-              <span class="text-slate-300 mx-0.5">/</span>
-              <span class="text-purple-700">${a}${deltaSpan(a, aPrev)}</span>
-            </td>`;
+            cells += `<td class="px-2 py-1 border-b-2 border-slate-200 text-center text-[10px] font-bold ${isCurrent ? 'bg-blue-50' : ''}">${splitCell(
+              `<span class="text-blue-700">${g}${deltaSpan(g, gPrev)}</span>`,
+              `<span class="text-purple-700">${a}${deltaSpan(a, aPrev)}</span>`
+            )}</td>`;
             if (isCurrent) {
-              cells += `<td class="px-2 py-1 border-b-2 border-slate-200 text-center text-[10px] font-bold trend-avg-col bg-amber-50 border-l border-r border-amber-200">
-                <span class="text-blue-700">${avgG != null ? avgG : '—'}</span>
-                <span class="text-slate-300 mx-0.5">/</span>
-                <span class="text-purple-700">${avgA != null ? avgA : '—'}</span>
-              </td>`;
+              cells += `<td class="px-2 py-1 border-b-2 border-slate-200 text-center text-[10px] font-bold trend-avg-col bg-amber-50 border-l border-r border-amber-200">${splitCell(
+                `<span class="text-blue-700">${avgG != null ? avgG : '—'}</span>`,
+                `<span class="text-purple-700">${avgA != null ? avgA : '—'}</span>`
+              )}</td>`;
             }
           });
 
@@ -7019,26 +7030,26 @@
 
           if (hasSubRows) {
             groupSystemsList.forEach(sys => {
-              const sAvgG = rolling4Wk(i => cats.reduce((s, c) => s + (weekData[i].catSysGhr?.[c]?.[sys] || 0), 0));
-              const sAvgA = rolling4Wk(i => cats.reduce((s, c) => s + (weekData[i].catSysAff?.[c]?.[sys] || 0), 0));
+              const sAvgG = rolling4Wk(i => groupSysDistinct(i, cats, sys, 'ghr'));
+              const sAvgA = rolling4Wk(i => groupSysDistinct(i, cats, sys, 'aff'));
               let sysCells = `<td class="pl-10 pr-3 py-1 border-b border-slate-100 text-slate-500 whitespace-nowrap text-[10px]">${sys}</td>`;
               weeks.forEach((w, i) => {
-                const g = cats.reduce((s, c) => s + (weekData[i].catSysGhr?.[c]?.[sys] || 0), 0);
-                const a = cats.reduce((s, c) => s + (weekData[i].catSysAff?.[c]?.[sys] || 0), 0);
-                const gPrev = i > 0 ? cats.reduce((s, c) => s + (weekData[i-1].catSysGhr?.[c]?.[sys] || 0), 0) : null;
-                const aPrev = i > 0 ? cats.reduce((s, c) => s + (weekData[i-1].catSysAff?.[c]?.[sys] || 0), 0) : null;
+                const g = groupSysDistinct(i, cats, sys, 'ghr');
+                const a = groupSysDistinct(i, cats, sys, 'aff');
+                const gPrev = i > 0 ? groupSysDistinct(i - 1, cats, sys, 'ghr') : null;
+                const aPrev = i > 0 ? groupSysDistinct(i - 1, cats, sys, 'aff') : null;
                 const isCurrent = i === currentWeekIdx;
-                sysCells += `<td class="px-2 py-1 border-b border-slate-100 text-center text-[10px] ${isCurrent ? 'bg-blue-50/50' : ''}">
-                  <span class="text-blue-600">${g}${deltaSpan(g, gPrev)}</span>
-                  <span class="text-slate-200 mx-0.5">/</span>
-                  <span class="text-purple-600">${a}${deltaSpan(a, aPrev)}</span>
-                </td>`;
+                sysCells += `<td class="px-2 py-1 border-b border-slate-100 text-center text-[10px] ${isCurrent ? 'bg-blue-50/50' : ''}">${splitCell(
+                  `<span class="text-blue-600">${g}${deltaSpan(g, gPrev)}</span>`,
+                  `<span class="text-purple-600">${a}${deltaSpan(a, aPrev)}</span>`,
+                  'text-slate-200'
+                )}</td>`;
                 if (isCurrent) {
-                  sysCells += `<td class="px-2 py-1 border-b border-slate-100 text-center text-[10px] trend-avg-col bg-amber-50 border-l border-r border-amber-200">
-                    <span class="text-blue-600">${sAvgG != null ? sAvgG : '—'}</span>
-                    <span class="text-slate-200 mx-0.5">/</span>
-                    <span class="text-purple-600">${sAvgA != null ? sAvgA : '—'}</span>
-                  </td>`;
+                  sysCells += `<td class="px-2 py-1 border-b border-slate-100 text-center text-[10px] trend-avg-col bg-amber-50 border-l border-r border-amber-200">${splitCell(
+                    `<span class="text-blue-600">${sAvgG != null ? sAvgG : '—'}</span>`,
+                    `<span class="text-purple-600">${sAvgA != null ? sAvgA : '—'}</span>`,
+                    'text-slate-200'
+                  )}</td>`;
                 }
               });
               rows += `<tr class="sub-sys-${subId} hidden bg-slate-25 hover:bg-slate-50">${sysCells}</tr>`;
@@ -7091,17 +7102,15 @@
             const gPrev = i > 0 ? (weekData[i-1].sysGhr?.[sys] || 0) : null;
             const aPrev = i > 0 ? (weekData[i-1].sysAff?.[sys] || 0) : null;
             const isCurrent = i === currentWeekIdx;
-            cells += `<td class="px-2 py-1.5 border-b border-slate-100 text-center text-[10px] ${isCurrent ? 'bg-blue-50' : ''}">
-              <span class="text-blue-700 font-semibold">${gv}${deltaSpan(gv,gPrev)}</span>
-              <span class="text-slate-300 mx-0.5">/</span>
-              <span class="text-purple-700 font-semibold">${av}${deltaSpan(av,aPrev)}</span>
-            </td>`;
+            cells += `<td class="px-2 py-1.5 border-b border-slate-100 text-center text-[10px] ${isCurrent ? 'bg-blue-50' : ''}">${splitCell(
+              `<span class="text-blue-700 font-semibold">${gv}${deltaSpan(gv,gPrev)}</span>`,
+              `<span class="text-purple-700 font-semibold">${av}${deltaSpan(av,aPrev)}</span>`
+            )}</td>`;
             if (isCurrent) {
-              cells += `<td class="px-2 py-1.5 border-b border-slate-100 text-center text-[10px] trend-avg-col bg-amber-50 border-l border-r border-amber-200">
-                <span class="text-blue-700 font-semibold">${avgG ?? '—'}</span>
-                <span class="text-slate-300 mx-0.5">/</span>
-                <span class="text-purple-700 font-semibold">${avgA ?? '—'}</span>
-              </td>`;
+              cells += `<td class="px-2 py-1.5 border-b border-slate-100 text-center text-[10px] trend-avg-col bg-amber-50 border-l border-r border-amber-200">${splitCell(
+                `<span class="text-blue-700 font-semibold">${avgG ?? '—'}</span>`,
+                `<span class="text-purple-700 font-semibold">${avgA ?? '—'}</span>`
+              )}</td>`;
             }
           });
           let rows = `<tr class="hover:bg-slate-50" ${toggleAttr}>${cells}</tr>`;
@@ -7116,17 +7125,17 @@
                 const gPrev = i > 0 ? (weekData[i-1].sysCatGhr?.[sys]?.[cat] || 0) : null;
                 const aPrev = i > 0 ? (weekData[i-1].sysCatAff?.[sys]?.[cat] || 0) : null;
                 const isCurrent = i === currentWeekIdx;
-                sc += `<td class="px-2 py-1 border-b border-slate-50 text-center text-[10px] ${isCurrent ? 'bg-blue-50/50' : ''}">
-                  <span class="text-blue-600">${gv}${deltaSpan(gv,gPrev)}</span>
-                  <span class="text-slate-200 mx-0.5">/</span>
-                  <span class="text-purple-600">${av}${deltaSpan(av,aPrev)}</span>
-                </td>`;
+                sc += `<td class="px-2 py-1 border-b border-slate-50 text-center text-[10px] ${isCurrent ? 'bg-blue-50/50' : ''}">${splitCell(
+                  `<span class="text-blue-600">${gv}${deltaSpan(gv,gPrev)}</span>`,
+                  `<span class="text-purple-600">${av}${deltaSpan(av,aPrev)}</span>`,
+                  'text-slate-200'
+                )}</td>`;
                 if (isCurrent) {
-                  sc += `<td class="px-2 py-1 border-b border-slate-50 text-center text-[10px] trend-avg-col bg-amber-50 border-l border-r border-amber-200">
-                    <span class="text-blue-600">${sAvgG ?? '—'}</span>
-                    <span class="text-slate-200 mx-0.5">/</span>
-                    <span class="text-purple-600">${sAvgA ?? '—'}</span>
-                  </td>`;
+                  sc += `<td class="px-2 py-1 border-b border-slate-50 text-center text-[10px] trend-avg-col bg-amber-50 border-l border-r border-amber-200">${splitCell(
+                    `<span class="text-blue-600">${sAvgG ?? '—'}</span>`,
+                    `<span class="text-purple-600">${sAvgA ?? '—'}</span>`,
+                    'text-slate-200'
+                  )}</td>`;
                 }
               });
               rows += `<tr class="sys-cat-${sysId} hidden bg-slate-25 hover:bg-slate-50">${sc}</tr>`;
@@ -7141,11 +7150,15 @@
             const g = weekData[i].ghr, a = weekData[i].aff;
             const gP = i > 0 ? weekData[i-1].ghr : null, aP = i > 0 ? weekData[i-1].aff : null;
             const isCurrent = i === currentWeekIdx;
-            cells += `<td class="px-2 py-1.5 border-b border-slate-200 text-center text-[11px] font-bold ${isCurrent ? 'bg-blue-50' : ''}">
-              <span class="text-blue-700">${g}${deltaSpan(g,gP)}</span><span class="text-slate-300 mx-0.5">/</span><span class="text-purple-700">${a}${deltaSpan(a,aP)}</span></td>`;
+            cells += `<td class="px-2 py-1.5 border-b border-slate-200 text-center text-[11px] font-bold ${isCurrent ? 'bg-blue-50' : ''}">${splitCell(
+              `<span class="text-blue-700">${g}${deltaSpan(g,gP)}</span>`,
+              `<span class="text-purple-700">${a}${deltaSpan(a,aP)}</span>`
+            )}</td>`;
             if (isCurrent) {
-              cells += `<td class="px-2 py-1.5 border-b border-slate-200 text-center text-[11px] font-bold trend-avg-col bg-amber-50 border-l border-r border-amber-200">
-                <span class="text-blue-700">${avgG ?? '—'}</span><span class="text-slate-300 mx-0.5">/</span><span class="text-purple-700">${avgA ?? '—'}</span></td>`;
+              cells += `<td class="px-2 py-1.5 border-b border-slate-200 text-center text-[11px] font-bold trend-avg-col bg-amber-50 border-l border-r border-amber-200">${splitCell(
+                `<span class="text-blue-700">${avgG ?? '—'}</span>`,
+                `<span class="text-purple-700">${avgA ?? '—'}</span>`
+              )}</td>`;
             }
           });
           return `<tr class="bg-slate-50">${cells}</tr>`;
@@ -7176,11 +7189,15 @@
             const gv = weekData[i].pmGhr?.[pm] || 0, av = weekData[i].pmAff?.[pm] || 0;
             const gP = i > 0 ? (weekData[i-1].pmGhr?.[pm] || 0) : null, aP = i > 0 ? (weekData[i-1].pmAff?.[pm] || 0) : null;
             const isCurrent = i === currentWeekIdx;
-            cells += `<td class="px-2 py-1.5 border-b border-slate-100 text-center text-[10px] ${isCurrent ? 'bg-blue-50' : ''}">
-              <span class="text-blue-700 font-semibold">${gv}${deltaSpan(gv,gP)}</span><span class="text-slate-300 mx-0.5">/</span><span class="text-purple-700 font-semibold">${av}${deltaSpan(av,aP)}</span></td>`;
+            cells += `<td class="px-2 py-1.5 border-b border-slate-100 text-center text-[10px] ${isCurrent ? 'bg-blue-50' : ''}">${splitCell(
+              `<span class="text-blue-700 font-semibold">${gv}${deltaSpan(gv,gP)}</span>`,
+              `<span class="text-purple-700 font-semibold">${av}${deltaSpan(av,aP)}</span>`
+            )}</td>`;
             if (isCurrent) {
-              cells += `<td class="px-2 py-1.5 border-b border-slate-100 text-center text-[10px] trend-avg-col bg-amber-50 border-l border-r border-amber-200">
-                <span class="text-blue-700 font-semibold">${avgG ?? '—'}</span><span class="text-slate-300 mx-0.5">/</span><span class="text-purple-700 font-semibold">${avgA ?? '—'}</span></td>`;
+              cells += `<td class="px-2 py-1.5 border-b border-slate-100 text-center text-[10px] trend-avg-col bg-amber-50 border-l border-r border-amber-200">${splitCell(
+                `<span class="text-blue-700 font-semibold">${avgG ?? '—'}</span>`,
+                `<span class="text-purple-700 font-semibold">${avgA ?? '—'}</span>`
+              )}</td>`;
             }
           });
           let rows = `<tr class="hover:bg-slate-50" ${toggleAttr}>${cells}</tr>`;
@@ -7201,11 +7218,17 @@
               const gv = weekData[i].pmSysGhr?.[pm]?.[sys] || 0, av = weekData[i].pmSysAff?.[pm]?.[sys] || 0;
               const gP = i > 0 ? (weekData[i-1].pmSysGhr?.[pm]?.[sys] || 0) : null, aP = i > 0 ? (weekData[i-1].pmSysAff?.[pm]?.[sys] || 0) : null;
               const isCurrent = i === currentWeekIdx;
-              sc += `<td class="px-2 py-1 border-b border-slate-50 text-center text-[10px] ${isCurrent ? 'bg-blue-50/50' : ''}">
-                <span class="text-blue-600">${gv}${deltaSpan(gv,gP)}</span><span class="text-slate-200 mx-0.5">/</span><span class="text-purple-600">${av}${deltaSpan(av,aP)}</span></td>`;
+              sc += `<td class="px-2 py-1 border-b border-slate-50 text-center text-[10px] ${isCurrent ? 'bg-blue-50/50' : ''}">${splitCell(
+                `<span class="text-blue-600">${gv}${deltaSpan(gv,gP)}</span>`,
+                `<span class="text-purple-600">${av}${deltaSpan(av,aP)}</span>`,
+                'text-slate-200'
+              )}</td>`;
               if (isCurrent) {
-                sc += `<td class="px-2 py-1 border-b border-slate-50 text-center text-[10px] trend-avg-col bg-amber-50 border-l border-r border-amber-200">
-                  <span class="text-blue-600">${pmsAvgG ?? '—'}</span><span class="text-slate-200 mx-0.5">/</span><span class="text-purple-600">${pmsAvgA ?? '—'}</span></td>`;
+                sc += `<td class="px-2 py-1 border-b border-slate-50 text-center text-[10px] trend-avg-col bg-amber-50 border-l border-r border-amber-200">${splitCell(
+                  `<span class="text-blue-600">${pmsAvgG ?? '—'}</span>`,
+                  `<span class="text-purple-600">${pmsAvgA ?? '—'}</span>`,
+                  'text-slate-200'
+                )}</td>`;
               }
             });
             rows += `<tr class="pm-sys-${pmId} hidden hover:bg-slate-50" ${sysToggle}>${sc}</tr>`;
@@ -7219,11 +7242,17 @@
                 const gP = i > 0 ? (weekData[i-1].pmSysCat?.ghr?.[pm]?.[sys]?.[cat] || 0) : null;
                 const aP = i > 0 ? (weekData[i-1].pmSysCat?.aff?.[pm]?.[sys]?.[cat] || 0) : null;
                 const isCurrent = i === currentWeekIdx;
-                cc += `<td class="px-2 py-1 border-b border-slate-50 text-center text-[10px] ${isCurrent ? 'bg-blue-50/30' : ''}">
-                  <span class="text-blue-500">${gv}${deltaSpan(gv, gP)}</span><span class="text-slate-200 mx-0.5">/</span><span class="text-purple-500">${av}${deltaSpan(av, aP)}</span></td>`;
+                cc += `<td class="px-2 py-1 border-b border-slate-50 text-center text-[10px] ${isCurrent ? 'bg-blue-50/30' : ''}">${splitCell(
+                  `<span class="text-blue-500">${gv}${deltaSpan(gv, gP)}</span>`,
+                  `<span class="text-purple-500">${av}${deltaSpan(av, aP)}</span>`,
+                  'text-slate-200'
+                )}</td>`;
                 if (isCurrent) {
-                  cc += `<td class="px-2 py-1 border-b border-slate-50 text-center text-[10px] trend-avg-col bg-amber-50 border-l border-r border-amber-200">
-                    <span class="text-blue-500">${pmscAvgG ?? '—'}</span><span class="text-slate-200 mx-0.5">/</span><span class="text-purple-500">${pmscAvgA ?? '—'}</span></td>`;
+                  cc += `<td class="px-2 py-1 border-b border-slate-50 text-center text-[10px] trend-avg-col bg-amber-50 border-l border-r border-amber-200">${splitCell(
+                    `<span class="text-blue-500">${pmscAvgG ?? '—'}</span>`,
+                    `<span class="text-purple-500">${pmscAvgA ?? '—'}</span>`,
+                    'text-slate-200'
+                  )}</td>`;
                 }
               });
               rows += `<tr class="pm-sys-cat-${sysId2} hidden hover:bg-slate-50">${cc}</tr>`;
@@ -7308,10 +7337,22 @@
           });
           return `<tr class="bg-slate-50">${cells}</tr>`;
         })();
-        const vendorTableBody = (hideAffiliateSplit ? '' : buildCaptureRow()) + vendorTableTotalRow + sortedVendors.map(buildVendorRow).join('');
+        // Vendor is an affiliate-only axis, so on non-MSP there is nothing to group by —
+        // sortedVendors is always empty and the table would be a lone "Total Affiliate
+        // — / 0" row. The Group By button is hidden to match (see toolbar below).
+        const vendorTableBody = isNonMspTrend
+          ? ''
+          : buildCaptureRow() + vendorTableTotalRow + sortedVendors.map(buildVendorRow).join('');
 
-        // Weekly summary rows: Total HC, GHR, Affiliate, Pipeline, Trend Projection
-        const summaryRows = [
+        // Weekly summary rows. On non-MSP the GHR row is identical to Total HC (no
+        // affiliates) and every Pending row is permanently 0 (no submission funnel),
+        // so 5 of the 7 rows would be pure noise — show only the two that carry signal.
+        const summaryRows = isNonMspTrend
+          ? [
+              { label: 'Total HC', color: 'slate-700', getData: i => weekData[i].total },
+              { label: 'Pipeline (Confirmed)', color: 'green-700', getData: i => i >= lastActualIdx ? weekData[i].total : null },
+            ]
+          : [
           { label: 'Total HC', color: 'slate-700', getData: i => weekData[i].total },
           { label: 'GHR', color: 'blue-700', getData: i => weekData[i].ghr },
           { label: 'Affiliate', color: 'purple-700', getData: i => weekData[i].aff },
@@ -7335,6 +7376,25 @@
           return `<tr class="hover:bg-slate-50">${cells}</tr>`;
         }).join('');
 
+        // Partial-load warning. The API wraps each source query in its own
+        // try/except and still returns 200, so without this a failed B4 / VNDLY /
+        // Symplr query renders as a clean chart that is quietly missing a whole
+        // book of business.
+        const partialErrors = s.trendPartialErrors;
+        const loadError = s.trendLoadError;
+        const partialDataBanner = (partialErrors?.length || loadError)
+          ? `<div class="mb-4 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 flex items-start gap-3">
+              <i data-lucide="alert-triangle" class="w-4 h-4 text-amber-600 mt-0.5 flex-shrink-0"></i>
+              <div class="text-xs text-amber-900">
+                <div class="font-semibold">${loadError ? 'Trend data failed to load' : 'Showing partial data — one or more sources failed'}</div>
+                <div class="mt-1 text-amber-800 font-mono text-[10px] break-all">${
+                  (loadError ? [loadError] : partialErrors).map(e => String(e)).join(' · ')
+                }</div>
+                <div class="mt-1 text-amber-700">Headcount and revenue below may be understated. Retry with a page refresh.</div>
+              </div>
+            </div>`
+          : '';
+
         // Destroy existing charts before replacing DOM
         if (window.__trendChart) { window.__trendChart.destroy(); window.__trendChart = null; }
 
@@ -7353,8 +7413,8 @@
                   class="px-2.5 py-1 rounded-md text-slate-500 hover:text-slate-700 transition-colors">Account</button>
                 <button onclick="window.__trendView='pm';document.getElementById('trendBreakdownBody').innerHTML=window.__trendPMBody;document.getElementById('trendBreakdownLabel').textContent='PM';document.getElementById('trendGroupByBtns').querySelectorAll('button').forEach(b=>b.classList.remove('bg-white','shadow-sm','text-slate-700'));this.classList.add('bg-white','shadow-sm','text-slate-700');window.updateTrendChart('pm')"
                   class="px-2.5 py-1 rounded-md text-slate-500 hover:text-slate-700 transition-colors">PM</button>
-                <button onclick="window.__trendView='vendor';document.getElementById('trendBreakdownBody').innerHTML=window.__trendVendorBody;document.getElementById('trendBreakdownLabel').textContent='Vendor';document.getElementById('trendGroupByBtns').querySelectorAll('button').forEach(b=>b.classList.remove('bg-white','shadow-sm','text-slate-700'));this.classList.add('bg-white','shadow-sm','text-slate-700');window.updateTrendChart('vendor')"
-                  class="px-2.5 py-1 rounded-md text-slate-500 hover:text-slate-700 transition-colors">Vendor</button>
+                ${isNonMspTrend ? '' : `<button onclick="window.__trendView='vendor';document.getElementById('trendBreakdownBody').innerHTML=window.__trendVendorBody;document.getElementById('trendBreakdownLabel').textContent='Vendor';document.getElementById('trendGroupByBtns').querySelectorAll('button').forEach(b=>b.classList.remove('bg-white','shadow-sm','text-slate-700'));this.classList.add('bg-white','shadow-sm','text-slate-700');window.updateTrendChart('vendor')"
+                  class="px-2.5 py-1 rounded-md text-slate-500 hover:text-slate-700 transition-colors">Vendor</button>`}
               </div>
               <button onclick="window.collapseAllTrend()" class="flex items-center gap-1 px-2.5 py-1 rounded-md text-[10px] font-semibold text-slate-500 hover:text-slate-700 hover:bg-slate-100 transition-colors border border-slate-200">
                 <i data-lucide="chevrons-up-down" class="w-3 h-3"></i> Collapse All
@@ -7365,12 +7425,13 @@
               <button id="trendYoYBtn" onclick="window.toggleTrendYoY()" class="flex items-center gap-1 px-2.5 py-1 rounded-md text-[10px] font-semibold text-slate-500 hover:text-slate-700 hover:bg-slate-100 transition-colors border border-slate-200">
                 <i data-lucide="calendar" class="w-3 h-3"></i> <span id="trendYoYLabel">Show Prior Year</span>
               </button>
-              <button id="trendFillRateBtn" onclick="window.toggleTrendFillRate()" class="flex items-center gap-1 px-2.5 py-1 rounded-md text-[10px] font-semibold text-slate-500 hover:text-slate-700 hover:bg-slate-100 transition-colors border border-slate-200">
+              ${isNonMspTrend ? '' /* every fill-rate series is a flat 100% line without an affiliate split or a pending funnel */ : `<button id="trendFillRateBtn" onclick="window.toggleTrendFillRate()" class="flex items-center gap-1 px-2.5 py-1 rounded-md text-[10px] font-semibold text-slate-500 hover:text-slate-700 hover:bg-slate-100 transition-colors border border-slate-200">
                 <i data-lucide="percent" class="w-3 h-3"></i> <span id="trendFillRateLabel">Show Fill Rate</span>
-              </button>
+              </button>`}
             </div>
           </div>
-          <div class="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-4" id="trendKpiTiles"></div>
+          ${partialDataBanner}
+          <div class="grid grid-cols-2 ${isNonMspTrend ? '' : 'lg:grid-cols-4'} gap-3 mb-4" id="trendKpiTiles"></div>
           <div class="bg-white rounded-xl border border-slate-200 p-4 shadow-sm">
             <div id="trendChartLegend" class="flex flex-wrap justify-center gap-x-5 gap-y-2 mb-3 text-[11px] text-slate-600"></div>
             <canvas id="trendChart" height="100"></canvas>
@@ -7414,6 +7475,8 @@
         window.__trendPMBody = pmTableBody;
         window.__trendVendorBody = vendorTableBody;
         window.__trendView = window.__trendView || 'category';
+        // Vendor doesn't exist on non-MSP; never restore into an empty table.
+        if (isNonMspTrend && window.__trendView === 'vendor') window.__trendView = 'category';
         // Restore previous toggle selection if re-rendering
         const restoreTrendView = (bodyHtml, label, btnIdx) => {
           const el = document.getElementById('trendBreakdownBody');
@@ -7550,10 +7613,8 @@
         // ── KPI tiles: 7-day-forward projection from the current week ──
         // i = currentWeekIdx is "this week"; i+1 is "next 7 days".
         const nextIdx = currentWeekIdx + 1;
-        const nextWeek = weeks[nextIdx];
         const currentTotalHc = actualsData[currentWeekIdx] ?? (weekData[currentWeekIdx]?.total ?? 0);
         const nextTotalHc = weekData[nextIdx] ? (weekData[nextIdx].total + (weekData[nextIdx].pendingTotal || 0)) : 0;
-        const nextBookedHc = weekData[nextIdx] ? weekData[nextIdx].total : 0;  // confirmed (pipeline)
         const nextExpectedAddlHc = weekData[nextIdx] ? (weekData[nextIdx].pendingTotal || 0) : 0;  // unconfirmed
         const hcDelta = nextTotalHc - currentTotalHc;
         const bookedStartsDelta = (weekData[nextIdx]?.total || 0) - (weekData[currentWeekIdx]?.total || 0);
@@ -7575,20 +7636,27 @@
           const s = abs >= 1e6 ? '$' + (abs / 1e6).toFixed(2) + 'M' : '$' + (abs / 1e3).toFixed(0) + 'k';
           return `<span class="${cls} font-semibold">${up ? '+' : '-'}${s}</span>`;
         };
-        const nextLabel = nextWeek ? fmtWeekEnd(nextWeek.end) : '—';
-        const tile = (label, delta, subtitle) => `
+        // The delta is next week vs THIS week, so the "vs" line names the current week —
+        // it previously named nextWeek, i.e. the very week being measured.
+        const currentLabel = weeks[currentWeekIdx] ? fmtWeekEnd(weeks[currentWeekIdx].end) : '—';
+        const tile = (label, delta) => `
           <div class="bg-white border border-slate-200 rounded-lg px-4 py-3 shadow-sm">
             <div class="text-[10px] uppercase tracking-wide text-slate-400 font-semibold">${label}</div>
             <div class="text-[10px] text-slate-400 mb-1">Next 7 Days Projection</div>
             <div class="text-2xl font-bold">${delta}</div>
-            <div class="text-[10px] text-slate-500 mt-1">vs ${nextLabel}</div>
+            <div class="text-[10px] text-slate-500 mt-1">vs ${currentLabel}</div>
           </div>
         `;
-        const trendKpiTilesHtml =
-          tile('Total Headcount', fmtDelta(hcDelta)) +
-          tile('Booked Starts <span class="text-slate-400 normal-case font-normal">(confirmed)</span>', fmtDelta(bookedStartsDelta)) +
-          tile('Expected Starts <span class="text-slate-400 normal-case font-normal">(unconfirmed)</span>', fmtDelta(nextExpectedAddlHc)) +
-          tile('Projected Revenue', fmtDeltaDollars(revenueDelta));
+        // Non-MSP: pendingTotal is always 0, which makes Expected Starts permanently ±0
+        // and Booked Starts numerically identical to Total Headcount. Show only the two
+        // tiles that mean something.
+        const trendKpiTilesHtml = isNonMspTrend
+          ? tile('Total Headcount', fmtDelta(hcDelta)) +
+            tile('Projected Revenue', fmtDeltaDollars(revenueDelta))
+          : tile('Total Headcount', fmtDelta(hcDelta)) +
+            tile('Booked Starts <span class="text-slate-400 normal-case font-normal">(confirmed)</span>', fmtDelta(bookedStartsDelta)) +
+            tile('Expected Starts <span class="text-slate-400 normal-case font-normal">(unconfirmed)</span>', fmtDelta(nextExpectedAddlHc)) +
+            tile('Projected Revenue', fmtDeltaDollars(revenueDelta));
         const trendKpiTilesEl = document.getElementById('trendKpiTiles');
         if (trendKpiTilesEl) trendKpiTilesEl.innerHTML = trendKpiTilesHtml;
 
@@ -7664,12 +7732,16 @@
         const DASH_PENDING = [9, 3, 3, 3];
         const DASH_PROJECTION = [14, 6];
         // Non-MSP has no GHR vs Affiliate distinction — everything is GHR direct staffing.
-        // Drop the GHR/Affiliate series entirely; keep Total + Revenue.
-        const isNonMspTrend = s.dataSource === 'non_msp';
+        // Drop the GHR/Affiliate series entirely; keep Total + Revenue. (isNonMspTrend is
+        // declared once near the top of the breakdown section.)
         const categoryChartDatasets = [
           { label: 'Total Headcount', data: actualsData, borderColor: '#64748b', backgroundColor: 'rgba(100,116,139,0.08)', fill: true, tension: 0.3, pointRadius: 5 },
           { label: 'Total Pipeline', data: pipelineData, borderColor: '#64748b', fill: false, tension: 0.3, pointRadius: 4, borderDash: DASH_PIPELINE, hideFromLegend: true },
-          { label: 'Total Unconfirmed', data: pipelineWithPendingData, borderColor: '#64748b', fill: false, tension: 0.3, pointRadius: 4, borderDash: DASH_PENDING },
+          // No submission funnel on non-MSP, so pendingTotal is always 0 and this series
+          // would render exactly on top of Total Pipeline.
+          ...(isNonMspTrend ? [] : [
+            { label: 'Total Unconfirmed', data: pipelineWithPendingData, borderColor: '#64748b', fill: false, tension: 0.3, pointRadius: 4, borderDash: DASH_PENDING },
+          ]),
           ...(isNonMspTrend ? [] : [
             { label: 'GHR', data: ghrActualsData, borderColor: '#3b82f6', backgroundColor: 'rgba(59,130,246,0.1)', fill: false, tension: 0.3, pointRadius: 4 },
             { label: 'GHR Pipeline', data: ghrPipelineData, borderColor: '#3b82f6', fill: false, tension: 0.3, pointRadius: 3, borderDash: DASH_PIPELINE, hideFromLegend: true },
@@ -7922,6 +7994,10 @@
           ]),
         ];
 
+        // Labels the user has hidden via the legend. Persisted across re-renders and
+        // across Group By / Fill Rate / Prior Year switches (see updateTrendChart).
+        window.__trendHiddenLabels = window.__trendHiddenLabels || new Set();
+
         window.updateTrendChart = function(view) {
           if (!window.__trendChart || !window.__trendChartDatasets) return;
           let datasets;
@@ -7937,6 +8013,12 @@
             datasets = interleaveYoY(base, yoy);
           }
           window.__trendChart.data.datasets = datasets;
+          // Re-apply hide state by LABEL, not by index. Chart.js tracks visibility
+          // positionally, so a series hidden in one Group By view used to leave a
+          // completely unrelated series hidden after switching views.
+          datasets.forEach((ds, i) =>
+            window.__trendChart.setDatasetVisibility(i, !window.__trendHiddenLabels.has(ds.label))
+          );
           // Update y-axis title
           const yScale = window.__trendChart.options?.scales?.y;
           if (yScale) {
@@ -7946,6 +8028,10 @@
             yScale.max = window.__fillRateMode ? 100 : undefined;
           }
           window.__trendChart.update();
+          // Every caller (Group By buttons, Prior Year toggle, Fill Rate toggle)
+          // needs the legend rebuilt for the new dataset list — doing it here means
+          // no caller can forget, which is how the legend used to go stale.
+          renderTrendLegend();
         };
 
         window.toggleTrendFillRate = () => {
@@ -7959,7 +8045,6 @@
             btn.classList.toggle('border-blue-200', window.__fillRateMode);
           }
           window.updateTrendChart(window.__trendView || 'category');
-          renderTrendLegend();
         };
 
         // Custom legend: for Total/GHR/Affiliate datasets, stack as rows with group label +
@@ -8041,7 +8126,14 @@
           container.querySelectorAll('button[data-idx]').forEach(b => {
             b.onclick = () => {
               const idx = parseInt(b.dataset.idx, 10);
-              chart.setDatasetVisibility(idx, !chart.isDatasetVisible(idx));
+              const label = chart.data.datasets[idx]?.label;
+              const nowHidden = chart.isDatasetVisible(idx);
+              // Remember by label so the choice survives a Group By / overlay switch.
+              if (label) {
+                if (nowHidden) window.__trendHiddenLabels.add(label);
+                else window.__trendHiddenLabels.delete(label);
+              }
+              chart.setDatasetVisibility(idx, !nowHidden);
               chart.update();
               renderTrendLegend();
             };
@@ -8126,9 +8218,9 @@
               }
             }
           });
-          // Apply current view (account/pm/category) and any active overlays
+          // Apply current view (account/pm/category) and any active overlays.
+          // This renders the legend too.
           window.updateTrendChart(window.__trendView || 'category');
-          renderTrendLegend();
         }
 
         lucide.createIcons();

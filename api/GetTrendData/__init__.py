@@ -26,6 +26,46 @@ BULLHORN_ACTIVE_STATUSES = (
     'Completed', 'Termination',
 )
 
+# VNDLY work-order statuses meaning "this assignment was awarded and ran (or is
+# running)". The Bullhorn list above has always included its historical statuses;
+# VNDLY was filtered to 'Active' only, which applies a CURRENT status to PAST
+# weeks — anyone who finished and got flipped to a terminal status vanished from
+# the lookback. Older weeks lost proportionally more rows than recent ones, which
+# manufactured a fake upward trend (and understated the prior-year line badly).
+#
+# Excluded as never-happened: Rejected, Withdrawn, Offer Declined, Cancelled.
+# Excluded as pre-start funnel: Applied, Offer Released, Verification In Progress,
+# Ready to Onboard (these belong to the pending queries below).
+VNDLY_RAN_STATUSES = ('Active', 'Ended', 'Ended by Job Close')
+
+# Terminal members of the set above. Their [End Date] is the ORIGINALLY SCHEDULED
+# end, not the date the assignment actually stopped — 'Ended by Job Close' rows
+# carry end dates over a year out. Counting those as still-running would inflate
+# current and future headcount, so the effective end is capped at today: a
+# terminal status cannot still be running.
+VNDLY_TERMINAL_STATUSES = ('Ended', 'Ended by Job Close')
+
+# VNDLY pre-start pipeline statuses. 'Ready to Onboard' was previously missing
+# here even though the Pending tab's own statusBucket() classifies it.
+VNDLY_PENDING_STATUSES = (
+    'Applied', 'Offer Released', 'Verification In Progress', 'Ready to Onboard',
+)
+
+
+def _sql_list(values):
+    """Render a tuple of statuses as a SQL IN-list literal."""
+    return ', '.join("'" + v.replace("'", "''") + "'" for v in values)
+
+
+# Effective end date for a VNDLY work order, capped at today for terminal
+# statuses (see VNDLY_TERMINAL_STATUSES).
+VNDLY_EFFECTIVE_END_SQL = f'''CASE
+                        WHEN [Current Status] IN ({_sql_list(VNDLY_TERMINAL_STATUSES)})
+                             AND [End Date] > CAST(GETDATE() AS DATE)
+                        THEN CAST(GETDATE() AS DATE)
+                        ELSE [End Date]
+                    END'''
+
 
 def _bullhorn_trend_data():
     """
@@ -99,7 +139,14 @@ def _bullhorn_trend_data():
             CONVERT(VARCHAR(10), w.week_start, 23) AS week_start,
             ({system_case}) AS system,
             'GHR' AS vendor_type,
-            SUM(ISNULL(p.clientBillRate, 0) * ISNULL(p.hoursPerDay, 0) * 5) AS revenue
+            -- TRY_CAST for the same reason the assignments query above uses it:
+            -- clientBillRate / hoursPerDay are free-text in the Bullhorn views
+            -- and a single unparseable value fails the whole SUM without it.
+            -- NOTE: this is a run-rate ESTIMATE (bill rate x scheduled hours),
+            -- not billed dollars. Symplr's contribution to weekly_revenue is
+            -- actual billed amount. The frontend unions the two.
+            SUM(ISNULL(TRY_CAST(p.clientBillRate AS DECIMAL(18,2)), 0)
+                * ISNULL(TRY_CAST(p.hoursPerDay AS DECIMAL(10,2)), 0) * 5) AS revenue
         FROM Weeks w
         INNER JOIN dbo.View_Placement p
             ON p.dateBegin <= DATEADD(DAY, 6, w.week_start)
@@ -263,6 +310,13 @@ def _symplr_trend_data():
                 FROM dbo.orders o
                 WHERE o.jobdatestart IS NOT NULL
                     AND CAST(o.jobdatestart AS DATE) >= DATEADD(WEEK, -8, GETDATE())
+                    -- Only shifts that actually produced billable work. Without
+                    -- this, open/cancelled orders carrying a quoted
+                    -- totalbillamount inflate the revenue line. Gating on
+                    -- billhours rather than status = 'filled' mirrors
+                    -- GetHoursData and is safe if a worked shift later moves to
+                    -- a terminal status other than 'filled'.
+                    AND ISNULL(o.totalbillhours, 0) > 0
                     AND {symplr_scope_filter('o.customerid', master_ids=symplr_master_ids)}
             )
             SELECT
@@ -360,6 +414,11 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
 
         cursor = conn.cursor()
         assignments = []
+        # Each query below has its own try/except so one bad source doesn't zero
+        # out the whole tab. Collect the failures so the response can say so —
+        # otherwise a partial load is indistinguishable from a genuinely quiet
+        # week. Mirrors the `errors` contract the non-MSP path already returns.
+        errors = []
 
         # ============================================================
         # B4Health - Assignments in rolling window
@@ -397,12 +456,13 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                 assignments.append(row_dict)
         except Exception as e:
             print(f"Error loading B4 trend assignments: {e}")
+            errors.append(f"b4_assignments: {e}")
 
         # ============================================================
         # VNDLY - Assignments in rolling window
         # ============================================================
         try:
-            cursor.execute('''
+            cursor.execute(f'''
                 SELECT
                     'VNDLY' AS source_system,
                     CONCAT([Contractor First Name], ' ', [Contractor Last Name]) AS worker_name,
@@ -416,10 +476,12 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                     TRY_CAST([Bill Rate] AS DECIMAL(10,2)) AS bill_rate,
                     NULL AS weekly_hours,
                     [Start Date] AS startDate,
-                    [End Date] AS endDate
+                    {VNDLY_EFFECTIVE_END_SQL} AS endDate
                 FROM dbo.STAGING_VNDLY_WORKORDERS
-                WHERE [Current Status] = 'Active'
+                WHERE [Current Status] IN ({_sql_list(VNDLY_RAN_STATUSES)})
                     AND [Start Date] IS NOT NULL
+                    -- Safe to test the raw column: the CASE above only ever lowers a
+                    -- future end date to today, which still passes this bound.
                     AND ([End Date] IS NULL OR [End Date] >= DATEADD(WEEK, -4, GETDATE()))
             ''')
 
@@ -433,6 +495,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                 assignments.append(row_dict)
         except Exception as e:
             print(f"Error loading VNDLY trend assignments: {e}")
+            errors.append(f"vndly_assignments: {e}")
 
         # ============================================================
         # B4Health - Pending submissions (With Requests = candidate submitted)
@@ -470,12 +533,13 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                 pending.append(row_dict)
         except Exception as e:
             print(f"Error loading B4 pending: {e}")
+            errors.append(f"b4_pending: {e}")
 
         # ============================================================
-        # VNDLY - Pending work orders (Applied, Offer Released, Verification)
+        # VNDLY - Pending work orders (pre-start funnel; see VNDLY_PENDING_STATUSES)
         # ============================================================
         try:
-            cursor.execute('''
+            cursor.execute(f'''
                 SELECT
                     'VNDLY' AS source_system,
                     CONCAT([Contractor First Name], ' ', [Contractor Last Name]) AS worker_name,
@@ -491,7 +555,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                     [Start Date] AS startDate,
                     [End Date] AS endDate
                 FROM dbo.STAGING_VNDLY_WORKORDERS
-                WHERE [Current Status] IN ('Applied', 'Offer Released', 'Verification In Progress')
+                WHERE [Current Status] IN ({_sql_list(VNDLY_PENDING_STATUSES)})
                     AND [Start Date] IS NOT NULL
                     AND [Start Date] >= DATEADD(WEEK, -1, GETDATE())
             ''')
@@ -505,6 +569,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                 pending.append(row_dict)
         except Exception as e:
             print(f"Error loading VNDLY pending: {e}")
+            errors.append(f"vndly_pending: {e}")
 
         # ============================================================
         # Weekly actual revenue — B4 (from B4HealthESR Bill Total)
@@ -545,6 +610,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                 })
         except Exception as e:
             print(f"Error loading B4 weekly revenue: {e}")
+            errors.append(f"b4_revenue: {e}")
 
         # ============================================================
         # Weekly actual revenue — VNDLY (from STAGING_VNDLY_SPEND Client Amount)
@@ -587,16 +653,18 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                 })
         except Exception as e:
             print(f"Error loading VNDLY weekly revenue: {e}")
+            errors.append(f"vndly_revenue: {e}")
 
         conn.close()
 
-        print(f"Returning {len(assignments)} trend assignments, {len(pending)} pending, {len(weekly_revenue)} weekly revenue rows")
+        print(f"Returning {len(assignments)} trend assignments, {len(pending)} pending, {len(weekly_revenue)} weekly revenue rows (errors: {errors or 'none'})")
 
         return func.HttpResponse(
             json.dumps({
                 'assignments': assignments,
                 'pending': pending,
                 'weekly_revenue': weekly_revenue,
+                'errors': errors,
             }, default=str),
             mimetype="application/json",
             status_code=200

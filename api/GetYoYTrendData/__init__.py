@@ -24,6 +24,27 @@ BULLHORN_YOY_STATUSES = (
     'Completed', 'Termination',
 )
 
+# See GetTrendData for the full rationale. Filtering VNDLY to 'Active' was even
+# more damaging here than on the 4-week lookback: a full year of status drift
+# meant nearly every prior-year assignment had been flipped to a terminal status
+# and dropped out, so the prior-year overlay read far below the current year.
+VNDLY_RAN_STATUSES = ('Active', 'Ended', 'Ended by Job Close')
+VNDLY_TERMINAL_STATUSES = ('Ended', 'Ended by Job Close')
+
+
+def _sql_list(values):
+    return ', '.join("'" + v.replace("'", "''") + "'" for v in values)
+
+
+# [End Date] on a terminal work order is the originally scheduled end, not the
+# actual stop date, so cap it at today.
+VNDLY_EFFECTIVE_END_SQL = f'''CASE
+                            WHEN [Current Status] IN ({_sql_list(VNDLY_TERMINAL_STATUSES)})
+                                 AND [End Date] > CAST(GETDATE() AS DATE)
+                            THEN CAST(GETDATE() AS DATE)
+                            ELSE [End Date]
+                        END'''
+
 
 def _bullhorn_yoy_data():
     """Returns YoY weekly headcount rows from Bullhorn. Raises on error."""
@@ -66,7 +87,11 @@ def _bullhorn_yoy_data():
             WHERE p.isDeleted = 0
                 AND p.status IN ({status_list})
                 AND p.dateBegin IS NOT NULL
-                AND p.dateBegin >= DATEADD(WEEK, -62, GETDATE())
+                -- Bound on END date, not start: an assignment that began before the
+                -- 60-week window but was still running inside it belongs in these
+                -- weeks. A start-date bound dropped them, understating the oldest
+                -- prior-year weeks. The join supplies the upper bound.
+                AND (p.dateEnd IS NULL OR p.dateEnd >= DATEADD(WEEK, -61, GETDATE()))
                 AND {scope_filter}
         )
         SELECT
@@ -140,7 +165,11 @@ def _symplr_yoy_data():
             LEFT JOIN dbo.profile_temp pt ON lt.tempid = pt.recordid
             WHERE lt.status = 'filled'
                 AND lt.date_start IS NOT NULL
-                AND lt.date_start >= DATEADD(WEEK, -62, GETDATE())
+                -- Bound on END date, not start: an assignment that began before the
+                -- 60-week window but was still running inside it belongs in these
+                -- weeks. A start-date bound dropped them, understating the oldest
+                -- prior-year weeks. The join supplies the upper bound.
+                AND (lt.date_end IS NULL OR lt.date_end >= DATEADD(WEEK, -61, GETDATE()))
                 AND {scope}
 
             UNION ALL
@@ -162,7 +191,11 @@ def _symplr_yoy_data():
                 AND (o.lt_orderid IS NULL OR o.lt_orderid = 0)
                 AND o.filledby IS NOT NULL AND o.filledby > 0
                 AND o.jobdatestart IS NOT NULL
-                AND o.jobdatestart >= DATEADD(WEEK, -62, GETDATE())
+                -- Bound on END date, not start: an assignment that began before the
+                -- 60-week window but was still running inside it belongs in these
+                -- weeks. A start-date bound dropped them, understating the oldest
+                -- prior-year weeks. The join supplies the upper bound.
+                AND (o.jobdateend IS NULL OR o.jobdateend >= DATEADD(WEEK, -61, GETDATE()))
                 AND {scope_orders}
             GROUP BY o.customerid, o.filledby
         )
@@ -246,7 +279,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
         rows = []
 
         try:
-            cursor.execute('''
+            cursor.execute(f'''
                 ;WITH Weeks AS (
                     SELECT TOP 60
                         DATEADD(WEEK, 1 - ROW_NUMBER() OVER (ORDER BY (SELECT NULL)),
@@ -273,7 +306,12 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                     FROM dhc.B4HealthOrder
                     WHERE Contract_Status = 'Closed And Awarded'
                         AND Start_Date IS NOT NULL
-                        AND Start_Date >= DATEADD(WEEK, -62, GETDATE())
+                        -- Bound on END date, not start. The Weeks CTE reaches back 60
+                        -- weeks, and an assignment that began earlier but was still
+                        -- running inside that window belongs in it — a start-date
+                        -- bound silently dropped those, understating the oldest
+                        -- prior-year weeks. The join below supplies the upper bound.
+                        AND (End_Date IS NULL OR End_Date >= DATEADD(WEEK, -61, GETDATE()))
                         AND Health_System <> 'Sunrise Senior Living Management (California)'
 
                     UNION ALL
@@ -286,11 +324,11 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                         [Labor Type] AS category,
                         [Vendor Name] AS agency,
                         [Start Date] AS sd,
-                        [End Date] AS ed
+                        {VNDLY_EFFECTIVE_END_SQL} AS ed
                     FROM dbo.STAGING_VNDLY_WORKORDERS
-                    WHERE [Current Status] = 'Active'
+                    WHERE [Current Status] IN ({_sql_list(VNDLY_RAN_STATUSES)})
                         AND [Start Date] IS NOT NULL
-                        AND [Start Date] >= DATEADD(WEEK, -62, GETDATE())
+                        AND ([End Date] IS NULL OR [End Date] >= DATEADD(WEEK, -61, GETDATE()))
                 )
                 SELECT
                     CONVERT(VARCHAR(10), w.week_start, 23) AS week_start,
