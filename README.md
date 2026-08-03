@@ -2,6 +2,21 @@
 
 ## Version History
 
+**2.1.0** - Trend tab: Projected Headcount line on the chart
+
+Closes Tier 3 §3a from TREND_TAB_FOLLOWUPS.md.
+
+The projection engine — `buildProjection`, `holtSmooth`, `buildBlendedProjection`, `PENDING_CONVERSION`, `projectionData` / `ghrProjectionData` / `affProjectionData` — was being computed every render and the outputs never rendered anywhere. Wiring them onto the chart makes the ~150 lines earn their keep:
+
+- **New "Projected Headcount" line on the Category view chart** (long-dashed grey — matches the Total series color, dashed to visually distinguish from actuals + pipeline). Data source is `projectionData` = Holt-smoothed trend blended with forward pipeline + expected-conversion of pending (`PENDING_CONVERSION = 0.7`), weighted 75% at +1 week, 50% at +2, 25% at +3, 0% at +4 — near-term reflects known-quantity pipeline, far-term defers to trend.
+- **Overlay datasets** (used by Account, PM, Division views) now include the projection line alongside Total + Pipeline. Same three reference series stay steady across Group By switches.
+- **Legend groups projections properly** — `parseLabel` recognizes "Projected Headcount", "GHR Projection", "Affiliate Projection" and slots them into the Total / GHR / Affiliate groups as a "Projection" variant.
+- **Non-MSP: projection dropped** on the chart because the pending-conversion component is 0 (no submission funnel per BULLHORN_PORT_SPEC §5), which would leave the projection line collapsed onto Total Pipeline.
+- **Dead code cleanup**: `linearRegression` was defined but never called — removed. `totalFillProjection` / `ghrFillProjection` / `affFillProjection` were computed but never used — removed alongside the `projectSeries` helper that only fed them. Fill Rate mode itself needs redefinition per §5b before its projection variants are worth adding.
+- The audit called out two misleading comments promising "Trend Projection" output that didn't exist. Both replaced with accurate descriptions of what's actually rendered.
+
+Note on numbers: the projection line inherits any bias in the lookback — see §2 residual on VNDLY terminal end dates (fixed to use last-spend week in an earlier commit), and the various filter parity fixes in v2.0.3 / v2.0.4. Should be sanity-checked against a few weeks of real data before it's trusted for planning decisions.
+
 **2.0.5** - Trend tab: non-MSP category taxonomy + Division axis replaces PM view
 
 Closes Tier 3 items §3b and §3c from TREND_TAB_FOLLOWUPS.md.

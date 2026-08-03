@@ -766,7 +766,7 @@
     const $ = (id) => document.getElementById(id);
 
     // App version - loaded from environment variable via API, with fallback
-    let APP_VERSION = '2.0.5';
+    let APP_VERSION = '2.1.0';
 
     const API_BASE_URL = '/api';
     
@@ -6453,20 +6453,6 @@
           weeks.push({ start, end });
         }
 
-        // Linear regression helper (kept for reference/backward compat)
-        function linearRegression(points) {
-          const n = points.length;
-          if (n < 2) return { slope: 0, intercept: points.length ? points[0].y : 0 };
-          const sumX = points.reduce((s, p) => s + p.x, 0);
-          const sumY = points.reduce((s, p) => s + p.y, 0);
-          const sumXY = points.reduce((s, p) => s + p.x * p.y, 0);
-          const sumXX = points.reduce((s, p) => s + p.x * p.x, 0);
-          const denom = (n * sumXX - sumX * sumX);
-          const slope = denom !== 0 ? (n * sumXY - sumX * sumY) / denom : 0;
-          const intercept = (sumY - slope * sumX) / n;
-          return { slope, intercept };
-        }
-
         // Holt's linear exponential smoothing — tracks level + trend with recency decay.
         // alpha smooths the level, beta smooths the trend (both 0..1; higher = more reactive).
         function holtSmooth(values, alpha = 0.6, beta = 0.3) {
@@ -7886,7 +7872,10 @@
         const trendKpiTilesEl = document.getElementById('trendKpiTiles');
         if (trendKpiTilesEl) trendKpiTilesEl.innerHTML = trendKpiTilesHtml;
 
-        // Overlay lines shared across account/PM views: Total, Pipeline, Trend Projection
+        // Overlay lines shared across account/PM/division views: Total, Pipeline,
+        // Projected Headcount. Same three lines the Category view shows, so
+        // switching Group By keeps the reference series steady while the
+        // per-bucket lines beneath swap out.
         const overlayDatasets = [
           {
             label: 'Total Headcount',
@@ -7901,6 +7890,14 @@
             borderColor: '#22c55e',
             backgroundColor: 'rgba(34,197,94,0.08)',
             fill: false, tension: 0.3, pointRadius: 5, borderWidth: 2,
+          },
+          {
+            label: 'Projected Headcount',
+            data: projectionData,
+            borderColor: '#64748b',
+            // DASH_PROJECTION is declared later in this function — inline the
+            // literal so overlayDatasets doesn't reference it before init.
+            fill: false, tension: 0.3, pointRadius: 3, borderWidth: 2, borderDash: [14, 6],
           },
         ];
 
@@ -7969,6 +7966,15 @@
         const categoryChartDatasets = [
           { label: 'Total Headcount', data: actualsData, borderColor: '#64748b', backgroundColor: 'rgba(100,116,139,0.08)', fill: true, tension: 0.3, pointRadius: 5 },
           { label: 'Total Pipeline', data: pipelineData, borderColor: '#64748b', fill: false, tension: 0.3, pointRadius: 4, borderDash: DASH_PIPELINE, hideFromLegend: true },
+          // Projected Headcount: Holt-smoothed trend blended with forward-looking
+          // pipeline + expected-conversion of pending (weighted 75% at +1, 50%
+          // at +2, 25% at +3, 0% at +4). Long-dashed to visually separate from
+          // actuals + pipeline. Hidden by default on non-MSP because the
+          // pending-conversion component is 0 there (no submission funnel), so
+          // the line collapses onto Total Pipeline — visible on MSP only.
+          ...(isNonMspTrend ? [] : [
+            { label: 'Projected Headcount', data: projectionData, borderColor: '#64748b', fill: false, tension: 0.3, pointRadius: 3, borderWidth: 2, borderDash: DASH_PROJECTION },
+          ]),
           // No submission funnel on non-MSP, so pendingTotal is always 0 and this series
           // would render exactly on top of Total Pipeline.
           ...(isNonMspTrend ? [] : [
@@ -7978,9 +7984,11 @@
             { label: 'GHR', data: ghrActualsData, borderColor: '#3b82f6', backgroundColor: 'rgba(59,130,246,0.1)', fill: false, tension: 0.3, pointRadius: 4 },
             { label: 'GHR Pipeline', data: ghrPipelineData, borderColor: '#3b82f6', fill: false, tension: 0.3, pointRadius: 3, borderDash: DASH_PIPELINE, hideFromLegend: true },
             { label: 'GHR Unconfirmed', data: pendingGhrData, borderColor: '#3b82f6', fill: false, tension: 0.3, pointRadius: 3, borderDash: DASH_PENDING },
+            { label: 'GHR Projection', data: ghrProjectionData, borderColor: '#3b82f6', fill: false, tension: 0.3, pointRadius: 2, borderWidth: 1.5, borderDash: DASH_PROJECTION, hideFromLegend: true },
             { label: 'Affiliate', data: affActualsData, borderColor: '#8b5cf6', backgroundColor: 'rgba(139,92,246,0.1)', fill: false, tension: 0.3, pointRadius: 4 },
             { label: 'Affiliate Pipeline', data: affPipelineData, borderColor: '#8b5cf6', fill: false, tension: 0.3, pointRadius: 3, borderDash: DASH_PIPELINE, hideFromLegend: true },
             { label: 'Affiliate Unconfirmed', data: pendingAffData, borderColor: '#8b5cf6', fill: false, tension: 0.3, pointRadius: 3, borderDash: DASH_PENDING },
+            { label: 'Affiliate Projection', data: affProjectionData, borderColor: '#8b5cf6', fill: false, tension: 0.3, pointRadius: 2, borderWidth: 1.5, borderDash: DASH_PROJECTION, hideFromLegend: true },
           ]),
           { label: 'Revenue', data: revenueTotalData, borderColor: '#d97706', backgroundColor: 'rgba(217,119,6,0.08)', fill: false, tension: 0.3, pointRadius: 4, borderWidth: 2, yAxisID: 'y1' },
           { label: 'Revenue (projected)', data: revenueProjectedData, borderColor: '#d97706', fill: false, tension: 0.3, pointRadius: 3, borderWidth: 2, borderDash: DASH_PENDING, yAxisID: 'y1', hideFromLegend: true },
@@ -8205,23 +8213,22 @@
           const a = weekData[i].aff + (weekData[i].pendingAff || 0);
           return { num: a, den: g + a };
         };
-        const projectSeries = (actualsArr) =>
-          buildProjection(i => actualsArr[i], { min: 0, max: 100, decimals: 1 });
 
         const totalFillActuals = pctActuals(i => ({ num: weekData[i].total, den: weekData[i].total }), true); // flat 100 past
+        // Fill Rate mode series. Projection variants of these were computed
+        // but never used (§5b — the Fill Rate axis itself needs redefinition
+        // per the audit); leaving out the projection lines here until that
+        // rework happens.
         const totalFillPipeline = pctActuals(i => ({ num: weekData[i].total, den: weekData[i].total }), false);
         const totalFillPending = pctActuals(totalBookConfirmed, false);
-        const totalFillProjection = projectSeries(totalFillActuals);
 
         const ghrFillActuals = pctActuals(ghrShare, true);
         const ghrFillPipeline = pctActuals(ghrShare, false);
         const ghrFillPending = pctActuals(ghrWithPending, false);
-        const ghrFillProjection = projectSeries(ghrFillActuals);
 
         const affFillActuals = pctActuals(affShare, true);
         const affFillPipeline = pctActuals(affShare, false);
         const affFillPending = pctActuals(affWithPending, false);
-        const affFillProjection = projectSeries(affFillActuals);
 
         // Non-MSP: fill rate is always 100% GHR by definition — drop the
         // GHR + Affiliate breakout, keep only Total Fill Rate + its dashed variants.
@@ -8310,9 +8317,12 @@
             .filter(({ ds }) => !ds.hideFromLegend);
 
           const parseLabel = (label) => {
+            // Projected Headcount is the Total group's projection variant.
+            if (label === 'Projected Headcount') return { group: 'Total', variant: 'Projection' };
             for (const g of ['Total', 'GHR', 'Affiliate']) {
               if (label === g || label === `${g} Headcount` || label === `${g} Fill Rate`) return { group: g, variant: 'Headcount' };
               if (label === `${g} Unconfirmed` || label === `${g} Fill Rate (Unconfirmed)`) return { group: g, variant: 'Unconfirmed' };
+              if (label === `${g} Projection`) return { group: g, variant: 'Projection' };
               if (label === `${g} (PY)` || label === `${g} Headcount (PY)` || label === `${g} Fill Rate (PY)`) return { group: g, variant: 'Prior Year' };
             }
             return { group: null, variant: label };
