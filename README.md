@@ -2,6 +2,17 @@
 
 ## Version History
 
+**2.1.1** - Trend tab: Tier 4 housekeeping (dedupe, DATEFIRST, slug collisions, Fill Rate removal, boundary divider)
+
+Closes the Tier 4 items from TREND_TAB_FOLLOWUPS.md. No user-visible math changes on their own; each reduces drift risk or ambiguity.
+
+- **§5f `transitionedSystems` deduplicated** — was inline as `new Set(['RUMC', 'Holy Redeemer', 'Cooper'])` in three separate render paths in index.html (view-list, view-stats, view-trend). Hoisted to `CONSTANTS.TRANSITIONED_SYSTEMS`. New systems that transition from B4 to VNDLY now only need updating in one place.
+- **§4b `SET DATEFIRST 7` pinned at connection open**. `DATEPART(WEEKDAY, ...)` is used across every trend / YoY / financial / hours query and depends on the session's `DATEFIRST` setting — anything other than `us_english` (which is 7 = Sunday-first) would shift every Sunday-bucketed week by 1+ days. New `_pin_datefirst()` helper runs `SET DATEFIRST 7` right after each `pyodbc.connect()` for Bullhorn / Symplr / AppDB. The MSP-path `pyodbc.connect(...)` calls in GetTrendData / GetYoYTrendData / GetFinancialData set it directly on their cursor. Non-fatal on failure (falls back to server default).
+- **§5j Slug collisions in expand/collapse IDs** — `catId`/`sysId`/`pmId`/`divId`/`vendorId` were built with `replace(/[^a-zA-Z0-9]/g, '_')`, so "GHR-1" and "GHR 1" produced the same slug and toggling one row expanded both. New `_slug(label, idx)` appends the array index so each row gets a unique key. Callers pass idx via the existing `.map(fn)` (which supplies element + index by default).
+- **§5b Fill Rate mode removed**. "Total Fill Rate" was `total/total` (flat 100%), "Total Fill Rate (Unconfirmed)" was `confirmed/(confirmed+pending)` which DROPS as the pipeline grows (a healthier pipeline read as a worse fill rate), and "GHR Fill Rate" / "Affiliate Fill Rate" were share-of-placements — that's the GHR Capture % row already in the table. A real fill rate (filled requisitions ÷ total requisitions) needs requisition data we don't have; removal was the honest answer. Was hidden on non-MSP in v2.0.2; now removed on MSP too. Dropped: toolbar button, `window.toggleTrendFillRate`, `__fillRateMode` branch in `updateTrendChart`, `fillRateChartDatasets`, `pctActuals` / `ghrShare` / `affShare` / `ghrWithPending` / `affWithPending` / `totalBookConfirmed` helpers, `totalFill*` / `ghrFill*` / `affFill*` series.
+- **§5i Actuals→pipeline boundary now has a visual divider**. Deltas cross that boundary comparing values whose basis genuinely changes (actuals → confirmed-only bookings), so future weeks structurally read as declines — a cliff that was actually just the metric changing definition. First future week header now gets a dashed left border with a tooltip explaining the boundary.
+- **§5e Bullhorn ↔ Symplr worker overlap** — verified against live data: **1 worker** overlaps between the two books (1,720 Bullhorn active vs 401 Symplr active). Not worth the cross-source dedup complexity for a single row. Noted here so we don't re-investigate.
+
 **2.1.0** - Trend tab: Projected Headcount line on the chart
 
 Closes Tier 3 §3a from TREND_TAB_FOLLOWUPS.md.

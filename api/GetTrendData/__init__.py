@@ -500,6 +500,12 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
         )
 
         cursor = conn.cursor()
+        # Pin DATEFIRST so DATEPART(WEEKDAY, ...) buckets on Sunday regardless
+        # of the server default (see shared_code/data_source._pin_datefirst).
+        try:
+            cursor.execute("SET DATEFIRST 7")
+        except Exception as e:
+            print(f"MSP trend: SET DATEFIRST failed (non-fatal): {e}")
         assignments = []
         # Each query below has its own try/except so one bad source doesn't zero
         # out the whole tab. Collect the failures so the response can say so —

@@ -18,6 +18,27 @@ import pyodbc
 VALID_SOURCES = {'msp', 'non_msp'}
 
 
+def _pin_datefirst(conn):
+    """
+    Pin the session's DATEFIRST to 7 (Sunday) so every DATEPART(WEEKDAY, ...)
+    in the app buckets on a Sunday boundary regardless of the server or
+    connection language default. The frontend assumes Sunday-start weeks,
+    so a session running under us_english (which is Sunday=1) is the assumed
+    case — but a connection string or server default in any other language
+    would shift every week bucket by one or more days without this.
+    Idempotent; safe to run on every connection.
+    """
+    try:
+        cursor = conn.cursor()
+        cursor.execute("SET DATEFIRST 7")
+        cursor.close()
+    except Exception as e:
+        # Non-fatal — if the driver rejects it for some reason, the app still
+        # runs (just at the mercy of the server default). Log for the record.
+        print(f"_pin_datefirst: swallowed error: {e}")
+    return conn
+
+
 def get_data_source() -> str:
     """
     Returns 'msp' (default) or 'non_msp'. Unknown values fall back to 'msp'
@@ -37,7 +58,7 @@ def is_non_msp() -> bool:
 
 def get_bullhorn_conn():
     """pyodbc connection to the Bullhorn mirror DB. Used by every non_msp endpoint."""
-    return pyodbc.connect(
+    return _pin_datefirst(pyodbc.connect(
         f"DRIVER={{ODBC Driver 17 for SQL Server}};"
         f"SERVER={os.environ['BULLHORN_HOST']};"
         f"DATABASE={os.environ['BULLHORN_DB']};"
@@ -45,7 +66,7 @@ def get_bullhorn_conn():
         f"PWD={os.environ['BULLHORN_PASSWORD']};"
         f"TrustServerCertificate=yes;"
         f"Encrypt=yes"
-    )
+    ))
 
 
 def get_appdb_conn():
@@ -64,14 +85,14 @@ def get_appdb_conn():
     pwd = os.environ.get('DB_PASSWORD')
     if not all([host, db, user, pwd]):
         return None
-    return pyodbc.connect(
+    return _pin_datefirst(pyodbc.connect(
         f"DRIVER={{ODBC Driver 17 for SQL Server}};"
         f"SERVER={host};"
         f"DATABASE={db};"
         f"UID={user};"
         f"PWD={pwd};"
         f"TrustServerCertificate=yes"
-    )
+    ))
 
 
 def get_symplr_conn():
@@ -86,7 +107,7 @@ def get_symplr_conn():
     pwd = os.environ.get('SYMPLR_PASSWORD')
     if not all([host, db, user, pwd]):
         return None
-    return pyodbc.connect(
+    return _pin_datefirst(pyodbc.connect(
         f"DRIVER={{ODBC Driver 17 for SQL Server}};"
         f"SERVER={host};"
         f"DATABASE={db};"
@@ -94,4 +115,4 @@ def get_symplr_conn():
         f"PWD={pwd};"
         f"TrustServerCertificate=yes;"
         f"Encrypt=yes"
-    )
+    ))

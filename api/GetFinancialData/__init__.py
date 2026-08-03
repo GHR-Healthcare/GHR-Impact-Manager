@@ -297,6 +297,12 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
         )
 
         cursor = conn.cursor()
+        # Pin DATEFIRST so DATEPART(WEEKDAY, ...) buckets on Sunday regardless
+        # of the server default (see shared_code/data_source._pin_datefirst).
+        try:
+            cursor.execute("SET DATEFIRST 7")
+        except Exception as e:
+            print(f"MSP financial: SET DATEFIRST failed (non-fatal): {e}")
         vndly_data = []
         b4_data = []
 

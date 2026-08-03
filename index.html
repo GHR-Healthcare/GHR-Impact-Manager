@@ -766,7 +766,7 @@
     const $ = (id) => document.getElementById(id);
 
     // App version - loaded from environment variable via API, with fallback
-    let APP_VERSION = '2.1.0';
+    let APP_VERSION = '2.1.1';
 
     const API_BASE_URL = '/api';
     
@@ -1000,6 +1000,13 @@
         { keywords: ['trinity', 'mercy', 'st. mary', 'nazareth', 'st. francis'], system: 'Trinity Health' },
         { keywords: ['sunrise'], system: 'Sunrise Senior Living', hidden: true },
       ],
+
+      // Systems whose MSP contract moved from B4 to VNDLY. Used to dedupe
+      // rows in the trend / financial / stats views (VNDLY is authoritative
+      // once transitioned). Previously duplicated inline in three render
+      // paths (View.trend, View.stats, View.list) — moved here to keep the
+      // three paths in sync when a new system transitions.
+      TRANSITIONED_SYSTEMS: new Set(['RUMC', 'Holy Redeemer', 'Cooper']),
       
       TEAM_MEMBERS: [
         { name: "Alyssa Comita", email: "acomita@ghrhealthcare.com" },
@@ -5375,7 +5382,7 @@
 
         // B4-to-VNDLY transition: these systems have fully moved to VNDLY,
         // exclude all B4 data for them to prevent double-counting
-        const transitionedSystems = new Set(['RUMC', 'Holy Redeemer', 'Cooper']);
+        const transitionedSystems = CONSTANTS.TRANSITIONED_SYSTEMS;
 
         // Systems excluded from per diem tab entirely
         const isExcludedFromPerDiem = (sys) => Utils.isHiddenHealthSystem(sys);
@@ -6070,7 +6077,7 @@
         // Dedup overlap: only drop a B4 row if VNDLY has the same worker
         // on the same date. Preserves pre-transition B4 data for systems
         // that have partially transitioned (e.g. Cooper as of 2026-04-13).
-        const transitionedSystems = new Set(['RUMC', 'Holy Redeemer', 'Cooper']);
+        const transitionedSystems = CONSTANTS.TRANSITIONED_SYSTEMS;
         const isExcludedSystem = (sys) => Utils.isHiddenHealthSystem(sys);
         const hoursDateKey = d => d ? d.toISOString().slice(0, 10) : '';
         const nwH = Utils.normalizeWorkerName;
@@ -6359,7 +6366,7 @@
         // Dedup overlap: only drop a B4 assignment if VNDLY has the same
         // worker in the same system. Preserves pre-transition B4 data for
         // systems that have partially transitioned (e.g. Cooper 2026-04-13).
-        const transitionedSystems = new Set(['RUMC', 'Holy Redeemer', 'Cooper']);
+        const transitionedSystems = CONSTANTS.TRANSITIONED_SYSTEMS;
         const nwT = Utils.normalizeWorkerName;
         const vndlyAssignmentKeys = new Set(
           allAssignments
@@ -6807,10 +6814,19 @@
           return aIdx !== bIdx ? aIdx - bIdx : a.localeCompare(b);
         });
 
+        // First future week gets a dashed left border to signal the
+        // actuals→pipeline boundary. Deltas cross that boundary comparing
+        // week-over-week values whose basis genuinely changes (actuals →
+        // confirmed-only bookings), so future weeks structurally read as
+        // declines. The divider tells readers to reset their expectations
+        // at that column without needing a legend / footnote for it.
         const summaryTableHeaders = weeks.map((w, i) => {
           const isCurrent = i === currentWeekIdx;
+          const isFirstFuture = currentWeekIdx >= 0 && i === currentWeekIdx + 1;
+          const boundaryCls = isFirstFuture ? 'border-l-2 border-dashed border-slate-400' : '';
+          const boundaryTip = isFirstFuture ? ' title="Pipeline (confirmed) from here forward — deltas are structurally different from the actuals to the left"' : '';
           const avgCol = isCurrent ? `<th class="px-2 py-2 text-center font-semibold trend-avg-col bg-amber-50 text-amber-700 border-l border-r border-amber-200">4-Wk Avg</th>` : '';
-          return `<th class="px-2 py-2 text-center font-semibold ${isCurrent ? 'bg-blue-50 text-blue-700' : ''}">${fmtWeekEnd(w.end)}</th>${avgCol}`;
+          return `<th class="px-2 py-2 text-center font-semibold ${isCurrent ? 'bg-blue-50 text-blue-700' : ''} ${boundaryCls}"${boundaryTip}>${fmtWeekEnd(w.end)}</th>${avgCol}`;
         }).join('');
 
         const deltaSpan = (val, prev) => {
@@ -6867,8 +6883,12 @@
           hideAffiliateSplit
             ? ghrHtml
             : `${ghrHtml}<span class="${sepClass} mx-0.5">/</span>${affHtml}`;
-        const buildCatRow = (cat) => {
-          const catId = cat.replace(/[^a-zA-Z0-9]/g, '_');
+        // Slug helper: append an index so labels that only differ by symbol
+        // (e.g. "GHR-1" vs "GHR 1") don't collide once /[^a-zA-Z0-9]/g strips
+        // to the same base and toggle one → both expand.
+        const _slug = (label, idx) => `${String(label).replace(/[^a-zA-Z0-9]/g, '_')}_${idx}`;
+        const buildCatRow = (cat, catIdx) => {
+          const catId = _slug(cat, catIdx);
           const systems = getSystemsForCat(cat);
           const hasSubRows = systems.length > 1;
           const toggleAttr = hasSubRows ? `onclick="document.querySelectorAll('.cat-sys-${catId}').forEach(r=>r.classList.toggle('hidden'))" style="cursor:pointer"` : '';
@@ -7140,8 +7160,8 @@
         });
         const sortedSystems = [...allSystems].sort();
 
-        const buildSysRow = (sys) => {
-          const sysId = sys.replace(/[^a-zA-Z0-9]/g, '_');
+        const buildSysRow = (sys, sysIdx) => {
+          const sysId = _slug(sys, sysIdx);
           const cats = new Set();
           weekData.forEach(wd => {
             Object.keys(wd.sysCatGhr?.[sys] || {}).forEach(c => cats.add(c));
@@ -7230,8 +7250,8 @@
         });
         const sortedPMs = [...allPMs].sort((a, b) => a === 'Unassigned' ? 1 : b === 'Unassigned' ? -1 : a.localeCompare(b));
 
-        const buildPMRow = (pm) => {
-          const pmId = pm.replace(/[^a-zA-Z0-9]/g, '_');
+        const buildPMRow = (pm, pmIdx) => {
+          const pmId = _slug(pm, pmIdx);
           const pmSystems = new Set();
           weekData.forEach(wd => {
             Object.keys(wd.pmSysGhr?.[pm] || {}).forEach(s => pmSystems.add(s));
@@ -7258,8 +7278,8 @@
             }
           });
           let rows = `<tr class="hover:bg-slate-50" ${toggleAttr}>${cells}</tr>`;
-          [...pmSystems].sort().forEach(sys => {
-            const sysId2 = (pm + '_' + sys).replace(/[^a-zA-Z0-9]/g, '_');
+          [...pmSystems].sort().forEach((sys, subIdx) => {
+            const sysId2 = _slug(pm + '_' + sys, `${pmIdx}_${subIdx}`);
             const pmSysCats = new Set();
             weekData.forEach(wd => {
               Object.keys(wd.pmSysCat?.ghr?.[pm]?.[sys] || {}).forEach(c => pmSysCats.add(c));
@@ -7364,8 +7384,8 @@
         const sortedDivisions = [...allDivisions].sort((a, b) =>
           a === 'Unassigned' ? 1 : b === 'Unassigned' ? -1 : a.localeCompare(b));
 
-        const buildDivRow = (div) => {
-          const divId = div.replace(/[^a-zA-Z0-9]/g, '_');
+        const buildDivRow = (div, divIdx) => {
+          const divId = _slug(div, divIdx);
           const divSystems = new Set();
           weekData.forEach(wd => {
             Object.keys(wd.divSysGhr?.[div] || {}).forEach(sy => divSystems.add(sy));
@@ -7456,8 +7476,8 @@
         weekData.forEach(wd => Object.keys(wd.vendorAff || {}).forEach(v => allVendors.add(v)));
         const sortedVendors = [...allVendors].sort((a, b) => a === 'Unknown' ? 1 : b === 'Unknown' ? -1 : a.localeCompare(b));
 
-        const buildVendorRow = (vendor) => {
-          const vendorId = vendor.replace(/[^a-zA-Z0-9]/g, '_');
+        const buildVendorRow = (vendor, vendorIdx) => {
+          const vendorId = _slug(vendor, vendorIdx);
           const vendorSystems = new Set();
           weekData.forEach(wd => Object.keys(wd.vendorSysAff?.[vendor] || {}).forEach(s => vendorSystems.add(s)));
           const hasSubs = vendorSystems.size > 1;
@@ -7616,9 +7636,17 @@
               <button id="trendYoYBtn" onclick="window.toggleTrendYoY()" class="flex items-center gap-1 px-2.5 py-1 rounded-md text-[10px] font-semibold text-slate-500 hover:text-slate-700 hover:bg-slate-100 transition-colors border border-slate-200">
                 <i data-lucide="calendar" class="w-3 h-3"></i> <span id="trendYoYLabel">Show Prior Year</span>
               </button>
-              ${isNonMspTrend ? '' /* every fill-rate series is a flat 100% line without an affiliate split or a pending funnel */ : `<button id="trendFillRateBtn" onclick="window.toggleTrendFillRate()" class="flex items-center gap-1 px-2.5 py-1 rounded-md text-[10px] font-semibold text-slate-500 hover:text-slate-700 hover:bg-slate-100 transition-colors border border-slate-200">
-                <i data-lucide="percent" class="w-3 h-3"></i> <span id="trendFillRateLabel">Show Fill Rate</span>
-              </button>`}
+              <!-- Fill Rate toggle removed. Was hidden on non-MSP in v2.0.2 (every
+                   series is a flat 100% line without an affiliate split or pending
+                   funnel). On MSP the math was misleading: "Total Fill Rate" =
+                   total/total = flat 100%, "Total Fill Rate (Unconfirmed)" DROPS
+                   as the pipeline grows (a healthier pipeline reads as worse
+                   fill), and "GHR Fill Rate" was really share-of-placements
+                   (the GHR Capture % row already in the table). A real fill rate
+                   (filled requisitions ÷ total requisitions) needs requisition
+                   data we don't have; removal was the honest answer. See §5b in
+                   TREND_TAB_FOLLOWUPS.md. -->
+
             </div>
           </div>
           ${partialDataBanner}
@@ -8186,65 +8214,11 @@
           return result;
         };
 
-        // Fill rate calculations per week:
-        //   Total Fill Rate     = confirmed / (confirmed + pending)       → what % of the book is confirmed
-        //   GHR Fill Rate       = GHR / (GHR + Affiliate)                 → GHR's share of placements
-        //   Affiliate Fill Rate = Affiliate / (GHR + Affiliate)           → Affiliate's share (complement of GHR)
-        const pctActuals = (series, past) => weeks.map((w, i) => {
-          if (past && i > lastActualIdx) return null;
-          if (!past && i < lastActualIdx) return null;
-          const { num, den } = series(i);
-          return den > 0 ? Math.round(num / den * 1000) / 10 : null;
-        });
-        const ghrShare = i => ({ num: weekData[i].ghr, den: weekData[i].ghr + weekData[i].aff });
-        const affShare = i => ({ num: weekData[i].aff, den: weekData[i].ghr + weekData[i].aff });
-        const totalBookConfirmed = i => {
-          const confirmed = weekData[i].total;
-          const pending = weekData[i].pendingTotal || 0;
-          return { num: confirmed, den: confirmed + pending };
-        };
-        const ghrWithPending = i => {
-          const g = weekData[i].ghr + (weekData[i].pendingGhr || 0);
-          const a = weekData[i].aff + (weekData[i].pendingAff || 0);
-          return { num: g, den: g + a };
-        };
-        const affWithPending = i => {
-          const g = weekData[i].ghr + (weekData[i].pendingGhr || 0);
-          const a = weekData[i].aff + (weekData[i].pendingAff || 0);
-          return { num: a, den: g + a };
-        };
-
-        const totalFillActuals = pctActuals(i => ({ num: weekData[i].total, den: weekData[i].total }), true); // flat 100 past
-        // Fill Rate mode series. Projection variants of these were computed
-        // but never used (§5b — the Fill Rate axis itself needs redefinition
-        // per the audit); leaving out the projection lines here until that
-        // rework happens.
-        const totalFillPipeline = pctActuals(i => ({ num: weekData[i].total, den: weekData[i].total }), false);
-        const totalFillPending = pctActuals(totalBookConfirmed, false);
-
-        const ghrFillActuals = pctActuals(ghrShare, true);
-        const ghrFillPipeline = pctActuals(ghrShare, false);
-        const ghrFillPending = pctActuals(ghrWithPending, false);
-
-        const affFillActuals = pctActuals(affShare, true);
-        const affFillPipeline = pctActuals(affShare, false);
-        const affFillPending = pctActuals(affWithPending, false);
-
-        // Non-MSP: fill rate is always 100% GHR by definition — drop the
-        // GHR + Affiliate breakout, keep only Total Fill Rate + its dashed variants.
-        const fillRateChartDatasets = [
-          { label: 'Total Fill Rate', data: totalFillActuals, borderColor: '#64748b', backgroundColor: 'rgba(100,116,139,0.08)', fill: true, tension: 0.3, pointRadius: 5 },
-          { label: 'Total Fill Rate (Pipeline)', data: totalFillPipeline, borderColor: '#64748b', fill: false, tension: 0.3, pointRadius: 4, borderDash: DASH_PIPELINE, hideFromLegend: true },
-          { label: 'Total Fill Rate (Unconfirmed)', data: totalFillPending, borderColor: '#64748b', fill: false, tension: 0.3, pointRadius: 4, borderDash: DASH_PENDING },
-          ...(isNonMspTrend ? [] : [
-            { label: 'GHR Fill Rate', data: ghrFillActuals, borderColor: '#3b82f6', backgroundColor: 'rgba(59,130,246,0.1)', fill: false, tension: 0.3, pointRadius: 5 },
-            { label: 'GHR Fill Rate (Pipeline)', data: ghrFillPipeline, borderColor: '#3b82f6', fill: false, tension: 0.3, pointRadius: 4, borderDash: DASH_PIPELINE, hideFromLegend: true },
-            { label: 'GHR Fill Rate (Unconfirmed)', data: ghrFillPending, borderColor: '#3b82f6', fill: false, tension: 0.3, pointRadius: 4, borderDash: DASH_PENDING },
-            { label: 'Affiliate Fill Rate', data: affFillActuals, borderColor: '#8b5cf6', backgroundColor: 'rgba(139,92,246,0.1)', fill: false, tension: 0.3, pointRadius: 5 },
-            { label: 'Affiliate Fill Rate (Pipeline)', data: affFillPipeline, borderColor: '#8b5cf6', fill: false, tension: 0.3, pointRadius: 4, borderDash: DASH_PIPELINE, hideFromLegend: true },
-            { label: 'Affiliate Fill Rate (Unconfirmed)', data: affFillPending, borderColor: '#8b5cf6', fill: false, tension: 0.3, pointRadius: 4, borderDash: DASH_PENDING },
-          ]),
-        ];
+        // Fill Rate mode was removed in v2.1.1 — the math was misleading
+        // and a real fill rate needs requisition data we don't have. See §5b
+        // in TREND_TAB_FOLLOWUPS.md. The pctActuals / *Fill* series were only
+        // used by the removed Fill Rate chart datasets — dropped along with
+        // the toggle button.
 
         // Labels the user has hidden via the legend. Persisted across re-renders and
         // across Group By / Fill Rate / Prior Year switches (see updateTrendChart).
@@ -8252,19 +8226,14 @@
 
         window.updateTrendChart = function(view) {
           if (!window.__trendChart || !window.__trendChartDatasets) return;
-          let datasets;
-          if (window.__fillRateMode) {
-            datasets = fillRateChartDatasets;
-          } else {
-            let base;
-            if (view === 'account') base = window.__trendChartDatasets.account;
-            else if (view === 'pm') base = window.__trendChartDatasets.pm;
-            else if (view === 'division') base = window.__trendChartDatasets.division;
-            else if (view === 'vendor') base = window.__trendChartDatasets.vendor;
-            else base = window.__trendChartDatasets.category;
-            const yoy = window.__yoyVisible ? computeYoYDatasets(view) : [];
-            datasets = interleaveYoY(base, yoy);
-          }
+          let base;
+          if (view === 'account') base = window.__trendChartDatasets.account;
+          else if (view === 'pm') base = window.__trendChartDatasets.pm;
+          else if (view === 'division') base = window.__trendChartDatasets.division;
+          else if (view === 'vendor') base = window.__trendChartDatasets.vendor;
+          else base = window.__trendChartDatasets.category;
+          const yoy = window.__yoyVisible ? computeYoYDatasets(view) : [];
+          const datasets = interleaveYoY(base, yoy);
           window.__trendChart.data.datasets = datasets;
           // Re-apply hide state by LABEL, not by index. Chart.js tracks visibility
           // positionally, so a series hidden in one Group By view used to leave a
@@ -8272,32 +8241,11 @@
           datasets.forEach((ds, i) =>
             window.__trendChart.setDatasetVisibility(i, !window.__trendHiddenLabels.has(ds.label))
           );
-          // Update y-axis title
-          const yScale = window.__trendChart.options?.scales?.y;
-          if (yScale) {
-            if (!yScale.title) yScale.title = { display: true, font: { size: 11 } };
-            yScale.title.text = window.__fillRateMode ? 'Fill Rate (%)' : 'Headcount';
-            yScale.min = window.__fillRateMode ? 0 : undefined;
-            yScale.max = window.__fillRateMode ? 100 : undefined;
-          }
           window.__trendChart.update();
           // Every caller (Group By buttons, Prior Year toggle, Fill Rate toggle)
           // needs the legend rebuilt for the new dataset list — doing it here means
           // no caller can forget, which is how the legend used to go stale.
           renderTrendLegend();
-        };
-
-        window.toggleTrendFillRate = () => {
-          window.__fillRateMode = !window.__fillRateMode;
-          const btn = document.getElementById('trendFillRateBtn');
-          const lbl = document.getElementById('trendFillRateLabel');
-          if (lbl) lbl.textContent = window.__fillRateMode ? 'Show Headcount' : 'Show Fill Rate';
-          if (btn) {
-            btn.classList.toggle('bg-blue-50', window.__fillRateMode);
-            btn.classList.toggle('text-blue-700', window.__fillRateMode);
-            btn.classList.toggle('border-blue-200', window.__fillRateMode);
-          }
-          window.updateTrendChart(window.__trendView || 'category');
         };
 
         // Custom legend: for Total/GHR/Affiliate datasets, stack as rows with group label +
