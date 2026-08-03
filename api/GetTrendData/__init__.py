@@ -14,6 +14,7 @@ from shared_code.symplr_systems import (
     build_scope_filter as symplr_scope_filter,
     build_division_case_expr as symplr_division_case_expr,
     resolve_scope_master_ids as symplr_resolve_scope,
+    service_line_case as symplr_service_line_case,
 )
 
 
@@ -101,6 +102,32 @@ VNDLY_HAS_SPEND_IF_TERMINAL_SQL = f'''(
     )'''
 
 
+# Bullhorn service line bucketing, parallel to Symplr's SYMPLR_SERVICE_LINE_CASE.
+# Groups placements by profession (p.customText1) into MSP-style service lines
+# so the non-MSP Category breakdown lines up with MSP's Nursing / Allied /
+# Non-Clinical / Advanced Practices groupings instead of everything falling
+# into "Other".
+#
+# Values inventoried against live scope: RN (12k+), Coder (2k+), Social Worker,
+# CRNA, OR Tech, RRT, Sterile Processing Tech, Coder, CMA, IT, Registered
+# Dietitian, etc. Unmapped rows fall through to the placement's employmentType
+# (Travel / PRN / Remote / Local / Permanent) so they land in a labelled
+# bucket rather than 'Other'. Requires View_Placement aliased as `p`.
+BULLHORN_SERVICE_LINE_CASE = '''CASE
+        WHEN p.customText1 IN ('RN', 'LPN', 'CNA') THEN 'Nursing'
+        WHEN p.customText1 IN ('CRNA', 'Anesthesiologist', 'NP', 'PA', 'Physician', 'MD', 'DO') THEN 'Advanced Practices'
+        WHEN p.customText1 IN ('OT', 'PT', 'SLP', 'Registered Dietitian', 'Therapist',
+                                'Social Worker', 'Speech', 'RRT', 'OR Tech', 'CMA',
+                                'Sterile Processing Tech', 'Surgical Tech', 'Rad Tech',
+                                'Ultrasound Tech', 'MRI Tech', 'CT Tech', 'Echo Tech',
+                                'Pharmacy Tech', 'Lab Tech', 'Respiratory Therapist') THEN 'Allied'
+        WHEN p.customText1 IN ('Coder', 'CDI Specialist', 'Coding Auditor', 'Medical Coder',
+                                'Customer Service Rep', 'Clerical', 'Admin', 'IT',
+                                'Director', 'HIM Specialist', 'Analyst') THEN 'Non-Clinical'
+        ELSE COALESCE(NULLIF(p.employmentType, ''), 'Other')
+    END'''
+
+
 def _bullhorn_trend_data():
     """
     Returns {assignments, weekly_revenue} from the Bullhorn book. Raises on
@@ -129,16 +156,22 @@ def _bullhorn_trend_data():
             'GHR' AS agency,
             p.customText1 AS specialty,
             p.employmentType AS category,
+            ({BULLHORN_SERVICE_LINE_CASE}) AS service_line,
             -- Division lives on the client (View_ClientCorporation.customTextBlock1),
             -- not the placement — customTextBlock1 on View_Placement is always NULL.
             -- Values arrive as a comma-separated list (e.g. "Allied,Nursing,RevCycle Workforce")
             -- because a single client can be serviced by multiple GHR internal teams.
             cc.customTextBlock1 AS division,
             NULL AS region,
-            -- Profession is on the JobOrder (jo.customText1), not the Placement.
-            -- Matches how GetPositions reads it so the Profession filter dropdown
-            -- values (populated from positions + stats) actually match trend records.
-            jo.customText1 AS profession,
+            -- Profession: GetPositions reads jo.customText1, but that field is
+            -- NULL on the vast majority of job orders older placements attach
+            -- to — so filtering by profession from the dropdown would silently
+            -- drop most trend rows. Placement-level customText1 (which we're
+            -- also labeling `specialty` above) carries the real value in that
+            -- case (RN, Coder, CRNA, Social Worker, etc.). Prefer jo. when
+            -- populated for consistency with the positions endpoint; fall back
+            -- to p. otherwise.
+            COALESCE(NULLIF(jo.customText1, ''), p.customText1) AS profession,
             p.customText11 AS pm,
             p.status AS status,
             TRY_CAST(p.clientBillRate AS DECIMAL(10,2)) AS bill_rate,
@@ -252,6 +285,7 @@ def _symplr_trend_data():
                 'GHR' AS agency,
                 lt.specialty AS specialty,
                 lt.nursetype AS category,
+                ({symplr_service_line_case('lt.nursetype')}) AS service_line,
                 ({division_case}) AS division,
                 pc.state AS region,
                 lt.specialty AS profession,
@@ -300,6 +334,7 @@ def _symplr_trend_data():
                 'GHR' AS agency,
                 MAX(o.specialty) AS specialty,
                 MAX(o.nursetype) AS category,
+                ({symplr_service_line_case('MAX(o.nursetype)')}) AS service_line,
                 ({division_case_orders}) AS division,
                 MAX(pc.state) AS region,
                 MAX(o.specialty) AS profession,

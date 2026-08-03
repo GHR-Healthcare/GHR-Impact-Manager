@@ -766,7 +766,7 @@
     const $ = (id) => document.getElementById(id);
 
     // App version - loaded from environment variable via API, with fallback
-    let APP_VERSION = '2.0.4';
+    let APP_VERSION = '2.0.5';
 
     const API_BASE_URL = '/api';
     
@@ -6559,6 +6559,13 @@
           const pmSysAff = {};
           const pmSysCatGhr = {};    // pm → system → category → Set of names
           const pmSysCatAff = {};
+          // Division buckets (non-MSP only — MSP has no meaningful Division
+          // dimension). Bullhorn division comes as a comma-separated list per
+          // CLIENT, so a single worker can count under multiple divisions.
+          const divGhr = {};         // division → Set of names
+          const divAff = {};
+          const divSysGhr = {};      // division → system → Set of names
+          const divSysAff = {};
           const vendorAff = {};      // vendor → Set of names (affiliate only)
           const vendorSysAff = {};   // vendor → system → Set of names
 
@@ -6579,18 +6586,40 @@
           // below go through this — they used to be two hand-copied blocks, which
           // is how the promotion came to run AFTER the counts were snapshotted
           // (totals included those workers, every breakdown excluded them).
+          const isNonMspTrend = s.dataSource === 'non_msp';
           const addRow = (r) => {
             const key = r.__hcKey;
-            const cat = normalizeCategory(r.category);
+            // Non-MSP: server emits `service_line` (Nursing / Allied /
+            // Non-Clinical / Advanced Practices / Travel / PRN / Local / etc.)
+            // via BULLHORN_SERVICE_LINE_CASE + symplr_service_line_case. Use
+            // that as the Category axis so raw Bullhorn employmentType and
+            // Symplr nursetype values don't all fall into 'Other'. Fall back
+            // to normalizeCategory(r.category) if service_line is missing.
+            const cat = isNonMspTrend
+              ? (r.service_line || normalizeCategory(r.category))
+              : normalizeCategory(r.category);
             const sys = r.healthSystem || 'Unknown';
             const pm = resolvePM(r.facility, r.healthSystem);
             const includeInPM = !PM_EXCLUDED_SYSTEMS.has(sys);
+            // Non-MSP: split the comma-separated division list so a worker on
+            // a client tagged "Allied,Nursing,RevCycle Workforce" contributes
+            // to each of those three division buckets. Falls back to
+            // 'Unassigned' for records with no division tag (untagged
+            // historical rows or Symplr rows with an unmapped master).
+            const divisions = isNonMspTrend
+              ? (String(r.division || '').split(',').map(x => x.trim()).filter(Boolean))
+              : [];
+            if (isNonMspTrend && divisions.length === 0) divisions.push('Unassigned');
             if (isGHRAgency(r.agency)) {
               ghrNames.add(key);
               if (!catGhr[cat]) catGhr[cat] = new Set(); catGhr[cat].add(key);
               addToNested2(catSysGhr, cat, sys, key);
               if (!sysGhr[sys]) sysGhr[sys] = new Set(); sysGhr[sys].add(key);
               addToNested2(sysCatGhr, sys, cat, key);
+              divisions.forEach(d => {
+                if (!divGhr[d]) divGhr[d] = new Set(); divGhr[d].add(key);
+                addToNested2(divSysGhr, d, sys, key);
+              });
               if (includeInPM) {
                 if (!pmGhr[pm]) pmGhr[pm] = new Set(); pmGhr[pm].add(key);
                 addToNested2(pmSysGhr, pm, sys, key);
@@ -6602,6 +6631,10 @@
               addToNested2(catSysAff, cat, sys, key);
               if (!sysAff[sys]) sysAff[sys] = new Set(); sysAff[sys].add(key);
               addToNested2(sysCatAff, sys, cat, key);
+              divisions.forEach(d => {
+                if (!divAff[d]) divAff[d] = new Set(); divAff[d].add(key);
+                addToNested2(divSysAff, d, sys, key);
+              });
               if (includeInPM) {
                 if (!pmAff[pm]) pmAff[pm] = new Set(); pmAff[pm].add(key);
                 addToNested2(pmSysAff, pm, sys, key);
@@ -6643,6 +6676,8 @@
             pmGhr: toCount1(pmGhr), pmAff: toCount1(pmAff),
             pmSysGhr: toCount2(pmSysGhr), pmSysAff: toCount2(pmSysAff),
             pmSysCat: { ghr: toCount3(pmSysCatGhr), aff: toCount3(pmSysCatAff) },
+            divGhr: toCount1(divGhr), divAff: toCount1(divAff),
+            divSysGhr: toCount2(divSysGhr), divSysAff: toCount2(divSysAff),
             vendorAff: toCount1(vendorAff), vendorSysAff: toCount2(vendorSysAff),
             pendingGhr: pendingGhrKeys.size, pendingAff: pendingAffKeys.size,
             pendingTotal: pendingGhrKeys.size + pendingAffKeys.size,
@@ -6984,7 +7019,14 @@
           return `<tr class="bg-slate-50">${cells}</tr>`;
         };
 
-        // Group categories and build header + subtotal rows
+        // Group categories and build header + subtotal rows. Order matters —
+        // the first matching group claims the category. Nursing / Allied /
+        // Advanced Practices / Physicians / Non-Clinical apply to both
+        // instances (MSP's own category strings and non-MSP's server-emitted
+        // service_line both hit these). Travel / Per Diem / Local / Remote /
+        // Perm Placement are the Bullhorn engagement-type fallbacks that
+        // BULLHORN_SERVICE_LINE_CASE emits when the profession doesn't map
+        // — without explicit entries they'd all fall into 'Other'.
         const catGroupDefs = [
           { label: 'Nursing',            match: c => /nurs/i.test(c) },
           { label: 'Allied',             match: c => /allied/i.test(c) },
@@ -6992,6 +7034,11 @@
           { label: 'Physicians',         match: c => /physician/i.test(c) },
           { label: 'Information Technology', match: c => /information\s*tech|^IT$/i.test(c) },
           { label: 'Non-Clinical',       match: c => /non.?clinical/i.test(c) },
+          { label: 'Travel',             match: c => /^travel$/i.test(c) },
+          { label: 'Per Diem / PRN',     match: c => /^(prn|per\s*diem)$/i.test(c) },
+          { label: 'Local Contract',     match: c => /^(local|local\s*contract)$/i.test(c) },
+          { label: 'Remote',             match: c => /^remote$/i.test(c) },
+          { label: 'Perm Placement',     match: c => /^(perm|perm\s*placement|permanent)$/i.test(c) },
           { label: 'Other',              match: () => true },
         ];
 
@@ -7317,6 +7364,107 @@
         })();
         const pmTableBody = (hideAffiliateSplit ? '' : buildCaptureRow()) + pmTableTotalRow + sortedPMs.map(buildPMRow).join('');
 
+        // ── Division view (non-MSP only) ───────────────────────────────────────
+        // Bullhorn division is a comma-separated list per client, so a worker
+        // on a "Allied,Nursing,RevCycle Workforce" client contributes to all
+        // three buckets. Sum-of-per-division counts therefore CAN exceed the
+        // deduplicated Total — that's expected and matches how division is
+        // used elsewhere in the app. Tooltip explains.
+        const allDivisions = new Set();
+        weekData.forEach(wd => {
+          Object.keys(wd.divGhr || {}).forEach(d => allDivisions.add(d));
+          Object.keys(wd.divAff || {}).forEach(d => allDivisions.add(d));
+        });
+        const sortedDivisions = [...allDivisions].sort((a, b) =>
+          a === 'Unassigned' ? 1 : b === 'Unassigned' ? -1 : a.localeCompare(b));
+
+        const buildDivRow = (div) => {
+          const divId = div.replace(/[^a-zA-Z0-9]/g, '_');
+          const divSystems = new Set();
+          weekData.forEach(wd => {
+            Object.keys(wd.divSysGhr?.[div] || {}).forEach(sy => divSystems.add(sy));
+            Object.keys(wd.divSysAff?.[div] || {}).forEach(sy => divSystems.add(sy));
+          });
+          const hasSubs = divSystems.size > 0;
+          const toggleAttr = hasSubs ? `onclick="document.querySelectorAll('.div-sys-${divId}').forEach(r=>r.classList.toggle('hidden'))" style="cursor:pointer"` : '';
+          const chevron = hasSubs ? `<span class="inline-block w-3 text-slate-400 mr-1">&#9654;</span>` : `<span class="inline-block w-3 mr-1"></span>`;
+          const avgG = rolling4Wk(i => weekData[i].divGhr?.[div] || 0);
+          const avgA = rolling4Wk(i => weekData[i].divAff?.[div] || 0);
+          let cells = `<td class="px-3 py-1.5 border-b border-slate-100 font-semibold text-slate-700 whitespace-nowrap text-xs">${chevron}${div}</td>`;
+          weeks.forEach((w, i) => {
+            const gv = weekData[i].divGhr?.[div] || 0, av = weekData[i].divAff?.[div] || 0;
+            const gP = i > 0 ? (weekData[i-1].divGhr?.[div] || 0) : null;
+            const aP = i > 0 ? (weekData[i-1].divAff?.[div] || 0) : null;
+            const isCurrent = i === currentWeekIdx;
+            cells += `<td class="px-2 py-1.5 border-b border-slate-100 text-center text-[10px] ${isCurrent ? 'bg-blue-50' : ''}">${splitCell(
+              `<span class="text-blue-700 font-semibold">${gv}${deltaSpan(gv,gP)}</span>`,
+              `<span class="text-purple-700 font-semibold">${av}${deltaSpan(av,aP)}</span>`
+            )}</td>`;
+            if (isCurrent) {
+              cells += `<td class="px-2 py-1.5 border-b border-slate-100 text-center text-[10px] trend-avg-col bg-amber-50 border-l border-r border-amber-200">${splitCell(
+                `<span class="text-blue-700 font-semibold">${avgG ?? '—'}</span>`,
+                `<span class="text-purple-700 font-semibold">${avgA ?? '—'}</span>`
+              )}</td>`;
+            }
+          });
+          let rows = `<tr class="hover:bg-slate-50" ${toggleAttr}>${cells}</tr>`;
+          [...divSystems].sort().forEach(sy => {
+            const dsAvgG = rolling4Wk(i => weekData[i].divSysGhr?.[div]?.[sy] || 0);
+            const dsAvgA = rolling4Wk(i => weekData[i].divSysAff?.[div]?.[sy] || 0);
+            let sc = `<td class="pl-7 pr-3 py-1 border-b border-slate-50 text-slate-600 whitespace-nowrap text-[10px]"><span class="inline-block w-3 mr-1"></span>${sy}</td>`;
+            weeks.forEach((w, i) => {
+              const gv = weekData[i].divSysGhr?.[div]?.[sy] || 0;
+              const av = weekData[i].divSysAff?.[div]?.[sy] || 0;
+              const gP = i > 0 ? (weekData[i-1].divSysGhr?.[div]?.[sy] || 0) : null;
+              const aP = i > 0 ? (weekData[i-1].divSysAff?.[div]?.[sy] || 0) : null;
+              const isCurrent = i === currentWeekIdx;
+              sc += `<td class="px-2 py-1 border-b border-slate-50 text-center text-[10px] ${isCurrent ? 'bg-blue-50/50' : ''}">${splitCell(
+                `<span class="text-blue-600">${gv}${deltaSpan(gv,gP)}</span>`,
+                `<span class="text-purple-600">${av}${deltaSpan(av,aP)}</span>`,
+                'text-slate-200'
+              )}</td>`;
+              if (isCurrent) {
+                sc += `<td class="px-2 py-1 border-b border-slate-50 text-center text-[10px] trend-avg-col bg-amber-50 border-l border-r border-amber-200">${splitCell(
+                  `<span class="text-blue-600">${dsAvgG ?? '—'}</span>`,
+                  `<span class="text-purple-600">${dsAvgA ?? '—'}</span>`,
+                  'text-slate-200'
+                )}</td>`;
+              }
+            });
+            rows += `<tr class="div-sys-${divId} hidden hover:bg-slate-50">${sc}</tr>`;
+          });
+          return rows;
+        };
+        // Division Total = sum across all division buckets. Because divisions
+        // are comma-separated per client, this total will overcount workers
+        // present in multiple divisions — annotated on the tooltip.
+        const divTotalGhr = (i) => Object.values(weekData[i].divGhr || {})
+          .reduce((s, v) => s + (typeof v === 'number' ? v : (v && v.size) || 0), 0);
+        const divTotalAff = (i) => Object.values(weekData[i].divAff || {})
+          .reduce((s, v) => s + (typeof v === 'number' ? v : (v && v.size) || 0), 0);
+        const divTableTotalRow = (() => {
+          const avgG = rolling4Wk(divTotalGhr), avgA = rolling4Wk(divTotalAff);
+          let cells = `<td class="px-3 py-1.5 border-b border-slate-200 font-bold text-slate-800 whitespace-nowrap text-xs" title="Workers in multiple divisions count under each — total may exceed unique headcount"><span class="inline-block w-3 mr-1"></span>Total (all divisions)</td>`;
+          weeks.forEach((w, i) => {
+            const g = divTotalGhr(i), a = divTotalAff(i);
+            const gP = i > 0 ? divTotalGhr(i-1) : null;
+            const aP = i > 0 ? divTotalAff(i-1) : null;
+            const isCurrent = i === currentWeekIdx;
+            cells += `<td class="px-2 py-1.5 border-b border-slate-200 text-center text-[11px] font-bold ${isCurrent ? 'bg-blue-50' : ''}">${splitCell(
+              `<span class="text-blue-700">${g}${deltaSpan(g,gP)}</span>`,
+              `<span class="text-purple-700">${a}${deltaSpan(a,aP)}</span>`
+            )}</td>`;
+            if (isCurrent) {
+              cells += `<td class="px-2 py-1.5 border-b border-slate-200 text-center text-[11px] font-bold trend-avg-col bg-amber-50 border-l border-r border-amber-200">${splitCell(
+                `<span class="text-blue-700">${avgG ?? '—'}</span>`,
+                `<span class="text-purple-700">${avgA ?? '—'}</span>`
+              )}</td>`;
+            }
+          });
+          return `<tr class="bg-slate-50">${cells}</tr>`;
+        })();
+        const divTableBody = (hideAffiliateSplit ? '' : buildCaptureRow()) + divTableTotalRow + sortedDivisions.map(buildDivRow).join('');
+
         // ── Vendor view (Affiliate vendors only) ───────────────────────────────
         const allVendors = new Set();
         weekData.forEach(wd => Object.keys(wd.vendorAff || {}).forEach(v => allVendors.add(v)));
@@ -7465,8 +7613,11 @@
                   class="px-2.5 py-1 rounded-md bg-white shadow-sm text-slate-700 transition-colors">Category</button>
                 <button onclick="window.__trendView='account';document.getElementById('trendBreakdownBody').innerHTML=window.__trendSysBody;document.getElementById('trendBreakdownLabel').textContent='Account';document.getElementById('trendGroupByBtns').querySelectorAll('button').forEach(b=>b.classList.remove('bg-white','shadow-sm','text-slate-700'));this.classList.add('bg-white','shadow-sm','text-slate-700');window.updateTrendChart('account')"
                   class="px-2.5 py-1 rounded-md text-slate-500 hover:text-slate-700 transition-colors">Account</button>
-                <button onclick="window.__trendView='pm';document.getElementById('trendBreakdownBody').innerHTML=window.__trendPMBody;document.getElementById('trendBreakdownLabel').textContent='PM';document.getElementById('trendGroupByBtns').querySelectorAll('button').forEach(b=>b.classList.remove('bg-white','shadow-sm','text-slate-700'));this.classList.add('bg-white','shadow-sm','text-slate-700');window.updateTrendChart('pm')"
-                  class="px-2.5 py-1 rounded-md text-slate-500 hover:text-slate-700 transition-colors">PM</button>
+                ${isNonMspTrend
+                  ? `<button onclick="window.__trendView='division';document.getElementById('trendBreakdownBody').innerHTML=window.__trendDivBody;document.getElementById('trendBreakdownLabel').textContent='Division';document.getElementById('trendGroupByBtns').querySelectorAll('button').forEach(b=>b.classList.remove('bg-white','shadow-sm','text-slate-700'));this.classList.add('bg-white','shadow-sm','text-slate-700');window.updateTrendChart('division')"
+                       class="px-2.5 py-1 rounded-md text-slate-500 hover:text-slate-700 transition-colors">Division</button>`
+                  : `<button onclick="window.__trendView='pm';document.getElementById('trendBreakdownBody').innerHTML=window.__trendPMBody;document.getElementById('trendBreakdownLabel').textContent='PM';document.getElementById('trendGroupByBtns').querySelectorAll('button').forEach(b=>b.classList.remove('bg-white','shadow-sm','text-slate-700'));this.classList.add('bg-white','shadow-sm','text-slate-700');window.updateTrendChart('pm')"
+                       class="px-2.5 py-1 rounded-md text-slate-500 hover:text-slate-700 transition-colors">PM</button>`}
                 ${isNonMspTrend ? '' : `<button onclick="window.__trendView='vendor';document.getElementById('trendBreakdownBody').innerHTML=window.__trendVendorBody;document.getElementById('trendBreakdownLabel').textContent='Vendor';document.getElementById('trendGroupByBtns').querySelectorAll('button').forEach(b=>b.classList.remove('bg-white','shadow-sm','text-slate-700'));this.classList.add('bg-white','shadow-sm','text-slate-700');window.updateTrendChart('vendor')"
                   class="px-2.5 py-1 rounded-md text-slate-500 hover:text-slate-700 transition-colors">Vendor</button>`}
               </div>
@@ -7528,9 +7679,16 @@
         window.__trendSysBody = sysTableBody;
         window.__trendPMBody = pmTableBody;
         window.__trendVendorBody = vendorTableBody;
+        window.__trendDivBody = divTableBody;
         window.__trendView = window.__trendView || 'category';
-        // Vendor doesn't exist on non-MSP; never restore into an empty table.
-        if (isNonMspTrend && window.__trendView === 'vendor') window.__trendView = 'category';
+        // Views that only apply to one instance — reset if we're on the other.
+        // Vendor + PM are MSP-only; Division is non-MSP-only.
+        if (isNonMspTrend && (window.__trendView === 'vendor' || window.__trendView === 'pm')) {
+          window.__trendView = 'category';
+        }
+        if (!isNonMspTrend && window.__trendView === 'division') {
+          window.__trendView = 'category';
+        }
         // Restore previous toggle selection if re-rendering
         const restoreTrendView = (bodyHtml, label, btnIdx) => {
           const el = document.getElementById('trendBreakdownBody');
@@ -7541,8 +7699,9 @@
           if (btns) { btns.querySelectorAll('button').forEach((b,i) => { b.classList.remove('bg-white','shadow-sm','text-slate-700'); if(i===btnIdx) b.classList.add('bg-white','shadow-sm','text-slate-700'); }); }
         };
         if (window.__trendView === 'account') restoreTrendView(sysTableBody, 'Account', 1);
-        else if (window.__trendView === 'pm') restoreTrendView(pmTableBody, 'PM', 2);
-        else if (window.__trendView === 'vendor') restoreTrendView(vendorTableBody, 'Vendor', 3);
+        else if (window.__trendView === 'pm' && !isNonMspTrend) restoreTrendView(pmTableBody, 'PM', 2);
+        else if (window.__trendView === 'division' && isNonMspTrend) restoreTrendView(divTableBody, 'Division', 2);
+        else if (window.__trendView === 'vendor' && !isNonMspTrend) restoreTrendView(vendorTableBody, 'Vendor', 3);
 
         // Per-system and per-PM chart datasets (used when Group By = Account or PM)
         const TREND_COLORS = ['#3b82f6','#8b5cf6','#22c55e','#f59e0b','#ef4444','#06b6d4','#84cc16','#f97316','#ec4899','#6366f1','#14b8a6','#f43f5e'];
@@ -7769,6 +7928,12 @@
             buildSeriesPair(sys, i => (weekData[i].sysGhr?.[sys] || 0) + (weekData[i].sysAff?.[sys] || 0), TREND_COLORS[idx % TREND_COLORS.length], idx)
           ),
         ];
+        const divChartDatasets = [
+          ...overlayDatasets,
+          ...sortedDivisions.flatMap((div, idx) =>
+            buildSeriesPair(div, i => (weekData[i].divGhr?.[div] || 0) + (weekData[i].divAff?.[div] || 0), TREND_COLORS[idx % TREND_COLORS.length], idx)
+          ),
+        ];
         const pmChartDatasets = [
           ...overlayDatasets,
           ...sortedPMs.flatMap((pm, idx) =>
@@ -7820,7 +7985,7 @@
           { label: 'Revenue', data: revenueTotalData, borderColor: '#d97706', backgroundColor: 'rgba(217,119,6,0.08)', fill: false, tension: 0.3, pointRadius: 4, borderWidth: 2, yAxisID: 'y1' },
           { label: 'Revenue (projected)', data: revenueProjectedData, borderColor: '#d97706', fill: false, tension: 0.3, pointRadius: 3, borderWidth: 2, borderDash: DASH_PENDING, yAxisID: 'y1', hideFromLegend: true },
         ];
-        window.__trendChartDatasets = { category: categoryChartDatasets, account: sysChartDatasets, pm: pmChartDatasets, vendor: vendorChartDatasets };
+        window.__trendChartDatasets = { category: categoryChartDatasets, account: sysChartDatasets, pm: pmChartDatasets, vendor: vendorChartDatasets, division: divChartDatasets };
 
         // ── Prior-Year (YoY) overlay ─────────────────────────────────────────
         // Compute prior-year week-start strings (52 weeks = 364 days back)
@@ -8087,6 +8252,7 @@
             let base;
             if (view === 'account') base = window.__trendChartDatasets.account;
             else if (view === 'pm') base = window.__trendChartDatasets.pm;
+            else if (view === 'division') base = window.__trendChartDatasets.division;
             else if (view === 'vendor') base = window.__trendChartDatasets.vendor;
             else base = window.__trendChartDatasets.category;
             const yoy = window.__yoyVisible ? computeYoYDatasets(view) : [];

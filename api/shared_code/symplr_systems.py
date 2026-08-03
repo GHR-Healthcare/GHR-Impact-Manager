@@ -38,6 +38,25 @@ SYMPLR_SYSTEM_ROLLUP = [
 ]
 
 
+def service_line_case(nursetype_col: str = 'lt.nursetype') -> str:
+    """
+    SQL CASE expression that buckets Symplr `nursetype` into MSP-parallel
+    service lines (Nursing / Allied / Non-Clinical / Other). Same taxonomy
+    GetFinancialData uses for its monthly rollup — factored out so Trend,
+    Stats, Financials, and Hours can all bucket identically.
+
+    Callers pass the correct column reference (e.g. `lt.nursetype` when the
+    lt_order table is aliased as lt, or `o.nursetype` when reading from the
+    shift-level orders table).
+    """
+    return f"""CASE
+        WHEN {nursetype_col} IN ('RN', 'LPN') THEN 'Nursing'
+        WHEN {nursetype_col} IN ('PCA', 'CNA', 'Aide', 'Paraprofessional') THEN 'Non-Clinical'
+        WHEN {nursetype_col} IN ('OT', 'PT', 'SLP', 'Therapy', 'Behavior Therapist') THEN 'Allied'
+        ELSE 'Other'
+    END"""
+
+
 def all_in_scope_master_ids():
     """Flat list of every profile_client master recordid in scope."""
     out = []

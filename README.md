@@ -2,6 +2,14 @@
 
 ## Version History
 
+**2.0.5** - Trend tab: non-MSP category taxonomy + Division axis replaces PM view
+
+Closes Tier 3 items §3b and §3c from TREND_TAB_FOLLOWUPS.md.
+
+- **§3b Non-MSP categories bucket into clinical service lines**. Trend was leaving every Bullhorn `employmentType` and Symplr `nursetype` value in the raw form, so the "Nursing" / "Allied" / "Advanced Practices" / "Non-Clinical" groupings collapsed to a single "Other" catch-all row on non-MSP. Two service-line CASE expressions now normalize server-side: `symplr_service_line_case()` factored out of GetFinancialData into `shared_code/symplr_systems.py` (Nursing / Allied / Non-Clinical / Other), and a new `BULLHORN_SERVICE_LINE_CASE` in GetTrendData that maps `p.customText1` (profession — RN, Coder, CRNA, OR Tech, etc.) into the same buckets with a fallback to `employmentType` (Travel / PRN / Local / Remote / Permanent) so unmapped rows still land in a labelled bucket. Both trend queries emit `service_line` alongside raw `category`; the addRow closure prefers `service_line` on non-MSP. Live verification: 9,910 Nursing / 3,455 Allied / 2,780 Non-Clinical / 1,481 Advanced Practices / ~2,200 in engagement-type fallbacks.
+- **§3b bonus — Profession filter uses the populated column**. v2.0.3 wired `jo.customText1 AS profession` but that field is NULL on the vast majority of job orders older placements attach to, so filtering by profession from the dropdown would have silently dropped most trend rows. Now `COALESCE(NULLIF(jo.customText1, ''), p.customText1)` — placement-level customText1 carries the real value (RN, Coder, CRNA, Social Worker, etc.) when the job order's is empty.
+- **§3c Division axis replaces PM view on non-MSP**. The PM view was showing every non-MSP row as "Unassigned" because `pmMappings` is an MSP-only admin table. New Division axis accumulates weekly `divGhr` / `divAff` / `divSysGhr` / `divSysAff` sets in `weekData` — Bullhorn division is comma-separated per client, so a worker on an "Allied,Nursing,RevCycle Workforce" client contributes to all three buckets (noted in the Total-row tooltip). PM button in the Group By toolbar swaps to "Division" on non-MSP; MSP unchanged. Division chart datasets, breakdown table, restore-view logic, and defensive reset (if user is on PM/Vendor and switches to non-MSP, or on Division and switches to MSP) all wired.
+
 **2.0.4** - Trend tab: revenue filter parity + YoY overlay filter parity + PM view total tie-out
 
 Tier 2 of the audit follow-ups — numbers that were wrong under specific filter combinations.
