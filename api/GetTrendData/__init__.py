@@ -57,14 +57,48 @@ def _sql_list(values):
     return ', '.join("'" + v.replace("'", "''") + "'" for v in values)
 
 
-# Effective end date for a VNDLY work order, capped at today for terminal
-# statuses (see VNDLY_TERMINAL_STATUSES).
+# Effective end date for a VNDLY work order.
+#
+#   - Active: raw [End Date] (may be NULL for open-ended assignments).
+#   - Ended / Ended by Job Close: [End Date] is the originally SCHEDULED end,
+#     often over a year out — not the date the assignment actually stopped.
+#     Use the last week we billed the contractor via STAGING_VNDLY_SPEND
+#     as the actual stop marker. Terminal WOs with no spend row at all are
+#     excluded upstream by VNDLY_HAS_SPEND_IF_TERMINAL_SQL — they never
+#     actually ran, so they shouldn't contribute headcount.
+#
+# The v2.0.2 first pass capped terminal rows at today, which overstated
+# current-week headcount (workers who really stopped weeks ago were still
+# counted) and produced a hard cliff the moment you crossed the current
+# week boundary. Using per-worker last-spend fixes both.
+#
+# Requires the outer STAGING_VNDLY_WORKORDERS to be aliased as `wo`.
 VNDLY_EFFECTIVE_END_SQL = f'''CASE
-                        WHEN [Current Status] IN ({_sql_list(VNDLY_TERMINAL_STATUSES)})
-                             AND [End Date] > CAST(GETDATE() AS DATE)
-                        THEN CAST(GETDATE() AS DATE)
-                        ELSE [End Date]
-                    END'''
+        WHEN wo.[Current Status] IN ({_sql_list(VNDLY_TERMINAL_STATUSES)}) THEN (
+            SELECT MAX(s.[Billing Cycle End Date])
+            FROM dbo.STAGING_VNDLY_SPEND s
+            WHERE s.[Contractor First Name] = wo.[Contractor First Name]
+              AND s.[Contractor Last Name]  = wo.[Contractor Last Name]
+        )
+        ELSE wo.[End Date]
+    END'''
+
+
+# WHERE-clause filter to keep terminal-status WOs only if the contractor has
+# at least one spend row. A terminal WO with no spend never actually ran
+# (the WO was awarded then closed without any billed hours). Without this
+# filter such rows would carry endDate = NULL, which the frontend treats as
+# "still running today" and would inflate current headcount by ~380 workers.
+#
+# Requires the outer STAGING_VNDLY_WORKORDERS to be aliased as `wo`.
+VNDLY_HAS_SPEND_IF_TERMINAL_SQL = f'''(
+        wo.[Current Status] = 'Active'
+        OR EXISTS (
+            SELECT 1 FROM dbo.STAGING_VNDLY_SPEND s
+            WHERE s.[Contractor First Name] = wo.[Contractor First Name]
+              AND s.[Contractor Last Name]  = wo.[Contractor Last Name]
+        )
+    )'''
 
 
 def _bullhorn_trend_data():
@@ -465,24 +499,30 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             cursor.execute(f'''
                 SELECT
                     'VNDLY' AS source_system,
-                    CONCAT([Contractor First Name], ' ', [Contractor Last Name]) AS worker_name,
-                    [Health System] AS system,
-                    [Default Work Site Name] AS facility,
-                    [Vendor Name] AS agency,
-                    [Job Title] AS specialty,
-                    [Labor Type] AS category,
-                    [Resource Manager] AS pm,
-                    [Current Status] AS status,
-                    TRY_CAST([Bill Rate] AS DECIMAL(10,2)) AS bill_rate,
+                    CONCAT(wo.[Contractor First Name], ' ', wo.[Contractor Last Name]) AS worker_name,
+                    wo.[Health System] AS system,
+                    wo.[Default Work Site Name] AS facility,
+                    wo.[Vendor Name] AS agency,
+                    wo.[Job Title] AS specialty,
+                    wo.[Labor Type] AS category,
+                    wo.[Resource Manager] AS pm,
+                    wo.[Current Status] AS status,
+                    TRY_CAST(wo.[Bill Rate] AS DECIMAL(10,2)) AS bill_rate,
                     NULL AS weekly_hours,
-                    [Start Date] AS startDate,
+                    wo.[Start Date] AS startDate,
                     {VNDLY_EFFECTIVE_END_SQL} AS endDate
-                FROM dbo.STAGING_VNDLY_WORKORDERS
-                WHERE [Current Status] IN ({_sql_list(VNDLY_RAN_STATUSES)})
-                    AND [Start Date] IS NOT NULL
-                    -- Safe to test the raw column: the CASE above only ever lowers a
-                    -- future end date to today, which still passes this bound.
-                    AND ([End Date] IS NULL OR [End Date] >= DATEADD(WEEK, -4, GETDATE()))
+                FROM dbo.STAGING_VNDLY_WORKORDERS wo
+                WHERE wo.[Current Status] IN ({_sql_list(VNDLY_RAN_STATUSES)})
+                    AND wo.[Start Date] IS NOT NULL
+                    -- Terminal WOs with no spend history never actually ran — drop them.
+                    AND {VNDLY_HAS_SPEND_IF_TERMINAL_SQL}
+                    -- Prune anything whose effective end is older than the trend
+                    -- window. For terminals the effective end is derived from the
+                    -- spend table; for Active it's the raw [End Date] (may be NULL).
+                    AND (
+                        {VNDLY_EFFECTIVE_END_SQL} IS NULL
+                        OR {VNDLY_EFFECTIVE_END_SQL} >= DATEADD(WEEK, -4, GETDATE())
+                    )
             ''')
 
             columns = [column[0] for column in cursor.description]

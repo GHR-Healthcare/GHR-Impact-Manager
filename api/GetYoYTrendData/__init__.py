@@ -38,12 +38,30 @@ def _sql_list(values):
 
 # [End Date] on a terminal work order is the originally scheduled end, not the
 # actual stop date, so cap it at today.
+# See GetTrendData for the full rationale. Terminal WOs use the last week
+# they had spend as the effective end (STAGING_VNDLY_SPEND is ground truth
+# for actual worked weeks); the raw [End Date] is the originally SCHEDULED
+# end and can be years out. Terminal WOs with no spend at all are excluded
+# via VNDLY_HAS_SPEND_IF_TERMINAL_SQL. Requires the outer table aliased as `wo`.
 VNDLY_EFFECTIVE_END_SQL = f'''CASE
-                            WHEN [Current Status] IN ({_sql_list(VNDLY_TERMINAL_STATUSES)})
-                                 AND [End Date] > CAST(GETDATE() AS DATE)
-                            THEN CAST(GETDATE() AS DATE)
-                            ELSE [End Date]
-                        END'''
+        WHEN wo.[Current Status] IN ({_sql_list(VNDLY_TERMINAL_STATUSES)}) THEN (
+            SELECT MAX(s.[Billing Cycle End Date])
+            FROM dbo.STAGING_VNDLY_SPEND s
+            WHERE s.[Contractor First Name] = wo.[Contractor First Name]
+              AND s.[Contractor Last Name]  = wo.[Contractor Last Name]
+        )
+        ELSE wo.[End Date]
+    END'''
+
+
+VNDLY_HAS_SPEND_IF_TERMINAL_SQL = f'''(
+        wo.[Current Status] = 'Active'
+        OR EXISTS (
+            SELECT 1 FROM dbo.STAGING_VNDLY_SPEND s
+            WHERE s.[Contractor First Name] = wo.[Contractor First Name]
+              AND s.[Contractor Last Name]  = wo.[Contractor Last Name]
+        )
+    )'''
 
 
 def _bullhorn_yoy_data():
@@ -318,17 +336,21 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
 
                     SELECT
                         'VNDLY' AS src,
-                        LOWER(LTRIM(RTRIM(CONCAT([Contractor First Name], ' ', [Contractor Last Name])))) AS worker,
-                        [Health System] AS system,
-                        [Default Work Site Name] AS facility,
-                        [Labor Type] AS category,
-                        [Vendor Name] AS agency,
-                        [Start Date] AS sd,
+                        LOWER(LTRIM(RTRIM(CONCAT(wo.[Contractor First Name], ' ', wo.[Contractor Last Name])))) AS worker,
+                        wo.[Health System] AS system,
+                        wo.[Default Work Site Name] AS facility,
+                        wo.[Labor Type] AS category,
+                        wo.[Vendor Name] AS agency,
+                        wo.[Start Date] AS sd,
                         {VNDLY_EFFECTIVE_END_SQL} AS ed
-                    FROM dbo.STAGING_VNDLY_WORKORDERS
-                    WHERE [Current Status] IN ({_sql_list(VNDLY_RAN_STATUSES)})
-                        AND [Start Date] IS NOT NULL
-                        AND ([End Date] IS NULL OR [End Date] >= DATEADD(WEEK, -61, GETDATE()))
+                    FROM dbo.STAGING_VNDLY_WORKORDERS wo
+                    WHERE wo.[Current Status] IN ({_sql_list(VNDLY_RAN_STATUSES)})
+                        AND wo.[Start Date] IS NOT NULL
+                        AND {VNDLY_HAS_SPEND_IF_TERMINAL_SQL}
+                        AND (
+                            {VNDLY_EFFECTIVE_END_SQL} IS NULL
+                            OR {VNDLY_EFFECTIVE_END_SQL} >= DATEADD(WEEK, -61, GETDATE())
+                        )
                 )
                 SELECT
                     CONVERT(VARCHAR(10), w.week_start, 23) AS week_start,
