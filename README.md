@@ -2,6 +2,14 @@
 
 ## Version History
 
+**2.0.3** - Trend tab: fix VNDLY current-week cliff + Tier 1 silent-filter bugs
+
+- **VNDLY terminal WOs use last spend week as effective end** (closes §2 of TREND_TAB_FOLLOWUPS.md). v2.0.2 capped `Ended` / `Ended by Job Close` at `GETDATE()` because raw `[End Date]` is the *originally scheduled* end; that overstated the current week by ~250 workers and created a hard cliff at next week. `STAGING_VNDLY_SPEND` has the ground truth — `VNDLY_EFFECTIVE_END_SQL` now uses `MAX(s.[Billing Cycle End Date])` per contractor. Terminal WOs with zero spend rows are excluded entirely via `VNDLY_HAS_SPEND_IF_TERMINAL_SQL` (they never actually ran — ~380 such rows were being counted). Live verification: current week 496 → 234, no cliff, smooth history 244→248→243→238→234→234→231→225. Fix applied to both `GetTrendData` and `GetYoYTrendData`.
+- **Profession filter on Trend actually filters** (§3d). Was silently ignored — the dropdown appeared to work but did nothing. `GetTrendData` now selects `jo.customText1 AS profession` on the Bullhorn placement side (JOIN to View_JobOrder) and `lt.specialty` / `MAX(o.specialty)` on the two Symplr paths; `View.trend().filterRow` now checks it.
+- **Region filter treats NULL region as "passes any region filter"** (§4a). Was silently dropping the entire Bullhorn book on non-MSP whenever any region was selected, because Bullhorn `region` is NULL upstream. Applied across 6 filter sites: positions match, KPIs, Stats, Trend `filterRow`, Trend outlook, `passesPendingFilters`.
+- **Category filter no longer over-broadens** (§5h). `matchesTrendCategory` fell back to a broad `/nurs/` ∨ `/allied/` regex match after the exact/substring check, so filtering to "Travel Nursing" returned every Nursing category and Trend disagreed with every other tab. Fallback removed; substring check kept.
+- **Non-MSP: trust the server's health system, don't re-key on facility** (§5d). `Utils.getHealthSystem` was keyword-matching against facility name too and could override the server's `build_system_case_expr` answer, so the same client could show under two different systems in the Account view vs the Revenue line. On non-MSP the helper now returns `dbHealthSystem` verbatim when the server supplied one.
+
 **2.0.2** - Trend tab: finish the non-MSP Aff/AV strip + Symplr revenue overstatement
 
 Audit of the Trend tab found the 2.0.0 "GHR / Affiliate strip" only reached 2 of the 8 places that render a `GHR / Aff` cell pair, so most of the tab still showed `N / 0` on non-MSP.

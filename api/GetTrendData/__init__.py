@@ -135,6 +135,10 @@ def _bullhorn_trend_data():
             -- because a single client can be serviced by multiple GHR internal teams.
             cc.customTextBlock1 AS division,
             NULL AS region,
+            -- Profession is on the JobOrder (jo.customText1), not the Placement.
+            -- Matches how GetPositions reads it so the Profession filter dropdown
+            -- values (populated from positions + stats) actually match trend records.
+            jo.customText1 AS profession,
             p.customText11 AS pm,
             p.status AS status,
             TRY_CAST(p.clientBillRate AS DECIMAL(10,2)) AS bill_rate,
@@ -144,6 +148,7 @@ def _bullhorn_trend_data():
         FROM dbo.View_Placement p
         LEFT JOIN dbo.View_Candidate c ON p.candidateID = c.candidateID
         LEFT JOIN dbo.View_ClientCorporation cc ON p.clientCorporationID = cc.clientCorporationID
+        LEFT JOIN dbo.View_JobOrder jo ON p.jobOrderID = jo.jobOrderID
         WHERE p.isDeleted = 0
             AND p.status IN ({status_list})
             AND p.dateBegin IS NOT NULL
@@ -245,6 +250,7 @@ def _symplr_trend_data():
                 lt.nursetype AS category,
                 ({division_case}) AS division,
                 pc.state AS region,
+                lt.specialty AS profession,
                 NULL AS pm,
                 lt.status AS status,
                 NULL AS bill_rate,
@@ -292,6 +298,7 @@ def _symplr_trend_data():
                 MAX(o.nursetype) AS category,
                 ({division_case_orders}) AS division,
                 MAX(pc.state) AS region,
+                MAX(o.specialty) AS profession,
                 NULL AS pm,
                 'filled' AS status,
                 NULL AS bill_rate,

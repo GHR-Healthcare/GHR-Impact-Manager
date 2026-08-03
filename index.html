@@ -766,7 +766,7 @@
     const $ = (id) => document.getElementById(id);
 
     // App version - loaded from environment variable via API, with fallback
-    let APP_VERSION = '2.0.2';
+    let APP_VERSION = '2.0.3';
 
     const API_BASE_URL = '/api';
     
@@ -2165,6 +2165,20 @@
        */
       getHealthSystem(facilityName, dbHealthSystem) {
         if (!facilityName && !dbHealthSystem) return '';
+
+        // Non-MSP: the server already resolved the system via
+        // build_system_case_expr — either a hardcoded rollup name (Cone Health,
+        // Orlando Health, etc.) or cc.name as fallback. Trust it directly.
+        // Facility-keyword matching (below) could otherwise override the
+        // server's answer when the facility text happens to contain a keyword
+        // that maps to a DIFFERENT rollup, so the Account view and the Revenue
+        // line could attribute the same client to two different systems.
+        if (dbHealthSystem
+            && typeof window !== 'undefined'
+            && window.store
+            && window.store.state.dataSource === 'non_msp') {
+          return dbHealthSystem;
+        }
 
         const f = (facilityName || '').toLowerCase();
         const db = (dbHealthSystem || '').toLowerCase();
@@ -3772,7 +3786,8 @@
             if (s.filterSelection.professions.size > 0 && !(job.profession && s.filterSelection.professions.has(job.profession))) return false;
           }
           if (excludeFilter !== 'regions') {
-            if (s.filterSelection.regions.size > 0 && !(job.region && s.filterSelection.regions.has(job.region))) return false;
+            // NULL region (e.g. entire Bullhorn book) passes any region filter — see filterRow comment.
+            if (s.filterSelection.regions.size > 0 && job.region && !s.filterSelection.regions.has(job.region)) return false;
           }
           return true;
         };
@@ -3971,7 +3986,7 @@
           // facilities/categories behave).
           const divMatch = Utils.matchesSelectedDivisions(j.division, s.filterSelection.divisions);
           const profMatch = s.filterSelection.professions.size === 0 || (j.profession && s.filterSelection.professions.has(j.profession));
-          const regMatch = s.filterSelection.regions.size === 0 || (j.region && s.filterSelection.regions.has(j.region));
+          const regMatch = s.filterSelection.regions.size === 0 || !j.region || s.filterSelection.regions.has(j.region);
 
           let ageMatch = true;
           if (s.filters.ageMin !== null && j.daysPast < s.filters.ageMin) ageMatch = false;
@@ -4519,7 +4534,7 @@
           const catMatch = Utils.matchesStatsCategoryFilter(r.specialty, s.filterSelection.categories);
           const divMatch = Utils.matchesSelectedDivisions(r.division, s.filterSelection.divisions);
           const profMatch = s.filterSelection.professions.size === 0 || (r.profession && s.filterSelection.professions.has(r.profession));
-          const regMatch = s.filterSelection.regions.size === 0 || (r.region && s.filterSelection.regions.has(r.region));
+          const regMatch = s.filterSelection.regions.size === 0 || !r.region || s.filterSelection.regions.has(r.region);
           const isActive = r.startDate && r.startDate <= now && (!r.endDate || r.endDate >= now);
           return sysMatch && facMatch && specMatch && catMatch && divMatch && profMatch && regMatch && isActive;
         });
@@ -6358,7 +6373,12 @@
           return true;
         });
 
-        // Category filter: match normalized category against selected filter values
+        // Category filter: match record's category against selected filter values.
+        // Previously fell back to a broad /nurs/ ∨ /allied/ regex match after
+        // the exact/substring check, so filtering to "Travel Nursing" returned
+        // ALL nursing categories — Trend disagreed with every other tab under a
+        // category filter. Now uses the same case-insensitive substring test the
+        // rest of the app uses (matches "Travel Nursing" but not "Nursing").
         const selectedCats = s.filterSelection.categories;
         const matchesTrendCategory = (cat) => {
           if (selectedCats.size === 0) return true;
@@ -6366,9 +6386,6 @@
           for (const filterCat of selectedCats) {
             const fc = String(filterCat).toLowerCase();
             if (nc === fc || nc.includes(fc) || fc.includes(nc)) return true;
-            // Broad group match: both nursing or both allied
-            if (/nurs/i.test(nc) && /nurs/i.test(fc)) return true;
-            if (/allied/i.test(nc) && /allied/i.test(fc)) return true;
           }
           return false;
         };
@@ -6382,8 +6399,15 @@
           const specMatch = s.filterSelection.specialties.size === 0 ||
             Array.from(s.filterSelection.specialties).some(sp => sp.toLowerCase() === (r.specialty || '').toLowerCase());
           const divMatch = Utils.matchesSelectedDivisions(r.division, s.filterSelection.divisions);
-          const regMatch = s.filterSelection.regions.size === 0 || (r.region && s.filterSelection.regions.has(r.region));
-          return sysMatch && facMatch && catMatch && specMatch && divMatch && regMatch;
+          const profMatch = s.filterSelection.professions.size === 0 ||
+            (r.profession && s.filterSelection.professions.has(r.profession));
+          // Region: rows with NULL region (e.g. entire Bullhorn book — spec says
+          // "Bullhorn region is NULL for now") pass any region selection. Without
+          // this, picking any region silently drops every Bullhorn row on non-MSP.
+          const regMatch = s.filterSelection.regions.size === 0
+            || !r.region
+            || s.filterSelection.regions.has(r.region);
+          return sysMatch && facMatch && catMatch && specMatch && divMatch && profMatch && regMatch;
         };
         const filtered = deduped.filter(filterRow);
         const filteredPending = allPending.filter(filterRow);
@@ -8402,7 +8426,8 @@
           if (drill && drill.agency && (drill.agency === 'GHR') !== isGhr) return;
           if (!trendCatMatch(r)) return;
           if (!Utils.matchesSelectedDivisions(r.division, s.filterSelection.divisions)) return;
-          if (s.filterSelection.regions.size > 0 && !(r.region && s.filterSelection.regions.has(r.region))) return;
+          // NULL region passes any region filter (see filterRow comment above).
+          if (s.filterSelection.regions.size > 0 && r.region && !s.filterSelection.regions.has(r.region)) return;
 
           const bk = trendStatusBucket(r.status);
           if (!bk) return;
@@ -8430,7 +8455,8 @@
           if (drill && drill.agency && (drill.agency === 'GHR') !== isGhr) return false;
           if (!trendCatMatch(r)) return false;
           if (!Utils.matchesSelectedDivisions(r.division, s.filterSelection.divisions)) return false;
-          if (s.filterSelection.regions.size > 0 && !(r.region && s.filterSelection.regions.has(r.region))) return false;
+          // NULL region passes any region filter (see filterRow comment above).
+          if (s.filterSelection.regions.size > 0 && r.region && !s.filterSelection.regions.has(r.region)) return false;
           return true;
         };
 
