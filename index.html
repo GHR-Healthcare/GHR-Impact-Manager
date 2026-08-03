@@ -766,7 +766,7 @@
     const $ = (id) => document.getElementById(id);
 
     // App version - loaded from environment variable via API, with fallback
-    let APP_VERSION = '2.0.3';
+    let APP_VERSION = '2.0.4';
 
     const API_BASE_URL = '/api';
     
@@ -7284,7 +7284,37 @@
           });
           return rows;
         };
-        const pmTableTotalRow = sysTableTotalRow; // same total
+        // PM view total must reflect PM_EXCLUDED_SYSTEMS. sysTableTotalRow is the
+        // ALL-systems total, which was previously reused here — so PM rows never
+        // summed to their own Total. Compute a PM-specific total instead: since
+        // each worker maps to exactly one PM (resolvePM returns one), summing
+        // the per-PM counts for a week reproduces the deduplicated PM total.
+        const pmTotalGhr = (i) => Object.values(weekData[i].pmGhr || {})
+          .reduce((s, v) => s + (typeof v === 'number' ? v : (v && v.size) || 0), 0);
+        const pmTotalAff = (i) => Object.values(weekData[i].pmAff || {})
+          .reduce((s, v) => s + (typeof v === 'number' ? v : (v && v.size) || 0), 0);
+        const pmTableTotalRow = (() => {
+          const avgG = rolling4Wk(pmTotalGhr);
+          const avgA = rolling4Wk(pmTotalAff);
+          let cells = `<td class="px-3 py-1.5 border-b border-slate-200 font-bold text-slate-800 whitespace-nowrap text-xs" title="Excludes ${[...PM_EXCLUDED_SYSTEMS].join(', ')}"><span class="inline-block w-3 mr-1"></span>Total</td>`;
+          weeks.forEach((w, i) => {
+            const g = pmTotalGhr(i), a = pmTotalAff(i);
+            const gP = i > 0 ? pmTotalGhr(i-1) : null;
+            const aP = i > 0 ? pmTotalAff(i-1) : null;
+            const isCurrent = i === currentWeekIdx;
+            cells += `<td class="px-2 py-1.5 border-b border-slate-200 text-center text-[11px] font-bold ${isCurrent ? 'bg-blue-50' : ''}">${splitCell(
+              `<span class="text-blue-700">${g}${deltaSpan(g, gP)}</span>`,
+              `<span class="text-purple-700">${a}${deltaSpan(a, aP)}</span>`
+            )}</td>`;
+            if (isCurrent) {
+              cells += `<td class="px-2 py-1.5 border-b border-slate-200 text-center text-[11px] font-bold trend-avg-col bg-amber-50 border-l border-r border-amber-200">${splitCell(
+                `<span class="text-blue-700">${avgG ?? '—'}</span>`,
+                `<span class="text-purple-700">${avgA ?? '—'}</span>`
+              )}</td>`;
+            }
+          });
+          return `<tr class="bg-slate-50">${cells}</tr>`;
+        })();
         const pmTableBody = (hideAffiliateSplit ? '' : buildCaptureRow()) + pmTableTotalRow + sortedPMs.map(buildPMRow).join('');
 
         // ── Vendor view (Affiliate vendors only) ───────────────────────────────
@@ -7518,8 +7548,10 @@
         const TREND_COLORS = ['#3b82f6','#8b5cf6','#22c55e','#f59e0b','#ef4444','#06b6d4','#84cc16','#f97316','#ec4899','#6366f1','#14b8a6','#f43f5e'];
 
         // ── Weekly actual revenue (from trend data's weekly_revenue rows) ──
-        // Applies current system filter only; revenue isn't tagged by category
-        // so category/specialty filters can't narrow it further.
+        // Applies system, facility, and region filters. Revenue rows aren't
+        // tagged by category/specialty, so those filters can't narrow it further
+        // (revenue then stops matching headcount under those filters — a known
+        // gap that would need per-worker revenue rollups to close).
         const weeklyRevenueRows = s.trendData?.weekly_revenue || [];
         const fmtWeekKey = (d) => {
           const y = d.getFullYear();
@@ -7546,6 +7578,17 @@
         weeklyRevenueRows.forEach(r => {
           const sys = Utils.getHealthSystem(null, r.system);
           if (s.filterSelection.systems.size > 0 && !s.filterSelection.systems.has(sys)) return;
+          // Facility filter: NULL facility passes (e.g. some MSP spend rows
+          // may not carry it) — same treatment as region on Bullhorn headcount.
+          if (s.filterSelection.facilities.size > 0
+              && r.facility
+              && !s.filterSelection.facilities.has(r.facility)) return;
+          // Region filter: NULL region passes any filter (Bullhorn + MSP revenue
+          // rows carry NULL region — filtering them out would silently drop
+          // whole books, matching the headcount treatment fixed in v2.0.3).
+          if (s.filterSelection.regions.size > 0
+              && r.region
+              && !s.filterSelection.regions.has(r.region)) return;
           if (divFilterActive) {
             const src = r.source_system;
             const isBullhornSrc = src === 'Bullhorn';
@@ -7790,21 +7833,34 @@
           return `${yyyy}-${mm}-${dd}`;
         });
 
-        // Apply same filters to YoY rows as the current view
+        // Apply the same filter set to prior-year rows that filterRow applies
+        // to current-year rows. Previously this only checked systems /
+        // facilities / categories (with the same over-broadening /nurs/
+        // fallback the main filter had), and skipped division / region /
+        // specialty / profession / isHiddenHealthSystem entirely — so hidden
+        // systems appeared in prior-year but not current, and non-MSP filters
+        // silently didn't apply to the overlay.
         const applyFiltersToYoY = (r) => {
           const sys = Utils.getHealthSystem(r.facility, r.system);
+          if (Utils.isHiddenHealthSystem(sys)) return false;
           if (s.filterSelection.systems.size > 0 && !s.filterSelection.systems.has(sys)) return false;
-          if (s.filterSelection.facilities.size > 0 && r.facility && !s.filterSelection.facilities.has(r.facility)) return false;
-          if (s.filterSelection.categories.size > 0) {
-            const nc = (r.category || '').toLowerCase();
-            const match = Array.from(s.filterSelection.categories).some(fc => {
-              const f = String(fc).toLowerCase();
-              return nc === f || nc.includes(f) || f.includes(nc) ||
-                (/nurs/i.test(nc) && /nurs/i.test(f)) ||
-                (/allied/i.test(nc) && /allied/i.test(f));
-            });
-            if (!match) return false;
+          if (s.filterSelection.facilities.size > 0
+              && r.facility
+              && !s.filterSelection.facilities.has(r.facility)) return false;
+          if (!matchesTrendCategory(r.category)) return false;
+          if (s.filterSelection.specialties.size > 0) {
+            const rs = (r.specialty || '').toLowerCase();
+            const specMatch = Array.from(s.filterSelection.specialties)
+              .some(sp => sp.toLowerCase() === rs);
+            if (!specMatch) return false;
           }
+          if (!Utils.matchesSelectedDivisions(r.division, s.filterSelection.divisions)) return false;
+          if (s.filterSelection.professions.size > 0
+              && r.profession
+              && !s.filterSelection.professions.has(r.profession)) return false;
+          if (s.filterSelection.regions.size > 0
+              && r.region
+              && !s.filterSelection.regions.has(r.region)) return false;
           return true;
         };
 

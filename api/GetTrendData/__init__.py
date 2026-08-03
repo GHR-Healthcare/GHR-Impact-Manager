@@ -177,6 +177,8 @@ def _bullhorn_trend_data():
         SELECT
             CONVERT(VARCHAR(10), w.week_start, 23) AS week_start,
             ({system_case}) AS system,
+            cc.name AS facility,
+            NULL AS region,
             'GHR' AS vendor_type,
             -- TRY_CAST for the same reason the assignments query above uses it:
             -- clientBillRate / hoursPerDay are free-text in the Bullhorn views
@@ -195,15 +197,17 @@ def _bullhorn_trend_data():
             AND p.status IN ({status_list})
             AND p.dateBegin IS NOT NULL
             AND {scope_filter}
-        GROUP BY w.week_start, ({system_case})
+        GROUP BY w.week_start, ({system_case}), cc.name
     ''')
     for row in cursor.fetchall():
         weekly_revenue.append({
             'source_system': 'Bullhorn',
             'week_start': row[0],
             'system': row[1],
-            'vendor_type': row[2],
-            'revenue': float(row[3] or 0),
+            'facility': row[2],
+            'region': row[3],
+            'vendor_type': row[4],
+            'revenue': float(row[5] or 0),
         })
 
     conn.close()
@@ -347,8 +351,11 @@ def _symplr_trend_data():
                     DATEADD(DAY, 1 - DATEPART(WEEKDAY, CAST(o.jobdatestart AS DATE)),
                             CAST(o.jobdatestart AS DATE)) AS week_start_date,
                     ({symplr_system_case_expr('o.customerid')}) AS system,
+                    pc.clientname AS facility,
+                    pc.state AS region,
                     o.totalbillamount
                 FROM dbo.orders o
+                LEFT JOIN dbo.profile_client pc ON o.customerid = pc.recordid
                 WHERE o.jobdatestart IS NOT NULL
                     AND CAST(o.jobdatestart AS DATE) >= DATEADD(WEEK, -8, GETDATE())
                     -- Only shifts that actually produced billable work. Without
@@ -363,18 +370,22 @@ def _symplr_trend_data():
             SELECT
                 CONVERT(VARCHAR(10), week_start_date, 23) AS week_start,
                 system,
+                facility,
+                region,
                 'GHR' AS vendor_type,
                 SUM(ISNULL(totalbillamount, 0)) AS revenue
             FROM RevenueSource
-            GROUP BY week_start_date, system
+            GROUP BY week_start_date, system, facility, region
         ''')
         for row in cursor.fetchall():
             weekly_revenue.append({
                 'source_system': 'Symplr',
                 'week_start': row[0],
                 'system': row[1],
-                'vendor_type': row[2],
-                'revenue': float(row[3] or 0),
+                'facility': row[2],
+                'region': row[3],
+                'vendor_type': row[4],
+                'revenue': float(row[5] or 0),
             })
     except Exception as e:
         errors.append(f"symplr_revenue: {e}")
@@ -629,6 +640,8 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                         DATEADD(DAY, 1 - DATEPART(WEEKDAY, CAST([Work Date] AS DATE)), CAST([Work Date] AS DATE)),
                         23) AS week_start,
                     [Health System] AS system,
+                    [Facility Name] AS facility,
+                    NULL AS region,
                     CASE
                         WHEN [Agency Name] LIKE 'GHR%' OR [Agency Name] LIKE '%Planet Healthcare%'
                         THEN 'GHR' ELSE 'Affiliate'
@@ -642,6 +655,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                 GROUP BY
                     DATEADD(DAY, 1 - DATEPART(WEEKDAY, CAST([Work Date] AS DATE)), CAST([Work Date] AS DATE)),
                     [Health System],
+                    [Facility Name],
                     CASE
                         WHEN [Agency Name] LIKE 'GHR%' OR [Agency Name] LIKE '%Planet Healthcare%'
                         THEN 'GHR' ELSE 'Affiliate'
@@ -652,8 +666,10 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                     'source_system': 'B4',
                     'week_start': row[0],
                     'system': row[1],
-                    'vendor_type': row[2],
-                    'revenue': float(row[3] or 0),
+                    'facility': row[2],
+                    'region': row[3],
+                    'vendor_type': row[4],
+                    'revenue': float(row[5] or 0),
                 })
         except Exception as e:
             print(f"Error loading B4 weekly revenue: {e}")
@@ -673,6 +689,8 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                         DATEADD(DAY, 1 - DATEPART(WEEKDAY, CAST([Billing Cycle Start Date] AS DATE)), CAST([Billing Cycle Start Date] AS DATE)),
                         23) AS week_start,
                     [Health System] AS system,
+                    [Work Site Name] AS facility,
+                    NULL AS region,
                     CASE
                         WHEN [Vendor Company Name] LIKE '%GHR%' OR [Vendor Company Name] LIKE '%Planet Healthcare%'
                         THEN 'GHR' ELSE 'Affiliate'
@@ -685,6 +703,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                 GROUP BY
                     DATEADD(DAY, 1 - DATEPART(WEEKDAY, CAST([Billing Cycle Start Date] AS DATE)), CAST([Billing Cycle Start Date] AS DATE)),
                     [Health System],
+                    [Work Site Name],
                     CASE
                         WHEN [Vendor Company Name] LIKE '%GHR%' OR [Vendor Company Name] LIKE '%Planet Healthcare%'
                         THEN 'GHR' ELSE 'Affiliate'
@@ -695,8 +714,10 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                     'source_system': 'VNDLY',
                     'week_start': row[0],
                     'system': row[1],
-                    'vendor_type': row[2],
-                    'revenue': float(row[3] or 0),
+                    'facility': row[2],
+                    'region': row[3],
+                    'vendor_type': row[4],
+                    'revenue': float(row[5] or 0),
                 })
         except Exception as e:
             print(f"Error loading VNDLY weekly revenue: {e}")

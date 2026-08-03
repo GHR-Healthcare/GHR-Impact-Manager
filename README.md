@@ -2,6 +2,14 @@
 
 ## Version History
 
+**2.0.4** - Trend tab: revenue filter parity + YoY overlay filter parity + PM view total tie-out
+
+Tier 2 of the audit follow-ups — numbers that were wrong under specific filter combinations.
+
+- **§5a Revenue overlay honors facility and region filters** (both instances). Previously the revenue series applied only the system filter and the non-MSP division proxy — facility, specialty, and region were dropped, while headcount honored them. So revenue and headcount described different populations whenever those filters were on, and `avgRevPerWorker` (revenue ÷ filtered headcount) inflated the Projected Revenue KPI under a facility filter. Bullhorn / Symplr / B4 / VNDLY revenue queries now emit `facility` and `region` columns and GROUP BY them; frontend applies both filters to the revenue overlay with NULL-passes-any semantics (Bullhorn `region` is NULL upstream; some MSP spend rows may not carry a facility either). Category/specialty remain structurally unfilterable on revenue — the rows aren't tagged and would need per-worker rollups to close.
+- **§5c Prior-year overlay uses the same filter set as current-year**. `applyFiltersToYoY` was checking only systems + facilities + categories (with the same over-broadening `/nurs/` fallback we removed from the main filter in v2.0.3), and skipping division / region / specialty / profession / `isHiddenHealthSystem` entirely. So hidden systems appeared in the prior-year line but not the current line, and non-MSP filters silently didn't apply to the overlay. Now mirrors `filterRow`.
+- **§5g PM view has its own total**. The PM view excludes `PM_EXCLUDED_SYSTEMS` (Jefferson, Sunrise Senior Living Management) but its Total row reused the all-systems `sysTableTotalRow`, so PM rows never summed to the total shown above them. New `pmTotalGhr(i)` / `pmTotalAff(i)` helpers sum across PM buckets (each worker maps to one PM, so sum-of-counts = deduplicated total). Tooltip on the Total cell now names the excluded systems.
+
 **2.0.3** - Trend tab: fix VNDLY current-week cliff + Tier 1 silent-filter bugs
 
 - **VNDLY terminal WOs use last spend week as effective end** (closes §2 of TREND_TAB_FOLLOWUPS.md). v2.0.2 capped `Ended` / `Ended by Job Close` at `GETDATE()` because raw `[End Date]` is the *originally scheduled* end; that overstated the current week by ~250 workers and created a hard cliff at next week. `STAGING_VNDLY_SPEND` has the ground truth — `VNDLY_EFFECTIVE_END_SQL` now uses `MAX(s.[Billing Cycle End Date])` per contractor. Terminal WOs with zero spend rows are excluded entirely via `VNDLY_HAS_SPEND_IF_TERMINAL_SQL` (they never actually ran — ~380 such rows were being counted). Live verification: current week 496 → 234, no cliff, smooth history 244→248→243→238→234→234→231→225. Fix applied to both `GetTrendData` and `GetYoYTrendData`.
