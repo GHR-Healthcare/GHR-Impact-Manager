@@ -106,7 +106,7 @@ def _symplr_hours_data():
     cursor = conn.cursor()
     app_conn = get_appdb_conn()
     try:
-        symplr_master_ids = symplr_resolve_scope(app_conn)
+        symplr_master_ids = symplr_resolve_scope(app_conn, symplr_cursor=cursor)
     finally:
         if app_conn is not None:
             app_conn.close()
@@ -137,6 +137,7 @@ def _symplr_hours_data():
         LEFT JOIN dbo.lt_order lt ON o.lt_orderid = lt.lt_orderid
         LEFT JOIN dbo.profile_temp pt ON lt.tempid = pt.recordid
         LEFT JOIN dbo.profile_client pc ON o.customerid = pc.recordid
+        LEFT JOIN dbo.regions r ON r.regionid = TRY_CAST(pc.region AS INT)
         WHERE o.jobdatestart IS NOT NULL
             AND CAST(o.jobdatestart AS DATE) >= DATEADD(WEEK, -13, GETDATE())
             AND ISNULL(o.totalbillhours, 0) > 0

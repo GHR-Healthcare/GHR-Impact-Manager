@@ -195,7 +195,7 @@ def _symplr_positions_data():
     cursor = conn.cursor()
     app_conn = get_appdb_conn()
     try:
-        symplr_master_ids = symplr_resolve_scope(app_conn)
+        symplr_master_ids = symplr_resolve_scope(app_conn, symplr_cursor=cursor)
     finally:
         if app_conn is not None:
             app_conn.close()
@@ -258,6 +258,7 @@ def _symplr_positions_data():
                 pc.state AS region
             FROM dbo.lt_order lt
             LEFT JOIN dbo.profile_client pc ON lt.clientid = pc.recordid
+            LEFT JOIN dbo.regions r ON r.regionid = TRY_CAST(pc.region AS INT)
             WHERE lt.status = 'open'
                 AND lt.date_entered >= DATEADD(DAY, -45, GETDATE())
                 AND {scope}
@@ -298,13 +299,14 @@ def _symplr_positions_data():
                 NULL AS start_time,
                 NULL AS end_time,
                 'open' AS status,
-                ({sys_case_orders}) AS health_system,
+                MAX({sys_case_orders}) AS health_system,
                 MAX(o.specialty) AS profession,
                 NULL AS subspecialty,
-                ({division_case_orders}) AS division,
+                MAX({division_case_orders}) AS division,
                 MAX(pc.state) AS region
             FROM dbo.orders o
             LEFT JOIN dbo.profile_client pc ON o.customerid = pc.recordid
+            LEFT JOIN dbo.regions r ON r.regionid = TRY_CAST(pc.region AS INT)
             WHERE o.status = 'open'
                 AND (o.lt_orderid IS NULL OR o.lt_orderid = 0)
                 AND o.jobdatestart >= GETDATE()
@@ -353,14 +355,15 @@ def _symplr_positions_data():
                 NULL AS start_time,
                 NULL AS end_time,
                 'open' AS status,
-                ({sys_case}) AS health_system,
+                MAX({sys_case}) AS health_system,
                 MAX(lt.specialty) AS profession,
                 NULL AS subspecialty,
-                ({division_case}) AS division,
+                MAX({division_case}) AS division,
                 MAX(pc.state) AS region
             FROM dbo.orders o
             INNER JOIN dbo.lt_order lt ON o.lt_orderid = lt.lt_orderid
             LEFT JOIN dbo.profile_client pc ON lt.clientid = pc.recordid
+            LEFT JOIN dbo.regions r ON r.regionid = TRY_CAST(pc.region AS INT)
             WHERE o.status = 'open'
                 AND o.lt_orderid IS NOT NULL AND o.lt_orderid <> 0
                 AND lt.status <> 'open'

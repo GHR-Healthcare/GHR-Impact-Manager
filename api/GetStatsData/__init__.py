@@ -97,7 +97,7 @@ def _symplr_stats_data():
     cursor = conn.cursor()
     app_conn = get_appdb_conn()
     try:
-        symplr_master_ids = symplr_resolve_scope(app_conn)
+        symplr_master_ids = symplr_resolve_scope(app_conn, symplr_cursor=cursor)
     finally:
         if app_conn is not None:
             app_conn.close()
@@ -132,6 +132,7 @@ def _symplr_stats_data():
                 lt.status AS status
             FROM dbo.lt_order lt
             LEFT JOIN dbo.profile_client pc ON lt.clientid = pc.recordid
+            LEFT JOIN dbo.regions r ON r.regionid = TRY_CAST(pc.region AS INT)
             LEFT JOIN dbo.profile_temp pt ON lt.tempid = pt.recordid
             WHERE lt.status = 'filled'
                 AND lt.date_start IS NOT NULL
@@ -153,15 +154,16 @@ def _symplr_stats_data():
                 LTRIM(RTRIM(ISNULL(MAX(pt.firstname), '') + ' ' + ISNULL(MAX(pt.lastname), ''))) AS candidate_name,
                 'GHR' AS agency,
                 MAX(pc.clientname) AS facility,
-                ({sys_case_orders}) AS system,
+                MAX({sys_case_orders}) AS system,
                 MAX(o.specialty) AS specialty,
-                ({division_case_orders}) AS division,
+                MAX({division_case_orders}) AS division,
                 MAX(pc.state) AS region,
                 CAST(MIN(o.jobdatestart) AS DATE) AS startDate,
                 CAST(MAX(o.jobdateend)   AS DATE) AS endDate,
                 'filled' AS status
             FROM dbo.orders o
             LEFT JOIN dbo.profile_client pc ON o.customerid = pc.recordid
+            LEFT JOIN dbo.regions r ON r.regionid = TRY_CAST(pc.region AS INT)
             LEFT JOIN dbo.profile_temp   pt ON o.filledby   = pt.recordid
             WHERE o.status = 'filled'
                 AND (o.lt_orderid IS NULL OR o.lt_orderid = 0)

@@ -260,7 +260,7 @@ def _symplr_trend_data():
     cursor = conn.cursor()
     app_conn = get_appdb_conn()
     try:
-        symplr_master_ids = symplr_resolve_scope(app_conn)
+        symplr_master_ids = symplr_resolve_scope(app_conn, symplr_cursor=cursor)
     finally:
         if app_conn is not None:
             app_conn.close()
@@ -297,6 +297,7 @@ def _symplr_trend_data():
                 CAST(lt.date_end AS DATE) AS endDate
             FROM dbo.lt_order lt
             LEFT JOIN dbo.profile_client pc ON lt.clientid = pc.recordid
+            LEFT JOIN dbo.regions r ON r.regionid = TRY_CAST(pc.region AS INT)
             LEFT JOIN dbo.profile_temp pt ON lt.tempid = pt.recordid
             WHERE lt.status = 'filled'
                 AND lt.date_start IS NOT NULL
@@ -329,13 +330,13 @@ def _symplr_trend_data():
             SELECT
                 'Symplr' AS source_system,
                 LTRIM(RTRIM(ISNULL(MAX(pt.firstname), '') + ' ' + ISNULL(MAX(pt.lastname), ''))) AS worker_name,
-                ({system_case_orders}) AS system,
+                MAX({system_case_orders}) AS system,
                 MAX(pc.clientname) AS facility,
                 'GHR' AS agency,
                 MAX(o.specialty) AS specialty,
                 MAX(o.nursetype) AS category,
                 ({symplr_service_line_case('MAX(o.nursetype)')}) AS service_line,
-                ({division_case_orders}) AS division,
+                MAX({division_case_orders}) AS division,
                 MAX(pc.state) AS region,
                 MAX(o.specialty) AS profession,
                 NULL AS pm,
@@ -346,6 +347,7 @@ def _symplr_trend_data():
                 CAST(MAX(o.jobdateend)   AS DATE) AS endDate
             FROM dbo.orders o
             LEFT JOIN dbo.profile_client pc ON o.customerid = pc.recordid
+            LEFT JOIN dbo.regions r ON r.regionid = TRY_CAST(pc.region AS INT)
             LEFT JOIN dbo.profile_temp   pt ON o.filledby   = pt.recordid
             WHERE o.status = 'filled'
                 AND (o.lt_orderid IS NULL OR o.lt_orderid = 0)
@@ -391,6 +393,7 @@ def _symplr_trend_data():
                     o.totalbillamount
                 FROM dbo.orders o
                 LEFT JOIN dbo.profile_client pc ON o.customerid = pc.recordid
+                LEFT JOIN dbo.regions r ON r.regionid = TRY_CAST(pc.region AS INT)
                 WHERE o.jobdatestart IS NOT NULL
                     AND CAST(o.jobdatestart AS DATE) >= DATEADD(WEEK, -8, GETDATE())
                     -- Only shifts that actually produced billable work. Without
