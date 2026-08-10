@@ -766,7 +766,7 @@
     const $ = (id) => document.getElementById(id);
 
     // App version - loaded from environment variable via API, with fallback
-    let APP_VERSION = '2.2.2';
+    let APP_VERSION = '2.2.3';
 
     const API_BASE_URL = '/api';
     
@@ -2206,9 +2206,21 @@
       /**
        * Check if a health system is flagged 'hidden' in the mappings.
        * Hidden systems are excluded from every tab and the filter dropdowns.
+       *
+       * MSP-only: CONSTANTS.HEALTH_SYSTEM_MAPPINGS is an MSP-managed table
+       * (Settings → Health Systems). Non-MSP has no such taxonomy — Bullhorn
+       * clients and Symplr clients are their own systems by name. Keyword
+       * matches against MSP entries would false-positive on non-MSP client
+       * names that happen to contain MSP keywords (e.g. any client with
+       * "jefferson" in the name), so we short-circuit here.
        */
       isHiddenHealthSystem(sys) {
         if (!sys) return false;
+        if (typeof window !== 'undefined'
+            && window.store
+            && window.store.state.dataSource === 'non_msp') {
+          return false;
+        }
         const s = String(sys).toLowerCase();
         for (const m of CONSTANTS.HEALTH_SYSTEM_MAPPINGS) {
           if (!m.hidden) continue;
@@ -2252,10 +2264,63 @@
        * emits a single value ("Education"). Returns true if any of the record's
        * divisions is in the selection set.
        */
-      matchesSelectedDivisions(recordDivision, selectedDivisions) {
+      // Which professions belong to each GHR division. The record's
+      // division field comes from cc.customTextBlock1 (Bullhorn) — a comma-
+      // separated list of teams that service the CLIENT, not the team that
+      // placed THIS worker. Without a profession check, filtering by
+      // "RevCycle Workforce" pulls in RNs at any client whose tag list
+      // includes RevCycle (which is most of them). Substring-match the
+      // record's profession against these keywords instead.
+      //
+      // Divisions without an entry (Planet Healthcare, Search, Workforce
+      // Solutions, Human Services, Acute, United, Technology, Education,
+      // Non-Acute) fall back to the raw client-list match — either the
+      // profession vocabulary is too varied to whitelist, or the division
+      // itself is a business-line label rather than a role.
+      DIVISION_PROFESSION_KEYWORDS: {
+        'RevCycle Workforce': [
+          'coder', 'medical coder', 'cdi specialist', 'coding auditor',
+          'him specialist', 'customer service rep', 'clerical',
+          'patient access', 'patient care coord', 'clinical helpdesk',
+          'billing', 'credentialing',
+        ],
+        'Nursing': ['rn', 'lpn', 'cna', 'ma ', 'medical assistant'],
+        'Allied': [
+          'ot', 'pt', 'slp', 'slpa', 'therapist', 'therap',
+          'social worker', 'registered dietitian',
+          'rrt', 'respiratory',
+          'or tech', 'cma', 'sterile processing', 'surgical tech',
+          'rad tech', 'ultrasound', 'mri tech', 'ct tech', 'echo tech',
+          'pharm tech', 'pharmacy tech', 'lab tech', 'med tech', 'medical laboratory',
+          'dental hygienist', 'phlebotomist',
+          'behavior therapist', 'behavior technician', 'bcba',
+          'psychologist', 'psycol',
+          'sleep tech', 'mammography', 'eeg tech', 'xray tech',
+        ],
+        'Locum Tenens': [
+          'crna', 'anesthesiologist',
+          'physician', 'md', 'do',
+          'np', 'nurse practitioner', 'pa ', 'physician assistant',
+        ],
+      },
+
+      matchesSelectedDivisions(recordDivision, selectedDivisions, recordProfession) {
         if (!selectedDivisions || selectedDivisions.size === 0) return true;
         if (!recordDivision) return false;
-        return String(recordDivision).split(',').some(d => selectedDivisions.has(d.trim()));
+        const recordDivs = String(recordDivision).split(',').map(d => d.trim());
+        const prof = String(recordProfession || '').toLowerCase();
+        // For each selected division: the record's client-list must contain
+        // that division AND (if the division has a profession whitelist)
+        // the record's profession must match one of the keywords. Divisions
+        // without a whitelist keep the old client-list-only match.
+        for (const selected of selectedDivisions) {
+          if (!recordDivs.includes(selected)) continue;
+          const keywords = this.DIVISION_PROFESSION_KEYWORDS[selected];
+          if (!keywords) return true;
+          if (!prof) continue;
+          if (keywords.some(k => prof.includes(k))) return true;
+        }
+        return false;
       },
 
       matchesSelectedSystems(record, selectedSystems) {
@@ -3787,7 +3852,7 @@
           // Non-MSP cascading dimensions. On MSP these selections stay empty
           // so the conditions are a no-op.
           if (excludeFilter !== 'divisions') {
-            if (!Utils.matchesSelectedDivisions(job.division, s.filterSelection.divisions)) return false;
+            if (!Utils.matchesSelectedDivisions(job.division, s.filterSelection.divisions, job.profession)) return false;
           }
           if (excludeFilter !== 'professions') {
             if (s.filterSelection.professions.size > 0 && !(job.profession && s.filterSelection.professions.has(job.profession))) return false;
@@ -3991,7 +4056,7 @@
           // empty division/profession/region pass when nothing is selected,
           // never pass when a filter IS selected (consistent with the way
           // facilities/categories behave).
-          const divMatch = Utils.matchesSelectedDivisions(j.division, s.filterSelection.divisions);
+          const divMatch = Utils.matchesSelectedDivisions(j.division, s.filterSelection.divisions, j.profession);
           const profMatch = s.filterSelection.professions.size === 0 || (j.profession && s.filterSelection.professions.has(j.profession));
           const regMatch = s.filterSelection.regions.size === 0 || !j.region || s.filterSelection.regions.has(j.region);
 
@@ -4539,7 +4604,7 @@
           const facMatch = s.filterSelection.facilities.size === 0 || (r.facility && s.filterSelection.facilities.has(r.facility));
           const specMatch = s.filterSelection.specialties.size === 0 || (r.specialty && s.filterSelection.specialties.has(Utils.cleanFilterText(r.specialty)));
           const catMatch = Utils.matchesStatsCategoryFilter(r.specialty, s.filterSelection.categories);
-          const divMatch = Utils.matchesSelectedDivisions(r.division, s.filterSelection.divisions);
+          const divMatch = Utils.matchesSelectedDivisions(r.division, s.filterSelection.divisions, r.profession);
           const profMatch = s.filterSelection.professions.size === 0 || (r.profession && s.filterSelection.professions.has(r.profession));
           const regMatch = s.filterSelection.regions.size === 0 || !r.region || s.filterSelection.regions.has(r.region);
           const isActive = r.startDate && r.startDate <= now && (!r.endDate || r.endDate >= now);
@@ -6405,7 +6470,7 @@
           const catMatch = matchesTrendCategory(r.category);
           const specMatch = s.filterSelection.specialties.size === 0 ||
             Array.from(s.filterSelection.specialties).some(sp => sp.toLowerCase() === (r.specialty || '').toLowerCase());
-          const divMatch = Utils.matchesSelectedDivisions(r.division, s.filterSelection.divisions);
+          const divMatch = Utils.matchesSelectedDivisions(r.division, s.filterSelection.divisions, r.profession);
           const profMatch = s.filterSelection.professions.size === 0 ||
             (r.profession && s.filterSelection.professions.has(r.profession));
           // Region: rows with NULL region (e.g. entire Bullhorn book — spec says
@@ -8055,7 +8120,7 @@
               .some(sp => sp.toLowerCase() === rs);
             if (!specMatch) return false;
           }
-          if (!Utils.matchesSelectedDivisions(r.division, s.filterSelection.divisions)) return false;
+          if (!Utils.matchesSelectedDivisions(r.division, s.filterSelection.divisions, r.profession)) return false;
           if (s.filterSelection.professions.size > 0
               && r.profession
               && !s.filterSelection.professions.has(r.profession)) return false;
@@ -8605,7 +8670,7 @@
           const isGhr = isGHRAgencyLocal(r.agency);
           if (drill && drill.agency && (drill.agency === 'GHR') !== isGhr) return;
           if (!trendCatMatch(r)) return;
-          if (!Utils.matchesSelectedDivisions(r.division, s.filterSelection.divisions)) return;
+          if (!Utils.matchesSelectedDivisions(r.division, s.filterSelection.divisions, r.profession)) return;
           // NULL region passes any region filter (see filterRow comment above).
           if (s.filterSelection.regions.size > 0 && r.region && !s.filterSelection.regions.has(r.region)) return;
 
@@ -8634,7 +8699,7 @@
           const isGhr = isGHRAgencyLocal(r.agency);
           if (drill && drill.agency && (drill.agency === 'GHR') !== isGhr) return false;
           if (!trendCatMatch(r)) return false;
-          if (!Utils.matchesSelectedDivisions(r.division, s.filterSelection.divisions)) return false;
+          if (!Utils.matchesSelectedDivisions(r.division, s.filterSelection.divisions, r.profession)) return false;
           // NULL region passes any region filter (see filterRow comment above).
           if (s.filterSelection.regions.size > 0 && r.region && !s.filterSelection.regions.has(r.region)) return false;
           return true;

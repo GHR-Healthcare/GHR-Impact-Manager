@@ -2,6 +2,15 @@
 
 ## Version History
 
+**2.2.3** - Non-MSP filters: Division profession intersection + hidden-system MSP-only guard
+
+Two filter bugs on the non-MSP side. Full audit in [NON_MSP_FILTER_AUDIT.md](NON_MSP_FILTER_AUDIT.md).
+
+- **§F1 Division filter over-matched via client-level tags.** Bullhorn `record.division` is `cc.customTextBlock1` — a comma-separated list of which GHR teams service the CLIENT, not the team that placed THIS worker. Selecting "RevCycle Workforce" pulled in RNs at any client whose tag list included RevCycle (most non-MSP clients do). `Utils.matchesSelectedDivisions` now also requires the placement's profession to match a keyword whitelist per division (Rev Cycle needs Coder/CDI/HIM Specialist/etc.; Nursing needs RN/LPN/CNA; Allied needs OT/PT/SLP/therapist/tech/etc.; Locum Tenens needs CRNA/Anesthesiologist/NP/PA). Divisions without a whitelist (Planet Healthcare, Search, Workforce Solutions, Human Services, Acute, United, Technology, Education, Non-Acute) keep the old client-list-only match — those are business-line labels rather than roles. Signature updated across 7 call sites to thread `profession` through.
+- **§F2 Hidden-system MSP keywords cross-contaminated non-MSP.** `Utils.isHiddenHealthSystem` iterated `CONSTANTS.HEALTH_SYSTEM_MAPPINGS` (MSP-managed table from Settings → Health Systems), so any non-MSP client name containing "jefferson" or "sunrise" got silently dropped. Now short-circuits to `false` when `dataSource === 'non_msp'` — non-MSP has no equivalent hide taxonomy.
+
+Open items §F3–F7 documented in the audit file (Facility duplicates System on non-MSP, Category mixes engagement mode + role, Specialty duplicates Profession, Region filter is Symplr-state-only, `matchesStatsCategoryFilter` broad-keyword-matches). None ship this pass — they need UI decisions.
+
 **2.2.2** - Symplr scope filter now renders as a flat IN-list (fixes v2.2.0 Trend + Financials timeouts)
 
 v2.2.0 shifted Symplr scope from a hardcoded rollup to auto-discovery, but `build_scope_filter` still built a correlated subquery that expanded MasterClientID AND filtered `r.regionname NOT LIKE '%MSP%'` on every row of the outer query. On the aggregate ORDERS-based queries (Trend + Financials + Hours + YoY) this measured **~66 seconds** against live data — past the SWA Free 45s gateway limit, so those tabs surfaced as "backend call failure" to users.
