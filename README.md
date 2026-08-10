@@ -2,6 +2,17 @@
 
 ## Version History
 
+**2.2.4** - Non-MSP §F3: System rolls up to parent, Facility stays specific
+
+Closes §F3 from NON_MSP_FILTER_AUDIT.md. Both source systems have a parent/child chain we weren't using — Bullhorn's `parentClientCorporationID` on `View_ClientCorporation` and Symplr's `MasterClientID` on `profile_client`. Sub-orgs like `Cone Health OrthoCare Greensboro` / `Cone Health Behavioral Health Hospital` were their own systems, so the System filter dropdown mostly duplicated the Facility one on non-MSP.
+
+- **Bullhorn**: `build_system_case_expr`'s fallback changed from `cc.name` to `ISNULL(pcc.name, cc.name)`. The 8 hardcoded rollups still take precedence (Cone Health / Orlando Health / etc.); auto-discovered clients now roll up one level via `parentClientCorporationID`. ~70% of in-scope Bullhorn clients have a parent, so this collapses a lot.
+- **Symplr**: `build_system_case_expr` returns `ISNULL(m.clientname, pc.clientname)` — `m` = the MasterClient parent when the client is a sub-org, NULL when it's a top-level master. ~30% of in-scope Symplr clients have a master. Sub-orgs like `DCIU ECE - Aston` / `DCIU ECE - Wallingford` now roll up to System=`DCIU ECE` with Facility keeping the specific sub-org.
+- Every non-MSP query now joins the parent alongside the client: `LEFT JOIN dbo.profile_client m ON pc.MasterClientID = m.recordid` for Symplr, `LEFT JOIN dbo.View_ClientCorporation pcc ON cc.parentClientCorporationID = pcc.clientCorporationID` for Bullhorn. Applied across all 6 non-MSP endpoints — 12 Symplr + 7 Bullhorn join sites.
+- Facility stays as `cc.name` / `pc.clientname` — dropdowns are now meaningfully different.
+
+Live verification: 118 distinct Symplr facilities collapse to 99 systems after rollup.
+
 **2.2.3** - Non-MSP filters: Division profession intersection + hidden-system MSP-only guard
 
 Two filter bugs on the non-MSP side. Full audit in [NON_MSP_FILTER_AUDIT.md](NON_MSP_FILTER_AUDIT.md).

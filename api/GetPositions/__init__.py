@@ -82,6 +82,7 @@ def _bullhorn_positions_data():
             NULL AS region
         FROM dbo.View_JobOrder jo
         LEFT JOIN dbo.View_ClientCorporation cc ON jo.clientCorporationID = cc.clientCorporationID
+        LEFT JOIN dbo.View_ClientCorporation pcc ON cc.parentClientCorporationID = pcc.clientCorporationID
         LEFT JOIN dbo.View_CorporateUser u ON jo.ownerID = u.corporateUserID
         WHERE jo.isDeleted = 0
             AND jo.status IN ({status_list})
@@ -258,6 +259,7 @@ def _symplr_positions_data():
                 pc.state AS region
             FROM dbo.lt_order lt
             LEFT JOIN dbo.profile_client pc ON lt.clientid = pc.recordid
+            LEFT JOIN dbo.profile_client m  ON pc.MasterClientID = m.recordid
             LEFT JOIN dbo.regions r ON r.regionid = TRY_CAST(pc.region AS INT)
             WHERE lt.status = 'open'
                 AND lt.date_entered >= DATEADD(DAY, -45, GETDATE())
@@ -306,6 +308,7 @@ def _symplr_positions_data():
                 MAX(pc.state) AS region
             FROM dbo.orders o
             LEFT JOIN dbo.profile_client pc ON o.customerid = pc.recordid
+            LEFT JOIN dbo.profile_client m  ON pc.MasterClientID = m.recordid
             LEFT JOIN dbo.regions r ON r.regionid = TRY_CAST(pc.region AS INT)
             WHERE o.status = 'open'
                 AND (o.lt_orderid IS NULL OR o.lt_orderid = 0)
@@ -363,6 +366,7 @@ def _symplr_positions_data():
             FROM dbo.orders o
             INNER JOIN dbo.lt_order lt ON o.lt_orderid = lt.lt_orderid
             LEFT JOIN dbo.profile_client pc ON lt.clientid = pc.recordid
+            LEFT JOIN dbo.profile_client m  ON pc.MasterClientID = m.recordid
             LEFT JOIN dbo.regions r ON r.regionid = TRY_CAST(pc.region AS INT)
             WHERE o.status = 'open'
                 AND o.lt_orderid IS NOT NULL AND o.lt_orderid <> 0

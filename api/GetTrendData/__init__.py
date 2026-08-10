@@ -181,6 +181,7 @@ def _bullhorn_trend_data():
         FROM dbo.View_Placement p
         LEFT JOIN dbo.View_Candidate c ON p.candidateID = c.candidateID
         LEFT JOIN dbo.View_ClientCorporation cc ON p.clientCorporationID = cc.clientCorporationID
+        LEFT JOIN dbo.View_ClientCorporation pcc ON cc.parentClientCorporationID = pcc.clientCorporationID
         LEFT JOIN dbo.View_JobOrder jo ON p.jobOrderID = jo.jobOrderID
         WHERE p.isDeleted = 0
             AND p.status IN ({status_list})
@@ -226,6 +227,7 @@ def _bullhorn_trend_data():
             ON p.dateBegin <= DATEADD(DAY, 6, w.week_start)
             AND (p.dateEnd IS NULL OR p.dateEnd >= w.week_start)
         LEFT JOIN dbo.View_ClientCorporation cc ON p.clientCorporationID = cc.clientCorporationID
+        LEFT JOIN dbo.View_ClientCorporation pcc ON cc.parentClientCorporationID = pcc.clientCorporationID
         WHERE p.isDeleted = 0
             AND p.status IN ({status_list})
             AND p.dateBegin IS NOT NULL
@@ -297,6 +299,7 @@ def _symplr_trend_data():
                 CAST(lt.date_end AS DATE) AS endDate
             FROM dbo.lt_order lt
             LEFT JOIN dbo.profile_client pc ON lt.clientid = pc.recordid
+            LEFT JOIN dbo.profile_client m  ON pc.MasterClientID = m.recordid
             LEFT JOIN dbo.regions r ON r.regionid = TRY_CAST(pc.region AS INT)
             LEFT JOIN dbo.profile_temp pt ON lt.tempid = pt.recordid
             WHERE lt.status = 'filled'
@@ -347,6 +350,7 @@ def _symplr_trend_data():
                 CAST(MAX(o.jobdateend)   AS DATE) AS endDate
             FROM dbo.orders o
             LEFT JOIN dbo.profile_client pc ON o.customerid = pc.recordid
+            LEFT JOIN dbo.profile_client m  ON pc.MasterClientID = m.recordid
             LEFT JOIN dbo.regions r ON r.regionid = TRY_CAST(pc.region AS INT)
             LEFT JOIN dbo.profile_temp   pt ON o.filledby   = pt.recordid
             WHERE o.status = 'filled'
@@ -393,6 +397,7 @@ def _symplr_trend_data():
                     o.totalbillamount
                 FROM dbo.orders o
                 LEFT JOIN dbo.profile_client pc ON o.customerid = pc.recordid
+                LEFT JOIN dbo.profile_client m  ON pc.MasterClientID = m.recordid
                 LEFT JOIN dbo.regions r ON r.regionid = TRY_CAST(pc.region AS INT)
                 WHERE o.jobdatestart IS NOT NULL
                     AND CAST(o.jobdatestart AS DATE) >= DATEADD(WEEK, -8, GETDATE())

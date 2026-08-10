@@ -73,6 +73,7 @@ def _bullhorn_hours_data():
             AND (p.dateEnd IS NULL OR p.dateEnd >= w.week_start)
         LEFT JOIN dbo.View_Candidate c ON p.candidateID = c.candidateID
         LEFT JOIN dbo.View_ClientCorporation cc ON p.clientCorporationID = cc.clientCorporationID
+        LEFT JOIN dbo.View_ClientCorporation pcc ON cc.parentClientCorporationID = pcc.clientCorporationID
         WHERE p.isDeleted = 0
             AND p.status IN ({status_list})
             AND p.dateBegin IS NOT NULL
@@ -137,6 +138,7 @@ def _symplr_hours_data():
         LEFT JOIN dbo.lt_order lt ON o.lt_orderid = lt.lt_orderid
         LEFT JOIN dbo.profile_temp pt ON lt.tempid = pt.recordid
         LEFT JOIN dbo.profile_client pc ON o.customerid = pc.recordid
+        LEFT JOIN dbo.profile_client m  ON pc.MasterClientID = m.recordid
         LEFT JOIN dbo.regions r ON r.regionid = TRY_CAST(pc.region AS INT)
         WHERE o.jobdatestart IS NOT NULL
             AND CAST(o.jobdatestart AS DATE) >= DATEADD(WEEK, -13, GETDATE())

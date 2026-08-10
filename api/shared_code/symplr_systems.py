@@ -75,27 +75,44 @@ def service_line_case(nursetype_col: str = 'lt.nursetype') -> str:
 
 # JOIN REQUIREMENTS FOR CALLERS
 # =============================
-# Every Symplr query joins the client table for facility + system:
+# Every Symplr query joins the client table + its MasterClient parent + the
+# regions lookup:
 #
 #     LEFT JOIN dbo.profile_client pc ON <client_id_col> = pc.recordid
+#     LEFT JOIN dbo.profile_client m  ON pc.MasterClientID = m.recordid
+#     LEFT JOIN dbo.regions       r  ON r.regionid = TRY_CAST(pc.region AS INT)
 #
-# Queries that use build_division_case_expr additionally join regions:
-#
-#     LEFT JOIN dbo.regions r ON r.regionid = TRY_CAST(pc.region AS INT)
-#
-# build_scope_filter no longer needs `r` — MasterClientID expansion + MSP
-# exclusion happen once in resolve_scope_master_ids (Python) and the filter
-# renders as a flat IN-list.
+# - `pc` = the actual client the placement is at ("DCIU School Age - Aston")
+#          → used for Facility.
+# - `m`  = the MasterClient parent ("DCIU ECE" / "Bancroft NeuroHealth") when
+#          the client is a sub-org, NULL when the client IS a master. Used
+#          for the System axis so sub-orgs roll up cleanly — ~30% of Symplr
+#          rows in scope have a real master, the rest are self-tops.
+# - `r`  = the business region ("Education Nursing" / "PA Nursing" / etc.)
+#          — used for the division derivation and (historically) the MSP
+#          exclusion. build_scope_filter no longer references `r`;
+#          MasterClientID expansion + MSP exclusion happen once in Python
+#          in resolve_scope_master_ids.
 
 
 def build_system_case_expr(column_name: str = 'lt.clientid') -> str:
     """
-    System axis on non-MSP = the client's own display name (pc.clientname).
-    Caller must LEFT JOIN dbo.profile_client pc ON `column_name` = pc.recordid.
-    `column_name` is retained for API compatibility with the older signature
-    but ignored — the alias is always `pc`.
+    System axis on non-MSP = the MasterClient's name if the client is a
+    sub-org, else the client's own name. Groups sub-orgs cleanly under their
+    parent (e.g. "DCIU ECE - Aston", "DCIU ECE - Wallingford", etc. all
+    roll up to System="DCIU ECE" while Facility keeps the specific sub-org).
+
+    ~30% of in-scope Symplr clients have a MasterClientID; the rest are
+    self-tops so we fall through to pc.clientname.
+
+    Caller must join both:
+        LEFT JOIN dbo.profile_client pc ON <col> = pc.recordid
+        LEFT JOIN dbo.profile_client m  ON pc.MasterClientID = m.recordid
+
+    `column_name` retained for API compat but ignored — the aliases are
+    always `pc` and `m`.
     """
-    return "pc.clientname"
+    return "ISNULL(m.clientname, pc.clientname)"
 
 
 def build_division_case_expr(column_name: str = 'lt.clientid') -> str:

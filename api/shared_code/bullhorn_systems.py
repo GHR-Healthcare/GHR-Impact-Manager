@@ -189,15 +189,23 @@ def resolve_scope_client_ids(bullhorn_cursor, app_conn=None):
     )
 
 
-def build_system_case_expr(column_name='p.clientCorporationID', fallback_name_column='cc.name'):
+def build_system_case_expr(column_name='p.clientCorporationID', fallback_name_column="ISNULL(pcc.name, cc.name)"):
     """
-    SQL CASE that maps clientCorporationID → rolled-up system_name. IDs not
-    in the hardcoded rollup fall through to `fallback_name_column` (defaults
-    to cc.name — every non-MSP query already JOINs View_ClientCorporation cc,
-    so this Just Works).
+    SQL CASE that maps clientCorporationID → rolled-up system_name.
+    IDs not in the hardcoded rollup fall through to `fallback_name_column`.
 
-    Callers that don't join cc must pass their own fallback_name_column, or
-    pass 'NULL' to preserve the old behavior of returning NULL for unmapped IDs.
+    Fallback (default): `ISNULL(pcc.name, cc.name)` — walk one level up the
+    Bullhorn parent chain via View_ClientCorporation.parentClientCorporationID.
+    ~70% of in-scope Bullhorn clients have a parent, so this collapses sub-orgs
+    (e.g. "Cone Health OrthoCare Greensboro") under their parent ("Cone Health")
+    on the System axis while Facility keeps the specific sub-org name. Every
+    non-MSP Bullhorn query already JOINs View_ClientCorporation cc; they must
+    additionally LEFT JOIN cc.parentClientCorporationID → pcc for this fallback
+    to resolve.
+
+    Callers that don't join pcc must pass their own fallback_name_column
+    (e.g. 'cc.name' to skip the parent lookup) or 'NULL' to preserve the
+    old behavior of returning NULL for unmapped IDs.
     """
     parts = ['CASE']
     for entry in BULLHORN_SYSTEM_ROLLUP:

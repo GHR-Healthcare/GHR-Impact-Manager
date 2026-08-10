@@ -104,6 +104,7 @@ def _bullhorn_financial_data(date_from_sql: str, date_to_sql: str):
                 AND (p.dateEnd IS NULL OR p.dateEnd >= w.week_start)
             LEFT JOIN dbo.View_Candidate c ON p.candidateID = c.candidateID
             LEFT JOIN dbo.View_ClientCorporation cc ON p.clientCorporationID = cc.clientCorporationID
+            LEFT JOIN dbo.View_ClientCorporation pcc ON cc.parentClientCorporationID = pcc.clientCorporationID
             WHERE p.isDeleted = 0
                 AND p.status IN ({status_list})
                 AND p.dateBegin IS NOT NULL
@@ -190,6 +191,7 @@ def _symplr_financial_data(date_from_sql: str, date_to_sql: str):
         FROM dbo.orders o
         LEFT JOIN dbo.lt_order lt ON o.lt_orderid = lt.lt_orderid
         LEFT JOIN dbo.profile_client pc ON o.customerid = pc.recordid
+        LEFT JOIN dbo.profile_client m  ON pc.MasterClientID = m.recordid
         LEFT JOIN dbo.regions r ON r.regionid = TRY_CAST(pc.region AS INT)
         WHERE o.jobdatestart IS NOT NULL
             AND CAST(o.jobdatestart AS DATE) >= {date_from_sql}
