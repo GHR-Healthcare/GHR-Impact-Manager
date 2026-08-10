@@ -2,6 +2,16 @@
 
 ## Version History
 
+**2.2.2** - Symplr scope filter now renders as a flat IN-list (fixes v2.2.0 Trend + Financials timeouts)
+
+v2.2.0 shifted Symplr scope from a hardcoded rollup to auto-discovery, but `build_scope_filter` still built a correlated subquery that expanded MasterClientID AND filtered `r.regionname NOT LIKE '%MSP%'` on every row of the outer query. On the aggregate ORDERS-based queries (Trend + Financials + Hours + YoY) this measured **~66 seconds** against live data — past the SWA Free 45s gateway limit, so those tabs surfaced as "backend call failure" to users.
+
+Fix: move both the MasterClientID expansion and the MSP-region exclusion into `resolve_scope_master_ids` (Python side), so it runs ONCE at scope resolution time. `build_scope_filter` then renders as a flat `col IN (list)` — SQL Server can seek the clustered index on `profile_client.recordid`.
+
+Measured against live DB: the aggregate ORDERS COUNT(*) query drops from **65.9s to 1.1s** (~60× faster). Identical result set (11,396 rows). The lt_order-based trend query also drops from 332ms to 93ms.
+
+No functional change for users — same scope, same MSP exclusion, same data. Just doesn't time out.
+
 **2.2.1** - Hide flag now hides from dropdowns too
 
 Systems marked `hidden` in Settings → Health Systems were already excluded from every row-level filter check via `Utils.isHiddenHealthSystem`, but the System and Facility filter dropdowns kept populating with them — so a user could pick a hidden system from the dropdown and get zero results. Filter dropdown population (LOAD_DATA and REFRESH_UI paths) now runs the same hidden-system check: hidden systems drop from the System dropdown, and facilities whose resolved system is hidden drop from the Facility dropdown. Applies to both MSP and non-MSP. Applies to Jefferson + Sunrise today; anything future users hide via Settings picks up automatically.

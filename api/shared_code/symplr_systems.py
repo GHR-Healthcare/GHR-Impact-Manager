@@ -75,18 +75,17 @@ def service_line_case(nursetype_col: str = 'lt.nursetype') -> str:
 
 # JOIN REQUIREMENTS FOR CALLERS
 # =============================
-# The scope helpers below assume every Symplr query has already joined the
-# client + region tables under specific aliases:
+# Every Symplr query joins the client table for facility + system:
 #
 #     LEFT JOIN dbo.profile_client pc ON <client_id_col> = pc.recordid
+#
+# Queries that use build_division_case_expr additionally join regions:
+#
 #     LEFT JOIN dbo.regions r ON r.regionid = TRY_CAST(pc.region AS INT)
 #
-# That lets the CASE/system/scope expressions reference `pc.clientname` and
-# `r.regionname` directly — safe in SELECT + GROUP BY (unlike correlated
-# subqueries, which SQL Server can't use in GROUP BY).
-#
-# Each of the 6 non-MSP endpoints already joins `pc` for facility (`pc.clientname
-# AS facility`). Adding the `regions` join is a one-liner per query.
+# build_scope_filter no longer needs `r` — MasterClientID expansion + MSP
+# exclusion happen once in resolve_scope_master_ids (Python) and the filter
+# renders as a flat IN-list.
 
 
 def build_system_case_expr(column_name: str = 'lt.clientid') -> str:
@@ -184,58 +183,72 @@ def discover_active_client_ids(symplr_cursor):
         return set()
 
 
+def _expand_and_filter_allowlist(symplr_cursor, allowlist_ids):
+    """
+    Expand manual allowlist entries via MasterClientID AND drop any resulting
+    client whose region name contains 'MSP'. Runs ONCE at scope-resolution
+    time so that build_scope_filter can render as a flat IN-list (no
+    correlated subquery). Only called when the allowlist is non-empty.
+    """
+    if not allowlist_ids or symplr_cursor is None:
+        return set()
+    try:
+        ids_sql = ', '.join(str(int(i)) for i in allowlist_ids if i is not None)
+        if not ids_sql:
+            return set()
+        symplr_cursor.execute(f"""
+            SELECT pc.recordid
+            FROM dbo.profile_client pc
+            LEFT JOIN dbo.regions r ON r.regionid = TRY_CAST(pc.region AS INT)
+            WHERE (pc.recordid IN ({ids_sql}) OR pc.MasterClientID IN ({ids_sql}))
+              AND (r.regionname IS NULL OR r.regionname NOT LIKE '%MSP%')
+        """)
+        return {int(row[0]) for row in symplr_cursor.fetchall() if row[0] is not None}
+    except Exception as e:
+        print(f"_expand_and_filter_allowlist: swallowed error: {e}")
+        return set()
+
+
 def resolve_scope_master_ids(app_conn=None, symplr_cursor=None):
     """
-    Effective Symplr scope: manual allowlist ∪ auto-discovered active clients
-    (excluding MSP-tagged regions).
+    Effective Symplr scope: manual allowlist (expanded via MasterClientID +
+    MSP-region filter) ∪ auto-discovered active clients.
+
+    Both expansion and MSP exclusion happen HERE, once — build_scope_filter
+    can then render a flat IN-list and let SQL Server use the clustered
+    index on profile_client.recordid. Previously the expansion + MSP filter
+    lived inside build_scope_filter as a correlated subquery evaluated per
+    row of every trend/financial/positions query, which timed out the
+    Trend and Financials tabs on the SWA Free 45s gateway limit.
 
     Name kept as `resolve_scope_master_ids` for backward compat with the
-    existing endpoint call sites — the IDs it returns aren't strictly
-    "masters" anymore. build_scope_filter still expands via MasterClientID
-    so a leader adding a master ID still pulls the children.
+    existing endpoint call sites — the IDs it returns are the fully-
+    resolved leaf client IDs, no longer just "masters".
 
     If `symplr_cursor` is None (e.g. endpoint failed to open Symplr conn),
-    falls back to allowlist only. Empty set → scope filter renders 1=0 →
-    no rows.
+    falls back to allowlist only (unexpanded). Empty set → scope filter
+    renders 1=0 → no rows.
     """
-    ids = get_manual_symplr_allowlist_ids(app_conn)
+    allowlist_ids = get_manual_symplr_allowlist_ids(app_conn)
+    ids = _expand_and_filter_allowlist(symplr_cursor, allowlist_ids) if allowlist_ids else set()
     if symplr_cursor is not None:
         ids |= discover_active_client_ids(symplr_cursor)
     return ids
-
-
-def _expansion_subquery(master_ids):
-    """SQL subquery resolving to every recordid in scope of the given
-    IDs — the IDs themselves plus any client whose MasterClientID points
-    at one of them. So a leader adding a master via the allowlist pulls
-    its children in automatically."""
-    ids = ', '.join(str(i) for i in master_ids) if master_ids else 'NULL'
-    return (
-        f"SELECT recordid FROM dbo.profile_client "
-        f"WHERE recordid IN ({ids}) OR MasterClientID IN ({ids})"
-    )
 
 
 def build_scope_filter(column_name: str = 'lt.clientid', master_ids=None) -> str:
     """
     SQL fragment restricting rows to Symplr clients in scope.
 
-    Pass `master_ids` from resolve_scope_master_ids() to include auto-active
-    + manual allowlist. Additionally excludes MSP-tagged regions inline —
-    even if a leader force-adds an MSP-tagged client via the allowlist, the
-    region filter here still pushes it out (data-integrity guard; MSP work
-    belongs on the MSP dashboard).
-
-    Caller must have joined `dbo.regions r` for the MSP-exclusion clause to
-    resolve. See the JOIN REQUIREMENTS comment at the top of this module.
+    Pass `master_ids` (fully resolved by resolve_scope_master_ids) — this
+    now renders as a flat IN-list with no correlated subquery, so SQL
+    Server can seek the clustered index on the joined column. MSP exclusion
+    + MasterClientID expansion happen once at scope resolution, not per
+    row of each caller's query.
     """
     if master_ids is None:
         master_ids = []
     ids = sorted(set(int(i) for i in master_ids if i is not None))
     if not ids:
         return '1 = 0'
-    sub = _expansion_subquery(ids)
-    return (
-        f"({column_name} IN ({sub})"
-        f" AND (r.regionname IS NULL OR r.regionname NOT LIKE '%MSP%'))"
-    )
+    return f'{column_name} IN ({", ".join(str(i) for i in ids)})'
