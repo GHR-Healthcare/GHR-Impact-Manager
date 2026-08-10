@@ -2,6 +2,10 @@
 
 ## Version History
 
+**2.2.1** - Hide flag now hides from dropdowns too
+
+Systems marked `hidden` in Settings → Health Systems were already excluded from every row-level filter check via `Utils.isHiddenHealthSystem`, but the System and Facility filter dropdowns kept populating with them — so a user could pick a hidden system from the dropdown and get zero results. Filter dropdown population (LOAD_DATA and REFRESH_UI paths) now runs the same hidden-system check: hidden systems drop from the System dropdown, and facilities whose resolved system is hidden drop from the Facility dropdown. Applies to both MSP and non-MSP. Applies to Jefferson + Sunrise today; anything future users hide via Settings picks up automatically.
+
 **2.2.0** - Symplr: drop hardcoded rollup, auto-discovery by region, MSP exclusion, expanded service line
 
 The Symplr side of the non-MSP dashboard was scoped to 3 hardcoded school-district masters (Reading SD / Allentown SD / DCIU). Everyone else — KenCrest, Presbyterian Senior Living, Bancroft NeuroHealth, ~10 other school districts — was invisible. Symplr now works like Bullhorn: any client with active work is pulled in automatically. Manual allowlist covers edge cases.

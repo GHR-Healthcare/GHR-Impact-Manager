@@ -766,7 +766,7 @@
     const $ = (id) => document.getElementById(id);
 
     // App version - loaded from environment variable via API, with fallback
-    let APP_VERSION = '2.2.0';
+    let APP_VERSION = '2.2.1';
 
     const API_BASE_URL = '/api';
     
@@ -9338,17 +9338,28 @@
               const allAssignments = [...(s.statsData.onAssignment || []), ...(s.statsData.upcoming || [])];
               const pdAssignments = s.perDiemData?.assignments || [];
 
+              // Hidden-system exclusion: a facility resolves to its health
+              // system via getHealthSystem — if that system is flagged hidden,
+              // the facility name is dropped from the dropdown too. Keeps the
+              // dropdowns consistent with the row-level filterRow checks that
+              // already exclude hidden rows everywhere else.
+              const _isHiddenBySystem = (sys) => sys && Utils.isHiddenHealthSystem(sys);
+              const _isHiddenByFacility = (facility) => {
+                if (!facility) return false;
+                return _isHiddenBySystem(Utils.getHealthSystem(facility, ''));
+              };
+
               // Use healthSystem (mapped value) for system filter - include both jobs and assignments
               s.filters.systems = new Set([
                 ...s.jobs.map(j => j.healthSystem),
                 ...allAssignments.map(a => a.healthSystem),
                 ...pdAssignments.map(a => a.healthSystem)
-              ].filter(Boolean));
+              ].filter(v => v && !_isHiddenBySystem(v)));
               s.filters.facilities = new Set([
                 ...s.jobs.map(j => j.facility),
                 ...allAssignments.map(a => a.facility),
                 ...pdAssignments.map(a => a.facility)
-              ].filter(Boolean));
+              ].filter(v => v && !_isHiddenByFacility(v)));
               s.filters.categories = new Set(s.jobs.map(j => j.program).filter(Boolean));
               // Apply cleanFilterText to specialty values for consistent matching
               s.filters.specialties = new Set([
@@ -9393,16 +9404,23 @@
               const allAssignments = [...(s.statsData.onAssignment || []), ...(s.statsData.upcoming || [])];
               const pdAssignments = s.perDiemData?.assignments || [];
 
+              // Hidden-system exclusion (see LOAD_DATA note above).
+              const _isHiddenBySystem = (sys) => sys && Utils.isHiddenHealthSystem(sys);
+              const _isHiddenByFacility = (facility) => {
+                if (!facility) return false;
+                return _isHiddenBySystem(Utils.getHealthSystem(facility, ''));
+              };
+
               s.filters.systems = new Set([
                 ...s.jobs.map(j => j.healthSystem),
                 ...allAssignments.map(a => a.healthSystem),
                 ...pdAssignments.map(a => a.healthSystem)
-              ].filter(Boolean));
+              ].filter(v => v && !_isHiddenBySystem(v)));
               s.filters.facilities = new Set([
                 ...s.jobs.map(j => j.facility),
                 ...allAssignments.map(a => a.facility),
                 ...pdAssignments.map(a => a.facility)
-              ].filter(Boolean));
+              ].filter(v => v && !_isHiddenByFacility(v)));
               s.filters.categories = new Set(s.jobs.map(j => j.program).filter(Boolean));
               // Apply cleanFilterText to specialty values for consistent matching
               s.filters.specialties = new Set([
