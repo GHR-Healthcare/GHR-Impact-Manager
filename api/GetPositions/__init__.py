@@ -76,10 +76,10 @@ def _bullhorn_positions_data():
             jo.status AS status,
             ({system_case}) AS health_system,
             COALESCE(NULLIF(cat.name, ''), cat.occupation) AS profession,
-            -- Specialty (specialty_categoryID) is likewise not a column on the
-            -- view and has no obvious job-level link table, so subspecialty
-            -- still reads the unmapped customText2 and is usually NULL.
-            jo.customText2 AS subspecialty,
+            -- Real specialty from dbo.JobOrderSpecialties -> dbo.Specialty.
+            -- `specialty` above stays jo.title (the job title, what the list
+            -- card shows); this is the structured value behind it.
+            COALESCE(NULLIF(spec.name, ''), jo.customText2) AS subspecialty,
             -- Division and Team are JOB-level fields (Bullhorn field mapping:
             -- correlatedCustomText1 = Division, correlatedCustomText5 = Team,
             -- Team nesting under Division). Previously division came from
@@ -105,6 +105,18 @@ def _bullhorn_positions_data():
               AND cty.isDeleted = 0
             ORDER BY cty.name
         ) cat
+        -- Specialty is a to-many association too (dbo.JobOrderSpecialties ->
+        -- dbo.Specialty), same shape as the category join above. One
+        -- deterministic row so the Specialty filter stays an exact match.
+        OUTER APPLY (
+            SELECT TOP 1 sp.name
+            FROM dbo.JobOrderSpecialties js
+            INNER JOIN dbo.Specialty sp ON js.specialtyID = sp.specialtyID
+            WHERE js.jobOrderID = jo.jobOrderID
+              AND js.isDeleted = 0
+              AND sp.isDeleted = 0
+            ORDER BY sp.name
+        ) spec
         LEFT JOIN dbo.View_ClientCorporation cc ON jo.clientCorporationID = cc.clientCorporationID
         LEFT JOIN dbo.View_ClientCorporation pcc ON cc.parentClientCorporationID = pcc.clientCorporationID
         LEFT JOIN dbo.View_CorporateUser u ON jo.ownerID = u.corporateUserID

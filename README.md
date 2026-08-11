@@ -2,6 +2,13 @@
 
 ## Version History
 
+**2.2.6** - Non-MSP: real Specialty via JobOrderSpecialties (closes audit §F5 on Trend)
+
+Completes the association work started in 2.2.5. Specialty is a to-many association like category — `dbo.JobOrderSpecialties` → `dbo.Specialty` — resolved with the same single-deterministic-row `OUTER APPLY`.
+
+- **Trend's Specialty stopped duplicating Profession.** It read `p.customText1`, which on a placement *is* the profession, so the Specialty and Profession dropdowns showed identical values (NON_MSP_FILTER_AUDIT.md §F5). Now prefers the job's real specialty, falling back to the old value so nothing empties out.
+- **GetPositions `subspecialty`** now carries the real specialty instead of the unmapped `customText2`. `specialty` stays `jo.title` — that's the job title the list card displays. Note the frontend does not currently read `subspecialty`, so this is data-only until we decide whether the non-MSP Specialty filter should switch from job title to the structured value.
+
 **2.2.5** - Non-MSP: Division fixed at the source, Team filter, profession via Category, AV strip on List
 
 The v2.2.3 division whitelist made the Division filter return **nothing** on the List view. Root cause was two wrong columns, not the matching logic.

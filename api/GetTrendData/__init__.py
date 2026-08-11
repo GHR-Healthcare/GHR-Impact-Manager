@@ -154,7 +154,11 @@ def _bullhorn_trend_data():
             ({system_case}) AS system,
             cc.name AS facility,
             'GHR' AS agency,
-            p.customText1 AS specialty,
+            -- Specialty used to be p.customText1 — which IS the profession on a
+            -- placement, so Specialty and Profession showed identical dropdowns
+            -- (NON_MSP_FILTER_AUDIT.md §F5). Prefer the job's real specialty,
+            -- falling back to the old value so nothing empties out.
+            COALESCE(NULLIF(spec.name, ''), p.customText1) AS specialty,
             p.employmentType AS category,
             ({BULLHORN_SERVICE_LINE_CASE}) AS service_line,
             -- Division lives on the client (View_ClientCorporation.customTextBlock1),
@@ -209,6 +213,18 @@ def _bullhorn_trend_data():
               AND cty.isDeleted = 0
             ORDER BY cty.name
         ) cat
+        -- Specialty is a to-many association too (dbo.JobOrderSpecialties ->
+        -- dbo.Specialty), same shape as the category join above. One
+        -- deterministic row so the Specialty filter stays an exact match.
+        OUTER APPLY (
+            SELECT TOP 1 sp.name
+            FROM dbo.JobOrderSpecialties js
+            INNER JOIN dbo.Specialty sp ON js.specialtyID = sp.specialtyID
+            WHERE js.jobOrderID = jo.jobOrderID
+              AND js.isDeleted = 0
+              AND sp.isDeleted = 0
+            ORDER BY sp.name
+        ) spec
         WHERE p.isDeleted = 0
             AND p.status IN ({status_list})
             AND p.dateBegin IS NOT NULL
