@@ -161,7 +161,16 @@ def _bullhorn_trend_data():
             -- not the placement — customTextBlock1 on View_Placement is always NULL.
             -- Values arrive as a comma-separated list (e.g. "Allied,Nursing,RevCycle Workforce")
             -- because a single client can be serviced by multiple GHR internal teams.
-            cc.customTextBlock1 AS division,
+            -- Division and Team are JOB-level fields (Bullhorn field mapping:
+            -- correlatedCustomText1 = Division, correlatedCustomText5 = Team,
+            -- Team nesting under Division). Previously division came from
+            -- cc.customTextBlock1 — a comma-separated list of every GHR team
+            -- servicing the CLIENT, which is why one client showed up tagged
+            -- "Allied,Nursing,RevCycle Workforce,United" across 4,400 RN
+            -- placements. Fall back to the client tag list only when the job
+            -- has no division, so legacy rows don't vanish from the filter.
+            COALESCE(NULLIF(jo.correlatedCustomText1, ''), cc.customTextBlock1) AS division,
+            jo.correlatedCustomText5 AS team,
             NULL AS region,
             -- Profession: GetPositions reads jo.customText1, but that field is
             -- NULL on the vast majority of job orders older placements attach
@@ -171,7 +180,11 @@ def _bullhorn_trend_data():
             -- case (RN, Coder, CRNA, Social Worker, etc.). Prefer jo. when
             -- populated for consistency with the positions endpoint; fall back
             -- to p. otherwise.
-            COALESCE(NULLIF(jo.customText1, ''), p.customText1) AS profession,
+            -- Job-order category first (see the OUTER APPLY below), then the
+            -- placement's own customText1 — on a PLACEMENT that field genuinely
+            -- is the profession, which is why trend was always better populated
+            -- than the positions list.
+            COALESCE(NULLIF(cat.name, ''), cat.occupation, NULLIF(p.customText1, '')) AS profession,
             p.customText11 AS pm,
             p.status AS status,
             TRY_CAST(p.clientBillRate AS DECIMAL(10,2)) AS bill_rate,
@@ -183,6 +196,19 @@ def _bullhorn_trend_data():
         LEFT JOIN dbo.View_ClientCorporation cc ON p.clientCorporationID = cc.clientCorporationID
         LEFT JOIN dbo.View_ClientCorporation pcc ON cc.parentClientCorporationID = pcc.clientCorporationID
         LEFT JOIN dbo.View_JobOrder jo ON p.jobOrderID = jo.jobOrderID
+        -- Profession on a job order is a to-many association
+        -- (View_JobOrder has no categoryID column; the mirror splits it into
+        -- dbo.JobOrderCategories). Take a single deterministic category so the
+        -- Profession filter can stay an exact match rather than a split list.
+        OUTER APPLY (
+            SELECT TOP 1 cty.name, cty.occupation
+            FROM dbo.JobOrderCategories jc
+            INNER JOIN dbo.Category cty ON jc.categoryID = cty.categoryID
+            WHERE jc.jobOrderID = jo.jobOrderID
+              AND jc.isDeleted = 0
+              AND cty.isDeleted = 0
+            ORDER BY cty.name
+        ) cat
         WHERE p.isDeleted = 0
             AND p.status IN ({status_list})
             AND p.dateBegin IS NOT NULL
@@ -289,6 +315,7 @@ def _symplr_trend_data():
                 lt.nursetype AS category,
                 ({symplr_service_line_case('lt.nursetype')}) AS service_line,
                 ({division_case}) AS division,
+                NULL AS team,
                 pc.state AS region,
                 lt.specialty AS profession,
                 NULL AS pm,
@@ -340,6 +367,7 @@ def _symplr_trend_data():
                 MAX(o.nursetype) AS category,
                 ({symplr_service_line_case('MAX(o.nursetype)')}) AS service_line,
                 MAX({division_case_orders}) AS division,
+                NULL AS team,
                 MAX(pc.state) AS region,
                 MAX(o.specialty) AS profession,
                 NULL AS pm,

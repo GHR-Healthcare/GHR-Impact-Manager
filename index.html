@@ -208,6 +208,8 @@
       <div class="flex flex-wrap items-end gap-3 w-full lg:w-auto lg:min-w-[50%]" id="controlsArea">
         <!-- Division: first slot on non-MSP (dataSource === 'non_msp'), hidden on MSP.
              Shown/hidden by View.initFilters based on window.store.state.dataSource. -->
+        <div class="multi-select-container relative w-[calc(50%-6px)] sm:flex-1 min-h-[58px] hidden" id="teamFilterContainer">
+        </div>
         <div class="multi-select-container relative w-[calc(50%-6px)] sm:flex-1 min-h-[58px] hidden" id="divisionFilterContainer">
           <label class="block text-xs font-bold text-slate-500 mb-1 ml-1 uppercase tracking-wider">Division</label>
           <div class="w-full bg-white border border-slate-300 rounded-md px-3 py-2 text-sm text-slate-400">Loading...</div>
@@ -766,7 +768,7 @@
     const $ = (id) => document.getElementById(id);
 
     // App version - loaded from environment variable via API, with fallback
-    let APP_VERSION = '2.2.4';
+    let APP_VERSION = '2.2.5';
 
     const API_BASE_URL = '/api';
     
@@ -1836,6 +1838,8 @@
                 // Bullhorn/Symplr per v1.8.0). Used by the Division /
                 // Profession / Region filter dropdowns.
                 division: String(row.division || ''),
+                // Team (Bullhorn correlatedCustomText5) nests under Division.
+                team: String(row.team || ''),
                 profession: String(row.profession || row.specialty_name || ''),
                 region: String(row.region || ''),
                 ghrSubs: row.ghrSubs || 0,
@@ -2264,63 +2268,49 @@
        * emits a single value ("Education"). Returns true if any of the record's
        * divisions is in the selection set.
        */
-      // Which professions belong to each GHR division. The record's
-      // division field comes from cc.customTextBlock1 (Bullhorn) — a comma-
-      // separated list of teams that service the CLIENT, not the team that
-      // placed THIS worker. Without a profession check, filtering by
-      // "RevCycle Workforce" pulls in RNs at any client whose tag list
-      // includes RevCycle (which is most of them). Substring-match the
-      // record's profession against these keywords instead.
-      //
-      // Divisions without an entry (Planet Healthcare, Search, Workforce
-      // Solutions, Human Services, Acute, United, Technology, Education,
-      // Non-Acute) fall back to the raw client-list match — either the
-      // profession vocabulary is too varied to whitelist, or the division
-      // itself is a business-line label rather than a role.
-      DIVISION_PROFESSION_KEYWORDS: {
-        'RevCycle Workforce': [
-          'coder', 'medical coder', 'cdi specialist', 'coding auditor',
-          'him specialist', 'customer service rep', 'clerical',
-          'patient access', 'patient care coord', 'clinical helpdesk',
-          'billing', 'credentialing',
-        ],
-        'Nursing': ['rn', 'lpn', 'cna', 'ma ', 'medical assistant'],
-        'Allied': [
-          'ot', 'pt', 'slp', 'slpa', 'therapist', 'therap',
-          'social worker', 'registered dietitian',
-          'rrt', 'respiratory',
-          'or tech', 'cma', 'sterile processing', 'surgical tech',
-          'rad tech', 'ultrasound', 'mri tech', 'ct tech', 'echo tech',
-          'pharm tech', 'pharmacy tech', 'lab tech', 'med tech', 'medical laboratory',
-          'dental hygienist', 'phlebotomist',
-          'behavior therapist', 'behavior technician', 'bcba',
-          'psychologist', 'psycol',
-          'sleep tech', 'mammography', 'eeg tech', 'xray tech',
-        ],
-        'Locum Tenens': [
-          'crna', 'anesthesiologist',
-          'physician', 'md', 'do',
-          'np', 'nurse practitioner', 'pa ', 'physician assistant',
-        ],
-      },
-
-      matchesSelectedDivisions(recordDivision, selectedDivisions, recordProfession) {
+      /*
+       * Division match.
+       *
+       * `record.division` is now the JOB-level division (Bullhorn
+       * correlatedCustomText1), falling back to the client's comma-separated
+       * team-tag list (cc.customTextBlock1) only for rows whose job carries no
+       * division. The comma split handles that legacy shape.
+       *
+       * The v2.2.3 profession-keyword whitelist that used to live here is gone.
+       * It existed because division came from the CLIENT tag list, so selecting
+       * "RevCycle Workforce" pulled in every RN at any client tagged RevCycle —
+       * one client showed 4,403 RN placements under
+       * "Allied,Nursing,RevCycle Workforce,United". The whitelist tried to
+       * recover the real team by guessing from the profession, which
+       *   (a) dropped every row whose profession was blank — on the List view
+       *       that is nearly all of them, since job orders carry profession in
+       *       categoryID, not the customText1 the query was reading, so
+       *       selecting any division showed NOTHING; and
+       *   (b) still mis-bucketed, e.g. 'rn' substring-matched "CRNA".
+       * A job-level division needs no guessing, and Team gives the finer cut.
+       */
+      matchesSelectedDivisions(recordDivision, selectedDivisions) {
         if (!selectedDivisions || selectedDivisions.size === 0) return true;
         if (!recordDivision) return false;
-        const recordDivs = String(recordDivision).split(',').map(d => d.trim());
-        const prof = String(recordProfession || '').toLowerCase();
-        // For each selected division: the record's client-list must contain
-        // that division AND (if the division has a profession whitelist)
-        // the record's profession must match one of the keywords. Divisions
-        // without a whitelist keep the old client-list-only match.
-        for (const selected of selectedDivisions) {
-          if (!recordDivs.includes(selected)) continue;
-          const keywords = this.DIVISION_PROFESSION_KEYWORDS[selected];
-          if (!keywords) return true;
-          if (!prof) continue;
-          if (keywords.some(k => prof.includes(k))) return true;
-        }
-        return false;
+        return String(recordDivision).split(',').some(d => selectedDivisions.has(d.trim()));
+      },
+
+      /*
+       * Team match. Team (Bullhorn correlatedCustomText5) is job-level and nests
+       * under Division. Symplr rows have no team, so they pass through any team
+       * selection rather than vanishing — same rule the Region filter uses for
+       * Bullhorn's NULL region.
+       */
+      matchesSelectedTeams(recordTeam, selectedTeams) {
+        if (!selectedTeams || selectedTeams.size === 0) return true;
+        // An unset team is NOT a match. Team is sparsely populated (most job
+        // orders carry none), so letting NULL through would mean picking
+        // "Buffalo Nursing" returned Buffalo plus every untagged row. This is
+        // deliberately unlike the Region rule, where NULL passes — Bullhorn
+        // region is universally NULL (a data gap), whereas an unset team is a
+        // real "no team assigned".
+        if (!recordTeam) return false;
+        return selectedTeams.has(String(recordTeam).trim());
       },
 
       matchesSelectedSystems(record, selectedSystems) {
@@ -3693,6 +3683,7 @@
         // containers are hidden via CSS on MSP (no data → empty dropdown is
         // confusing). Visibility is toggled below.
         View.renderDropdown('divisionFilterContainer', 'divisions', s.filters.divisions || new Set(), false);
+        View.renderDropdown('teamFilterContainer', 'teams', s.filters.teams || new Set(), false);
         View.renderDropdown('professionFilterContainer', 'professions', s.filters.professions || new Set(), false);
         View.renderDropdown('regionFilterContainer', 'regions', s.filters.regions || new Set(), false);
 
@@ -3701,12 +3692,18 @@
         // is NULL for now) so MSP and Bullhorn-only non-MSP slices don't
         // surface an always-empty Region picker.
         const divEl = $('divisionFilterContainer');
+        const teamEl = $('teamFilterContainer');
         const profEl = $('professionFilterContainer');
         const regEl = $('regionFilterContainer');
         const showDiv = isNonMsp && (s.filters.divisions?.size > 0);
+        // Team is a job-level Bullhorn field (correlatedCustomText5) nested under
+        // Division. Symplr rows carry no team, so it only shows when Bullhorn
+        // supplies values.
+        const showTeam = isNonMsp && (s.filters.teams?.size > 0);
         const showProf = isNonMsp && (s.filters.professions?.size > 0);
         const showReg = isNonMsp && (s.filters.regions?.size > 0);
         if (divEl) divEl.classList.toggle('hidden', !showDiv);
+        if (teamEl) teamEl.classList.toggle('hidden', !showTeam);
         if (profEl) profEl.classList.toggle('hidden', !showProf);
         if (regEl) regEl.classList.toggle('hidden', !showReg);
         lucide.createIcons();
@@ -3718,7 +3715,7 @@
         const sorted = Array.from(set || []).filter(x => x != null && String(x).trim() !== '').sort();
         const labelMap = {
           systems: 'SYSTEM', facilities: 'FACILITY', categories: 'CATEGORY', specialties: 'SPECIALTY/DEPT',
-          divisions: 'DIVISION', professions: 'PROFESSION', regions: 'REGION',
+          divisions: 'DIVISION', teams: 'TEAM', professions: 'PROFESSION', regions: 'REGION',
         };
 
         let optionsHtml = '';
@@ -3778,7 +3775,8 @@
         const idMap = {
           systems: 'systemFilterContainer', facilities: 'facilityFilterContainer',
           categories: 'categoryFilterContainer', specialties: 'specialtyFilterContainer',
-          divisions: 'divisionFilterContainer', professions: 'professionFilterContainer',
+          divisions: 'divisionFilterContainer', teams: 'teamFilterContainer',
+          professions: 'professionFilterContainer',
           regions: 'regionFilterContainer',
         };
 
@@ -3852,7 +3850,8 @@
           // Non-MSP cascading dimensions. On MSP these selections stay empty
           // so the conditions are a no-op.
           if (excludeFilter !== 'divisions') {
-            if (!Utils.matchesSelectedDivisions(job.division, s.filterSelection.divisions, job.profession)) return false;
+            if (!Utils.matchesSelectedDivisions(job.division, s.filterSelection.divisions)) return false;
+          if (!Utils.matchesSelectedTeams(job.team, s.filterSelection.teams)) return false;
           }
           if (excludeFilter !== 'professions') {
             if (s.filterSelection.professions.size > 0 && !(job.profession && s.filterSelection.professions.has(job.profession))) return false;
@@ -3958,17 +3957,80 @@
         lucide.createIcons();
       },
 
+      /*
+       * Quick-attach people picker.
+       *
+       * MSP keeps the hardcoded CONSTANTS.TEAM_MEMBERS chips — that list is the
+       * MSP pod and is short enough to click through.
+       *
+       * Non-MSP is a different org, so those names are wrong there. Instead of
+       * maintaining a second hardcoded list, search Microsoft Graph as the user
+       * types (same /api/search-users endpoint + debounce the PM-mapping picker
+       * already uses) and attach whoever they pick.
+       */
+      applyTagSelection(mode, name) {
+        if (mode === 'next_step') {
+          const el = document.getElementById('nextStepText');
+          if (el) el.value += `@${name} `;
+        } else if (mode === 'lever') {
+          const el = document.getElementById('leverTagInput');
+          if (el) el.value = name;
+        }
+      },
+
       renderTags(mode) {
         const container = $('tagContainer');
         if (!container) return;
 
+        if (window.store.state.dataSource === 'non_msp') {
+          container.innerHTML = `
+            <div class="relative w-full">
+              <input type="text" id="tagUserSearch" autocomplete="off"
+                     placeholder="Search people…"
+                     oninput="View.searchTagUsers('${mode}', this.value)"
+                     onblur="setTimeout(()=>document.getElementById('tagUserDropdown')?.classList.add('hidden'), 200)"
+                     class="w-full border border-slate-300 rounded px-2 py-1 text-[11px] focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none">
+              <div id="tagUserDropdown" class="hidden absolute z-50 left-0 right-0 top-full mt-0.5 bg-white border border-slate-200 rounded shadow-lg max-h-40 overflow-y-auto text-[11px]"></div>
+            </div>`;
+          return;
+        }
+
         container.innerHTML = CONSTANTS.TEAM_MEMBERS.map(m => {
           const safeName = m.name.replace(/'/g, "\\'");
-          let clickAction = "";
-          if (mode === 'next_step') clickAction = `document.getElementById('nextStepText').value += '@${safeName} ';`;
-          if (mode === 'lever') clickAction = `document.getElementById('leverTagInput').value = '${safeName}';`;
-          return `<span class="inline-block bg-slate-100 hover:bg-blue-100 text-slate-700 text-[10px] px-2 py-1 rounded cursor-pointer border border-slate-200 transition-colors" onclick="${clickAction}">${m.name}</span>`;
+          return `<span class="inline-block bg-slate-100 hover:bg-blue-100 text-slate-700 text-[10px] px-2 py-1 rounded cursor-pointer border border-slate-200 transition-colors" onclick="View.applyTagSelection('${mode}','${safeName}')">${m.name}</span>`;
         }).join('');
+      },
+
+      searchTagUsers(mode, query) {
+        clearTimeout(View.__tagSearchTimer);
+        const dropdown = document.getElementById('tagUserDropdown');
+        if (!dropdown) return;
+        if ((query || '').trim().length < 2) { dropdown.classList.add('hidden'); return; }
+
+        View.__tagSearchTimer = setTimeout(async () => {
+          try {
+            const resp = await fetch(`${API_BASE_URL}/search-users?q=${encodeURIComponent(query)}`);
+            const data = await resp.json();
+            const users = data.users || [];
+            if (!users.length) {
+              dropdown.innerHTML = `<div class="px-2 py-1.5 text-slate-400">No matches</div>`;
+              dropdown.classList.remove('hidden');
+              return;
+            }
+            dropdown.innerHTML = users.map(u => {
+              const nm = String(u.displayName || u.mail || '').replace(/'/g, "\\'");
+              return `<div class="px-2 py-1.5 hover:bg-blue-50 cursor-pointer"
+                           onmousedown="View.applyTagSelection('${mode}','${nm}');document.getElementById('tagUserSearch').value='';document.getElementById('tagUserDropdown').classList.add('hidden')">
+                        <div class="font-medium text-slate-700">${u.displayName || ''}</div>
+                        <div class="text-slate-400 text-[10px]">${u.mail || ''}</div>
+                      </div>`;
+            }).join('');
+            dropdown.classList.remove('hidden');
+          } catch (e) {
+            console.warn('User search failed:', e);
+            dropdown.classList.add('hidden');
+          }
+        }, 250);
       },
 
       toggleDropdown(el, event) {
@@ -4056,7 +4118,8 @@
           // empty division/profession/region pass when nothing is selected,
           // never pass when a filter IS selected (consistent with the way
           // facilities/categories behave).
-          const divMatch = Utils.matchesSelectedDivisions(j.division, s.filterSelection.divisions, j.profession);
+          const divMatch = Utils.matchesSelectedDivisions(j.division, s.filterSelection.divisions)
+            && Utils.matchesSelectedTeams(j.team, s.filterSelection.teams);
           const profMatch = s.filterSelection.professions.size === 0 || (j.profession && s.filterSelection.professions.has(j.profession));
           const regMatch = s.filterSelection.regions.size === 0 || !j.region || s.filterSelection.regions.has(j.region);
 
@@ -4264,24 +4327,25 @@
                                          <span class="text-[9px] text-slate-400 uppercase tracking-wide">Days</span>
                                      </div>
                                      
-                                     <!-- Subs Breakdown -->
+                                     <!-- Subs Breakdown. Non-MSP has no Agency Vendor concept —
+                                          every submission is GHR — so show a single total. -->
                                      <div class="flex flex-col items-center">
                                          <div class="flex gap-1 text-xs font-bold">
                                             <span class="text-blue-600" title="GHR Submissions">${job.ghrSubs}</span>
-                                            <span class="text-slate-300">/</span>
-                                            <span class="text-purple-600" title="AV Submissions">${job.avSubs}</span>
+                                            ${window.store.state.dataSource === 'non_msp' ? '' : `<span class="text-slate-300">/</span>
+                                            <span class="text-purple-600" title="AV Submissions">${job.avSubs}</span>`}
                                          </div>
-                                         <span class="text-[9px] text-slate-400 uppercase tracking-wide">Subs (G/A)</span>
+                                         <span class="text-[9px] text-slate-400 uppercase tracking-wide">${window.store.state.dataSource === 'non_msp' ? 'Subs' : 'Subs (G/A)'}</span>
                                      </div>
 
                                      <!-- Declines Breakdown -->
                                      <div class="flex flex-col items-center">
                                          <div class="flex gap-1 text-xs font-bold">
                                             <span class="text-red-500" title="GHR Declines">${job.ghrDeclines}</span>
-                                            <span class="text-slate-300">/</span>
-                                            <span class="text-red-400" title="AV Declines">${job.avDeclines}</span>
+                                            ${window.store.state.dataSource === 'non_msp' ? '' : `<span class="text-slate-300">/</span>
+                                            <span class="text-red-400" title="AV Declines">${job.avDeclines}</span>`}
                                          </div>
-                                         <span class="text-[9px] text-slate-400 uppercase tracking-wide">Dec (G/A)</span>
+                                         <span class="text-[9px] text-slate-400 uppercase tracking-wide">${window.store.state.dataSource === 'non_msp' ? 'Declines' : 'Dec (G/A)'}</span>
                                      </div>
 
                                      <!-- Impact -->
@@ -4604,7 +4668,8 @@
           const facMatch = s.filterSelection.facilities.size === 0 || (r.facility && s.filterSelection.facilities.has(r.facility));
           const specMatch = s.filterSelection.specialties.size === 0 || (r.specialty && s.filterSelection.specialties.has(Utils.cleanFilterText(r.specialty)));
           const catMatch = Utils.matchesStatsCategoryFilter(r.specialty, s.filterSelection.categories);
-          const divMatch = Utils.matchesSelectedDivisions(r.division, s.filterSelection.divisions, r.profession);
+          const divMatch = Utils.matchesSelectedDivisions(r.division, s.filterSelection.divisions)
+            && Utils.matchesSelectedTeams(r.team, s.filterSelection.teams);
           const profMatch = s.filterSelection.professions.size === 0 || (r.profession && s.filterSelection.professions.has(r.profession));
           const regMatch = s.filterSelection.regions.size === 0 || !r.region || s.filterSelection.regions.has(r.region);
           const isActive = r.startDate && r.startDate <= now && (!r.endDate || r.endDate >= now);
@@ -6470,7 +6535,8 @@
           const catMatch = matchesTrendCategory(r.category);
           const specMatch = s.filterSelection.specialties.size === 0 ||
             Array.from(s.filterSelection.specialties).some(sp => sp.toLowerCase() === (r.specialty || '').toLowerCase());
-          const divMatch = Utils.matchesSelectedDivisions(r.division, s.filterSelection.divisions, r.profession);
+          const divMatch = Utils.matchesSelectedDivisions(r.division, s.filterSelection.divisions)
+            && Utils.matchesSelectedTeams(r.team, s.filterSelection.teams);
           const profMatch = s.filterSelection.professions.size === 0 ||
             (r.profession && s.filterSelection.professions.has(r.profession));
           // Region: rows with NULL region (e.g. entire Bullhorn book — spec says
@@ -8120,7 +8186,8 @@
               .some(sp => sp.toLowerCase() === rs);
             if (!specMatch) return false;
           }
-          if (!Utils.matchesSelectedDivisions(r.division, s.filterSelection.divisions, r.profession)) return false;
+          if (!Utils.matchesSelectedDivisions(r.division, s.filterSelection.divisions)) return false;
+          if (!Utils.matchesSelectedTeams(r.team, s.filterSelection.teams)) return false;
           if (s.filterSelection.professions.size > 0
               && r.profession
               && !s.filterSelection.professions.has(r.profession)) return false;
@@ -8670,7 +8737,8 @@
           const isGhr = isGHRAgencyLocal(r.agency);
           if (drill && drill.agency && (drill.agency === 'GHR') !== isGhr) return;
           if (!trendCatMatch(r)) return;
-          if (!Utils.matchesSelectedDivisions(r.division, s.filterSelection.divisions, r.profession)) return;
+          if (!Utils.matchesSelectedDivisions(r.division, s.filterSelection.divisions)) return;
+          if (!Utils.matchesSelectedTeams(r.team, s.filterSelection.teams)) return;
           // NULL region passes any region filter (see filterRow comment above).
           if (s.filterSelection.regions.size > 0 && r.region && !s.filterSelection.regions.has(r.region)) return;
 
@@ -8699,7 +8767,8 @@
           const isGhr = isGHRAgencyLocal(r.agency);
           if (drill && drill.agency && (drill.agency === 'GHR') !== isGhr) return false;
           if (!trendCatMatch(r)) return false;
-          if (!Utils.matchesSelectedDivisions(r.division, s.filterSelection.divisions, r.profession)) return false;
+          if (!Utils.matchesSelectedDivisions(r.division, s.filterSelection.divisions)) return false;
+          if (!Utils.matchesSelectedTeams(r.team, s.filterSelection.teams)) return false;
           // NULL region passes any region filter (see filterRow comment above).
           if (s.filterSelection.regions.size > 0 && r.region && !s.filterSelection.regions.has(r.region)) return false;
           return true;
@@ -9377,7 +9446,7 @@
           // Non-MSP filter dimensions — populated from the API's division/region/customText fields.
           // On MSP these stay empty; the UI hides the controls. Once the merged dashboard ships,
           // MSP records will carry the same shape and these become live there too.
-          divisions: new Set(), professions: new Set(), regions: new Set(),
+          divisions: new Set(), teams: new Set(), professions: new Set(), regions: new Set(),
         },
         searchQuery: '',
         view: 'list',
@@ -9443,6 +9512,10 @@
                   if (trimmed) s.filters.divisions.add(trimmed);
                 });
               });
+              // Team: single-valued job-level field, no comma-splitting needed.
+              s.filters.teams = new Set(
+                [...s.jobs, ...allAssignments].map(r => (r.team || '').trim()).filter(Boolean)
+              );
               s.filters.professions = new Set([
                 ...s.jobs.map(j => j.profession),
                 ...allAssignments.map(a => a.profession),
@@ -9503,6 +9576,10 @@
                   if (trimmed) s.filters.divisions.add(trimmed);
                 });
               });
+              // Team: single-valued job-level field, no comma-splitting needed.
+              s.filters.teams = new Set(
+                [...s.jobs, ...allAssignments].map(r => (r.team || '').trim()).filter(Boolean)
+              );
               s.filters.professions = new Set([
                 ...s.jobs.map(j => j.profession),
                 ...allAssignments.map(a => a.profession),

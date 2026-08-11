@@ -75,12 +75,36 @@ def _bullhorn_positions_data():
             NULL AS end_time,
             jo.status AS status,
             ({system_case}) AS health_system,
-            jo.customText1 AS profession,
+            COALESCE(NULLIF(cat.name, ''), cat.occupation) AS profession,
+            -- Specialty (specialty_categoryID) is likewise not a column on the
+            -- view and has no obvious job-level link table, so subspecialty
+            -- still reads the unmapped customText2 and is usually NULL.
             jo.customText2 AS subspecialty,
-            -- Division lives on the client (see GetTrendData note).
-            cc.customTextBlock1 AS division,
+            -- Division and Team are JOB-level fields (Bullhorn field mapping:
+            -- correlatedCustomText1 = Division, correlatedCustomText5 = Team,
+            -- Team nesting under Division). Previously division came from
+            -- cc.customTextBlock1 — a comma-separated list of every GHR team
+            -- servicing the CLIENT, which is why one client showed up tagged
+            -- "Allied,Nursing,RevCycle Workforce,United" across 4,400 RN
+            -- placements. Fall back to the client tag list only when the job
+            -- has no division, so legacy rows don't vanish from the filter.
+            COALESCE(NULLIF(jo.correlatedCustomText1, ''), cc.customTextBlock1) AS division,
+            jo.correlatedCustomText5 AS team,
             NULL AS region
         FROM dbo.View_JobOrder jo
+        -- Profession on a job order is a to-many association
+        -- (View_JobOrder has no categoryID column; the mirror splits it into
+        -- dbo.JobOrderCategories). Take a single deterministic category so the
+        -- Profession filter can stay an exact match rather than a split list.
+        OUTER APPLY (
+            SELECT TOP 1 cty.name, cty.occupation
+            FROM dbo.JobOrderCategories jc
+            INNER JOIN dbo.Category cty ON jc.categoryID = cty.categoryID
+            WHERE jc.jobOrderID = jo.jobOrderID
+              AND jc.isDeleted = 0
+              AND cty.isDeleted = 0
+            ORDER BY cty.name
+        ) cat
         LEFT JOIN dbo.View_ClientCorporation cc ON jo.clientCorporationID = cc.clientCorporationID
         LEFT JOIN dbo.View_ClientCorporation pcc ON cc.parentClientCorporationID = pcc.clientCorporationID
         LEFT JOIN dbo.View_CorporateUser u ON jo.ownerID = u.corporateUserID
@@ -256,6 +280,7 @@ def _symplr_positions_data():
                 lt.specialty AS profession,
                 NULL AS subspecialty,
                 ({division_case}) AS division,
+                NULL AS team,
                 pc.state AS region
             FROM dbo.lt_order lt
             LEFT JOIN dbo.profile_client pc ON lt.clientid = pc.recordid
@@ -305,6 +330,7 @@ def _symplr_positions_data():
                 MAX(o.specialty) AS profession,
                 NULL AS subspecialty,
                 MAX({division_case_orders}) AS division,
+                NULL AS team,
                 MAX(pc.state) AS region
             FROM dbo.orders o
             LEFT JOIN dbo.profile_client pc ON o.customerid = pc.recordid
@@ -362,6 +388,7 @@ def _symplr_positions_data():
                 MAX(lt.specialty) AS profession,
                 NULL AS subspecialty,
                 MAX({division_case}) AS division,
+                NULL AS team,
                 MAX(pc.state) AS region
             FROM dbo.orders o
             INNER JOIN dbo.lt_order lt ON o.lt_orderid = lt.lt_orderid

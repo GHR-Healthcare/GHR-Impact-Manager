@@ -2,6 +2,19 @@
 
 ## Version History
 
+**2.2.5** - Non-MSP: Division fixed at the source, Team filter, profession via Category, AV strip on List
+
+The v2.2.3 division whitelist made the Division filter return **nothing** on the List view. Root cause was two wrong columns, not the matching logic.
+
+- **Division is now job-level.** `record.division` came from `cc.customTextBlock1` — a comma-separated list of every GHR team servicing the CLIENT, which is why one client showed 4,403 RN placements tagged `Allied,Nursing,RevCycle Workforce,United`. Bullhorn's field mapping puts Division on the JOB (`correlatedCustomText1`), single-valued and clean (`Planet Healthcare`, `Travel Nursing`, `Allied`, `Nursing`, `RevCycle Workforce`, `Acute`, `Search`, `United`, `Locum Tenens`, `Technology`, `Texas`). Falls back to the client tag list only where the job carries no division, so legacy rows stay filterable.
+- **Profession was reading an unmapped column.** `GetPositions` used `jo.customText1 AS profession`, but on a job order profession is a to-many association — `View_JobOrder` has no `categoryID` column at all; the mirror splits it into `dbo.JobOrderCategories` → `dbo.Category`. So profession was NULL for nearly every job order. Now resolved via `OUTER APPLY` taking one deterministic category. On a *placement* `customText1` genuinely is the profession, so Trend keeps it as fallback — that's why Trend was always better populated than the List.
+- **The profession-keyword whitelist is deleted** (`DIVISION_PROFESSION_KEYWORDS` + the 3rd argument, 7 call sites). It existed to recover the real team from a client-level division tag by guessing from profession. With a job-level division there is nothing to guess. It was also broken both ways: `'ma '`/`'pa '` carried trailing spaces so a profession of exactly `MA`/`PA` could never match, while plain substring matching let `'rn'` match `CRNA` and `'do'` match `Endoscopy Tech` — the same cross-division bleed the whitelist was added to stop. And its `if (!prof) continue` branch is what turned sparse profession data into an empty filter.
+- **New Team filter** (`correlatedCustomText5`), non-MSP only, hidden when empty — `Buffalo Nursing`, `Blue Bell Nursing`, `Travel Team 1-5`, `Acute Team 1-5`, `RevCycle Coders`. Team is sparsely populated, so an unset team does NOT pass a team selection; otherwise picking Buffalo would return Buffalo plus ~193k untagged rows. Deliberately unlike the Region rule, where NULL passes because Bullhorn region is universally NULL.
+- **List actives/declines drop the GHR/AV split on non-MSP** — single total, headers `Subs`/`Declines` instead of `Subs (G/A)`/`Dec (G/A)`. Same 2-of-N drift as the Trend tab.
+- **Quick-attach people picker searches Graph on non-MSP.** The hardcoded `CONSTANTS.TEAM_MEMBERS` chips are the MSP pod; on non-MSP they were simply the wrong names. MSP keeps the chips; non-MSP gets a debounced typeahead against the existing `/api/search-users` Graph endpoint. Both paths now share one `applyTagSelection(mode, name)` helper.
+
+Known gap: job-order **specialty** (`specialty_categoryID`) is likewise not a column on the view and has no obvious job-level link table, so `subspecialty` still reads the unmapped `customText2` and stays mostly NULL.
+
 **2.2.4** - Non-MSP §F3: System rolls up to parent, Facility stays specific
 
 Closes §F3 from NON_MSP_FILTER_AUDIT.md. Both source systems have a parent/child chain we weren't using — Bullhorn's `parentClientCorporationID` on `View_ClientCorporation` and Symplr's `MasterClientID` on `profile_client`. Sub-orgs like `Cone Health OrthoCare Greensboro` / `Cone Health Behavioral Health Hospital` were their own systems, so the System filter dropdown mostly duplicated the Facility one on non-MSP.
