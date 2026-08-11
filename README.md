@@ -2,6 +2,10 @@
 
 ## Version History
 
+**2.2.8** - Non-MSP: Active/Declines column headers drop the "GHR / Agency" label
+
+The 2.2.5 AV strip fixed the per-row values but not the column headers. `Active` and `Declines` are static markup in the List table head, outside the JS render path the non-MSP guard lives in, so they kept advertising a `GHR / Agency` split above a single number. Now hidden on non-MSP. The row values and the List KPI cards were already handled.
+
 **2.2.7** - Non-MSP: Specialty filter uses the structured value; Division→Team and Profession→Specialty cascade
 
 - **Specialty filtering keys off `dbo.Specialty`, not the job title.** `job.specialty` is `jo.title` — free text with one variant per posting, so as a dropdown it was unusable and shared nothing with Trend, which uses the structured value. The card keeps the job title (that's the useful label); filtering and the dropdown now go through `Utils.jobSpecialtyKey()`, which prefers the structured name and falls back to the title so MSP is unaffected. List and Trend finally mean the same thing by "specialty".
