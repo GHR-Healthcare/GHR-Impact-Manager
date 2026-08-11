@@ -768,7 +768,7 @@
     const $ = (id) => document.getElementById(id);
 
     // App version - loaded from environment variable via API, with fallback
-    let APP_VERSION = '2.2.6';
+    let APP_VERSION = '2.2.7';
 
     const API_BASE_URL = '/api';
     
@@ -1816,6 +1816,11 @@
                 healthSystem: Utils.getHealthSystem(facilityName, row.health_system),
                 facility: facilityName,
                 specialty: String(row.specialty_name || row.specialty || ''),
+                // Structured specialty from dbo.JobOrderSpecialties (non-MSP).
+                // `specialty` above stays the job title — that is what the card
+                // shows — while FILTERING keys off this, so the List and Trend
+                // tabs agree on what "specialty" means. Empty on MSP.
+                specialtyName: String(row.subspecialty || ''),
                 unit: String(row.unit_name || row.unit || ''),
                 costCenter: String(row.cost_center || ''),
                 dateAdded: Utils.toDateOrNull(row.date_added || row.created_date),
@@ -2301,6 +2306,17 @@
        * selection rather than vanishing — same rule the Region filter uses for
        * Bullhorn's NULL region.
        */
+      /*
+       * The value the Specialty FILTER keys off for a job. Prefers the
+       * structured dbo.Specialty name and falls back to the job title, which is
+       * all MSP has. Display sites deliberately keep using job.specialty — a
+       * job title is the useful label on a card and a terrible filter value
+       * (free text, one variant per posting, no overlap across sources).
+       */
+      jobSpecialtyKey(job) {
+        return Utils.cleanFilterText(job.specialtyName || job.specialty);
+      },
+
       matchesSelectedTeams(recordTeam, selectedTeams) {
         if (!selectedTeams || selectedTeams.size === 0) return true;
         // An unset team is NOT a match. Team is sparsely populated (most job
@@ -3845,13 +3861,15 @@
             }
           }
           if (excludeFilter !== 'specialties') {
-            if (s.filterSelection.specialties.size > 0 && !s.filterSelection.specialties.has(Utils.cleanFilterText(job.specialty))) return false;
+            if (s.filterSelection.specialties.size > 0 && !s.filterSelection.specialties.has(Utils.jobSpecialtyKey(job))) return false;
           }
           // Non-MSP cascading dimensions. On MSP these selections stay empty
           // so the conditions are a no-op.
           if (excludeFilter !== 'divisions') {
             if (!Utils.matchesSelectedDivisions(job.division, s.filterSelection.divisions)) return false;
-          if (!Utils.matchesSelectedTeams(job.team, s.filterSelection.teams)) return false;
+          }
+          if (excludeFilter !== 'teams') {
+            if (!Utils.matchesSelectedTeams(job.team, s.filterSelection.teams)) return false;
           }
           if (excludeFilter !== 'professions') {
             if (s.filterSelection.professions.size > 0 && !(job.profession && s.filterSelection.professions.has(job.profession))) return false;
@@ -3936,12 +3954,47 @@
           View.updateFilterUI('categories');
         }
 
+        // Non-MSP hierarchy cascades. Division narrows Team, Profession narrows
+        // Specialty (handled by the Specialties block below, since
+        // jobMatchesFilters already applies the profession selection). The two
+        // hierarchies are independent of each other — Division never constrains
+        // Profession — so each only ever narrows its own child. Picking a Team
+        // (or a Specialty) directly without its parent still works: these are
+        // plain AND filters, the cascade only trims the option lists.
+        const nonMspDims = [
+          { key: 'divisions',   valueOf: r => (r.division || '').split(',').map(d => d.trim()).filter(Boolean) },
+          { key: 'teams',       valueOf: r => [(r.team || '').trim()].filter(Boolean) },
+          { key: 'professions', valueOf: r => [(r.profession || '').trim()].filter(Boolean) },
+        ];
+        nonMspDims.forEach(({ key, valueOf }) => {
+          if (changedFilter === key) return;
+          const valid = new Set();
+          allJobs.forEach(job => {
+            if (jobMatchesFilters(job, key)) valueOf(job).forEach(v => valid.add(v));
+          });
+          // Trend/Stats assignments carry the same dimensions and are the only
+          // source on tabs with no open orders, so fold them in too.
+          (s.trendData?.assignments || []).forEach(r => {
+            const divOk  = key === 'divisions' || Utils.matchesSelectedDivisions(r.division, s.filterSelection.divisions);
+            const teamOk = key === 'teams'     || Utils.matchesSelectedTeams(r.team, s.filterSelection.teams);
+            const profOk = key === 'professions' || s.filterSelection.professions.size === 0
+              || (r.profession && s.filterSelection.professions.has(r.profession));
+            if (divOk && teamOk && profOk) valueOf(r).forEach(v => valid.add(v));
+          });
+          // Drop selections that are no longer reachable.
+          s.filterSelection[key].forEach(v => { if (!valid.has(v)) s.filterSelection[key].delete(v); });
+          const containerId = { divisions: 'divisionFilterContainer', teams: 'teamFilterContainer',
+                                professions: 'professionFilterContainer' }[key];
+          View.renderDropdown(containerId, key, valid, false);
+          View.updateFilterUI(key);
+        });
+
         // Update Specialties dropdown
         if (changedFilter !== 'specialties') {
           const validSpecialties = new Set();
           allJobs.forEach(job => {
-            if (jobMatchesFilters(job, 'specialties') && job.specialty) {
-              validSpecialties.add(Utils.cleanFilterText(job.specialty));
+            if (jobMatchesFilters(job, 'specialties') && (job.specialtyName || job.specialty)) {
+              validSpecialties.add(Utils.jobSpecialtyKey(job));
             }
           });
 
@@ -4112,7 +4165,7 @@
           if (Utils.isHiddenHealthSystem(j.healthSystem)) return false;
           const sysMatch = s.filterSelection.systems.size === 0 || s.filterSelection.systems.has(j.healthSystem);
           const facMatch = s.filterSelection.facilities.size === 0 || s.filterSelection.facilities.has(j.facility);
-          const specMatch = s.filterSelection.specialties.size === 0 || s.filterSelection.specialties.has(Utils.cleanFilterText(j.specialty));
+          const specMatch = s.filterSelection.specialties.size === 0 || s.filterSelection.specialties.has(Utils.jobSpecialtyKey(j));
           const catMatch = s.filterSelection.categories.size === 0 || Array.from(s.filterSelection.categories).some(cv => Utils.checkCategoryMatch(j.program, cv));
           // Non-MSP filter dimensions — match by exact value. Records with
           // empty division/profession/region pass when nothing is selected,
@@ -9497,7 +9550,7 @@
               s.filters.categories = new Set(s.jobs.map(j => j.program).filter(Boolean));
               // Apply cleanFilterText to specialty values for consistent matching
               s.filters.specialties = new Set([
-                ...s.jobs.map(j => Utils.cleanFilterText(j.specialty)),
+                ...s.jobs.map(j => Utils.jobSpecialtyKey(j)),
                 ...allAssignments.map(a => Utils.cleanFilterText(a.specialty))
               ].filter(Boolean));
               // Non-MSP dimensions — empty on MSP because the API doesn't emit them yet.
@@ -9562,7 +9615,7 @@
               s.filters.categories = new Set(s.jobs.map(j => j.program).filter(Boolean));
               // Apply cleanFilterText to specialty values for consistent matching
               s.filters.specialties = new Set([
-                ...s.jobs.map(j => Utils.cleanFilterText(j.specialty)),
+                ...s.jobs.map(j => Utils.jobSpecialtyKey(j)),
                 ...allAssignments.map(a => Utils.cleanFilterText(a.specialty))
               ].filter(Boolean));
               // Bullhorn division comes as a comma-separated list per CLIENT

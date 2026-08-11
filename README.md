@@ -2,6 +2,14 @@
 
 ## Version History
 
+**2.2.7** - Non-MSP: Specialty filter uses the structured value; Division→Team and Profession→Specialty cascade
+
+- **Specialty filtering keys off `dbo.Specialty`, not the job title.** `job.specialty` is `jo.title` — free text with one variant per posting, so as a dropdown it was unusable and shared nothing with Trend, which uses the structured value. The card keeps the job title (that's the useful label); filtering and the dropdown now go through `Utils.jobSpecialtyKey()`, which prefers the structured name and falls back to the title so MSP is unaffected. List and Trend finally mean the same thing by "specialty".
+- **Cascading option lists within each hierarchy.** Picking a Division narrows the Team dropdown to that Division's teams; picking a Profession narrows Specialty. The two hierarchies stay independent of each other — Division never constrains Profession — and picking a Team or Specialty directly without its parent still works, since these remain plain AND filters and the cascade only trims which options are offered. Assignments are folded in alongside open jobs so the lists don't collapse on tabs with no open orders.
+- **Fixed an exclude-guard bug** in `updateAllFilterOptions`: the team constraint sat inside the `divisions` guard, so recomputing the Division dropdown silently dropped the team filter too.
+
+Verified against live Bullhorn: 422,525 of 422,797 job orders carry exactly one category (269 carry two, 3 carry more), so the single-deterministic-row `OUTER APPLY` added in 2.2.5/2.2.6 is effectively lossless — no comma-list splitting needed. All 2,147 specialties have a populated `parentCategoryID`.
+
 **2.2.6** - Non-MSP: real Specialty via JobOrderSpecialties (closes audit §F5 on Trend)
 
 Completes the association work started in 2.2.5. Specialty is a to-many association like category — `dbo.JobOrderSpecialties` → `dbo.Specialty` — resolved with the same single-deterministic-row `OUTER APPLY`.
