@@ -768,7 +768,7 @@
     const $ = (id) => document.getElementById(id);
 
     // App version - loaded from environment variable via API, with fallback
-    let APP_VERSION = '2.2.9';
+    let APP_VERSION = '2.2.10';
 
     const API_BASE_URL = '/api';
     
@@ -2314,7 +2314,15 @@
        * all see one canonical value with no further call sites to keep in sync.
        */
       DIVISION_ALIASES: {
+        // Rolled into Nursing
         'Acute': 'Nursing',
+        'Travel Nursing': 'Nursing',
+        'Planet Healthcare': 'Nursing',
+        // These two also align Bullhorn with the vocabulary Symplr already
+        // emits (symplr_systems.build_division_case_expr returns exactly
+        // 'Education' / 'Non-Acute'), so both sources now share one taxonomy.
+        'Human Services': 'Education',
+        'Plymouth Meeting LTC': 'Non-Acute',
       },
 
       normalizeDivision(recordDivision) {

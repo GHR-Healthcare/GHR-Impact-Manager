@@ -2,6 +2,20 @@
 
 ## Version History
 
+**2.2.10** - Non-MSP: division rollups (Travel/Planet→Nursing, Human Services→Education, LTC→Non-Acute)
+
+Extends the 2.2.9 alias map with the remaining org changes Bullhorn's `correlatedCustomText1` hasn't caught up with:
+
+| Legacy value | Rolls into |
+|---|---|
+| `Acute`, `Travel Nursing`, `Planet Healthcare` | `Nursing` |
+| `Human Services` | `Education` |
+| `Plymouth Meeting LTC` | `Non-Acute` |
+
+The last two also align Bullhorn with the vocabulary Symplr already emits — `symplr_systems.build_division_case_expr` returns exactly `Education` / `Non-Acute` — so both sources finally share one division taxonomy instead of two disjoint ones.
+
+`Workforce Solutions` (the MSP division) is deliberately left as its own value pending a decision on whether it should appear on the non-MSP instance at all.
+
 **2.2.9** - Non-MSP: Acute division rolls into Nursing
 
 Acute was merged into Nursing organizationally, but ~4,000 Bullhorn job orders still carry the old `correlatedCustomText1` value. It therefore appeared as its own Division option — effectively dead — while its teams (`Acute Team 1-5`, `TX Acute`) sat stranded away from the rest of Nursing.
