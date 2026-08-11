@@ -2,6 +2,12 @@
 
 ## Version History
 
+**2.2.9** - Non-MSP: Acute division rolls into Nursing
+
+Acute was merged into Nursing organizationally, but ~4,000 Bullhorn job orders still carry the old `correlatedCustomText1` value. It therefore appeared as its own Division option — effectively dead — while its teams (`Acute Team 1-5`, `TX Acute`) sat stranded away from the rest of Nursing.
+
+New `Utils.DIVISION_ALIASES` + `normalizeDivision()`, applied at **ingest** (the job mapper and `normalizeTrendRow`) rather than at each comparison, so the dropdown, the matcher and the Division→Team cascade all see one canonical value with no further call sites to keep in sync. Comma-separated legacy values are mapped element-wise and de-duplicated, so `Acute,Nursing` collapses to `Nursing` rather than listing it twice. Future org changes are a one-line addition to the alias map.
+
 **2.2.8** - Non-MSP: Active/Declines column headers drop the "GHR / Agency" label
 
 The 2.2.5 AV strip fixed the per-row values but not the column headers. `Active` and `Declines` are static markup in the List table head, outside the JS render path the non-MSP guard lives in, so they kept advertising a `GHR / Agency` split above a single number. Now hidden on non-MSP. The row values and the List KPI cards were already handled.

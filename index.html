@@ -768,7 +768,7 @@
     const $ = (id) => document.getElementById(id);
 
     // App version - loaded from environment variable via API, with fallback
-    let APP_VERSION = '2.2.8';
+    let APP_VERSION = '2.2.9';
 
     const API_BASE_URL = '/api';
     
@@ -1652,6 +1652,7 @@
                         r.startDate = parseLocalDate(r.startDate);
                         r.endDate = parseLocalDate(r.endDate);
                         r.healthSystem = Utils.getHealthSystem(r.facility, r.system);
+                        r.division = Utils.normalizeDivision(r.division);
                         // PM is resolved later in View.trend() using pmMappings from store
                         r.pm = null;
                     };
@@ -1849,7 +1850,7 @@
                 // Non-MSP-only dimensions (NULL on MSP records, value on
                 // Bullhorn/Symplr per v1.8.0). Used by the Division /
                 // Profession / Region filter dropdowns.
-                division: String(row.division || ''),
+                division: Utils.normalizeDivision(row.division),
                 // Team (Bullhorn correlatedCustomText5) nests under Division.
                 team: String(row.team || ''),
                 profession: String(row.profession || row.specialty_name || ''),
@@ -2301,6 +2302,32 @@
        *   (b) still mis-bucketed, e.g. 'rn' substring-matched "CRNA".
        * A job-level division needs no guessing, and Team gives the finer cut.
        */
+      /*
+       * GHR org changes that Bullhorn's division field hasn't caught up with.
+       * Acute was rolled into Nursing, but ~4k job orders still carry the old
+       * value, so it showed as its own (effectively dead) Division option while
+       * its teams — Acute Team 1-5, TX Acute — were stranded away from the rest
+       * of Nursing.
+       *
+       * Applied at INGEST (job mapper + normalizeTrendRow) rather than at each
+       * comparison, so the dropdown, the matcher and the Division→Team cascade
+       * all see one canonical value with no further call sites to keep in sync.
+       */
+      DIVISION_ALIASES: {
+        'Acute': 'Nursing',
+      },
+
+      normalizeDivision(recordDivision) {
+        if (!recordDivision) return '';
+        const seen = new Set();
+        String(recordDivision).split(',').forEach(d => {
+          const t = d.trim();
+          if (!t) return;
+          seen.add(Utils.DIVISION_ALIASES[t] || t);
+        });
+        return [...seen].join(',');
+      },
+
       matchesSelectedDivisions(recordDivision, selectedDivisions) {
         if (!selectedDivisions || selectedDivisions.size === 0) return true;
         if (!recordDivision) return false;
