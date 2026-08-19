@@ -643,7 +643,93 @@ function renderExtensionFilters(){
  badge.textContent=`${count} of ${total} assignments`;
 }
 function extensionUrgency(r){const s=extensionSummary(r);if(s.tone==='red'||r.days<=14)return 'High';if(r.days<=30)return 'Medium';return 'Low'}
-function renderKPIs(){const nativeCfg=NATIVE_VIEWS[activeView];if(nativeCfg){kpis.innerHTML='';legend.innerHTML='';kpis.style.visibility='hidden';legend.style.visibility='hidden';kpis.style.display='';legend.style.display='';document.getElementById('viewTitle').innerHTML=`<div class="view-main"><b>${nativeCfg.title}</b></div><div class="view-sub">${nativeCfg.note||''}</div>`;return}kpis.style.visibility='';legend.style.visibility='';kpis.style.display='';legend.style.display='';const cfg=activeView==='hot'?{...viewConfig.open,title:'Priority Jobs',note:'High-age and high-value openings.'}:(viewConfig[activeView]||viewConfig.results);kpis.innerHTML=cfg.kpis.map((x,i)=>`<div class="kpi"><div class="kpi-label">${x[0]}</div><div class="kpi-value ${x[3]||''}">${x[1]}</div><div class="kpi-sub">${x[2]||''}</div><div class="icon ${x[3]||''}">${['◷','⌛','♙','↗','△','✓'][i]}</div></div>`).join('');const legendPreds=legendPredicatesForView();legend.innerHTML=cfg.legend.map(x=>{const label=x[1],on=legendFilter.has(label),clickable=!!(legendPreds&&legendPreds[label]);return `<span class="legend-chip${on?' on':''}${clickable?'':' static'}"${clickable?` data-legend="${label.replace(/"/g,'&quot;')}" role="button" tabindex="0" title="Filter to ${label}"`:''}><i class="circle" style="${x[0]==='outline'?'background:#fff;border:1px solid #8a99ad':'background:'+x[0]}"></i>${label}</span>`;}).join('')+(legendFilter.size?`<button class="legend-clear" data-legend-clear>Clear ${legendFilter.size} filter${legendFilter.size===1?'':'s'}</button>`:'');const exportBtn=activeView==='extensions'?`<button class="inline-export" data-export-extensions>⇩ Export Excel</button><span class="visibility-note">🔒 Delivery View · GHR only</span>`:'';const groupCtl=(activeView==='open'||activeView==='hot')?`<span class="groupby"><label>Group by</label><select id="openGroupBy"><option value="none"${openGrouping==='none'?' selected':''}>No Grouping</option><option value="specialty"${openGrouping==='specialty'?' selected':''}>Position Type</option><option value="category"${openGrouping==='category'?' selected':''}>Category</option><option value="system"${openGrouping==='system'?' selected':''}>Health System</option></select></span>`:'';const extCount=activeView==='extensions'?`<span class="filter-count" id="extensionFilterCount" hidden></span>`:'';const covNote=(activeView==='results'&&CLOSED_COVERAGE_NOTE)?`<div class="coverage-note">${CLOSED_COVERAGE_NOTE}</div>`:'';document.getElementById('viewTitle').innerHTML=`<div class="view-main"><b>${cfg.title}</b>${extCount}${exportBtn}${groupCtl}</div><div class="view-sub">${cfg.note}</div>${covNote}`;}
+/* Headline numbers for the reporting tabs.
+
+   The previous UI rendered the same six requisition tiles (Total Openings,
+   Avg Days Open, Submissions…) on Per Diem and Revenue, and hid the row
+   entirely on Trends and Contracts. On a revenue screen "Total Openings" is a
+   correct number describing the wrong thing, and two tabs were left with an
+   empty band. Each report now states its own figures, computed from the slice
+   it already loaded — the meeting stages keep the tiles people know.         */
+const num = v => (Number(v) || 0);
+const money = v => {
+  const n = num(v);
+  return Math.abs(n) >= 1e6 ? `$${(n/1e6).toFixed(2)}M`
+       : Math.abs(n) >= 1e3 ? `$${(n/1e3).toFixed(1)}k` : `$${n.toFixed(0)}`;
+};
+
+function reportKpis(view){
+  const st = (window.store && window.store.state) || {};
+  if(view === 'financials'){
+    const rows = st.financialData || [];
+    const rev = rows.reduce((a,r) => a + num(r.estimated_billing), 0);
+    const hrs = rows.reduce((a,r) => a + num(r.hours_worked), 0);
+    const months = new Set(rows.map(r => r.month).filter(Boolean)).size || 1;
+    const vndly = rows.filter(r => r.source_system === 'VNDLY')
+                      .reduce((a,r) => a + num(r.estimated_billing), 0);
+    return [
+      ['Revenue', money(rev), `${months} month${months===1?'':'s'}`, 'green'],
+      ['Monthly Average', money(rev/months), 'across the range', 'green'],
+      ['Annualized', money((rev/months)*12), 'run-rate equivalent', 'green'],
+      ['Hours Worked', Math.round(hrs).toLocaleString(), 'billed', 'blue'],
+      ['Avg Bill Rate', hrs ? `$${(rev/hrs).toFixed(0)}/hr` : '—', 'revenue ÷ hours', 'purple'],
+      ['VNDLY Share', rev ? `${Math.round(vndly/rev*100)}%` : '—', 'vs B4', 'amber'],
+    ];
+  }
+  if(view === 'trend'){
+    const t = st.trendData || {};
+    const asg = t.assignments || [];
+    const wk = t.weekly_revenue || [];
+    const hrs = (st.hoursData && (st.hoursData.rows || st.hoursData)) || [];
+    const sorted = [...wk].sort((a,b) => String(a.week_start).localeCompare(String(b.week_start)));
+    const last = sorted.length ? num(sorted[sorted.length-1].revenue) : 0;
+    const prev = sorted.length > 1 ? num(sorted[sorted.length-2].revenue) : 0;
+    const wow = prev ? Math.round((last-prev)/prev*100) : 0;
+    const totalHrs = (Array.isArray(hrs) ? hrs : [])
+      .reduce((a,r) => a + num(r.hours_worked ?? r.hours ?? r.total_hours), 0);
+    return [
+      ['Active Assignments', asg.length.toLocaleString(), 'in range', 'blue'],
+      ['Latest Week', money(last), 'revenue', 'green'],
+      ['Week over Week', `${wow >= 0 ? '+' : ''}${wow}%`, 'vs prior week', wow >= 0 ? 'green' : 'red'],
+      ['Hours', Math.round(totalHrs).toLocaleString(), 'in range', 'purple'],
+      ['Health Systems', new Set(asg.map(a => a.system).filter(Boolean)).size, 'covered', 'blue'],
+      ['Weeks Tracked', sorted.length, 'of revenue history', 'amber'],
+    ];
+  }
+  if(view === 'perdiem'){
+    const pd = st.perDiemData || {};
+    const shifts = pd.shifts || [];
+    const req = shifts.reduce((a,r) => a + num(r.open_positions ?? r.requested ?? 1), 0);
+    const filled = shifts.reduce((a,r) => a + num(r.filled ?? r.filled_positions), 0);
+    return [
+      ['Shifts Requested', req.toLocaleString(), 'in range', 'blue'],
+      ['Shifts Filled', filled.toLocaleString(), 'covered', 'green'],
+      ['Fill Rate', req ? `${Math.round(filled/req*100)}%` : '—', 'filled ÷ requested', filled/req >= 0.8 ? 'green' : 'amber'],
+      ['Open Orders', (pd.openOrders || []).length.toLocaleString(), 'unfilled', 'red'],
+      ['Assignments', (pd.assignments || []).length.toLocaleString(), 'per diem', 'purple'],
+      ['Facilities', new Set(shifts.map(r => r.facility || r.facility_name).filter(Boolean)).size, 'with activity', 'blue'],
+    ];
+  }
+  if(view === 'contracts'){
+    const c = st.contractsData || {};
+    const mm = (c.date_mismatches || []).length;
+    const mib = (c.missing_in_bullhorn || []).length;
+    const miv = (c.missing_in_b4vndly || []).length;
+    const reviewed = (st.reviewedContractsKeys && st.reviewedContractsKeys.size) || 0;
+    const total = mm + mib + miv;
+    return [
+      ['Date Mismatches', mm.toLocaleString(), 'Bullhorn vs VMS', mm ? 'red' : 'green'],
+      ['Missing in Bullhorn', mib.toLocaleString(), 'in VMS only', mib ? 'amber' : 'green'],
+      ['Missing in VMS', miv.toLocaleString(), 'in Bullhorn only', miv ? 'amber' : 'green'],
+      ['Total Discrepancies', total.toLocaleString(), 'needing review', total ? 'red' : 'green'],
+      ['Reviewed', reviewed.toLocaleString(), 'marked resolved', 'green'],
+      ['Outstanding', Math.max(0, total - reviewed).toLocaleString(), 'still open', 'purple'],
+    ];
+  }
+  return null;
+}
+
+function renderKPIs(){const nativeCfg=NATIVE_VIEWS[activeView];if(nativeCfg){const rk=reportKpis(activeView);kpis.innerHTML=(rk||[]).map((x,i)=>`<div class="kpi"><div class="kpi-label">${x[0]}</div><div class="kpi-value ${x[3]||''}">${x[1]}</div><div class="kpi-sub">${x[2]||''}</div><div class="icon ${x[3]||''}">${['◷','⌛','♙','↗','△','✓'][i]}</div></div>`).join('');legend.innerHTML='';kpis.style.visibility=rk&&rk.length?'':'hidden';legend.style.visibility='hidden';kpis.style.display='';legend.style.display='';document.getElementById('viewTitle').innerHTML=`<div class="view-main"><b>${nativeCfg.title}</b></div><div class="view-sub">${nativeCfg.note||''}</div>`;return}kpis.style.visibility='';legend.style.visibility='';kpis.style.display='';legend.style.display='';const cfg=activeView==='hot'?{...viewConfig.open,title:'Priority Jobs',note:'High-age and high-value openings.'}:(viewConfig[activeView]||viewConfig.results);kpis.innerHTML=cfg.kpis.map((x,i)=>`<div class="kpi"><div class="kpi-label">${x[0]}</div><div class="kpi-value ${x[3]||''}">${x[1]}</div><div class="kpi-sub">${x[2]||''}</div><div class="icon ${x[3]||''}">${['◷','⌛','♙','↗','△','✓'][i]}</div></div>`).join('');const legendPreds=legendPredicatesForView();legend.innerHTML=cfg.legend.map(x=>{const label=x[1],on=legendFilter.has(label),clickable=!!(legendPreds&&legendPreds[label]);return `<span class="legend-chip${on?' on':''}${clickable?'':' static'}"${clickable?` data-legend="${label.replace(/"/g,'&quot;')}" role="button" tabindex="0" title="Filter to ${label}"`:''}><i class="circle" style="${x[0]==='outline'?'background:#fff;border:1px solid #8a99ad':'background:'+x[0]}"></i>${label}</span>`;}).join('')+(legendFilter.size?`<button class="legend-clear" data-legend-clear>Clear ${legendFilter.size} filter${legendFilter.size===1?'':'s'}</button>`:'');const exportBtn=activeView==='extensions'?`<button class="inline-export" data-export-extensions>⇩ Export Excel</button><span class="visibility-note">🔒 Delivery View · GHR only</span>`:'';const groupCtl=(activeView==='open'||activeView==='hot')?`<span class="groupby"><label>Group by</label><select id="openGroupBy"><option value="none"${openGrouping==='none'?' selected':''}>No Grouping</option><option value="specialty"${openGrouping==='specialty'?' selected':''}>Position Type</option><option value="category"${openGrouping==='category'?' selected':''}>Category</option><option value="system"${openGrouping==='system'?' selected':''}>Health System</option></select></span>`:'';const extCount=activeView==='extensions'?`<span class="filter-count" id="extensionFilterCount" hidden></span>`:'';const covNote=(activeView==='results'&&CLOSED_COVERAGE_NOTE)?`<div class="coverage-note">${CLOSED_COVERAGE_NOTE}</div>`:'';document.getElementById('viewTitle').innerHTML=`<div class="view-main"><b>${cfg.title}</b>${extCount}${exportBtn}${groupCtl}</div><div class="view-sub">${cfg.note}</div>${covNote}`;}
 function head(cols){thead.innerHTML='<tr>'+cols.map(c=>`<th class="${c.center?'center':''}">${c.label}${c.sorted?(c.sorted==='asc'?' ↑':' ↓'):''}${c.sub?`<div class="th-sub">${c.sub}</div>`:''}</th>`).join('')+'</tr>'}
 function groupRow(label,count,colspan,meta=''){return `<tr class="group"><td colspan="${colspan}">${groupLabel(label)}<span class="count">${count}</span>${meta?`<span class="group-meta">${meta}</span>`:''}</td></tr>`}
 function idCell(r){return `<button class="id-btn" data-id="${r.id}" aria-expanded="${selected===r.id}"><span class="id-badge">${r.id}</span><span class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></span></button>`}
@@ -753,7 +839,14 @@ function renderPlaceholder(){
     host.innerHTML = '<div class="p-6 text-sm text-slate-500">Loading…</div>';
   }
   ensureReportData()
-    .then(() => { if(activeView === view) ReportViews.render(view, host); })
+    .then(() => {
+      if(activeView !== view) return;
+      ReportViews.render(view, host);
+      // The KPI row is built during render(), which ran before the data
+      // landed — without this the first report opened shows zeroed tiles
+      // while every later one looks fine, because its load already finished.
+      renderKPIs();
+    })
     .catch(e => {
       console.error('report data load failed:', e);
       if(activeView === view){
