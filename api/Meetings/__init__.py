@@ -26,11 +26,20 @@ def _ensure_schema(cursor):
             stage       INT           NULL,
             completed   NVARCHAR(400) NULL,   -- JSON array of stage indexes
             actions     NVARCHAR(MAX) NULL,   -- JSON array of captured actions
+            recap_html  NVARCHAR(MAX) NULL,   -- recap exactly as it was sent
             started_at  DATETIME2     NULL,
             ended_at    DATETIME2     NULL,
             updated_at  DATETIME2     NOT NULL,
             created_by  NVARCHAR(200) NULL
         )
+    """)
+    # Additive migration: tables created before recap_html existed.
+    cursor.execute("""
+        IF NOT EXISTS (
+            SELECT 1 FROM sys.columns
+            WHERE object_id = OBJECT_ID('impactmgr.meetings') AND name = 'recap_html'
+        )
+        ALTER TABLE impactmgr.meetings ADD recap_html NVARCHAR(MAX) NULL
     """)
 
 
@@ -72,7 +81,8 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             if meeting_id:
                 cursor.execute("""
                     SELECT meeting_id, health_system, facilities, recipients, stage,
-                           completed, actions, started_at, ended_at, updated_at, created_by
+                           completed, actions, started_at, ended_at, updated_at, created_by,
+                           recap_html
                     FROM impactmgr.meetings WHERE meeting_id = ?
                 """, meeting_id)
                 row = cursor.fetchone()
@@ -94,7 +104,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             cursor.execute(f"""
                 SELECT TOP {limit} meeting_id, health_system, facilities, recipients, stage,
                        completed, actions, started_at, ended_at, updated_at, created_by
-                FROM impactmgr.meetings ORDER BY updated_at DESC
+                FROM impactmgr.meetings ORDER BY started_at DESC, updated_at DESC
             """)
             cols = [c[0] for c in cursor.description]
             rows = [_row_to_meeting(r, cols) for r in cursor.fetchall()]
@@ -110,6 +120,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                 mimetype='application/json', status_code=400)
 
         actions = json.dumps(body.get('actions') or [], default=str)
+        recap_html = body.get('recapHtml')
         if len(actions.encode('utf-8')) > MAX_ACTIONS_BYTES:
             return func.HttpResponse(
                 json.dumps({'error': 'actions payload too large'}),
@@ -132,22 +143,24 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             USING (SELECT ? AS meeting_id) AS src ON t.meeting_id = src.meeting_id
             WHEN MATCHED THEN UPDATE SET
                 health_system = ?, facilities = ?, recipients = ?, stage = ?,
-                completed = ?, actions = ?, started_at = ?, ended_at = ?, updated_at = ?
+                completed = ?, actions = ?, started_at = ?, ended_at = ?, updated_at = ?,
+                recap_html = COALESCE(?, recap_html)
             WHEN NOT MATCHED THEN
                 INSERT (meeting_id, health_system, facilities, recipients, stage,
-                        completed, actions, started_at, ended_at, updated_at, created_by)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+                        completed, actions, started_at, ended_at, updated_at, created_by,
+                        recap_html)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
         """,
             meeting_id,
             body.get('healthSystem'), json.dumps(body.get('facilities') or []),
             body.get('recipients'), body.get('stage'),
             json.dumps(body.get('completed') or []), actions,
-            _dt(body.get('startedAt')), _dt(body.get('endedAt')), now,
+            _dt(body.get('startedAt')), _dt(body.get('endedAt')), now, recap_html,
             meeting_id,
             body.get('healthSystem'), json.dumps(body.get('facilities') or []),
             body.get('recipients'), body.get('stage'),
             json.dumps(body.get('completed') or []), actions,
-            _dt(body.get('startedAt')), _dt(body.get('endedAt')), now, user)
+            _dt(body.get('startedAt')), _dt(body.get('endedAt')), now, user, recap_html)
         conn.commit()
         print(f'Meetings: saved {meeting_id} ({len(body.get("actions") or [])} actions) for {user}')
         return func.HttpResponse(
