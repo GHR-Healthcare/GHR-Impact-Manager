@@ -285,7 +285,145 @@ button{cursor:pointer}
 </div>
 
 <footer class="footer"><div class="footer-left"><div><div class="foot-label">Revenue Won</div><div class="foot-value green">$286,400 (11)</div></div><div><div class="foot-label">Revenue Missed</div><div class="foot-value red">$114,300 (5)</div></div><div><div class="foot-label">Open Exposure</div><div class="foot-value">$612,100 (26)</div></div></div><div class="footer-right">GHR Impact Manager · Account Performance Workspace</div></footer>
-<div class="modal-backdrop" id="settingsOverlay" hidden><div class="settings-shell"><div class="settings-bar"><b>Settings</b><button type="button" class="modal-close" id="closeSettings" aria-label="Close settings">×</button></div><div class="settings-body" id="settingsBody"></div></div></div><div class="modal-backdrop" id="meetingSetupModal" hidden>
+  <div id="settingsModal" class="hidden fixed inset-0 bg-black/50 z-[90] flex items-center justify-center backdrop-blur-sm">
+    <div class="bg-white rounded-lg shadow-2xl w-11/12 max-w-4xl border border-slate-200 overflow-hidden flex flex-col max-h-[90vh]">
+      <div class="bg-slate-100 p-4 border-b border-slate-200 flex justify-between items-center">
+        <h3 class="text-2xl font-bold text-slate-900 flex items-center gap-2">
+          <i data-lucide="settings" class="w-6 h-6 text-slate-600"></i> Settings
+        </h3>
+        <button onclick="closeSettingsModal()" class="text-slate-400 hover:text-slate-700">
+          <i data-lucide="x" class="w-6 h-6"></i>
+        </button>
+      </div>
+      
+      <!-- Tabs -->
+      <div class="border-b border-slate-200 px-6 pt-4 flex gap-1">
+        <button id="settingsTabSystems" onclick="switchSettingsTab('systems')"
+          class="px-4 py-2 text-sm font-semibold rounded-t-md border border-b-0 border-slate-200 bg-white text-blue-700 -mb-px z-10">
+          <i data-lucide="building-2" class="w-4 h-4 inline-block mr-1"></i> Health Systems
+        </button>
+        <button id="settingsTabPM" onclick="switchSettingsTab('pm')"
+          class="px-4 py-2 text-sm font-semibold rounded-t-md text-slate-500 hover:text-slate-700">
+          <i data-lucide="user-check" class="w-4 h-4 inline-block mr-1"></i> Program Managers
+        </button>
+        <button id="settingsTabAllowlist" onclick="switchSettingsTab('allowlist')"
+          class="px-4 py-2 text-sm font-semibold rounded-t-md text-slate-500 hover:text-slate-700 hidden">
+          <i data-lucide="list-plus" class="w-4 h-4 inline-block mr-1"></i> Non-MSP Clients
+        </button>
+      </div>
+
+      <!-- Health Systems Tab -->
+      <div id="settingsPanelSystems" class="p-6 overflow-y-auto">
+        <p class="text-sm text-slate-500 mb-4">Map facility name keywords to normalized health system names. Keywords are matched case-insensitively.</p>
+
+        <!-- Non-MSP: system rollup isn't editable from this screen. Direct
+             users to the Non-MSP Clients tab where they can add accounts. -->
+        <div id="systemMappingsCodeManagedBanner" class="hidden mb-4 p-3 bg-amber-50 border border-amber-200 rounded text-sm text-amber-800">
+          <i data-lucide="info" class="w-4 h-4 inline-block mr-1"></i>
+          Health system groupings can't be edited here on the non-MSP dashboard. To force-include a specific account, switch to the <strong>Non-MSP Clients</strong> tab.
+        </div>
+
+        <div class="border rounded-lg overflow-hidden mb-4">
+          <table class="w-full text-sm">
+            <thead class="bg-slate-100">
+              <tr>
+                <th class="text-left p-3 font-semibold text-slate-700">Keywords (comma-separated)</th>
+                <th class="text-left p-3 font-semibold text-slate-700 w-48">Health System</th>
+                <th class="text-center p-3 font-semibold text-slate-700 w-36" title="Break out per diem metrics by facility instead of rolling up to system level">Per Diem Breakout</th>
+                <th class="text-center p-3 font-semibold text-slate-700 w-20" title="Hide this health system from all tabs and filters">Hide</th>
+                <th class="w-16 p-3"></th>
+              </tr>
+            </thead>
+            <tbody id="mappingsTableBody" class="divide-y">
+              <!-- Mappings loaded here -->
+            </tbody>
+          </table>
+        </div>
+
+        <div class="flex justify-between items-center">
+          <div class="flex gap-2">
+            <button onclick="addMappingRow()" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded text-sm font-medium flex items-center gap-1">
+              <i data-lucide="plus" class="w-4 h-4"></i> Add Mapping
+            </button>
+            <button onclick="resetMappingsToDefaults()" class="bg-slate-200 hover:bg-slate-300 text-slate-700 px-4 py-2 rounded text-sm font-medium flex items-center gap-1">
+              <i data-lucide="rotate-ccw" class="w-4 h-4"></i> Reset to Defaults
+            </button>
+          </div>
+          <div class="flex gap-2">
+            <button onclick="exportMappings()" class="bg-slate-200 hover:bg-slate-300 text-slate-700 px-4 py-2 rounded text-sm font-medium flex items-center gap-1">
+              <i data-lucide="download" class="w-4 h-4"></i> Export
+            </button>
+            <label class="bg-slate-200 hover:bg-slate-300 text-slate-700 px-4 py-2 rounded text-sm font-medium flex items-center gap-1 cursor-pointer">
+              <i data-lucide="upload" class="w-4 h-4"></i> Import
+              <input type="file" accept=".json" onchange="importMappings(event)" class="hidden">
+            </label>
+          </div>
+        </div>
+      </div>
+
+      <!-- Program Managers Tab -->
+      <div id="settingsPanelPM" class="p-6 overflow-y-auto hidden">
+        <p class="text-sm text-slate-500 mb-4">Assign a GHR Program Manager to each facility. Used to group headcount in the Trend tab PM view.</p>
+
+        <div class="border rounded-lg overflow-hidden mb-4">
+          <table class="w-full text-sm">
+            <thead class="bg-slate-100">
+              <tr>
+                <th class="text-left p-3 font-semibold text-slate-700">Facility</th>
+                <th class="text-left p-3 font-semibold text-slate-700 w-72">Program Manager</th>
+              </tr>
+            </thead>
+            <tbody id="pmMappingsTableBody" class="divide-y">
+              <!-- PM mappings loaded here -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Non-MSP Client Allowlist Tab (visible only on non-MSP) -->
+      <div id="settingsPanelAllowlist" class="p-6 overflow-y-auto hidden">
+        <p class="text-sm text-slate-500 mb-4">
+          Keep a specific client visible on the dashboard even when they have no active work at the moment.
+          Anyone with active placements or orders is already included automatically — this list is for accounts you want to keep an eye on regardless.
+        </p>
+
+        <div class="border rounded-lg overflow-hidden mb-4">
+          <table class="w-full text-sm">
+            <thead class="bg-slate-100">
+              <tr>
+                <th class="text-left p-3 font-semibold text-slate-700 w-32">Source</th>
+                <th class="text-left p-3 font-semibold text-slate-700 w-32">Client ID</th>
+                <th class="text-left p-3 font-semibold text-slate-700 w-64">Display Name <span class="font-normal text-xs text-slate-400">(optional)</span></th>
+                <th class="text-left p-3 font-semibold text-slate-700">Notes <span class="font-normal text-xs text-slate-400">(optional)</span></th>
+                <th class="w-14 p-3"></th>
+              </tr>
+            </thead>
+            <tbody id="allowlistTableBody" class="divide-y">
+              <!-- Allowlist rows loaded here -->
+            </tbody>
+          </table>
+        </div>
+
+        <div class="flex justify-between items-center gap-4 flex-wrap">
+          <button onclick="addAllowlistRow()" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded text-sm font-medium flex items-center gap-1.5 whitespace-nowrap">
+            <i data-lucide="plus" class="w-4 h-4"></i> Add Client
+          </button>
+          <p class="text-xs text-slate-500 max-w-md">
+            Removing a row here just removes the manual override. Clients with active work are still included automatically.
+          </p>
+        </div>
+      </div>
+      
+      <div class="bg-slate-100 p-4 border-t border-slate-200 flex justify-end gap-2">
+        <button onclick="closeSettingsModal()" class="bg-slate-200 hover:bg-slate-300 text-slate-700 px-6 py-2 rounded text-sm font-medium">
+          Cancel
+        </button>
+        <button onclick="saveSettings()" class="bg-emerald-600 hover:bg-emerald-700 text-white px-6 py-2 rounded text-sm font-medium flex items-center gap-1">
+          <i data-lucide="check" class="w-4 h-4"></i> Save Changes
+        </button>
+      </div>
+    </div>
+  </div></div><div class="modal-backdrop" id="meetingSetupModal" hidden>
   <div class="meeting-modal setup-modal">
     <div class="modal-head"><div><div class="modal-kicker">IMPACT Meeting</div><h2>Set meeting scope</h2><p>Select one health system and one or more facilities. We’ll show a high-level account readout before you dive into the live review.</p></div><button class="modal-close" data-close-meeting-modal>×</button></div>
     <div class="modal-body">
@@ -852,28 +990,26 @@ function syncFilterActionState(){
          : `Show only: ${band}`;
 }
 
+// The settings panel (system mappings, PM mappings, client allowlist) is the
+// ported module's own modal, driven by its own handlers — the workspace only
+// opens and closes it.
 function openSettings(){
-  const overlay = $id('settingsOverlay');
-  const frame = $id('settingsFrame');
-  if(!overlay || !frame) return;
-  // Loaded on first open rather than at boot, so the mappings/allowlist
-  // endpoints aren't queried by everyone who never opens settings.
-  if(!frame.getAttribute('src')) frame.src = '/legacy.html?embed=1&settings=1';
-  overlay.hidden = false;
+  if(typeof window.openSettingsModal === 'function'){ window.openSettingsModal(); return; }
+  $id('settingsModal')?.classList.remove('hidden');
 }
 
 function closeSettings(){
-  const overlay = $id('settingsOverlay');
-  if(overlay) overlay.hidden = true;
+  if(typeof window.closeSettingsModal === 'function'){ window.closeSettingsModal(); return; }
+  $id('settingsModal')?.classList.add('hidden');
 }
 
 $id('btnSettings')?.addEventListener('click', openSettings);
-$id('closeSettings')?.addEventListener('click', closeSettings);
-$id('settingsOverlay')?.addEventListener('click', e => {
-  if(e.target.id === 'settingsOverlay') closeSettings();   // click-outside
+document.addEventListener('click', e => {
+  if(e.target && e.target.id === 'settingsModal') closeSettings();   // click-outside
 });
 document.addEventListener('keydown', e => {
-  if(e.key === 'Escape' && !$id('settingsOverlay')?.hidden) closeSettings();
+  const m = $id('settingsModal');
+  if(e.key === 'Escape' && m && !m.classList.contains('hidden')) closeSettings();
 });
 
 $id('btnUrgentOnly')?.addEventListener('click', toggleUrgentOnly);
