@@ -68,7 +68,13 @@ def _b4_rows(cursor, horizon, include_affiliate):
             -- through the parent-contract chain.
             CASE WHEN o.Parent_Contract_ID IS NOT NULL AND LTRIM(RTRIM(o.Parent_Contract_ID)) <> ''
                  THEN 1 ELSE 0 END                      AS is_extension,
-            LTRIM(RTRIM(ISNULL(o.Parent_Contract_ID, ''))) AS parent_ref
+            LTRIM(RTRIM(ISNULL(o.Parent_Contract_ID, ''))) AS parent_ref,
+            0                                           AS extension_events,
+            NULL                                        AS last_extension_at,
+            NULL                                        AS extension_note,
+            NULL                                        AS extension_by,
+            -- B4 has no modifications feed, so no decision signal exists here.
+            'Not tracked in B4'                         AS decision_state
         FROM dhc.B4HealthOrder o WITH (NOLOCK)
         WHERE o.End_Date BETWEEN CAST(GETDATE() AS DATE)
                              AND DATEADD(DAY, ?, CAST(GETDATE() AS DATE))
@@ -90,6 +96,29 @@ def _vndly_rows(cursor, horizon, include_affiliate):
     status_list = ', '.join("'" + s.replace("'", "''") + "'" for s in VNDLY_ACTIVE_STATUSES)
     vendor_filter = '' if include_affiliate else f'AND {VNDLY_GHR_PREDICATE}'
     cursor.execute(f'''
+        WITH ext_mods AS (
+            -- Extension activity is an EVENT in the modifications feed, not a
+            -- status column. It is filed inconsistently: usually under
+            -- 'Date Extension', but 17 rows sit under 'Other', 'Ended in
+            -- Error' and 'Assignment Completed' with the detail only in
+            -- [Other Reason]. Matching on either catches all of them —
+            -- filtering on the reason alone silently drops those.
+            SELECT
+                WOSystemKey                                     AS wo,
+                COUNT(*)                                        AS ext_events,
+                MAX([Last Modified])                            AS last_ext_at,
+                -- The free text is where the actual decision lives
+                -- ('Extension offered for Chemistry unit - new end date
+                -- 12/26/26'), so keep the most recent non-empty note.
+                MAX(CASE WHEN NULLIF(LTRIM(RTRIM([Other Reason])), '') IS NOT NULL
+                         THEN [Other Reason] END)               AS ext_note,
+                MAX([Last Modified By])                         AS ext_by,
+                MAX(CASE WHEN [Other Reason] LIKE '%offer%' THEN 1 ELSE 0 END) AS mentions_offer
+            FROM dbo.STAGING_VNDLY_WORKODER_MODIFICATIONS WITH (NOLOCK)
+            WHERE [Reason for Modification] = 'Date Extension'
+               OR [Other Reason] LIKE '%exten%'
+            GROUP BY WOSystemKey
+        )
         SELECT
             'VNDLY'                                     AS source_system,
             CAST(w.WOSystemKey AS NVARCHAR(50))          AS id,
@@ -115,8 +144,21 @@ def _vndly_rows(cursor, horizon, include_affiliate):
             -- An end date past the original is an extension, full stop.
             CASE WHEN TRY_CAST(w.[End Date] AS DATE) > TRY_CAST(w.[Original End Date] AS DATE)
                  THEN 1 ELSE 0 END                       AS is_extension,
-            CONVERT(VARCHAR(10), TRY_CAST(w.[Original End Date] AS DATE), 120) AS parent_ref
+            CONVERT(VARCHAR(10), TRY_CAST(w.[Original End Date] AS DATE), 120) AS parent_ref,
+            ISNULL(x.ext_events, 0)                      AS extension_events,
+            CONVERT(VARCHAR(19), x.last_ext_at, 120)     AS last_extension_at,
+            x.ext_note                                   AS extension_note,
+            x.ext_by                                     AS extension_by,
+            -- Decision state is only inferable from free text: ~50 of the 105
+            -- work orders with extension activity say "offer". Anything else
+            -- with an executed date change is treated as already extended.
+            CASE WHEN x.wo IS NULL                       THEN 'None recorded'
+                 WHEN x.mentions_offer = 1               THEN 'Offered'
+                 WHEN TRY_CAST(w.[End Date] AS DATE) > TRY_CAST(w.[Original End Date] AS DATE)
+                                                         THEN 'Extended'
+                 ELSE 'Activity recorded' END            AS decision_state
         FROM dbo.STAGING_VNDLY_WORKORDERS w WITH (NOLOCK)
+        LEFT JOIN ext_mods x ON x.wo = w.WOSystemKey
         -- STAGING_VNDLY_JOBS holds 664 rows across only 387 distinct [Job Id],
         -- so joining it raw fans work orders out — measured at 112 rows where
         -- the truth is 60. Collapse to one row per job before joining.
