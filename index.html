@@ -846,21 +846,29 @@ function adaptExtensions(rows){
 /* ---- Onboarding ------------------------------------------------------- */
 function adaptOnboarding(rows){
   return (rows||[]).map(r => {
-    // Movement history comes from Bullhorn placement matching, so it covers
-    // GHR seats but almost no affiliate ones. When it's absent the answer is
-    // "unknown", never "zero" — a fabricated 0 moves reads as a clean start.
+    // Two VMSs, two different measures of "movement":
+    //   B4    — days slipped, reconstructed from warehouse snapshots. Covers
+    //           97% of GHR seats, under 5% of affiliate ones; where the
+    //           history is absent the answer is unknown, never zero.
+    //   VNDLY — flagged delay events with a categorised reason. There is no
+    //           Original Start Date in VNDLY, so how far a start slipped is
+    //           not knowable; only that a delay was raised, and why.
+    // These must not render as the same number.
     const tracked = r.movement_tracked !== false && r.move_count != null;
+    const measure = r.delay_measure || 'days';
+    const flaggedOnly = measure === 'flagged';
     const moves = tracked ? (r.move_count || 0) : null;
-    const delayed = tracked ? (r.days_delayed || 0) : null;
+    const delayed = (tracked && !flaggedOnly) ? (r.days_delayed || 0) : null;
     return {
       id: r.id,
       g: r.group,
       candidate: titleize(r.clinician),
       sys: [r.health_system, r.facility, r.unit].filter(Boolean).join(' · '),
       source: r.source,
-      scheduled: tracked ? fmtDate(r.original_start) : '—',
+      scheduled: (tracked && !flaggedOnly) ? fmtDate(r.original_start) : '—',
       current: fmtDate(r.current_start),
       variance: !tracked ? 'Not tracked'
+              : flaggedOnly ? (moves > 0 ? `${moves} delay flag${moves===1?'':'s'}` : 'No delay flagged')
               : delayed > 0 ? `+${delayed} days` : delayed < 0 ? `${delayed} days` : 'On schedule',
       status: r.group === 'CANCELED' ? 'Canceled'
             : r.group === 'DELAYED START' ? 'Delayed'
@@ -869,6 +877,7 @@ function adaptOnboarding(rows){
       delayCategory: titleize(r.delay_reason) !== '—' ? titleize(r.delay_reason) : 'Not categorized',
       reason: titleize(r.delay_reason) !== '—' ? titleize(r.delay_reason)
             : !tracked ? 'Start-date history not tracked for this agency'
+            : flaggedOnly ? 'No delay flagged on this work order'
             : (r.delayed_flag === 'Yes' ? 'Delay flagged, reason not recorded' : 'No delay recorded'),
       moveCount: tracked ? moves : '—',
       movementTracked: tracked,
@@ -882,9 +891,13 @@ function adaptOnboarding(rows){
       revenue: fmtMoneyK((r.awarded_rate||0) * (r.hours_per_week||0) * 13),
       // The endpoint returns aggregate movement, not a per-change log; the
       // detail timeline shows the endpoints of the slip instead of every hop.
-      moves: (tracked && moves > 0)
+      // VNDLY has no original start, so there is no from→to span to draw.
+      moves: (tracked && moves > 0 && !flaggedOnly)
         ? [[fmtShortDate(r.original_start), `${fmtShortDate(r.original_start)} → ${fmtShortDate(r.current_start)}`, `${moves} change${moves===1?'':'s'} recorded`]]
+        : (flaggedOnly && moves > 0)
+        ? [[fmtShortDate(r.current_start), 'Delay flagged', titleize(r.delay_reason)]]
         : [],
+      sourceSystem: r.source_system || 'B4',
       _raw: r,
     };
   });

@@ -5,36 +5,33 @@ import json
 from shared_code.auth import require_allowed_domain
 
 
-GHR_AGENCY_PREDICATE = "(o.Agency LIKE 'GHR%' OR o.Agency LIKE '%Planet Healthcare%')"
+B4_GHR_PREDICATE = "(o.Agency LIKE '%GHR%' OR o.Agency LIKE '%Planet Healthcare%')"
+VNDLY_GHR_PREDICATE = "(w.[Vendor Name] LIKE '%GHR%' OR w.[Vendor Name] LIKE '%Planet Healthcare%')"
 
-# How far back/forward the Onboarding stage looks around today's date. The
-# stage is about accepted offers moving toward an actual start, so it needs a
-# window on both sides: recent starts that already happened (did they stick?)
-# and upcoming ones (are they still moving?).
+# How far back/forward the Onboarding stage looks around today. The stage is
+# about accepted offers moving toward an actual start, so it needs a window on
+# both sides: recent starts that already happened (did they stick?) and
+# upcoming ones (are they still moving?).
 ONBOARDING_LOOKBACK_DAYS = 30
 ONBOARDING_LOOKAHEAD_DAYS = 45
 
-CANCELLED_STATUSES = ('Closed And Cancelled', 'Closed Not Awarded')
+B4_CANCELLED_STATUSES = ('Closed And Cancelled', 'Closed Not Awarded')
+# VNDLY terminal statuses that mean the seat never converted to a start.
+VNDLY_CANCELLED_STATUSES = ('Rejected', 'Withdrawn', 'Offer Declined', 'Ended in Error')
 
 
-def _onboarding_data(cursor, lookback, lookahead, include_affiliate):
-    """Rows for the Onboarding meeting stage.
+def _b4_rows(cursor, lookback, lookahead, include_affiliate):
+    """B4 seats. Movement is reconstructed from dbo.HIST_B4HealthOrder, which
+    snapshots each contract per warehouse load (RUN_ID). DISTINCT Start_Date
+    per Contract_ID gives the move count; earliest snapshot vs current gives
+    how far it slipped.
 
-    Start-date movement is reconstructed from dbo.HIST_B4HealthOrder, which
-    snapshots each contract per load (RUN_ID). Counting DISTINCT Start_Date per
-    Contract_ID yields the number of times a start moved; comparing the
-    earliest snapshot to the current row yields how far it slipped.
-
-    Verified against live data: 5,756 contracts never moved, 449 moved once,
-    151 moved 2+ times (max 6). So both the "Moved 2+ Times" and "Avg Days
-    Delayed" KPIs on this stage are computable rather than estimated.
-
-    B4HealthOrder.Delayed_Starts is only a Yes/No flag, so it's returned as
-    corroboration but the move count is what drives the stage.
+    That history comes from Bullhorn placement matching and Bullhorn is GHR's
+    own ATS, so it is GHR-only: measured over this window it covers 97% of GHR
+    seats but under 5% of affiliate ones. Where it is absent, movement is
+    unknown — never zero.
     """
-    status_list = ', '.join("'" + s.replace("'", "''") + "'" for s in CANCELLED_STATUSES)
-    agency_filter = '' if include_affiliate else f'AND {GHR_AGENCY_PREDICATE}'
-
+    agency_filter = '' if include_affiliate else f'AND {B4_GHR_PREDICATE}'
     cursor.execute(f'''
         WITH hist AS (
             SELECT
@@ -47,26 +44,21 @@ def _onboarding_data(cursor, lookback, lookahead, include_affiliate):
             GROUP BY LTRIM(RTRIM(Contract_ID))
         )
         SELECT
+            'B4'                                        AS source_system,
             LTRIM(RTRIM(o.Contract_ID))                 AS id,
             LTRIM(RTRIM(ISNULL(o.First_Name, '') + ' ' + ISNULL(o.Last_Name, ''))) AS clinician,
             o.Health_System                             AS health_system,
             o.Facility                                  AS facility,
             o.Unit                                      AS unit,
             o.Position_Type                             AS role,
-            o.Care_Type                                 AS care_type,
             o.Program                                   AS program,
-            o.Time_Type                                 AS time_type,
-            CASE WHEN {GHR_AGENCY_PREDICATE} THEN 'GHR' ELSE 'Affiliate' END AS source,
+            CASE WHEN {B4_GHR_PREDICATE} THEN 'GHR' ELSE 'Affiliate' END AS source,
             o.Agency                                    AS agency,
             o.Contract_Status                           AS contract_status,
             CAST(o.Start_Date AS DATE)                  AS current_start,
             CAST(h.first_start AS DATE)                 AS original_start,
             CAST(o.End_Date AS DATE)                    AS end_date,
-            -- HIST_B4HealthOrder is populated from Bullhorn placement
-            -- matching, and Bullhorn is GHR's own ATS — so history exists for
-            -- ~97% of GHR seats but only ~5% of affiliate ones. Without a
-            -- history row, movement is UNKNOWN, not zero; reporting 0 would
-            -- hand back a clean bill of health we can't support.
+            NULL                                        AS onboarded_date,
             CASE WHEN h.cid IS NULL THEN NULL ELSE
                 (h.distinct_starts - 1)
                 -- History only covers loads taken so far, so a start changed
@@ -76,32 +68,105 @@ def _onboarding_data(cursor, lookback, lookahead, include_affiliate):
                 + CASE WHEN o.Start_Date <> h.last_start THEN 1 ELSE 0 END
             END                                         AS move_count,
             CASE WHEN h.cid IS NULL THEN 0 ELSE 1 END   AS movement_tracked,
-            -- Positive = slipped later. Negative = pulled earlier.
             DATEDIFF(DAY, h.first_start, o.Start_Date)  AS days_delayed,
             DATEDIFF(DAY, CAST(GETDATE() AS DATE), o.Start_Date) AS days_until_start,
             o.Delayed_Starts                            AS delayed_flag,
             o.Delayed_Starts_Reasons                    AS delay_reason,
-            o.Unfilled_Reason                           AS unfilled_reason,
             o.Account_Manager                           AS account_manager,
-            o.Hiring_Manager                            AS hiring_manager,
-            TRY_CAST(o.Awarded_Rate AS DECIMAL(10,2))   AS awarded_rate,
+            TRY_CAST(o.Awarded_Rate AS DECIMAL(10,2))   AS bill_rate,
             TRY_CAST(o.Hours_per_Peek AS DECIMAL(10,2)) AS hours_per_week
         FROM dhc.B4HealthOrder o WITH (NOLOCK)
         LEFT JOIN hist h ON h.cid = LTRIM(RTRIM(o.Contract_ID))
         WHERE o.Start_Date BETWEEN DATEADD(DAY, ?, CAST(GETDATE() AS DATE))
                                AND DATEADD(DAY, ?, CAST(GETDATE() AS DATE))
             {agency_filter}
-        ORDER BY ISNULL(h.distinct_starts, 1) DESC, o.Start_Date ASC
     ''', -abs(lookback), lookahead)
+    return [dict(zip([c[0] for c in cursor.description], r)) for r in cursor.fetchall()]
 
-    columns = [c[0] for c in cursor.description]
-    rows = []
-    for row in cursor.fetchall():
-        r = dict(zip(columns, row))
-        for k in ('current_start', 'original_start', 'end_date'):
+
+def _vndly_rows(cursor, lookback, lookahead, include_affiliate):
+    """VNDLY work orders.
+
+    VNDLY records modifications explicitly, with a categorised reason, rather
+    than requiring snapshot inference — and unlike the B4 history it covers
+    affiliate vendors too.
+
+    The tradeoff: the work order carries [Original End Date] but there is no
+    Original Start Date anywhere in the VNDLY staging tables, so how far a
+    start slipped is NOT computable here. What is knowable is that a delayed
+    start was flagged and why. days_delayed is therefore null on this side and
+    move_count counts flagged delay events — a floor on real movement, not a
+    measured count. The UI must not present the two sides as the same measure.
+    """
+    vendor_filter = '' if include_affiliate else f'AND {VNDLY_GHR_PREDICATE}'
+    cursor.execute(f'''
+        WITH mods AS (
+            SELECT
+                WOSystemKey                                          AS wo,
+                SUM(CASE WHEN [Reason for Modification] LIKE 'Delayed Start%'
+                         THEN 1 ELSE 0 END)                          AS delay_events,
+                MAX(CASE WHEN [Reason for Modification] LIKE 'Delayed Start%'
+                         THEN [Reason for Modification] END)         AS delay_reason,
+                COUNT(*)                                             AS total_mods
+            FROM dbo.STAGING_VNDLY_WORKODER_MODIFICATIONS WITH (NOLOCK)
+            GROUP BY WOSystemKey
+        ),
+        jobs AS (
+            -- STAGING_VNDLY_JOBS holds ~664 rows over ~387 distinct [Job Id];
+            -- joining it raw fans work orders out, so collapse it first. The
+            -- key is the int [Job Id]; [JobSystemKey] is an nvarchar business
+            -- key ('CUH-3-294') and will not join.
+            SELECT [Job Id] AS job_id,
+                   MAX(TRY_CAST([Standard Hours Per Week] AS DECIMAL(10,2))) AS hours_per_week
+            FROM dbo.STAGING_VNDLY_JOBS WITH (NOLOCK)
+            GROUP BY [Job Id]
+        )
+        SELECT
+            'VNDLY'                                     AS source_system,
+            CAST(w.WOSystemKey AS NVARCHAR(50))          AS id,
+            LTRIM(RTRIM(ISNULL(w.[Contractor First Name], '') + ' ' + ISNULL(w.[Contractor Last Name], ''))) AS clinician,
+            w.[Health System]                            AS health_system,
+            COALESCE(w.[Default Work Site Name], w.[Job Site]) AS facility,
+            w.[Organization Unit]                        AS unit,
+            COALESCE(w.[Job Title], w.[Title])           AS role,
+            w.[Busines Unit - Name]                      AS program,
+            CASE WHEN {VNDLY_GHR_PREDICATE} THEN 'GHR' ELSE 'Affiliate' END AS source,
+            w.[Vendor Name]                              AS agency,
+            w.[Current Status]                           AS contract_status,
+            TRY_CAST(w.[Start Date] AS DATE)             AS current_start,
+            NULL                                         AS original_start,
+            TRY_CAST(w.[End Date] AS DATE)               AS end_date,
+            TRY_CAST(w.[Onboarded Date] AS DATE)         AS onboarded_date,
+            ISNULL(m.delay_events, 0)                    AS move_count,
+            -- The modifications feed exists for every work order, so no row
+            -- genuinely means no flagged delay (unlike B4, where a missing
+            -- history row means unmatched).
+            1                                            AS movement_tracked,
+            NULL                                         AS days_delayed,
+            DATEDIFF(DAY, CAST(GETDATE() AS DATE), TRY_CAST(w.[Start Date] AS DATE)) AS days_until_start,
+            CASE WHEN ISNULL(m.delay_events, 0) > 0 THEN 'Yes' ELSE 'No' END AS delayed_flag,
+            m.delay_reason                               AS delay_reason,
+            w.[Resource Manager]                         AS account_manager,
+            TRY_CAST(w.[Bill Rate] AS DECIMAL(10,2))     AS bill_rate,
+            j.hours_per_week                             AS hours_per_week
+        FROM dbo.STAGING_VNDLY_WORKORDERS w WITH (NOLOCK)
+        LEFT JOIN mods m ON m.wo = w.WOSystemKey
+        LEFT JOIN jobs j ON j.job_id = w.[Job Id]
+        WHERE TRY_CAST(w.[Start Date] AS DATE)
+                BETWEEN DATEADD(DAY, ?, CAST(GETDATE() AS DATE))
+                    AND DATEADD(DAY, ?, CAST(GETDATE() AS DATE))
+            {vendor_filter}
+    ''', -abs(lookback), lookahead)
+    return [dict(zip([c[0] for c in cursor.description], r)) for r in cursor.fetchall()]
+
+
+def _finalize(rows):
+    out = []
+    for r in rows:
+        for k in ('current_start', 'original_start', 'end_date', 'onboarded_date'):
             if r.get(k) is not None:
                 r[k] = r[k].isoformat() if hasattr(r[k], 'isoformat') else str(r[k])
-        for k in ('awarded_rate', 'hours_per_week'):
+        for k in ('bill_rate', 'hours_per_week'):
             if r.get(k) is not None:
                 r[k] = float(r[k])
 
@@ -109,13 +174,13 @@ def _onboarding_data(cursor, lookback, lookahead, include_affiliate):
         moves = r.get('move_count')
         delayed = r.get('days_delayed')
         status = (r.get('contract_status') or '')
+        cancelled = status in B4_CANCELLED_STATUSES or status in VNDLY_CANCELLED_STATUSES
 
         # Stage grouping, mirroring the four buckets the Onboarding view
         # renders. Untracked rows fall through to ON TRACK so they stay
-        # visible (the view only renders these four groups), but they carry
-        # movement_tracked=0 and null metrics so the UI shows "not tracked"
-        # rather than a confident zero.
-        if status in CANCELLED_STATUSES:
+        # visible, but carry movement_tracked=false and null metrics so the UI
+        # shows "not tracked" rather than a confident zero.
+        if cancelled:
             group = 'CANCELED'
         elif tracked and (delayed or 0) >= 7:
             group = 'DELAYED START'
@@ -123,11 +188,17 @@ def _onboarding_data(cursor, lookback, lookahead, include_affiliate):
             group = 'START DATE CHANGED'
         else:
             group = 'ON TRACK'
+
         r['group'] = group
         r['moved_multiple'] = bool(tracked and (moves or 0) >= 2)
         r['movement_tracked'] = tracked
-        rows.append(r)
-    return rows
+        # VNDLY knows a delay was flagged but not how far it slipped, so the
+        # two sides are not the same measure and the UI is told which it has.
+        r['delay_measure'] = 'days' if r.get('source_system') == 'B4' else 'flagged'
+        rate, hrs = r.get('bill_rate'), r.get('hours_per_week')
+        r['value_13wk'] = round(rate * hrs * 13, 2) if rate and hrs else None
+        out.append(r)
+    return out
 
 
 def main(req: func.HttpRequest) -> func.HttpResponse:
@@ -146,6 +217,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
     include_affiliate = str(req.params.get('includeAffiliate', '')).lower() in ('1', 'true', 'yes')
 
     conn = None
+    rows, errors = [], []
     try:
         conn = pyodbc.connect(
             f"DRIVER={{ODBC Driver 17 for SQL Server}};"
@@ -157,8 +229,26 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
         )
         cursor = conn.cursor()
         cursor.execute('SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED')
-        rows = _onboarding_data(cursor, lookback, lookahead, include_affiliate)
-        print(f"Onboarding: returning {len(rows)} rows (-{lookback}d/+{lookahead}d, affiliate={include_affiliate})")
+
+        # Unioned, not deduped — during the B4→VNDLY transition the two cover
+        # different workers, and once a system is cut over B4 stops producing
+        # rows for it. Same treatment GetFinancialData applies for RUMC, Holy
+        # Redeemer and Cooper.
+        for label, fn in (('B4', _b4_rows), ('VNDLY', _vndly_rows)):
+            try:
+                rows.extend(fn(cursor, lookback, lookahead, include_affiliate))
+            except Exception as e:
+                print(f"Onboarding: {label} branch failed: {e}")
+                import traceback
+                traceback.print_exc()
+                errors.append(f'{label}: {e}')
+
+        rows = _finalize(rows)
+        rows.sort(key=lambda r: (-(r.get('move_count') or 0), r.get('current_start') or ''))
+        b4n = sum(1 for r in rows if r['source_system'] == 'B4')
+        vnn = sum(1 for r in rows if r['source_system'] == 'VNDLY')
+        print(f"Onboarding: {len(rows)} rows (B4 {b4n}, VNDLY {vnn}; -{lookback}d/+{lookahead}d, "
+              f"affiliate={include_affiliate}; errors: {errors or 'none'})")
         return func.HttpResponse(
             json.dumps(rows, default=str),
             mimetype="application/json",
