@@ -75,6 +75,7 @@ def _b4_rows(cursor, lookback, lookahead, include_affiliate):
             o.Delayed_Starts_Reasons                    AS delay_reason,
             o.Account_Manager                           AS account_manager,
             TRY_CAST(o.Awarded_Rate AS DECIMAL(10,2))   AS bill_rate,
+            TRY_CAST(o.Pay_Rate AS DECIMAL(10,2))       AS pay_rate,
             TRY_CAST(o.Hours_per_Peek AS DECIMAL(10,2)) AS hours_per_week
         FROM dhc.B4HealthOrder o WITH (NOLOCK)
         LEFT JOIN hist h ON h.cid = LTRIM(RTRIM(o.Contract_ID))
@@ -149,6 +150,7 @@ def _vndly_rows(cursor, lookback, lookahead, include_affiliate):
             m.delay_reason                               AS delay_reason,
             w.[Resource Manager]                         AS account_manager,
             TRY_CAST(w.[Bill Rate] AS DECIMAL(10,2))     AS bill_rate,
+            TRY_CAST(w.[Pay Rate] AS DECIMAL(10,2))      AS pay_rate,
             j.hours_per_week                             AS hours_per_week
         FROM dbo.STAGING_VNDLY_WORKORDERS w WITH (NOLOCK)
         LEFT JOIN mods m ON m.wo = w.WOSystemKey
@@ -167,9 +169,13 @@ def _finalize(rows):
         for k in ('current_start', 'original_start', 'end_date', 'onboarded_date'):
             if r.get(k) is not None:
                 r[k] = r[k].isoformat() if hasattr(r[k], 'isoformat') else str(r[k])
-        for k in ('bill_rate', 'hours_per_week'):
+        for k in ('bill_rate', 'pay_rate', 'hours_per_week'):
             if r.get(k) is not None:
                 r[k] = float(r[k])
+        # See note above: this is the MSP fee split, not gross margin.
+        bill, pay = r.get('bill_rate'), r.get('pay_rate')
+        r['agency_receipt_pct'] = round(pay / bill * 100, 1) if bill and pay and bill > 0 else None
+        r['margin_pct'] = None
 
         # VNDLY writes the same reason several ways ('Terminated - attendance'
         # vs 'Terminated-attendance'), which would split one reason across two

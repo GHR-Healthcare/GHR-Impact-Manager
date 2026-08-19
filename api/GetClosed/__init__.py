@@ -59,6 +59,7 @@ def _b4_rows(cursor, lookback):
             o.Account_Manager                           AS account_manager,
             CAST(o.Start_Date AS DATE)                  AS start_date,
             TRY_CAST(o.Awarded_Rate AS DECIMAL(10,2))   AS bill_rate,
+            TRY_CAST(o.Pay_Rate AS DECIMAL(10,2))       AS pay_rate,
             TRY_CAST(o.Hours_per_Peek AS DECIMAL(10,2)) AS hours_per_week
         FROM dhc.B4HealthOrder o WITH (NOLOCK)
         LEFT JOIN hist_close hc ON hc.cid = LTRIM(RTRIM(o.Contract_ID))
@@ -109,6 +110,7 @@ def _vndly_rows(cursor, lookback):
             w.[Resource Manager]                          AS account_manager,
             TRY_CAST(w.[Start Date] AS DATE)              AS start_date,
             TRY_CAST(w.[Bill Rate] AS DECIMAL(10,2))      AS bill_rate,
+            TRY_CAST(w.[Pay Rate] AS DECIMAL(10,2))       AS pay_rate,
             NULL                                          AS hours_per_week,
             CASE WHEN TRY_CAST(w.[Onboarded Date] AS DATE) IS NOT NULL THEN 1 ELSE 0 END AS converted
         FROM dbo.STAGING_VNDLY_WORKORDERS w WITH (NOLOCK)
@@ -178,9 +180,13 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             for k in ('closed_on', 'start_date'):
                 if r.get(k) is not None and hasattr(r[k], 'isoformat'):
                     r[k] = r[k].isoformat()
-            for k in ('bill_rate', 'hours_per_week'):
+            for k in ('bill_rate', 'pay_rate', 'hours_per_week'):
                 if r.get(k) is not None:
                     r[k] = float(r[k])
+            # See note in GetExtensions: MSP fee split, not gross margin.
+            bill, pay = r.get('bill_rate'), r.get('pay_rate')
+            r['agency_receipt_pct'] = round(pay / bill * 100, 1) if bill and pay and bill > 0 else None
+            r['margin_pct'] = None
             rate, hrs = r.get('bill_rate'), r.get('hours_per_week')
             r['value_13wk'] = round(rate * hrs * 13, 2) if rate and hrs else None
 

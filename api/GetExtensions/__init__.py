@@ -63,6 +63,7 @@ def _b4_rows(cursor, horizon, include_affiliate):
             o.Hiring_Manager                            AS hiring_manager,
             o.Cost_Center                               AS cost_center,
             TRY_CAST(o.Awarded_Rate AS DECIMAL(10,2))   AS bill_rate,
+            TRY_CAST(o.Pay_Rate AS DECIMAL(10,2))       AS pay_rate,
             TRY_CAST(o.Hours_per_Peek AS DECIMAL(10,2)) AS hours_per_week,
             -- B4 has no "original end date", so an extension is only visible
             -- through the parent-contract chain.
@@ -140,6 +141,7 @@ def _vndly_rows(cursor, horizon, include_affiliate):
             w.[Hiring Manager]                           AS hiring_manager,
             NULL                                         AS cost_center,
             TRY_CAST(w.[Bill Rate] AS DECIMAL(10,2))     AS bill_rate,
+            TRY_CAST(w.[Pay Rate] AS DECIMAL(10,2))      AS pay_rate,
             j.hours_per_week                             AS hours_per_week,
             -- An end date past the original is an extension, full stop.
             CASE WHEN TRY_CAST(w.[End Date] AS DATE) > TRY_CAST(w.[Original End Date] AS DATE)
@@ -184,9 +186,18 @@ def _serialize(rows):
         for k in ('start_date', 'end_date'):
             if r.get(k) is not None:
                 r[k] = r[k].isoformat() if hasattr(r[k], 'isoformat') else str(r[k])
-        for k in ('bill_rate', 'hours_per_week'):
+        for k in ('bill_rate', 'pay_rate', 'hours_per_week'):
             if r.get(k) is not None:
                 r[k] = float(r[k])
+        # NOT gross margin. B4's Pay_Rate is a fixed share of Awarded_Rate —
+        # 11,170 awarded rows sit at exactly 95% and 5,177 at 93% — so this is
+        # the MSP vendor fee tier, i.e. what the agency receives after the MSP
+        # cut, not what the clinician is paid. Real margin needs clinician pay,
+        # which lives in Bullhorn and is not joined on the MSP path. Exposed
+        # under its own name so nothing downstream mistakes it for margin.
+        bill, pay = r.get('bill_rate'), r.get('pay_rate')
+        r['agency_receipt_pct'] = round(pay / bill * 100, 1) if bill and pay and bill > 0 else None
+        r['margin_pct'] = None
         rate, hrs = r.get('bill_rate'), r.get('hours_per_week')
         # 13-week forward value of the seat if it extends. Left null rather
         # than assuming a standard week when hours aren't known.

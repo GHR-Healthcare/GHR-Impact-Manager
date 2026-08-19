@@ -1357,6 +1357,7 @@ function adaptExtensions(rows){
       end: fmtDate(r.end_date),
       days: r.days_left,
       value: fmtMoneyK(r.extension_value_13wk),
+      margin: r.margin_pct != null ? `${r.margin_pct}%` : '—',
       status: 'No Decision',
       pmName: titleize(r.account_manager),
       recruiterName: titleize(r.hiring_manager),
@@ -1419,6 +1420,7 @@ function adaptOnboarding(rows){
             : !tracked ? 'Start-date history not tracked for this agency'
             : flaggedOnly ? 'No delay flagged on this work order'
             : (r.delayed_flag === 'Yes' ? 'Delay flagged, reason not recorded' : 'No delay recorded'),
+      margin: r.margin_pct != null ? `${r.margin_pct}%` : '—',
       moveCount: tracked ? moves : '—',
       movementTracked: tracked,
       owner: titleize(r.account_manager),
@@ -1475,7 +1477,9 @@ function adaptOpen(rows){
       pos: r.num_positions || 1,
       rate: isFinite(rate) && rate > 0 ? `$${rate.toFixed(0)}/hr` : '—',
       days,
-      margin: '—',
+      // An unplaced req has no pay rate, so there is no actual margin to show.
+      // This is the configured target, marked with ~ so it never reads as measured.
+      margin: APP_CONFIG.defaultMargin ? `~${Math.round(Number(APP_CONFIG.defaultMargin))}%` : '—',
       impact: '—',
       active: `${ghrSubs} / ${avSubs}`,
       declines: `${ghrDec} / ${avDec}`,
@@ -1525,6 +1529,7 @@ function adaptClosed(payload){
       outcome: OUTCOME_LABEL[r.group] || r.group,
       winner: titleize(r.agency),
       rate: r.bill_rate ? `$${Number(r.bill_rate).toFixed(0)}/hr` : '—',
+      margin: r.margin_pct != null ? `${r.margin_pct}%` : '—',
       rank: '—',
       rankTone: '',
       impact: r.value_13wk ? fmtMoneyK(r.value_13wk) : '—',
@@ -1722,7 +1727,7 @@ async function loadAllData(){
    ──────────────────────────────────────────────────────────────────────── */
 const API_BASE_URL = '/api';
 
-let APP_CONFIG = { appVersion: '2.4.0', dataSource: 'msp', otherInstanceUrl: '', otherInstanceLabel: 'Non-MSP' };
+let APP_CONFIG = { appVersion: '2.4.0', dataSource: 'msp', otherInstanceUrl: '', otherInstanceLabel: 'Non-MSP', defaultMargin: null };
 let currentUserName = '';
 
 function revealApp(){ const el=document.getElementById('appRoot'); if(el) el.style.visibility='visible'; }
