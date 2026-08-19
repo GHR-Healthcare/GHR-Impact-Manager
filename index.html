@@ -21,7 +21,7 @@ button{cursor:pointer}
 .brand{display:flex;gap:11px;align-items:flex-start}
 .brand svg{width:29px;height:29px;margin-top:2px}
 .brand-title{display:flex;align-items:center;gap:10px}.brand h1{margin:0;font-size:28px;line-height:1;font-weight:820;letter-spacing:-.5px}.msp{font-size:11px;color:#374fd0;background:#e9edff;border:1px solid #ced7ff;border-radius:999px;padding:4px 10px;font-weight:800}.version{font-size:11px;color:#76859a;font-weight:650}.subtitle{margin-top:7px;font-size:14px;color:#5d6f87}
-.top-actions{display:flex;align-items:center;gap:8px}.top-btn{height:36px;padding:0 12px;border:1px solid var(--line);background:#fff;border-radius:7px;color:#53627a;display:inline-flex;align-items:center;gap:7px;box-shadow:var(--shadow);font-weight:650}.top-btn.primary{color:#304bc3;background:#f5f7ff;border-color:#cbd5ff}.top-btn.icon{width:38px;padding:0;justify-content:center}.dot{width:7px;height:7px;border-radius:50%;display:inline-block}.dot.green{background:var(--green)}
+.top-actions{display:flex;align-items:center;gap:8px}.top-btn{height:36px;padding:0 12px;border:1px solid var(--line);background:#fff;border-radius:7px;color:#53627a;display:inline-flex;align-items:center;gap:7px;box-shadow:var(--shadow);font-weight:650}.top-btn.primary{color:#304bc3;background:#f5f7ff;border-color:#cbd5ff}.top-btn.icon{width:38px;padding:0;justify-content:center}.dot{width:7px;height:7px;border-radius:50%;display:inline-block}.dot.green{background:var(--green)}.dot.red{background:var(--red)}
 .main{padding:0 14px 18px}
 .filters{display:grid;grid-template-columns:150px 160px 165px 160px 165px 80px 80px auto;gap:10px;align-items:end;justify-content:end;margin:0 0 12px}
 .field label{display:block;font-size:10.5px;font-weight:850;color:#5c6e85;letter-spacing:.45px;margin:0 0 5px 2px}.field select,.field input{width:100%;height:39px;border:1px solid #c8d3e1;border-radius:7px;background:#fff;color:#273951;padding:0 11px;outline:none;font-size:13px}.search-wrap{position:relative}.search-wrap input{padding-left:31px}.search-wrap span{position:absolute;left:10px;top:28px;color:#9aa7b8;font-size:13px}.filter-actions{display:flex;align-items:end;gap:8px}.square{height:39px;min-width:42px;border:0;border-radius:7px;color:#fff;font-weight:900}.square.orange{background:#f15a0a}.square.indigo{background:#4338ca}.square.navy{background:#273b57}.square.purple{background:#8b2be2}
@@ -228,13 +228,13 @@ button{cursor:pointer}
 </style>
 </head>
 <body>
-<div class="app">
+<div class="app" id="appRoot" style="visibility:hidden">
   <header class="topbar">
     <div class="brand">
       <svg viewBox="0 0 24 24" fill="none"><path d="M2 12h4l3-8 4 16 3-8h6" stroke="#2563eb" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-      <div><div class="brand-title"><h1>GHR Impact Manager</h1><span class="msp">MSP</span><span class="version">v2.4.0</span></div><div class="subtitle">Account Performance Workspace</div></div>
+      <div><div class="brand-title"><h1>GHR Impact Manager</h1><span class="msp">MSP</span><span class="version" id="versionDisplay">v…</span></div><div class="subtitle">Account Performance Workspace</div></div>
     </div>
-    <div class="top-actions"><button class="top-btn meeting-start" id="startImpactMeeting">▶ Start IMPACT Meeting</button><button class="top-btn"><span class="dot green"></span>Connected</button><button class="top-btn primary">⇆ View Non-MSP</button><button class="top-btn icon">⚙</button><button class="top-btn">♙ dmatteson@ghrhealthcare…</button><button class="top-btn icon">↪</button></div>
+    <div class="top-actions"><button class="top-btn meeting-start" id="startImpactMeeting">▶ Start IMPACT Meeting</button><button class="top-btn" id="connectionStatus"><span class="dot green" id="connectionDot"></span>Connected</button><button class="top-btn primary" id="instanceToggle">⇆ View Non-MSP</button><button class="top-btn icon">⚙</button><button class="top-btn" id="currentUserDisplay">♙ …</button><button class="top-btn icon" id="logoutBtn" title="Sign out">↪</button></div>
   </header>
 
   <main class="main">
@@ -691,7 +691,106 @@ document.getElementById('createEmailDraft').addEventListener('click',()=>{meetin
 document.addEventListener('click',e=>{if(e.target.closest('[data-complete-stage]')){completeMeetingStage();return}if(e.target.closest('[data-stage-summary]')){const i=meetingStages.findIndex(s=>s.view===activeView);openStageOverview(i>=0?i:meetingState.stage);return}if(e.target.closest('[data-next-meeting]')){completeMeetingStage();return}if(e.target.closest('[data-end-meeting]')){endMeeting();return}});
 ['search','system','facility','category','specialty','minAge','maxAge'].forEach(id=>document.getElementById(id).addEventListener(id==='search'||id==='minAge'||id==='maxAge'?'input':'change',render));
 function toast(msg){const t=document.getElementById('toast');t.textContent=msg;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),2200)}
-render();
+/* ────────────────────────────────────────────────────────────────────────
+   Bootstrap: instance routing, auth, config.
+
+   Both Static Web Apps deploy from main off the same index.html; the only
+   thing that distinguishes them is DATA_SOURCE, surfaced by /api/get-config.
+   This build is the MSP workspace, so a non-MSP instance is handed straight
+   back to legacy.html (the previous UI) until non-MSP migrates too.
+
+   The app root stays visibility:hidden until that decision is made, so
+   non-MSP users never see a frame of the MSP workspace before redirecting.
+   ──────────────────────────────────────────────────────────────────────── */
+const API_BASE_URL = '/api';
+
+let APP_CONFIG = { appVersion: '2.4.0', dataSource: 'msp', otherInstanceUrl: '', otherInstanceLabel: 'Non-MSP' };
+let currentUserName = '';
+
+function revealApp(){ const el=document.getElementById('appRoot'); if(el) el.style.visibility='visible'; }
+
+function setConnectionState(ok, detail){
+  const btn=document.getElementById('connectionStatus');
+  const dot=document.getElementById('connectionDot');
+  if(!btn||!dot) return;
+  btn.lastChild.textContent = ok ? 'Connected' : 'Offline';
+  btn.title = detail || (ok ? 'Backend reachable' : 'Backend unreachable');
+  dot.className = 'dot ' + (ok ? 'green' : 'red');
+}
+
+async function loadConfig(){
+  const resp = await fetch(`${API_BASE_URL}/get-config`);
+  if(!resp.ok) throw new Error(`get-config ${resp.status}`);
+  return resp.json();
+}
+
+async function loadAzureUser(){
+  try{
+    const resp = await fetch('/.auth/me');
+    if(!resp.ok) return null;
+    const data = await resp.json();
+    const email = data?.clientPrincipal?.userDetails;
+    if(!email) return null;
+    currentUserName = email;
+    const el = document.getElementById('currentUserDisplay');
+    if(el){
+      el.textContent = '♙ ' + email;
+      el.title = 'Signed in as ' + email;
+    }
+    return email;
+  }catch(e){ return null; }
+}
+
+function applyConfig(cfg){
+  APP_CONFIG = { ...APP_CONFIG, ...cfg };
+  const v = document.getElementById('versionDisplay');
+  if(v && APP_CONFIG.appVersion) v.textContent = 'v' + APP_CONFIG.appVersion;
+  const toggle = document.getElementById('instanceToggle');
+  if(toggle){
+    const label = APP_CONFIG.otherInstanceLabel || 'Non-MSP';
+    toggle.textContent = '⇆ View ' + label;
+    if(APP_CONFIG.otherInstanceUrl){
+      toggle.onclick = () => { window.location.href = APP_CONFIG.otherInstanceUrl; };
+    }else{
+      toggle.style.display = 'none';
+    }
+  }
+}
+
+async function boot(){
+  document.getElementById('logoutBtn')?.addEventListener('click', () => {
+    window.location.href = '/.auth/logout';
+  });
+
+  let cfg = null;
+  try{
+    cfg = await loadConfig();
+  }catch(e){
+    // Backend unreachable. Render the workspace anyway rather than showing a
+    // dead page — the meeting flow is still navigable, just not live.
+    console.error('Config load failed:', e);
+    setConnectionState(false, 'Could not reach /api/get-config');
+    applyConfig({});
+    revealApp();
+    render();
+    return;
+  }
+
+  // Non-MSP instance: hand back to the previous UI before painting anything.
+  if((cfg.dataSource || 'msp') === 'non_msp'){
+    window.location.replace('/legacy.html');
+    return;
+  }
+
+  applyConfig(cfg);
+  setConnectionState(true);
+  document.title = 'GHR Impact Manager — MSP';
+  loadAzureUser();
+  revealApp();
+  render();
+}
+
+boot();
 </script>
 </body>
 </html>
