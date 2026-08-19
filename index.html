@@ -1665,6 +1665,33 @@ window.addEventListener('beforeunload', () => {
   navigator.sendBeacon?.(`${API_BASE_URL}/workspace-state`, new Blob([batch], {type:'application/json'}));
 });
 
+// Assignment snapshot.
+//
+// Neither VMS records how far a start moved or how many times, so the
+// Onboarding movement tiles have nothing to compute against. This captures
+// one row per assignment per day; once a start date differs between two
+// captures the movement becomes measurable.
+//
+// Forward-only — the first numbers appear the day after a start actually
+// moves. Fired once per day per browser: the endpoint is idempotent on
+// (entity, date), so a duplicate call is harmless, but there is no reason to
+// re-run it on every page view.
+async function ensureDailySnapshot(){
+  const key = 'ghr_snapshot_day';
+  const today = new Date().toISOString().slice(0, 10);
+  if(localStorage.getItem(key) === today) return;
+  try{
+    const status = await getJSON('/snapshot-assignments');
+    if(!status.capturedToday){
+      await fetch(`${API_BASE_URL}/snapshot-assignments`, { method: 'POST' });
+    }
+    localStorage.setItem(key, today);
+  }catch(e){
+    // Never block the workspace on this — it is background instrumentation.
+    console.error('snapshot skipped:', e);
+  }
+}
+
 async function loadWorkspaceState(){
   try{
     const saved = await getJSON('/workspace-state');
@@ -1764,6 +1791,7 @@ async function loadAllData(){
 
   results.forEach(r => { if(r.status === 'rejected') console.error('data load:', r.reason); });
   if(!(await loadWorkspaceState())) failed.push('saved changes');
+  ensureDailySnapshot();          // fire and forget
   DATA_READY = true;
   return failed;
 }
