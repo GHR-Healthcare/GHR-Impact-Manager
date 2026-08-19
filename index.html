@@ -228,6 +228,10 @@ button{cursor:pointer}
 </style>
 <script src="https://cdn.tailwindcss.com"></script>
 <script src="https://unpkg.com/lucide@latest"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script src="https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
 <script src="/report-views.js" defer></script>
 </head>
 <body>
@@ -1349,6 +1353,16 @@ const REPORT_SOURCES = {
   financials: [['/financial-data', 'financialData']],
   contracts:  [['/contracts-comparison', 'contractsComparison'], ['/reviewed-contracts', 'reviewedContracts']],
 };
+
+// Each renderer short-circuits to a spinner on its own *Loaded flag rather
+// than checking whether the data is there, so the flag has to be set too or
+// the view spins forever with the payload sitting right next to it.
+const REPORT_FLAGS = {
+  trend:      ['trendLoaded', 'hoursLoaded'],
+  perdiem:    ['perDiemLoaded'],
+  financials: [],
+  contracts:  ['contractsLoaded'],
+};
 const _reportLoaded = new Set();
 
 async function ensureReportData(view){
@@ -1367,6 +1381,7 @@ async function ensureReportData(view){
       console.error(`report data ${sources[i][0]} failed:`, r.reason);
     }
   });
+  (REPORT_FLAGS[view] || []).forEach(f => { patch[f] = true; });
   window.ReportViews.setState({ ...patch, dataSource: APP_CONFIG.dataSource });
   _reportLoaded.add(view);
   return results.every(r => r.status === 'fulfilled');
