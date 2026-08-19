@@ -22,28 +22,20 @@ VNDLY_CANCELLED_STATUSES = ('Rejected', 'Withdrawn', 'Offer Declined', 'Ended in
 
 
 def _b4_rows(cursor, lookback, lookahead, include_affiliate):
-    """B4 seats. Movement is reconstructed from dbo.HIST_B4HealthOrder, which
-    snapshots each contract per warehouse load (RUN_ID). DISTINCT Start_Date
-    per Contract_ID gives the move count; earliest snapshot vs current gives
-    how far it slipped.
+    """B4 seats in the window.
 
-    That history comes from Bullhorn placement matching and Bullhorn is GHR's
-    own ATS, so it is GHR-only: measured over this window it covers 97% of GHR
-    seats but under 5% of affiliate ones. Where it is absent, movement is
-    unknown — never zero.
+    B4 records whether a start was delayed and why — Delayed_Starts plus
+    Delayed_Starts_Reasons (Health System Request, Vendor/Contractor Request,
+    Compliance Incomplete) — natively, with no Bullhorn dependency.
+
+    It does not record how far a start slipped or how many times it moved.
+    That previously came from HIST_B4HealthOrder, which is populated by
+    Bullhorn placement matching; MSP reads B4 and VNDLY only, so day-count and
+    move-count return null rather than being reconstructed from a
+    Bullhorn-sourced table.
     """
     agency_filter = '' if include_affiliate else f'AND {B4_GHR_PREDICATE}'
     cursor.execute(f'''
-        WITH hist AS (
-            SELECT
-                LTRIM(RTRIM(Contract_ID))   AS cid,
-                COUNT(DISTINCT Start_Date)  AS distinct_starts,
-                MIN(Start_Date)             AS first_start,
-                MAX(Start_Date)             AS last_start
-            FROM dbo.HIST_B4HealthOrder WITH (NOLOCK)
-            WHERE Start_Date IS NOT NULL
-            GROUP BY LTRIM(RTRIM(Contract_ID))
-        )
         SELECT
             'B4'                                        AS source_system,
             LTRIM(RTRIM(o.Contract_ID))                 AS id,
@@ -57,7 +49,7 @@ def _b4_rows(cursor, lookback, lookahead, include_affiliate):
             o.Agency                                    AS agency,
             o.Contract_Status                           AS contract_status,
             CAST(o.Start_Date AS DATE)                  AS current_start,
-            CAST(h.first_start AS DATE)                 AS original_start,
+            NULL                                        AS original_start,
             CAST(o.End_Date AS DATE)                    AS end_date,
             NULL                                        AS onboarded_date,
             CASE WHEN h.cid IS NULL THEN NULL ELSE
@@ -68,7 +60,7 @@ def _b4_rows(cursor, lookback, lookahead, include_affiliate):
                 -- otherwise very recent slips read as "on track".
                 + CASE WHEN o.Start_Date <> h.last_start THEN 1 ELSE 0 END
             END                                         AS move_count,
-            CASE WHEN h.cid IS NULL THEN 0 ELSE 1 END   AS movement_tracked,
+            CASE WHEN o.Delayed_Starts = 'Yes' THEN 1 ELSE 0 END AS delay_flagged,
             DATEDIFF(DAY, h.first_start, o.Start_Date)  AS days_delayed,
             DATEDIFF(DAY, CAST(GETDATE() AS DATE), o.Start_Date) AS days_until_start,
             o.Delayed_Starts                            AS delayed_flag,
@@ -78,7 +70,6 @@ def _b4_rows(cursor, lookback, lookahead, include_affiliate):
             TRY_CAST(o.Pay_Rate AS DECIMAL(10,2))       AS pay_rate,
             TRY_CAST(o.Hours_per_Peek AS DECIMAL(10,2)) AS hours_per_week
         FROM dhc.B4HealthOrder o WITH (NOLOCK)
-        LEFT JOIN hist h ON h.cid = LTRIM(RTRIM(o.Contract_ID))
         WHERE o.Start_Date BETWEEN DATEADD(DAY, ?, CAST(GETDATE() AS DATE))
                                AND DATEADD(DAY, ?, CAST(GETDATE() AS DATE))
             {agency_filter}
@@ -147,6 +138,7 @@ def _vndly_rows(cursor, lookback, lookahead, include_affiliate):
             NULL                                         AS days_delayed,
             DATEDIFF(DAY, CAST(GETDATE() AS DATE), TRY_CAST(w.[Start Date] AS DATE)) AS days_until_start,
             CASE WHEN ISNULL(m.delay_events, 0) > 0 THEN 'Yes' ELSE 'No' END AS delayed_flag,
+            CASE WHEN ISNULL(m.delay_events, 0) > 0 THEN 1 ELSE 0 END AS delay_flagged,
             m.delay_reason                               AS delay_reason,
             w.[Resource Manager]                         AS account_manager,
             TRY_CAST(w.[Bill Rate] AS DECIMAL(10,2))     AS bill_rate,
@@ -188,7 +180,9 @@ def _finalize(rows):
         else:
             r['delay_category'] = 'Delayed Start' if (r.get('delayed_flag') == 'Yes') else None
 
-        tracked = bool(r.get('movement_tracked'))
+        # Both VMSs say whether a start slipped and why; neither says by how
+        # much or how many times. Grouping keys off the flag they do record.
+        flagged = bool(r.get('delay_flagged'))
         moves = r.get('move_count')
         delayed = r.get('days_delayed')
         status = (r.get('contract_status') or '')
@@ -200,16 +194,15 @@ def _finalize(rows):
         # shows "not tracked" rather than a confident zero.
         if cancelled:
             group = 'CANCELED'
-        elif tracked and (delayed or 0) >= 7:
+        elif flagged:
             group = 'DELAYED START'
-        elif tracked and (moves or 0) > 0:
-            group = 'START DATE CHANGED'
         else:
             group = 'ON TRACK'
 
         r['group'] = group
-        r['moved_multiple'] = bool(tracked and (moves or 0) >= 2)
-        r['movement_tracked'] = tracked
+        r['moved_multiple'] = False
+        r['movement_tracked'] = False
+        r['delay_flagged'] = flagged
         # VNDLY knows a delay was flagged but not how far it slipped, so the
         # two sides are not the same measure and the UI is told which it has.
         r['delay_measure'] = 'days' if r.get('source_system') == 'B4' else 'flagged'
