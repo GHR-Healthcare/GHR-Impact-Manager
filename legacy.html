@@ -95,6 +95,13 @@
       visibility: visible;
     }
   </style>
+<style>/* embed-mode */
+body.embedded{padding:0!important;height:auto!important;overflow:visible!important}
+body.embedded header,
+body.embedded #kpiContainer,
+body.embedded #legendContainer{display:none!important}
+body.embedded .embed-host{padding:0!important}
+</style>
 </head>
 
 <body class="bg-slate-50 text-slate-800 min-h-screen w-full p-2 sm:p-6 flex flex-col overflow-x-hidden overflow-y-auto md:h-screen md:overflow-hidden">
@@ -11147,5 +11154,28 @@
         }
     };
   </script>
+<script>/* embed-mode */
+// Rendered inside the meeting workspace as an iframe. Hides this app's own
+// chrome and pins it to a single view, so the four reporting tabs keep being
+// served by the code that already renders them correctly rather than being
+// re-implemented against a different store and design system.
+(function(){
+  var q = new URLSearchParams(location.search);
+  if(q.get('embed') !== '1') return;
+  document.documentElement.classList.add('embedded');
+  document.body.classList.add('embedded');
+  var view = q.get('view');
+  var apply = function(){
+    if(!window.store || !window.store.dispatch) return false;
+    if(view) window.store.dispatch('SET_VIEW', view);
+    return true;
+  };
+  // The store is built during the app's own boot, so retry briefly.
+  var tries = 0;
+  var t = setInterval(function(){
+    if(apply() || ++tries > 100) clearInterval(t);
+  }, 100);
+})();
+</script>
 </body>
 </html>
