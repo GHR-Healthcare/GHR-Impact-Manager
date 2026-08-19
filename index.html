@@ -846,34 +846,43 @@ function adaptExtensions(rows){
 /* ---- Onboarding ------------------------------------------------------- */
 function adaptOnboarding(rows){
   return (rows||[]).map(r => {
-    const moves = r.move_count || 0;
-    const delayed = r.days_delayed || 0;
+    // Movement history comes from Bullhorn placement matching, so it covers
+    // GHR seats but almost no affiliate ones. When it's absent the answer is
+    // "unknown", never "zero" — a fabricated 0 moves reads as a clean start.
+    const tracked = r.movement_tracked !== false && r.move_count != null;
+    const moves = tracked ? (r.move_count || 0) : null;
+    const delayed = tracked ? (r.days_delayed || 0) : null;
     return {
       id: r.id,
       g: r.group,
       candidate: titleize(r.clinician),
       sys: [r.health_system, r.facility, r.unit].filter(Boolean).join(' · '),
       source: r.source,
-      scheduled: fmtDate(r.original_start),
+      scheduled: tracked ? fmtDate(r.original_start) : '—',
       current: fmtDate(r.current_start),
-      variance: delayed > 0 ? `+${delayed} days` : delayed < 0 ? `${delayed} days` : 'On schedule',
+      variance: !tracked ? 'Not tracked'
+              : delayed > 0 ? `+${delayed} days` : delayed < 0 ? `${delayed} days` : 'On schedule',
       status: r.group === 'CANCELED' ? 'Canceled'
             : r.group === 'DELAYED START' ? 'Delayed'
             : r.group === 'START DATE CHANGED' ? 'Moved' : 'On Track',
       officialStartState: titleize(r.contract_status),
       delayCategory: titleize(r.delay_reason) !== '—' ? titleize(r.delay_reason) : 'Not categorized',
       reason: titleize(r.delay_reason) !== '—' ? titleize(r.delay_reason)
+            : !tracked ? 'Start-date history not tracked for this agency'
             : (r.delayed_flag === 'Yes' ? 'Delay flagged, reason not recorded' : 'No delay recorded'),
-      moveCount: moves,
+      moveCount: tracked ? moves : '—',
+      movementTracked: tracked,
       owner: titleize(r.account_manager),
       nextOwner: `PM · ${titleize(r.account_manager)}`,
-      nextStep: moves >= 2
+      nextStep: !tracked
+        ? 'Confirm start date directly — no movement history for this agency'
+        : moves >= 2
         ? 'Repeat start movement — escalate with the client before reconfirming'
         : 'Reconfirm start date with clinician and facility',
       revenue: fmtMoneyK((r.awarded_rate||0) * (r.hours_per_week||0) * 13),
       // The endpoint returns aggregate movement, not a per-change log; the
       // detail timeline shows the endpoints of the slip instead of every hop.
-      moves: moves > 0
+      moves: (tracked && moves > 0)
         ? [[fmtShortDate(r.original_start), `${fmtShortDate(r.original_start)} → ${fmtShortDate(r.current_start)}`, `${moves} change${moves===1?'':'s'} recorded`]]
         : [],
       _raw: r,

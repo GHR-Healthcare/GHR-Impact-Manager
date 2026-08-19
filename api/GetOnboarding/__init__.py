@@ -62,14 +62,20 @@ def _onboarding_data(cursor, lookback, lookahead, include_affiliate):
             CAST(o.Start_Date AS DATE)                  AS current_start,
             CAST(h.first_start AS DATE)                 AS original_start,
             CAST(o.End_Date AS DATE)                    AS end_date,
-            -- distinct_starts counts values seen in history, so moves =
-            -- values - 1. History only covers snapshots taken so far, so a
-            -- start changed since the last load shows as a single distinct
-            -- value that no longer matches the live row — count that as one
-            -- more move, otherwise very recent slips read as "on track".
-            (ISNULL(h.distinct_starts, 1) - 1)
-                + CASE WHEN h.last_start IS NOT NULL AND o.Start_Date <> h.last_start
-                       THEN 1 ELSE 0 END                AS move_count,
+            -- HIST_B4HealthOrder is populated from Bullhorn placement
+            -- matching, and Bullhorn is GHR's own ATS — so history exists for
+            -- ~97% of GHR seats but only ~5% of affiliate ones. Without a
+            -- history row, movement is UNKNOWN, not zero; reporting 0 would
+            -- hand back a clean bill of health we can't support.
+            CASE WHEN h.cid IS NULL THEN NULL ELSE
+                (h.distinct_starts - 1)
+                -- History only covers loads taken so far, so a start changed
+                -- since the last load shows as a single distinct value that no
+                -- longer matches the live row — count that as one more move,
+                -- otherwise very recent slips read as "on track".
+                + CASE WHEN o.Start_Date <> h.last_start THEN 1 ELSE 0 END
+            END                                         AS move_count,
+            CASE WHEN h.cid IS NULL THEN 0 ELSE 1 END   AS movement_tracked,
             -- Positive = slipped later. Negative = pulled earlier.
             DATEDIFF(DAY, h.first_start, o.Start_Date)  AS days_delayed,
             DATEDIFF(DAY, CAST(GETDATE() AS DATE), o.Start_Date) AS days_until_start,
@@ -99,21 +105,27 @@ def _onboarding_data(cursor, lookback, lookahead, include_affiliate):
             if r.get(k) is not None:
                 r[k] = float(r[k])
 
-        moves = r.get('move_count') or 0
-        delayed = r.get('days_delayed') or 0
+        tracked = bool(r.get('movement_tracked'))
+        moves = r.get('move_count')
+        delayed = r.get('days_delayed')
         status = (r.get('contract_status') or '')
 
-        # Stage grouping, mirroring the four buckets the Onboarding view renders.
+        # Stage grouping, mirroring the four buckets the Onboarding view
+        # renders. Untracked rows fall through to ON TRACK so they stay
+        # visible (the view only renders these four groups), but they carry
+        # movement_tracked=0 and null metrics so the UI shows "not tracked"
+        # rather than a confident zero.
         if status in CANCELLED_STATUSES:
             group = 'CANCELED'
-        elif delayed >= 7:
+        elif tracked and (delayed or 0) >= 7:
             group = 'DELAYED START'
-        elif moves > 0:
+        elif tracked and (moves or 0) > 0:
             group = 'START DATE CHANGED'
         else:
             group = 'ON TRACK'
         r['group'] = group
-        r['moved_multiple'] = moves >= 2
+        r['moved_multiple'] = bool(tracked and (moves or 0) >= 2)
+        r['movement_tracked'] = tracked
         rows.append(r)
     return rows
 
