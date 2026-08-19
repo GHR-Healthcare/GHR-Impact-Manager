@@ -42,21 +42,6 @@ def _b4_rows(cursor, horizon, include_affiliate):
     status_list = ', '.join("'" + s.replace("'", "''") + "'" for s in B4_EXCLUDED_STATUSES)
     agency_filter = '' if include_affiliate else f'AND {B4_GHR_PREDICATE}'
     cursor.execute(f'''
-        WITH bh AS (
-            -- Real gross margin. B4's own Pay_Rate is an MSP fee tier (11,170
-            -- awarded rows sit at exactly 95% of Awarded_Rate), so it cannot
-            -- produce a margin. Bullhorn's placement extract carries the
-            -- burdened figure, and it is materialised inside this warehouse —
-            -- BH_PLACEMENT_RAW joined through the B4 match table — so no live
-            -- Bullhorn connection is opened. Covers 283 of 312 seats (91%).
-            SELECT LTRIM(RTRIM(x.Contract_ID)) AS cid,
-                   MAX(TRY_CAST(p.reportedMargin AS FLOAT))  AS reported_margin,
-                   MAX(TRY_CAST(p.payRate AS FLOAT))         AS clinician_pay
-            FROM dbo.BH_PLACEMENT_RAW_TO_B4HealthOrder x WITH (NOLOCK)
-            JOIN dbo.BH_PLACEMENT_RAW p WITH (NOLOCK) ON p.placementID = x.placementID
-            WHERE x.placementID IS NOT NULL
-            GROUP BY LTRIM(RTRIM(x.Contract_ID))
-        )
         SELECT
             'B4'                                        AS source_system,
             LTRIM(RTRIM(o.Contract_ID))                 AS id,
@@ -85,9 +70,16 @@ def _b4_rows(cursor, horizon, include_affiliate):
             CASE WHEN o.Parent_Contract_ID IS NOT NULL AND LTRIM(RTRIM(o.Parent_Contract_ID)) <> ''
                  THEN 1 ELSE 0 END                      AS is_extension,
             LTRIM(RTRIM(ISNULL(o.Parent_Contract_ID, ''))) AS parent_ref,
-            CASE WHEN bh.reported_margin BETWEEN 0 AND 1
-                 THEN ROUND(bh.reported_margin * 100, 1) END AS margin_pct,
-            bh.clinician_pay                            AS clinician_pay_rate,
+            -- Margin is only real where the agency actually disclosed a pay
+            -- rate. B4's Pay_Rate is otherwise an MSP fee tier — it clusters at
+            -- 93-95% of Awarded_Rate — so anything at or above 90% is a fee
+            -- split, not clinician pay, and yields no margin.
+            CASE WHEN TRY_CAST(o.Pay_Rate AS FLOAT) / NULLIF(TRY_CAST(o.Awarded_Rate AS FLOAT),0) < 0.90
+                 THEN ROUND((TRY_CAST(o.Awarded_Rate AS FLOAT) - TRY_CAST(o.Pay_Rate AS FLOAT))
+                            / TRY_CAST(o.Awarded_Rate AS FLOAT) * 100, 1)
+            END                                         AS margin_pct,
+            CASE WHEN TRY_CAST(o.Pay_Rate AS FLOAT) / NULLIF(TRY_CAST(o.Awarded_Rate AS FLOAT),0) < 0.90
+                 THEN TRY_CAST(o.Pay_Rate AS FLOAT) END AS clinician_pay_rate,
             0                                           AS extension_events,
             NULL                                        AS last_extension_at,
             NULL                                        AS extension_note,
@@ -95,7 +87,6 @@ def _b4_rows(cursor, horizon, include_affiliate):
             -- B4 has no modifications feed, so no decision signal exists here.
             'Not tracked in B4'                         AS decision_state
         FROM dhc.B4HealthOrder o WITH (NOLOCK)
-        LEFT JOIN bh ON bh.cid = LTRIM(RTRIM(o.Contract_ID))
         WHERE o.End_Date BETWEEN CAST(GETDATE() AS DATE)
                              AND DATEADD(DAY, ?, CAST(GETDATE() AS DATE))
             AND o.Contract_Status NOT IN ({status_list})
@@ -175,13 +166,11 @@ def _vndly_rows(cursor, horizon, include_affiliate):
             -- returns null and falls through to the override/default.
             CASE WHEN TRY_CAST(w.[Bill Rate] AS FLOAT) > 0
                   AND TRY_CAST(w.[Pay Rate]  AS FLOAT) > 0
-                  AND TRY_CAST(w.[Pay Rate] AS FLOAT) / TRY_CAST(w.[Bill Rate] AS FLOAT)
-                      BETWEEN 0.40 AND 0.89
+                  AND TRY_CAST(w.[Pay Rate] AS FLOAT) / TRY_CAST(w.[Bill Rate] AS FLOAT) < 0.90
                  THEN ROUND((TRY_CAST(w.[Bill Rate] AS FLOAT) - TRY_CAST(w.[Pay Rate] AS FLOAT))
                             / TRY_CAST(w.[Bill Rate] AS FLOAT) * 100, 1)
             END                                          AS margin_pct,
-            CASE WHEN TRY_CAST(w.[Pay Rate] AS FLOAT) / NULLIF(TRY_CAST(w.[Bill Rate] AS FLOAT),0)
-                      BETWEEN 0.40 AND 0.89
+            CASE WHEN TRY_CAST(w.[Pay Rate] AS FLOAT) / NULLIF(TRY_CAST(w.[Bill Rate] AS FLOAT),0) < 0.90
                  THEN TRY_CAST(w.[Pay Rate] AS FLOAT) END AS clinician_pay_rate,
             ISNULL(x.ext_events, 0)                      AS extension_events,
             CONVERT(VARCHAR(19), x.last_ext_at, 120)     AS last_extension_at,

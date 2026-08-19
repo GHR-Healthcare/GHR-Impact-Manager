@@ -17,8 +17,14 @@ def _b4_rows(cursor, lookback):
 
     Anchoring is the hard part. Awarded_Date covers every awarded contract on
     both sides, but cancellations and never-awarded seats carry no close date
-    at all, and the HIST fallback only reaches GHR rows (that history comes
-    from Bullhorn placement matching). Measured over the full table:
+    at all.
+
+    A history fallback via HIST_B4HealthOrder + the BH RUN_DIM used to date
+    some of those, but it was dropped: that history is populated by Bullhorn
+    placement matching, and MSP data must come from B4 and VNDLY only.
+    Deriving from a Bullhorn-sourced table in the warehouse is the same
+    dependency as querying the mirror, just with an extra hop. Measured over
+    the full table:
 
         GHR WON        11,898 rows —     0 undated
         AFFILIATE WON   7,433 rows —     0 undated
@@ -30,15 +36,6 @@ def _b4_rows(cursor, lookback):
     and reported, because silently dropping them would overstate capture rate.
     """
     cursor.execute('''
-        WITH hist_close AS (
-            SELECT LTRIM(RTRIM(h.Contract_ID)) AS cid,
-                   MIN(CAST(CAST(d.Date_ID AS VARCHAR(8)) AS DATE)) AS closed_on
-            FROM dbo.HIST_B4HealthOrder h WITH (NOLOCK)
-            JOIN dbo.BH_PLACEMENT_RAW_TO_B4HealthOrder_RUN_DIM d WITH (NOLOCK)
-                 ON d.RUN_ID = h.RUN_ID
-            WHERE h.Contract_Status LIKE 'Closed%'
-            GROUP BY LTRIM(RTRIM(h.Contract_ID))
-        )
         SELECT
             'B4'                                        AS source_system,
             LTRIM(RTRIM(o.Contract_ID))                 AS id,
@@ -51,10 +48,8 @@ def _b4_rows(cursor, lookback):
             o.Contract_Status                           AS status,
             o.Agency                                    AS agency,
             CASE WHEN ''' + B4_GHR_PREDICATE + ''' THEN 'GHR' ELSE 'Affiliate' END AS source,
-            CAST(COALESCE(o.Awarded_Date, hc.closed_on) AS DATE) AS closed_on,
-            CASE WHEN o.Awarded_Date IS NOT NULL THEN 'awarded_date'
-                 WHEN hc.closed_on IS NOT NULL   THEN 'history'
-                 ELSE NULL END                          AS close_date_source,
+            CAST(o.Awarded_Date AS DATE)                AS closed_on,
+            CASE WHEN o.Awarded_Date IS NOT NULL THEN 'awarded_date' ELSE NULL END AS close_date_source,
             o.Unfilled_Reason                           AS outcome_reason,
             o.Account_Manager                           AS account_manager,
             CAST(o.Start_Date AS DATE)                  AS start_date,
@@ -62,7 +57,6 @@ def _b4_rows(cursor, lookback):
             TRY_CAST(o.Pay_Rate AS DECIMAL(10,2))       AS pay_rate,
             TRY_CAST(o.Hours_per_Peek AS DECIMAL(10,2)) AS hours_per_week
         FROM dhc.B4HealthOrder o WITH (NOLOCK)
-        LEFT JOIN hist_close hc ON hc.cid = LTRIM(RTRIM(o.Contract_ID))
         WHERE o.Contract_Status LIKE 'Closed%'
     ''')
     rows = [dict(zip([c[0] for c in cursor.description], r)) for r in cursor.fetchall()]
