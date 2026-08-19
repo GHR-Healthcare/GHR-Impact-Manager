@@ -101,6 +101,11 @@ body.embedded header,
 body.embedded #kpiContainer,
 body.embedded #legendContainer{display:none!important}
 body.embedded .embed-host{padding:0!important}
+/* Settings-only embed: the modal is a direct child of body and is
+   position:fixed, so hiding its siblings leaves just the panel. */
+body.embed-settings > *:not(#settingsModal){display:none!important}
+body.embed-settings{background:transparent!important}
+body.embed-settings #settingsModal{background:transparent!important;backdrop-filter:none!important}
 </style>
 </head>
 
@@ -11165,7 +11170,14 @@ body.embedded .embed-host{padding:0!important}
   document.documentElement.classList.add('embedded');
   document.body.classList.add('embedded');
   var view = q.get('view');
+  var settingsOnly = q.get('settings') === '1';
+  if(settingsOnly) document.body.classList.add('embed-settings');
   var apply = function(){
+    if(settingsOnly){
+      if(typeof window.openSettingsModal !== 'function') return false;
+      window.openSettingsModal();
+      return true;
+    }
     if(!window.store || !window.store.dispatch) return false;
     if(view) window.store.dispatch('SET_VIEW', view);
     return true;
