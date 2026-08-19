@@ -1357,7 +1357,7 @@ function adaptExtensions(rows){
       end: fmtDate(r.end_date),
       days: r.days_left,
       value: fmtMoneyK(r.extension_value_13wk),
-      margin: r.margin_pct != null ? `${r.margin_pct}%` : '—',
+      get margin(){ return marginLabel(r.id, r.margin_pct); },
       clinicianPay: r.clinician_pay_rate != null ? `$${Number(r.clinician_pay_rate).toFixed(0)}/hr` : '—',
       status: 'No Decision',
       pmName: titleize(r.account_manager),
@@ -1421,7 +1421,7 @@ function adaptOnboarding(rows){
             : !tracked ? 'Start-date history not tracked for this agency'
             : flaggedOnly ? 'No delay flagged on this work order'
             : (r.delayed_flag === 'Yes' ? 'Delay flagged, reason not recorded' : 'No delay recorded'),
-      margin: r.margin_pct != null ? `${r.margin_pct}%` : '—',
+      get margin(){ return marginLabel(r.id, r.margin_pct); },
       moveCount: tracked ? moves : '—',
       movementTracked: tracked,
       owner: titleize(r.account_manager),
@@ -1455,6 +1455,44 @@ function adaptOnboarding(rows){
 // already persisted in impactmgr.workspace_state, so it needs no source
 // system and updates the moment a lever is toggled.
 const LEVER_LABELS = ["Additional Recruiter Support", "Adjusted Start Period", "Auto Offer", "Bill Rate Increase", "Flex 48hr Schedule", "Hot Job Promotion", "Open to AVs", "Pay/Margin Adjustment", "Recruiter Incentive", "Relax Requirements"];
+
+/* Margin has three possible sources, in this order:
+
+     1. A manual override recorded against the job — the previous UI stored
+        these as `margin_update` changes and flagged the row marginOverridden,
+        so a person's explicit number always wins.
+     2. Bullhorn's burdened reportedMargin, joined inside the warehouse.
+        Available for placed seats matched to a placement (91% of B4).
+     3. The configured default (DEFAULT_MARGIN, currently 26) — the only thing
+        available for an open req, which has no clinician pay yet.
+
+   Which one is in play is returned alongside the value so the UI can mark an
+   estimate as an estimate instead of letting a default read as measured.    */
+const marginOverrides = {};
+
+function marginFor(id, measuredPct){
+  const manual = marginOverrides[String(id)];
+  if(manual != null) return { pct: Number(manual), source: 'override' };
+  if(measuredPct != null) return { pct: Number(measuredPct), source: 'measured' };
+  const dflt = Number(APP_CONFIG.defaultMargin);
+  return isFinite(dflt) && dflt > 0 ? { pct: dflt, source: 'default' } : { pct: null, source: 'none' };
+}
+
+function marginLabel(id, measuredPct){
+  const m = marginFor(id, measuredPct);
+  if(m.pct == null) return '—';
+  // ~ marks anything not measured, so a default never reads as an actual.
+  return m.source === 'measured' ? `${m.pct}%` : `~${m.pct}%`;
+}
+
+function setMarginOverride(id, pct){
+  const n = parseFloat(pct);
+  if(!isFinite(n) || n < 0 || n > 100) return false;
+  marginOverrides[String(id)] = n;
+  queueStateSave('margin', String(id), { pct: n });
+  render();
+  return true;
+}
 
 function impactPercent(jobId){
   if(!jobId) return null;
@@ -1492,7 +1530,7 @@ function adaptOpen(rows){
       days,
       // An unplaced req has no pay rate, so there is no actual margin to show.
       // This is the configured target, marked with ~ so it never reads as measured.
-      margin: APP_CONFIG.defaultMargin ? `~${Math.round(Number(APP_CONFIG.defaultMargin))}%` : '—',
+      get margin(){ return marginLabel(r.position_id, null); },
       get impact(){ const p = impactPercent(String(r.position_id)); return p == null ? '—' : `${p}%`; },
       active: `${ghrSubs} / ${avSubs}`,
       declines: `${ghrDec} / ${avDec}`,
@@ -1542,7 +1580,7 @@ function adaptClosed(payload){
       outcome: OUTCOME_LABEL[r.group] || r.group,
       winner: titleize(r.agency),
       rate: r.bill_rate ? `$${Number(r.bill_rate).toFixed(0)}/hr` : '—',
-      margin: r.margin_pct != null ? `${r.margin_pct}%` : '—',
+      get margin(){ return marginLabel(r.id, r.margin_pct); },
       rank: '—',
       rankTone: '',
       impact: r.value_13wk ? fmtMoneyK(r.value_13wk) : '—',
@@ -1637,6 +1675,9 @@ async function loadWorkspaceState(){
     Object.entries(saved.onboarding || {}).forEach(([k, v]) => { if(v && v.state) onboardingEdits[k] = v.state; });
     Object.entries(saved.interview || {}).forEach(([k, v]) => {
       if(v && v.state && v.state.value !== undefined) interviewOverrides[k] = v.state.value;
+    });
+    Object.entries(saved.margin || {}).forEach(([k, v]) => {
+      if(v && v.state && v.state.pct != null) marginOverrides[k] = Number(v.state.pct);
     });
     return true;
   }catch(e){

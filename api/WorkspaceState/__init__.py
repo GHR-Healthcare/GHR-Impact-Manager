@@ -11,7 +11,8 @@ from shared_code.data_source import get_appdb_conn
 #   extension  — client decision, notes, workflow steps (entity = contract / WOSystemKey)
 #   onboarding — revised start, delay category, context (entity = contract / WOSystemKey)
 #   interview  — interview outcome overrides            (entity = submission key)
-VALID_SCOPES = ('lever', 'extension', 'onboarding', 'interview')
+#   margin     — manual margin override                 (entity = job / contract id)
+VALID_SCOPES = ('lever', 'extension', 'onboarding', 'interview', 'margin')
 
 MAX_STATE_BYTES = 64 * 1024
 
