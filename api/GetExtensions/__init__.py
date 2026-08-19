@@ -42,6 +42,21 @@ def _b4_rows(cursor, horizon, include_affiliate):
     status_list = ', '.join("'" + s.replace("'", "''") + "'" for s in B4_EXCLUDED_STATUSES)
     agency_filter = '' if include_affiliate else f'AND {B4_GHR_PREDICATE}'
     cursor.execute(f'''
+        WITH bh AS (
+            -- Real gross margin. B4's own Pay_Rate is an MSP fee tier (11,170
+            -- awarded rows sit at exactly 95% of Awarded_Rate), so it cannot
+            -- produce a margin. Bullhorn's placement extract carries the
+            -- burdened figure, and it is materialised inside this warehouse —
+            -- BH_PLACEMENT_RAW joined through the B4 match table — so no live
+            -- Bullhorn connection is opened. Covers 283 of 312 seats (91%).
+            SELECT LTRIM(RTRIM(x.Contract_ID)) AS cid,
+                   MAX(TRY_CAST(p.reportedMargin AS FLOAT))  AS reported_margin,
+                   MAX(TRY_CAST(p.payRate AS FLOAT))         AS clinician_pay
+            FROM dbo.BH_PLACEMENT_RAW_TO_B4HealthOrder x WITH (NOLOCK)
+            JOIN dbo.BH_PLACEMENT_RAW p WITH (NOLOCK) ON p.placementID = x.placementID
+            WHERE x.placementID IS NOT NULL
+            GROUP BY LTRIM(RTRIM(x.Contract_ID))
+        )
         SELECT
             'B4'                                        AS source_system,
             LTRIM(RTRIM(o.Contract_ID))                 AS id,
@@ -70,6 +85,9 @@ def _b4_rows(cursor, horizon, include_affiliate):
             CASE WHEN o.Parent_Contract_ID IS NOT NULL AND LTRIM(RTRIM(o.Parent_Contract_ID)) <> ''
                  THEN 1 ELSE 0 END                      AS is_extension,
             LTRIM(RTRIM(ISNULL(o.Parent_Contract_ID, ''))) AS parent_ref,
+            CASE WHEN bh.reported_margin BETWEEN 0 AND 1
+                 THEN ROUND(bh.reported_margin * 100, 1) END AS margin_pct,
+            bh.clinician_pay                            AS clinician_pay_rate,
             0                                           AS extension_events,
             NULL                                        AS last_extension_at,
             NULL                                        AS extension_note,
@@ -77,6 +95,7 @@ def _b4_rows(cursor, horizon, include_affiliate):
             -- B4 has no modifications feed, so no decision signal exists here.
             'Not tracked in B4'                         AS decision_state
         FROM dhc.B4HealthOrder o WITH (NOLOCK)
+        LEFT JOIN bh ON bh.cid = LTRIM(RTRIM(o.Contract_ID))
         WHERE o.End_Date BETWEEN CAST(GETDATE() AS DATE)
                              AND DATEADD(DAY, ?, CAST(GETDATE() AS DATE))
             AND o.Contract_Status NOT IN ({status_list})
@@ -147,6 +166,10 @@ def _vndly_rows(cursor, horizon, include_affiliate):
             CASE WHEN TRY_CAST(w.[End Date] AS DATE) > TRY_CAST(w.[Original End Date] AS DATE)
                  THEN 1 ELSE 0 END                       AS is_extension,
             CONVERT(VARCHAR(10), TRY_CAST(w.[Original End Date] AS DATE), 120) AS parent_ref,
+            -- No VNDLY↔Bullhorn match table exists, so margin is unknown here
+            -- rather than approximated from the VMS fee split.
+            NULL                                         AS margin_pct,
+            NULL                                         AS clinician_pay_rate,
             ISNULL(x.ext_events, 0)                      AS extension_events,
             CONVERT(VARCHAR(19), x.last_ext_at, 120)     AS last_extension_at,
             x.ext_note                                   AS extension_note,
@@ -189,15 +212,13 @@ def _serialize(rows):
         for k in ('bill_rate', 'pay_rate', 'hours_per_week'):
             if r.get(k) is not None:
                 r[k] = float(r[k])
-        # NOT gross margin. B4's Pay_Rate is a fixed share of Awarded_Rate —
-        # 11,170 awarded rows sit at exactly 95% and 5,177 at 93% — so this is
-        # the MSP vendor fee tier, i.e. what the agency receives after the MSP
-        # cut, not what the clinician is paid. Real margin needs clinician pay,
-        # which lives in Bullhorn and is not joined on the MSP path. Exposed
-        # under its own name so nothing downstream mistakes it for margin.
+        # bill_rate/pay_rate here are the MSP fee split (what the client is
+        # billed vs what the agency receives), NOT margin. margin_pct comes
+        # from Bullhorn's burdened reportedMargin via the join above.
         bill, pay = r.get('bill_rate'), r.get('pay_rate')
         r['agency_receipt_pct'] = round(pay / bill * 100, 1) if bill and pay and bill > 0 else None
-        r['margin_pct'] = None
+        if r.get('clinician_pay_rate') is not None:
+            r['clinician_pay_rate'] = float(r['clinician_pay_rate'])
         rate, hrs = r.get('bill_rate'), r.get('hours_per_week')
         # 13-week forward value of the seat if it extends. Left null rather
         # than assuming a standard week when hours aren't known.

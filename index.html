@@ -1358,6 +1358,7 @@ function adaptExtensions(rows){
       days: r.days_left,
       value: fmtMoneyK(r.extension_value_13wk),
       margin: r.margin_pct != null ? `${r.margin_pct}%` : '—',
+      clinicianPay: r.clinician_pay_rate != null ? `$${Number(r.clinician_pay_rate).toFixed(0)}/hr` : '—',
       status: 'No Decision',
       pmName: titleize(r.account_manager),
       recruiterName: titleize(r.hiring_manager),
@@ -1449,6 +1450,18 @@ function adaptOnboarding(rows){
 // Buckets a job's submissions into the three pipeline stages the detail
 // pane charts. Anything not recognisably an interview or offer counts as
 // submitted, which is the conservative reading.
+// Impact is the share of Impact levers engaged on a job — the same measure
+// the current app uses (completed / total levers). It is app-owned state,
+// already persisted in impactmgr.workspace_state, so it needs no source
+// system and updates the moment a lever is toggled.
+const LEVER_LABELS = ["Additional Recruiter Support", "Adjusted Start Period", "Auto Offer", "Bill Rate Increase", "Flex 48hr Schedule", "Hot Job Promotion", "Open to AVs", "Pay/Margin Adjustment", "Recruiter Incentive", "Relax Requirements"];
+
+function impactPercent(jobId){
+  if(!jobId) return null;
+  const on = LEVER_LABELS.filter(l => leverState[`${jobId}|${l}`]).length;
+  return LEVER_LABELS.length ? Math.round(on / LEVER_LABELS.length * 100) : null;
+}
+
 function stageCounts(cands, wantGhr){
   const out = [0,0,0];
   (cands || []).forEach(c => {
@@ -1480,7 +1493,7 @@ function adaptOpen(rows){
       // An unplaced req has no pay rate, so there is no actual margin to show.
       // This is the configured target, marked with ~ so it never reads as measured.
       margin: APP_CONFIG.defaultMargin ? `~${Math.round(Number(APP_CONFIG.defaultMargin))}%` : '—',
-      impact: '—',
+      get impact(){ const p = impactPercent(String(r.position_id)); return p == null ? '—' : `${p}%`; },
       active: `${ghrSubs} / ${avSubs}`,
       declines: `${ghrDec} / ${avDec}`,
       rank: '—',
