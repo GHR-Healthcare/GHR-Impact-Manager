@@ -1357,7 +1357,7 @@ function adaptExtensions(rows){
       end: fmtDate(r.end_date),
       days: r.days_left,
       value: fmtMoneyK(r.extension_value_13wk),
-      get margin(){ return marginLabel(r.id, r.margin_pct); },
+      get margin(){ return marginLabel(r.id); },
       clinicianPay: r.clinician_pay_rate != null ? `$${Number(r.clinician_pay_rate).toFixed(0)}/hr` : '—',
       status: 'No Decision',
       pmName: titleize(r.account_manager),
@@ -1421,7 +1421,7 @@ function adaptOnboarding(rows){
             : !tracked ? 'Start-date history not tracked for this agency'
             : flaggedOnly ? 'No delay flagged on this work order'
             : (r.delayed_flag === 'Yes' ? 'Delay flagged, reason not recorded' : 'No delay recorded'),
-      get margin(){ return marginLabel(r.id, r.margin_pct); },
+      get margin(){ return marginLabel(r.id); },
       moveCount: tracked ? moves : '—',
       movementTracked: tracked,
       owner: titleize(r.account_manager),
@@ -1456,33 +1456,29 @@ function adaptOnboarding(rows){
 // system and updates the moment a lever is toggled.
 const LEVER_LABELS = ["Additional Recruiter Support", "Adjusted Start Period", "Auto Offer", "Bill Rate Increase", "Flex 48hr Schedule", "Hot Job Promotion", "Open to AVs", "Pay/Margin Adjustment", "Recruiter Incentive", "Relax Requirements"];
 
-/* Margin has three possible sources, in this order:
+/* Margin is a rate you set, not a value read from the data.
 
-     1. A manual override recorded against the job — the previous UI stored
-        these as `margin_update` changes and flagged the row marginOverridden,
-        so a person's explicit number always wins.
-     2. Bullhorn's burdened reportedMargin, joined inside the warehouse.
-        Available for placed seats matched to a placement (91% of B4).
-     3. The configured default (DEFAULT_MARGIN, currently 26) — the only thing
-        available for an open req, which has no clinician pay yet.
-
-   Which one is in play is returned alongside the value so the UI can mark an
-   estimate as an estimate instead of letting a default read as measured.    */
+   The VMS records what the client is billed and what the vendor receives; it
+   never records what the vendor pays its clinician. Disclosure sits under 1%
+   across every B4 and VNDLY table checked (B4HealthOrder 11/11,703,
+   B4HealthESR 665/729,177, VNDLY 128/858), so there is nothing to measure
+   against. Margin is therefore the configured DEFAULT_MARGIN — currently 26 —
+   or a per-job override, exactly as the previous UI applied it.            */
 const marginOverrides = {};
 
-function marginFor(id, measuredPct){
+function marginFor(id){
   const manual = marginOverrides[String(id)];
   if(manual != null) return { pct: Number(manual), source: 'override' };
-  if(measuredPct != null) return { pct: Number(measuredPct), source: 'measured' };
   const dflt = Number(APP_CONFIG.defaultMargin);
   return isFinite(dflt) && dflt > 0 ? { pct: dflt, source: 'default' } : { pct: null, source: 'none' };
 }
 
-function marginLabel(id, measuredPct){
-  const m = marginFor(id, measuredPct);
+function marginLabel(id){
+  const m = marginFor(id);
   if(m.pct == null) return '—';
-  // ~ marks anything not measured, so a default never reads as an actual.
-  return m.source === 'measured' ? `${m.pct}%` : `~${m.pct}%`;
+  // An override is a deliberate number for this job; the default is an
+  // assumption applied everywhere. Marking the latter keeps them distinct.
+  return m.source === 'override' ? `${m.pct}%` : `~${m.pct}%`;
 }
 
 function setMarginOverride(id, pct){
@@ -1530,7 +1526,7 @@ function adaptOpen(rows){
       days,
       // An unplaced req has no pay rate, so there is no actual margin to show.
       // This is the configured target, marked with ~ so it never reads as measured.
-      get margin(){ return marginLabel(r.position_id, null); },
+      get margin(){ return marginLabel(r.position_id); },
       get impact(){ const p = impactPercent(String(r.position_id)); return p == null ? '—' : `${p}%`; },
       active: `${ghrSubs} / ${avSubs}`,
       declines: `${ghrDec} / ${avDec}`,
@@ -1580,7 +1576,7 @@ function adaptClosed(payload){
       outcome: OUTCOME_LABEL[r.group] || r.group,
       winner: titleize(r.agency),
       rate: r.bill_rate ? `$${Number(r.bill_rate).toFixed(0)}/hr` : '—',
-      get margin(){ return marginLabel(r.id, r.margin_pct); },
+      get margin(){ return marginLabel(r.id); },
       rank: '—',
       rankTone: '',
       impact: r.value_13wk ? fmtMoneyK(r.value_13wk) : '—',

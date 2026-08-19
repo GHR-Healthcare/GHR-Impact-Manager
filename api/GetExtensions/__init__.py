@@ -70,16 +70,12 @@ def _b4_rows(cursor, horizon, include_affiliate):
             CASE WHEN o.Parent_Contract_ID IS NOT NULL AND LTRIM(RTRIM(o.Parent_Contract_ID)) <> ''
                  THEN 1 ELSE 0 END                      AS is_extension,
             LTRIM(RTRIM(ISNULL(o.Parent_Contract_ID, ''))) AS parent_ref,
-            -- Margin is only real where the agency actually disclosed a pay
-            -- rate. B4's Pay_Rate is otherwise an MSP fee tier — it clusters at
-            -- 93-95% of Awarded_Rate — so anything at or above 90% is a fee
-            -- split, not clinician pay, and yields no margin.
-            CASE WHEN TRY_CAST(o.Pay_Rate AS FLOAT) / NULLIF(TRY_CAST(o.Awarded_Rate AS FLOAT),0) < 0.90
-                 THEN ROUND((TRY_CAST(o.Awarded_Rate AS FLOAT) - TRY_CAST(o.Pay_Rate AS FLOAT))
-                            / TRY_CAST(o.Awarded_Rate AS FLOAT) * 100, 1)
-            END                                         AS margin_pct,
-            CASE WHEN TRY_CAST(o.Pay_Rate AS FLOAT) / NULLIF(TRY_CAST(o.Awarded_Rate AS FLOAT),0) < 0.90
-                 THEN TRY_CAST(o.Pay_Rate AS FLOAT) END AS clinician_pay_rate,
+            -- Margin is not read from the data. The VMS records what the
+            -- client is billed and what the vendor receives, never what the
+            -- vendor pays its clinician — disclosure sits under 1% across every
+            -- B4 and VNDLY table. Margin is the configured rate (DEFAULT_MARGIN,
+            -- currently 26) or a per-job override, applied client-side to the
+            -- bill rate. The rates below are what the calculation needs.
             0                                           AS extension_events,
             NULL                                        AS last_extension_at,
             NULL                                        AS extension_note,
@@ -157,21 +153,7 @@ def _vndly_rows(cursor, horizon, include_affiliate):
             CASE WHEN TRY_CAST(w.[End Date] AS DATE) > TRY_CAST(w.[Original End Date] AS DATE)
                  THEN 1 ELSE 0 END                       AS is_extension,
             CONVERT(VARCHAR(10), TRY_CAST(w.[Original End Date] AS DATE), 120) AS parent_ref,
-            -- VNDLY is not a uniform fee tier the way B4 is. Its [Pay Rate] is
-            -- a real clinician rate on part of the book and a copy of the bill
-            -- rate on the rest: 1,151 rows sit at >=90% of bill (unusable,
-            -- mostly pay == bill), 135 sit in a credible 40-89% band averaging
-            -- 33.8% margin, and 52 fall below 40% which reads as bad data.
-            -- Margin is computed only inside the credible band; everything else
-            -- returns null and falls through to the override/default.
-            CASE WHEN TRY_CAST(w.[Bill Rate] AS FLOAT) > 0
-                  AND TRY_CAST(w.[Pay Rate]  AS FLOAT) > 0
-                  AND TRY_CAST(w.[Pay Rate] AS FLOAT) / TRY_CAST(w.[Bill Rate] AS FLOAT) < 0.90
-                 THEN ROUND((TRY_CAST(w.[Bill Rate] AS FLOAT) - TRY_CAST(w.[Pay Rate] AS FLOAT))
-                            / TRY_CAST(w.[Bill Rate] AS FLOAT) * 100, 1)
-            END                                          AS margin_pct,
-            CASE WHEN TRY_CAST(w.[Pay Rate] AS FLOAT) / NULLIF(TRY_CAST(w.[Bill Rate] AS FLOAT),0) < 0.90
-                 THEN TRY_CAST(w.[Pay Rate] AS FLOAT) END AS clinician_pay_rate,
+            -- See the B4 branch: margin is a configured rate, not a lookup.
             ISNULL(x.ext_events, 0)                      AS extension_events,
             CONVERT(VARCHAR(19), x.last_ext_at, 120)     AS last_extension_at,
             x.ext_note                                   AS extension_note,
@@ -214,13 +196,12 @@ def _serialize(rows):
         for k in ('bill_rate', 'pay_rate', 'hours_per_week'):
             if r.get(k) is not None:
                 r[k] = float(r[k])
-        # bill_rate/pay_rate here are the MSP fee split (what the client is
-        # billed vs what the agency receives), NOT margin. margin_pct comes
-        # from Bullhorn's burdened reportedMargin via the join above.
+        # bill_rate/pay_rate are the MSP fee split — what the client is billed
+        # vs what the agency receives — not a margin. Kept under a name that
+        # cannot be mistaken for one. Margin itself is applied client-side from
+        # the configured rate or a per-job override.
         bill, pay = r.get('bill_rate'), r.get('pay_rate')
         r['agency_receipt_pct'] = round(pay / bill * 100, 1) if bill and pay and bill > 0 else None
-        if r.get('clinician_pay_rate') is not None:
-            r['clinician_pay_rate'] = float(r['clinician_pay_rate'])
         rate, hrs = r.get('bill_rate'), r.get('hours_per_week')
         # 13-week forward value of the seat if it extends. Left null rather
         # than assuming a standard week when hours aren't known.
