@@ -890,6 +890,37 @@ function extensionCompare(r){const rows=[['End Date',r.vndly.end,r.bullhorn.end,
 function extensionProgress(r){const e=getExtensionEdit(r),urg=extensionUrgency(r);const steps=[['confirmClient','Confirm Client',`PM · ${r.pmName}`,'Record whether the client wants to extend, close, or backfill.'],['gatherRTO','Gather RTO',`Recruiter · ${r.recruiterName}`,'Capture clinician requested time off before finalizing the extension.'],['sendExtension','Send Extension',`PM · ${r.pmName}`,'Confirm the extension has been sent and recorded.']];const accepted=r.vndly.accepted==='Yes'&&r.bullhorn.accepted==='Yes';return `<div class="extension-progress"><div class="progress-meta"><div class="metric"><span>PM</span><b>${r.pmName}</b></div><div class="metric"><span>Recruiter</span><b>${r.recruiterName}</b></div><div class="metric"><span>Days Left</span><b>${r.days}</b></div><div class="metric"><span>Urgency</span><b>${urg}</b></div></div><div class="panel-title" style="margin-bottom:4px">Extension Progress</div><div class="panel-sub">The team controls the client, RTO, and send-extension checkpoints. Acceptance remains system-confirmed.</div><div class="ext-checklist">${steps.map(s=>`<label class="ext-check"><input type="checkbox" data-ext-step="${r.id}|${s[0]}" ${e.steps[s[0]]?'checked':''}><span><div class="ext-check-title">${s[1]}</div><div class="ext-check-sub">${s[3]}</div></span><span class="ext-check-owner">${s[2]}</span></label>`).join('')}<div class="ext-check system-step"><span>${accepted?'✓':'○'}</span><span><div class="ext-check-title">Extension Accepted</div><div class="ext-check-sub">Confirmed from VNDLY and Bullhorn.</div></span><span class="ext-check-owner">System</span></div></div><div class="edit-box"><div class="edit-box-grid"><div><label>Client Decision</label><select data-ext-decision="${r.id}"><option ${e.decision==='Not Requested'?'selected':''}>Not Requested</option><option ${e.decision==='Interested'?'selected':''}>Interested</option><option ${e.decision==='Approved to Offer'?'selected':''}>Approved to Offer</option><option ${e.decision==='Approved'?'selected':''}>Approved</option><option ${e.decision==='Declined'?'selected':''}>Declined</option><option ${e.decision==='Backfill Required'?'selected':''}>Backfill Required</option></select></div><div><label>Shared Notes</label><textarea data-ext-note="${r.id}" placeholder="Add client or extension context...">${e.notes}</textarea></div></div><div class="action-row"><button class="action primary" data-save-extension="${r.id}">Save Extension Update</button><button class="action" data-action="View VNDLY">VNDLY</button><button class="action" data-action="View Bullhorn">Bullhorn</button></div></div>${r.backfill?`<div class="backfill-mini"><div class="mini-head"><div><div class="next-title">Linked Backfill</div><div class="mini-id">${r.backfill.id}</div></div><span class="status-badge blue">Active in Open Jobs</span></div><div class="metric-grid"><div class="metric"><span>Age</span><b>${r.backfill.age}</b></div><div class="metric"><span>GHR Activity</span><b>${r.backfill.ghr}</b></div><div class="metric"><span>Stage</span><b>${r.backfill.stage}</b></div><div class="metric"><span>Rate</span><b>${r.backfill.rate}</b></div></div></div>`:''}</div>`}
 
 function demandIntel(r){
+ /* Submissions come from the source system. The prototype generated names
+    from a seeded list for any job it had no fixture for, so a meeting could
+    be shown invented people alongside real counts — which is what made the
+    x/x totals disagree with the list beneath them.
+
+    Competitor placements and the market-share figures below have no source
+    we read today, so they are surfaced as unknown rather than fabricated. */
+ const real = Array.isArray(r.candidates) ? r.candidates : null;
+ const base = __demandIntelBase(r);
+ if(!real) return base;
+ const toRow = c => ({
+   name: c.name,
+   source: c.source,
+   stage: c.stage,
+   age: c.submitDate
+     ? `${Math.max(0, Math.round((Date.now() - new Date(c.submitDate).getTime())/86400000))}d`
+     : '—',
+   note: c.note || (c.agency && c.source !== 'GHR' ? c.agency : ''),
+ });
+ return {
+   ...base,
+   submissions: {
+     active: real.filter(c => !c.isDeclined).map(toRow),
+     declined: real.filter(c => c.isDeclined).map(toRow),
+   },
+   // No feed for who else placed into this job.
+   placements: [],
+ };
+}
+
+function __demandIntelBase(r){
  const map={
   '365991':{peer:78,capture:29,account:34,activeShare:31,leader:'Aya',leaderPct:34,lift:'15–22%',note:'Rate is $15/hr below the peer average and GHR trails Aya in active share.',submissions:{active:[{name:'Victoria Mebert',source:'GHR',stage:'Interview Complete',age:'10d',note:'Client feedback pending'},{name:'Zeina Ari',source:'GHR',stage:'Submitted',age:'9d',note:'Profile under review'},{name:'Barbara C.',source:'Vendor',stage:'Interview Scheduled',age:'6d',note:'Interview Jul 31'}],declined:[{name:'Megan R.',source:'GHR',stage:'Declined',age:'8d',note:'Rate below expectation'},{name:'Tori H.',source:'Vendor',stage:'Declined',age:'12d',note:'Accepted another offer'}]},placements:[{vendor:'Aya',clinician:'J. Ortiz, RN',start:'May 5, 2026',end:'Aug 3, 2026',rate:'$71/hr'},{vendor:'GHR',clinician:'K. Lewis, RN',start:'Apr 14, 2026',end:'Jul 12, 2026',rate:'$64/hr'},{vendor:'AMN',clinician:'L. Martin, RN',start:'Jun 2, 2026',end:'Aug 31, 2026',rate:'$69/hr'}]},
   '365974':{peer:81,capture:27,account:33,activeShare:27,leader:'Aya',leaderPct:38,lift:'12–18%',note:'Rate pressure is the primary constraint. Aya has the largest active foothold in comparable roles.',submissions:{active:[{name:'James Okafor',source:'GHR',stage:'Submitted',age:'5d',note:'Manager review pending'},{name:'Angela Brooks',source:'Vendor',stage:'Interview Complete',age:'4d',note:'Awaiting feedback'},{name:'Priya Nair',source:'Vendor',stage:'Offer Pending',age:'2d',note:'Vendor lead candidate'}],declined:[{name:'D. Fields',source:'GHR',stage:'Declined',age:'7d',note:'Rate concern'},{name:'S. Collins',source:'Vendor',stage:'Declined',age:'9d',note:'Schedule mismatch'}]},placements:[{vendor:'Aya',clinician:'A. Brooks, RN',start:'May 12, 2026',end:'Aug 10, 2026',rate:'$76/hr'},{vendor:'GHR',clinician:'M. Pruitt, RN',start:'Jun 9, 2026',end:'Sep 7, 2026',rate:'$73/hr'},{vendor:'AMN',clinician:'C. Dorsey, RN',start:'Apr 28, 2026',end:'Jul 27, 2026',rate:'$74/hr'}]},
@@ -1352,6 +1383,17 @@ function adaptOpen(rows){
       owner: titleize(r.hiring_manager),
       ghr: [ghrSubs, 0, 0],
       aff: [avSubs, 0, 0],
+      // Real submissions from the source system. Without these the detail
+      // pane falls back to generated names.
+      candidates: (r.candidates || []).map(c => ({
+        name: c.name || 'Unknown',
+        source: c.isGHR ? 'GHR' : 'Vendor',
+        agency: c.agency || '',
+        stage: c.status || (c.isDeclined ? 'Declined' : 'Submitted'),
+        submitDate: c.submitDate || null,
+        isDeclined: !!c.isDeclined,
+        note: c.declineReason || '',
+      })),
       _raw: r,
     };
   });
