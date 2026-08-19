@@ -4,99 +4,108 @@ import os
 import json
 import datetime
 from shared_code.auth import require_allowed_domain, current_user_email
-from shared_code.data_source import get_appdb_conn
 
 
 """
-Daily snapshot of assignment state.
+Daily snapshot of assignment state, written to the warehouse.
+
+Two tables, one per VMS, so each side stays queryable on its own terms and
+other apps can read them without going through this one:
+
+    dhc.B4HealthOrder_Snapshot
+    dbo.STAGING_VNDLY_WORKORDERS_Snapshot
 
 Neither VMS records how far a start moved or how many times. B4's movement
 history came from Bullhorn placement matching, which is off the MSP path, and
 VNDLY has no Original Start Date at all — so "Moved 2+ Times" and "Avg Days
 Delayed" have nothing to compute against.
 
-This writes one row per assignment per day. Once a start date changes between
-two snapshots, the movement becomes measurable: distinct start_date values per
-assignment is the move count, and first-seen versus current is the slip.
+One row per assignment per day. Once a start date changes between two
+snapshots the movement is measurable: distinct Start_Date per assignment is
+the move count, first-seen versus current is the slip.
 
-It is forward-only by nature — the first useful numbers appear the day after a
-start actually moves, and the metrics get better the longer it runs. That is
-the same mechanism HIST_B4HealthOrder used, kept inside data we own.
+Forward-only by nature — the first numbers appear the day after a start
+actually moves, and improve the longer it runs. Same mechanism
+HIST_B4HealthOrder used, on tables the warehouse owns.
 
-Idempotent: MERGE on (entity_id, snapshot_date), so repeated calls in a day
-update rather than accumulate, and the caller does not need to coordinate.
+Idempotent: MERGE on (key, Snapshot_Date), so repeat calls within a day update
+rather than accumulate and the caller needs no coordination.
+
+REQUIRES A GRANT. svc-impact-manager is db_datareader on ghrdhc and nothing
+else, so until a DBA runs migrations/2026-08-19_assignment_snapshots.sql this
+returns 403 naming what is missing. Deliberately no DDL in the app — the
+tables belong to the warehouse, this only appends to them.
 """
 
-SNAPSHOT_SOURCES = {
-    'B4': """
-        SELECT
-            'B4'                                       AS source_system,
-            LTRIM(RTRIM(Contract_ID))                  AS entity_id,
-            CAST(Start_Date AS DATE)                   AS start_date,
-            CAST(End_Date AS DATE)                     AS end_date,
-            Contract_Status                            AS status,
-            Health_System                              AS health_system,
-            Agency                                     AS agency,
-            TRY_CAST(Awarded_Rate AS DECIMAL(10,2))    AS bill_rate,
-            Delayed_Starts                             AS delayed_flag
-        FROM dhc.B4HealthOrder WITH (NOLOCK)
-        WHERE Start_Date >= DATEADD(DAY, -90, CAST(GETDATE() AS DATE))
-           OR End_Date   >= CAST(GETDATE() AS DATE)
-    """,
-    'VNDLY': """
-        SELECT
-            'VNDLY'                                    AS source_system,
-            CAST(WOSystemKey AS NVARCHAR(120))         AS entity_id,
-            TRY_CAST([Start Date] AS DATE)             AS start_date,
-            TRY_CAST([End Date] AS DATE)               AS end_date,
-            [Current Status]                           AS status,
-            [Health System]                            AS health_system,
-            [Vendor Name]                              AS agency,
-            TRY_CAST([Bill Rate] AS DECIMAL(10,2))     AS bill_rate,
-            NULL                                       AS delayed_flag
-        FROM dbo.STAGING_VNDLY_WORKORDERS WITH (NOLOCK)
-        WHERE TRY_CAST([Start Date] AS DATE) >= DATEADD(DAY, -90, CAST(GETDATE() AS DATE))
-           OR TRY_CAST([End Date] AS DATE)   >= CAST(GETDATE() AS DATE)
-    """,
+SNAPSHOT_TARGETS = {
+    'B4': {
+        'table': 'dhc.B4HealthOrder_Snapshot',
+        'key': 'Contract_ID',
+        'select': """
+            SELECT
+                LTRIM(RTRIM(Contract_ID))               AS k,
+                CAST(Start_Date AS DATE)                AS start_date,
+                CAST(End_Date AS DATE)                  AS end_date,
+                Contract_Status                         AS status,
+                Health_System                           AS health_system,
+                Agency                                  AS agency,
+                TRY_CAST(Awarded_Rate AS DECIMAL(10,2)) AS rate,
+                Delayed_Starts                          AS delayed_flag
+            FROM dhc.B4HealthOrder WITH (NOLOCK)
+            WHERE Start_Date >= DATEADD(DAY, -90, CAST(GETDATE() AS DATE))
+               OR End_Date   >= CAST(GETDATE() AS DATE)
+        """,
+        'merge': """
+            MERGE dhc.B4HealthOrder_Snapshot AS t
+            USING (SELECT ? AS Contract_ID, ? AS Snapshot_Date) AS s
+              ON t.Contract_ID = s.Contract_ID AND t.Snapshot_Date = s.Snapshot_Date
+            WHEN MATCHED THEN UPDATE SET
+                Start_Date = ?, End_Date = ?, Contract_Status = ?, Health_System = ?,
+                Agency = ?, Awarded_Rate = ?, Delayed_Starts = ?, Captured_At = ?
+            WHEN NOT MATCHED THEN
+                INSERT (Contract_ID, Snapshot_Date, Start_Date, End_Date, Contract_Status,
+                        Health_System, Agency, Awarded_Rate, Delayed_Starts, Captured_At)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+        """,
+        'has_delayed_flag': True,
+    },
+    'VNDLY': {
+        'table': 'dbo.STAGING_VNDLY_WORKORDERS_Snapshot',
+        'key': 'WOSystemKey',
+        'select': """
+            SELECT
+                CAST(WOSystemKey AS NVARCHAR(120))       AS k,
+                TRY_CAST([Start Date] AS DATE)           AS start_date,
+                TRY_CAST([End Date] AS DATE)             AS end_date,
+                [Current Status]                         AS status,
+                [Health System]                          AS health_system,
+                [Vendor Name]                            AS agency,
+                TRY_CAST([Bill Rate] AS DECIMAL(10,2))   AS rate,
+                NULL                                     AS delayed_flag
+            FROM dbo.STAGING_VNDLY_WORKORDERS WITH (NOLOCK)
+            WHERE TRY_CAST([Start Date] AS DATE) >= DATEADD(DAY, -90, CAST(GETDATE() AS DATE))
+               OR TRY_CAST([End Date] AS DATE)   >= CAST(GETDATE() AS DATE)
+        """,
+        'merge': """
+            MERGE dbo.STAGING_VNDLY_WORKORDERS_Snapshot AS t
+            USING (SELECT ? AS WOSystemKey, ? AS Snapshot_Date) AS s
+              ON t.WOSystemKey = s.WOSystemKey AND t.Snapshot_Date = s.Snapshot_Date
+            WHEN MATCHED THEN UPDATE SET
+                Start_Date = ?, End_Date = ?, Current_Status = ?, Health_System = ?,
+                Vendor_Name = ?, Bill_Rate = ?, Captured_At = ?
+            WHEN NOT MATCHED THEN
+                INSERT (WOSystemKey, Snapshot_Date, Start_Date, End_Date, Current_Status,
+                        Health_System, Vendor_Name, Bill_Rate, Captured_At)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
+        """,
+        'has_delayed_flag': False,
+    },
 }
 
-
-def _ensure_schema(cursor):
-    cursor.execute("""
-        IF NOT EXISTS (SELECT 1 FROM sys.schemas WHERE name = 'impactmgr')
-            EXEC('CREATE SCHEMA impactmgr')
-    """)
-    cursor.execute("""
-        IF NOT EXISTS (
-            SELECT 1 FROM sys.tables
-            WHERE name = 'assignment_snapshots' AND schema_id = SCHEMA_ID('impactmgr')
-        )
-        CREATE TABLE impactmgr.assignment_snapshots (
-            entity_id     NVARCHAR(120) NOT NULL,
-            snapshot_date DATE          NOT NULL,
-            source_system NVARCHAR(20)  NOT NULL,
-            start_date    DATE          NULL,
-            end_date      DATE          NULL,
-            status        NVARCHAR(100) NULL,
-            health_system NVARCHAR(200) NULL,
-            agency        NVARCHAR(200) NULL,
-            bill_rate     DECIMAL(10,2) NULL,
-            delayed_flag  NVARCHAR(20)  NULL,
-            captured_at   DATETIME2     NOT NULL,
-            CONSTRAINT PK_assignment_snapshots PRIMARY KEY (entity_id, snapshot_date)
-        )
-    """)
-    # Movement queries read by entity across dates, so index that way.
-    cursor.execute("""
-        IF NOT EXISTS (SELECT 1 FROM sys.indexes
-                       WHERE name = 'IX_assignment_snapshots_entity'
-                         AND object_id = OBJECT_ID('impactmgr.assignment_snapshots'))
-        CREATE INDEX IX_assignment_snapshots_entity
-            ON impactmgr.assignment_snapshots (entity_id, start_date)
-    """)
+MIGRATION = 'migrations/2026-08-19_assignment_snapshots.sql'
 
 
-def _positions_conn():
+def _conn():
     return pyodbc.connect(
         f"DRIVER={{ODBC Driver 17 for SQL Server}};"
         f"SERVER={os.environ['DB_HOST']};"
@@ -107,34 +116,32 @@ def _positions_conn():
     )
 
 
-def _capture(src_cursor, app_cursor, label, query, today, now):
-    src_cursor.execute(query)
-    cols = [c[0] for c in src_cursor.description]
-    rows = [dict(zip(cols, r)) for r in src_cursor.fetchall()]
+def _table_ready(cursor, table):
+    """True when the table exists and this login can write to it."""
+    cursor.execute("""
+        SELECT CASE WHEN OBJECT_ID(?) IS NULL THEN 0 ELSE 1 END,
+               ISNULL(HAS_PERMS_BY_NAME(?, 'OBJECT', 'INSERT'), 0)
+    """, table, table)
+    exists, can_insert = cursor.fetchone()
+    return bool(exists), bool(can_insert)
+
+
+def _capture(cursor, cfg, today, now):
+    cursor.execute(cfg['select'])
+    cols = [c[0] for c in cursor.description]
+    rows = [dict(zip(cols, r)) for r in cursor.fetchall()]
     written = 0
     for r in rows:
-        entity = (r.get('entity_id') or '').strip()
-        if not entity:
+        key = (r.get('k') or '').strip()
+        if not key:
             continue
-        app_cursor.execute("""
-            MERGE impactmgr.assignment_snapshots AS t
-            USING (SELECT ? AS entity_id, ? AS snapshot_date) AS src
-              ON t.entity_id = src.entity_id AND t.snapshot_date = src.snapshot_date
-            WHEN MATCHED THEN UPDATE SET
-                source_system = ?, start_date = ?, end_date = ?, status = ?,
-                health_system = ?, agency = ?, bill_rate = ?, delayed_flag = ?,
-                captured_at = ?
-            WHEN NOT MATCHED THEN
-                INSERT (entity_id, snapshot_date, source_system, start_date, end_date,
-                        status, health_system, agency, bill_rate, delayed_flag, captured_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
-        """,
-            entity, today,
-            r.get('source_system'), r.get('start_date'), r.get('end_date'), r.get('status'),
-            r.get('health_system'), r.get('agency'), r.get('bill_rate'), r.get('delayed_flag'), now,
-            entity, today,
-            r.get('source_system'), r.get('start_date'), r.get('end_date'), r.get('status'),
-            r.get('health_system'), r.get('agency'), r.get('bill_rate'), r.get('delayed_flag'), now)
+        vals = [r.get('start_date'), r.get('end_date'), r.get('status'),
+                r.get('health_system'), r.get('agency'), r.get('rate')]
+        if cfg['has_delayed_flag']:
+            vals.append(r.get('delayed_flag'))
+        vals.append(now)
+        # MERGE needs the values twice — once for UPDATE, once for INSERT.
+        cursor.execute(cfg['merge'], key, today, *vals, key, today, *vals)
         written += 1
     return written
 
@@ -144,60 +151,64 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
     if auth_error:
         return auth_error
 
-    app_conn = get_appdb_conn()
-    if app_conn is None:
-        return func.HttpResponse(
-            json.dumps({'error': 'appdb_not_configured'}),
-            mimetype='application/json', status_code=503)
-
-    src_conn = None
+    conn = None
     try:
-        app_cursor = app_conn.cursor()
-        _ensure_schema(app_cursor)
-        app_conn.commit()
+        conn = _conn()
+        cursor = conn.cursor()
+        cursor.execute('SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED')
 
         today = datetime.date.today()
         now = datetime.datetime.utcnow()
 
-        # GET reports coverage without writing, so the client can decide whether
-        # today's snapshot is already in place before doing any work.
-        if req.method == 'GET':
-            app_cursor.execute("""
-                SELECT COUNT(*) AS rows_today FROM impactmgr.assignment_snapshots
-                WHERE snapshot_date = ?
-            """, today)
-            rows_today = app_cursor.fetchone()[0]
-            app_cursor.execute("""
-                SELECT COUNT(DISTINCT snapshot_date) AS days,
-                       MIN(snapshot_date) AS first_day,
-                       COUNT(*) AS total_rows
-                FROM impactmgr.assignment_snapshots
-            """)
-            days, first_day, total = app_cursor.fetchone()
-            return func.HttpResponse(json.dumps({
-                'capturedToday': rows_today > 0,
-                'rowsToday': rows_today,
-                'daysCaptured': days or 0,
-                'firstDay': first_day.isoformat() if first_day else None,
-                'totalRows': total or 0,
-                # Movement is only measurable once there are two days to compare.
-                'movementAvailable': (days or 0) >= 2,
-            }, default=str), mimetype='application/json', status_code=200)
+        readiness = {}
+        for label, cfg in SNAPSHOT_TARGETS.items():
+            exists, can_insert = _table_ready(cursor, cfg['table'])
+            readiness[label] = {'table': cfg['table'], 'exists': exists, 'writable': can_insert}
 
-        src_conn = _positions_conn()
-        src_cursor = src_conn.cursor()
-        src_cursor.execute('SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED')
+        missing = [r for r in readiness.values() if not (r['exists'] and r['writable'])]
+        if missing:
+            # Say exactly what is missing and how to fix it, rather than
+            # failing with a permissions error nobody can act on.
+            return func.HttpResponse(json.dumps({
+                'error': 'snapshot_tables_not_ready',
+                'detail': 'The warehouse snapshot tables do not exist or are not writable '
+                          'by this login.',
+                'run': MIGRATION,
+                'tables': readiness,
+            }, default=str), mimetype='application/json', status_code=403)
+
+        if req.method == 'GET':
+            out = {}
+            for label, cfg in SNAPSHOT_TARGETS.items():
+                cursor.execute(f"""
+                    SELECT COUNT(DISTINCT Snapshot_Date), MIN(Snapshot_Date),
+                           SUM(CASE WHEN Snapshot_Date = ? THEN 1 ELSE 0 END)
+                    FROM {cfg['table']}
+                """, today)
+                days, first, today_rows = cursor.fetchone()
+                out[label] = {
+                    'daysCaptured': days or 0,
+                    'firstDay': first.isoformat() if first else None,
+                    'rowsToday': today_rows or 0,
+                }
+            # Movement needs two days to compare.
+            out['capturedToday'] = all(v['rowsToday'] > 0 for v in out.values()
+                                       if isinstance(v, dict))
+            out['movementAvailable'] = all(v['daysCaptured'] >= 2 for v in out.values()
+                                           if isinstance(v, dict))
+            return func.HttpResponse(json.dumps(out, default=str),
+                                     mimetype='application/json', status_code=200)
 
         captured, errors = {}, []
-        for label, query in SNAPSHOT_SOURCES.items():
+        for label, cfg in SNAPSHOT_TARGETS.items():
             try:
-                captured[label] = _capture(src_cursor, app_cursor, label, query, today, now)
+                captured[label] = _capture(cursor, cfg, today, now)
             except Exception as e:
                 print(f'Snapshot: {label} failed: {e}')
                 import traceback
                 traceback.print_exc()
                 errors.append(f'{label}: {e}')
-        app_conn.commit()
+        conn.commit()
 
         print(f'Snapshot {today}: {captured} (errors: {errors or "none"}) '
               f'by {current_user_email(req)}')
@@ -213,6 +224,5 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             json.dumps({'error': str(e)}),
             mimetype='application/json', status_code=500)
     finally:
-        if src_conn is not None:
-            src_conn.close()
-        app_conn.close()
+        if conn is not None:
+            conn.close()
