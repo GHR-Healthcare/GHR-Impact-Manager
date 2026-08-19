@@ -1,771 +1,24 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>GHR Impact Manager</title>
-  <link rel="icon" type="image/x-icon" href="favicon.ico">
+/* Reporting views ported from the previous UI.
+
+   Trends, Per Diem, Revenue and Contracts are the same renderers that
+   produce these reports today, so the numbers and layout are identical.
+   Their helpers live at several nesting depths inside one shared closure,
+   so the module is taken whole and only its standalone boot is disabled —
+   cherry-picking pieces out of it silently loses transitive helpers.
+
+   Markup uses Tailwind utilities and lucide icons, both loaded by
+   index.html. The workspace fills store.state via ReportViews.setState().
+ */
+
+/* Scoped in an IIFE: this module and the workspace are both classic scripts,
+   so its top-level declarations (API_BASE_URL, store, View, Utils, CONSTANTS…)
+   would otherwise collide with the workspace's own in the shared global scope.
+
+   The rendered markup uses inline on* handlers, which resolve against window,
+   so the handful of functions those reference are re-exported explicitly
+   below. Everything else stays private.                                     */
+(function(){
 
-  <!-- Libraries -->
-  <script src="https://cdn.tailwindcss.com"></script>
-  <script>tailwind.config = { corePlugins: { preflight: true } }</script>
-  <script>
-    // Suppress Tailwind CDN production warning
-    const originalWarn = console.warn;
-    console.warn = (...args) => {
-      if (args[0]?.includes?.('cdn.tailwindcss.com')) return;
-      originalWarn.apply(console, args);
-    };
-  </script>
-  <script src="https://unpkg.com/lucide@latest"></script>
-  <script src="https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-
-  <style>
-    body { font-family: 'Inter', sans-serif; }
-    .fade-in { animation: fadeIn 0.2s ease-in-out; }
-    @keyframes fadeIn { from { opacity: 0; transform: translateY(-5px); } to { opacity: 1; transform: translateY(0); } }
-
-    .scroller::-webkit-scrollbar { width: 8px; height: 8px; }
-    .scroller::-webkit-scrollbar-track { background: #f1f5f9; }
-    .scroller::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
-
-    /* Trend tab: collapse/expand the 4-week-average column */
-    body.trend-avg-hidden .trend-avg-col { display: none; }
-
-    .multi-select-dropdown {
-      display: none; position: absolute; top: 100%; left: 0; z-index: 50;
-      min-width: 100%; width: max-content; max-height: 400px; overflow-y: auto;
-      background: white; border: 1px solid #e2e8f0; border-radius: 0.375rem;
-      box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
-    }
-    .multi-select-container.open .multi-select-dropdown { display: block; }
-
-    #loadingOverlay { backdrop-filter: blur(2px); }
-    .spinner { border: 3px solid #f3f3f3; border-top: 3px solid #3b82f6; border-radius: 50%; width: 24px; height: 24px; animation: spin 1s linear infinite; }
-    @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
-
-    #toastContainer { pointer-events: none; }
-    .toast { pointer-events: auto; transition: all 0.3s ease; }
-
-    .hot-job-active { color: #ef4444; fill: #fee2e2; }
-    
-    /* Custom instant tooltips for KPI cards */
-    .kpi-tooltip {
-      position: relative;
-    }
-    .kpi-tooltip::after {
-      content: attr(data-tooltip);
-      position: absolute;
-      bottom: calc(100% + 8px);
-      right: 0;
-      background: #1e293b;
-      color: white;
-      padding: 6px 10px;
-      border-radius: 6px;
-      font-size: 11px;
-      font-weight: 500;
-      white-space: nowrap;
-      opacity: 0;
-      visibility: hidden;
-      transition: opacity 0.15s, visibility 0.15s;
-      pointer-events: none;
-      z-index: 9999;
-      box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
-    }
-    .kpi-tooltip::before {
-      content: '';
-      position: absolute;
-      bottom: calc(100% + 2px);
-      right: 6px;
-      border: 6px solid transparent;
-      border-top-color: #1e293b;
-      opacity: 0;
-      visibility: hidden;
-      transition: opacity 0.15s, visibility 0.15s;
-      pointer-events: none;
-      z-index: 9999;
-    }
-    .kpi-tooltip:hover::after,
-    .kpi-tooltip:hover::before {
-      opacity: 1;
-      visibility: visible;
-    }
-  </style>
-
-</head>
-
-<body class="bg-slate-50 text-slate-800 min-h-screen w-full p-2 sm:p-6 flex flex-col overflow-x-hidden overflow-y-auto md:h-screen md:overflow-hidden">
-
-  <!-- TOAST CONTAINER -->
-  <div id="toastContainer" class="fixed top-4 right-4 z-[60] flex flex-col gap-2"></div>
-
-  <!-- LOADING OVERLAY -->
-  <div id="loadingOverlay" class="hidden fixed inset-0 bg-white/50 z-[100] flex flex-col items-center justify-center">
-    <div class="bg-white p-4 rounded-lg shadow-xl border flex items-center gap-3">
-      <div class="spinner"></div>
-      <span class="font-bold text-slate-700" id="loadingText">Processing...</span>
-    </div>
-  </div>
-
-  <!-- EXPLANATION MODAL -->
-  <div id="helpModal" class="hidden fixed inset-0 bg-black/50 z-[90] flex items-center justify-center backdrop-blur-sm">
-    <div class="bg-white rounded-lg shadow-2xl w-[600px] border border-slate-200 overflow-hidden flex flex-col max-h-[90vh]">
-      <div class="bg-slate-100 p-4 border-b border-slate-200 flex justify-between items-center">
-        <h3 class="font-bold text-slate-700 flex items-center gap-2">
-          <i data-lucide="database" class="w-5 h-5 text-green-600"></i> Database Workflow Guide
-        </h3>
-        <button onclick="document.getElementById('helpModal').classList.add('hidden')" class="text-slate-400 hover:text-slate-700">
-          <i data-lucide="x" class="w-5 h-5"></i>
-        </button>
-      </div>
-      <div class="p-6 overflow-y-auto">
-        <div class="space-y-6">
-          <div class="flex gap-4">
-            <div class="bg-green-100 text-green-700 w-8 h-8 rounded-full flex items-center justify-center font-bold shrink-0">1</div>
-            <div>
-              <h4 class="font-bold text-slate-800">Load from Database</h4>
-              <p class="text-sm text-slate-600 mt-1">Click the green <span class="font-bold text-green-600">Load from Database</span> button to fetch the latest position data from your SQL Server database. This loads fresh data every time.</p>
-            </div>
-          </div>
-
-          <div class="flex gap-4">
-            <div class="bg-blue-100 text-blue-700 w-8 h-8 rounded-full flex items-center justify-center font-bold shrink-0">2</div>
-            <div>
-              <h4 class="font-bold text-slate-800">Make Changes</h4>
-              <p class="text-sm text-slate-600 mt-1">Toggle levers, update margins, add notes - all changes are <strong>automatically saved</strong> to the database in real-time. No need to manually save!</p>
-            </div>
-          </div>
-
-          <div class="flex gap-4">
-            <div class="bg-purple-100 text-purple-700 w-8 h-8 rounded-full flex items-center justify-center font-bold shrink-0">3</div>
-            <div>
-              <h4 class="font-bold text-slate-800">Refresh Anytime</h4>
-              <p class="text-sm text-slate-600 mt-1">Click the <span class="font-bold text-blue-600">Refresh</span> button to reload data and see changes made by other team members.</p>
-            </div>
-          </div>
-
-          <div class="bg-slate-50 p-4 rounded border border-slate-200 text-sm">
-            <strong class="text-slate-700">Pro Tip:</strong> Start each day by clicking "Load from Database" to get the freshest data. All your changes sync automatically across the team!
-          </div>
-        </div>
-      </div>
-      <div class="p-4 border-t border-slate-200 text-right bg-slate-50">
-        <button onclick="document.getElementById('helpModal').classList.add('hidden')" class="px-4 py-2 bg-slate-800 text-white rounded hover:bg-slate-700 text-sm font-medium">Got it</button>
-      </div>
-    </div>
-  </div>
-
-  <!-- HEADER -->
-  <header class="mb-4 shrink-0">
-    <!-- Top row: Title and User -->
-    <div class="flex flex-col sm:flex-row justify-between items-start gap-2 mb-2">
-      <div>
-        <h1 class="text-xl sm:text-3xl font-bold text-slate-900 flex items-center gap-2 sm:gap-3">
-          <i data-lucide="activity" class="text-blue-600 w-6 h-6 sm:w-8 sm:h-8"></i>
-          GHR Impact Manager
-          <!-- Instance badge — reveal + label from /api/get-config's dataSource. -->
-          <span id="instanceBadge" class="hidden text-[10px] sm:text-xs font-semibold uppercase tracking-wide px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-700 border border-indigo-200"></span>
-          <span id="versionDisplay" class="text-xs font-normal text-slate-400 ml-1"></span>
-        </h1>
-        <p id="appSubtitle" class="text-slate-500 text-xs sm:text-base mt-1 hidden sm:block">High-Performance Optimization Build</p>
-      </div>
-      
-      <!-- User Display & Logout - Top Right -->
-      <div class="flex items-center gap-1 sm:gap-2 flex-wrap">
-        <!-- Connection Status Indicator -->
-        <div id="connectionStatus" class="flex items-center gap-1.5 bg-white border border-slate-200 rounded-md px-2 sm:px-3 h-[32px] sm:h-[38px] shadow-sm" title="Database connection status">
-          <div id="connectionDot" class="w-2 h-2 rounded-full bg-emerald-500"></div>
-          <span id="connectionText" class="text-xs text-slate-500 hidden sm:inline">Connected</span>
-        </div>
-        <!-- MSP <-> non-MSP toggle. Wired in JS after /api/get-config lands.
-             Hidden until we know the other instance URL. -->
-        <a id="instanceToggleBtn" href="#" class="hidden items-center gap-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 px-2 sm:px-3 rounded-md shadow-sm text-xs sm:text-sm font-semibold transition-colors h-[32px] sm:h-[38px]" title="Switch dashboards">
-          <i data-lucide="arrow-left-right" class="w-4 h-4"></i>
-          <span id="instanceToggleLabel" class="hidden sm:inline">Switch</span>
-        </a>
-        <button onclick="openSettingsModal()"
-                class="flex items-center gap-1 bg-slate-100 hover:bg-slate-200 text-slate-600 px-2 sm:px-3 rounded-md shadow-sm text-sm font-medium transition-colors h-[32px] sm:h-[38px]"
-                title="Settings">
-          <i data-lucide="settings" class="w-4 h-4"></i>
-        </button>
-        <div class="flex items-center gap-1 sm:gap-2 bg-white border border-slate-200 rounded-md px-2 sm:px-3 h-[32px] sm:h-[38px] shadow-sm">
-          <i data-lucide="user" class="w-4 h-4 text-slate-500"></i>
-          <span id="currentUserDisplay" class="text-xs sm:text-sm font-medium text-slate-700 max-w-[100px] sm:max-w-[200px] truncate">Loading...</span>
-        </div>
-        <button onclick="logout()" 
-                class="flex items-center gap-1 bg-slate-100 hover:bg-slate-200 text-slate-600 px-2 sm:px-3 rounded-md shadow-sm text-sm font-medium transition-colors h-[32px] sm:h-[38px]"
-                title="Sign out">
-          <i data-lucide="log-out" class="w-4 h-4"></i>
-        </button>
-      </div>
-    </div>
-    
-    <!-- Bottom row: Filters, Search, Buttons -->
-    <div class="flex justify-end">
-      <div class="flex flex-wrap items-end gap-3 w-full lg:w-auto lg:min-w-[50%]" id="controlsArea">
-        <!-- Division: first slot on non-MSP (dataSource === 'non_msp'), hidden on MSP.
-             Shown/hidden by View.initFilters based on window.store.state.dataSource. -->
-        <div class="multi-select-container relative w-[calc(50%-6px)] sm:flex-1 min-h-[58px] hidden" id="teamFilterContainer">
-        </div>
-        <div class="multi-select-container relative w-[calc(50%-6px)] sm:flex-1 min-h-[58px] hidden" id="divisionFilterContainer">
-          <label class="block text-xs font-bold text-slate-500 mb-1 ml-1 uppercase tracking-wider">Division</label>
-          <div class="w-full bg-white border border-slate-300 rounded-md px-3 py-2 text-sm text-slate-400">Loading...</div>
-        </div>
-        <div class="multi-select-container relative w-[calc(50%-6px)] sm:flex-1 min-h-[58px]" id="systemFilterContainer">
-          <label class="block text-xs font-bold text-slate-500 mb-1 ml-1 uppercase tracking-wider">System</label>
-          <div class="w-full bg-white border border-slate-300 rounded-md px-3 py-2 text-sm text-slate-400">Loading...</div>
-        </div>
-        <div class="multi-select-container relative w-[calc(50%-6px)] sm:flex-1 min-h-[58px]" id="facilityFilterContainer">
-          <label class="block text-xs font-bold text-slate-500 mb-1 ml-1 uppercase tracking-wider">Facility</label>
-          <div class="w-full bg-white border border-slate-300 rounded-md px-3 py-2 text-sm text-slate-400">Loading...</div>
-        </div>
-        <div class="multi-select-container relative w-[calc(50%-6px)] sm:flex-1 min-h-[58px]" id="categoryFilterContainer">
-          <label class="block text-xs font-bold text-slate-500 mb-1 ml-1 uppercase tracking-wider">Category</label>
-          <div class="w-full bg-white border border-slate-300 rounded-md px-3 py-2 text-sm text-slate-400">Loading...</div>
-        </div>
-        <div class="multi-select-container relative w-[calc(50%-6px)] sm:flex-1 min-h-[58px]" id="specialtyFilterContainer">
-          <label class="block text-xs font-bold text-slate-500 mb-1 ml-1 uppercase tracking-wider">Specialty</label>
-          <div class="w-full bg-white border border-slate-300 rounded-md px-3 py-2 text-sm text-slate-400">Loading...</div>
-        </div>
-        <div class="multi-select-container relative w-[calc(50%-6px)] sm:flex-1 min-h-[58px] hidden" id="professionFilterContainer">
-          <label class="block text-xs font-bold text-slate-500 mb-1 ml-1 uppercase tracking-wider">Profession</label>
-          <div class="w-full bg-white border border-slate-300 rounded-md px-3 py-2 text-sm text-slate-400">Loading...</div>
-        </div>
-        <div class="multi-select-container relative w-[calc(50%-6px)] sm:flex-1 min-h-[58px] hidden" id="regionFilterContainer">
-          <label class="block text-xs font-bold text-slate-500 mb-1 ml-1 uppercase tracking-wider">Region</label>
-          <div class="w-full bg-white border border-slate-300 rounded-md px-3 py-2 text-sm text-slate-400">Loading...</div>
-        </div>
-
-        <div class="relative w-[calc(50%-6px)] sm:flex-1">
-          <label class="block text-xs font-bold text-slate-500 mb-1 ml-1 uppercase tracking-wider">Search ID</label>
-          <div class="relative">
-            <input type="text" placeholder="Job ID..." 
-                   class="w-full bg-white border border-slate-300 rounded-md pl-7 pr-2 py-2 text-sm focus:border-blue-500 outline-none shadow-sm"
-                   oninput="store.dispatch('SET_SEARCH', this.value)">
-            <i data-lucide="search" class="w-3 h-3 text-slate-400 absolute left-2.5 top-3"></i>
-          </div>
-        </div>
-
-        <div class="relative w-[calc(50%-6px)] sm:flex-1">
-          <label class="block text-xs font-bold text-slate-500 mb-1 ml-1 uppercase tracking-wider">Days Age</label>
-          <div class="flex gap-1">
-            <input type="number" id="minAge" placeholder="Min"
-                   class="w-1/2 bg-white border border-slate-300 rounded-md px-2 py-2 text-sm focus:border-blue-500 outline-none shadow-sm"
-                   oninput="store.dispatch('SET_AGE_RANGE')">
-            <input type="number" id="maxAge" placeholder="Max"
-                   class="w-1/2 bg-white border border-slate-300 rounded-md px-2 py-2 text-sm focus:border-blue-500 outline-none shadow-sm"
-                   oninput="store.dispatch('SET_AGE_RANGE')">
-          </div>
-        </div>
-        
-        <!-- Buttons -->
-        <div class="flex gap-1 sm:gap-2 items-center flex-wrap">
-          <button class="flex items-center gap-1 sm:gap-2 bg-orange-600 hover:bg-orange-700 text-white px-2 sm:px-4 rounded-md shadow-sm text-xs sm:text-sm font-medium transition-colors h-[32px] sm:h-[38px]"
-                  onclick="store.dispatch('GENERATE_HOT_JOBS_EMAIL')" title="AI Hot Job Summary">
-              <i data-lucide="flame" class="w-4 h-4"></i>
-          </button>
-          <button class="flex items-center gap-1 sm:gap-2 bg-indigo-600 hover:bg-indigo-700 text-white px-2 sm:px-4 rounded-md shadow-sm text-xs sm:text-sm font-medium transition-colors h-[32px] sm:h-[38px]"
-                  onclick="store.dispatch('GENERATE_SUMMARY')" title="AI Impact Call Summary">
-              <i data-lucide="file-text" class="w-4 h-4"></i>
-          </button>
-
-          <button id="privacyBtn"
-                  class="flex items-center gap-1 sm:gap-2 bg-slate-700 hover:bg-slate-800 text-white px-2 sm:px-4 rounded-md shadow-sm text-xs sm:text-sm font-medium transition-colors h-[32px] sm:h-[38px]"
-                  onclick="store.dispatch('TOGGLE_PRIVACY')" title="Redact Vendor Info">
-            <i data-lucide="eye-off" id="privacyIcon" class="w-4 h-4 text-red-400"></i>
-          </button>
-          
-          <button onclick="openHistoryModal()" 
-                  class="flex items-center gap-1 sm:gap-2 bg-purple-600 hover:bg-purple-700 text-white px-2 sm:px-4 rounded-md shadow-sm text-xs sm:text-sm font-medium transition-colors h-[32px] sm:h-[38px]"
-                  title="View change history">
-            <i data-lucide="history" class="w-4 h-4"></i>
-          </button>
-        </div>
-      </div>
-    </div>
-  </header>
-
-  <!-- HISTORY MODAL -->
-  <div id="historyModal" class="hidden fixed inset-0 bg-black/50 z-[90] flex items-center justify-center backdrop-blur-sm">
-    <div class="bg-white rounded-lg shadow-2xl w-11/12 max-w-6xl border border-slate-200 overflow-hidden flex flex-col max-h-[90vh]">
-      <div class="bg-slate-100 p-4 border-b border-slate-200 flex justify-between items-center">
-        <h3 class="text-2xl font-bold text-slate-900 flex items-center gap-2">
-          <i data-lucide="history" class="w-6 h-6 text-purple-600"></i> Change History
-        </h3>
-        <button onclick="closeHistoryModal()" class="text-slate-400 hover:text-slate-700">
-          <i data-lucide="x" class="w-6 h-6"></i>
-        </button>
-      </div>
-      
-      <div class="p-6 overflow-y-auto">
-        <div class="mb-4 flex gap-3">
-          <div class="flex-1">
-            <label class="block text-sm font-medium mb-1">View State At:</label>
-            <select id="historyVersionSelect" onchange="loadHistoricalVersion()" class="w-full border rounded px-3 py-2 text-sm">
-              <option value="">Select a version...</option>
-            </select>
-          </div>
-          <div class="flex items-end gap-2">
-            <button onclick="compareVersions()" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded text-sm font-medium flex items-center gap-1">
-              <i data-lucide="git-compare" class="w-4 h-4"></i> Compare
-            </button>
-            <button onclick="restoreVersion()" class="bg-orange-600 hover:bg-orange-700 text-white px-4 py-2 rounded text-sm font-medium flex items-center gap-1">
-              <i data-lucide="rotate-ccw" class="w-4 h-4"></i> Restore
-            </button>
-          </div>
-        </div>
-        
-        <div id="historyContent" class="border rounded-lg p-4 bg-slate-50 min-h-[400px]">
-          <!-- History content loaded here -->
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <!-- SETTINGS MODAL -->
-  <div id="settingsModal" class="hidden fixed inset-0 bg-black/50 z-[90] flex items-center justify-center backdrop-blur-sm">
-    <div class="bg-white rounded-lg shadow-2xl w-11/12 max-w-4xl border border-slate-200 overflow-hidden flex flex-col max-h-[90vh]">
-      <div class="bg-slate-100 p-4 border-b border-slate-200 flex justify-between items-center">
-        <h3 class="text-2xl font-bold text-slate-900 flex items-center gap-2">
-          <i data-lucide="settings" class="w-6 h-6 text-slate-600"></i> Settings
-        </h3>
-        <button onclick="closeSettingsModal()" class="text-slate-400 hover:text-slate-700">
-          <i data-lucide="x" class="w-6 h-6"></i>
-        </button>
-      </div>
-      
-      <!-- Tabs -->
-      <div class="border-b border-slate-200 px-6 pt-4 flex gap-1">
-        <button id="settingsTabSystems" onclick="switchSettingsTab('systems')"
-          class="px-4 py-2 text-sm font-semibold rounded-t-md border border-b-0 border-slate-200 bg-white text-blue-700 -mb-px z-10">
-          <i data-lucide="building-2" class="w-4 h-4 inline-block mr-1"></i> Health Systems
-        </button>
-        <button id="settingsTabPM" onclick="switchSettingsTab('pm')"
-          class="px-4 py-2 text-sm font-semibold rounded-t-md text-slate-500 hover:text-slate-700">
-          <i data-lucide="user-check" class="w-4 h-4 inline-block mr-1"></i> Program Managers
-        </button>
-        <button id="settingsTabAllowlist" onclick="switchSettingsTab('allowlist')"
-          class="px-4 py-2 text-sm font-semibold rounded-t-md text-slate-500 hover:text-slate-700 hidden">
-          <i data-lucide="list-plus" class="w-4 h-4 inline-block mr-1"></i> Non-MSP Clients
-        </button>
-      </div>
-
-      <!-- Health Systems Tab -->
-      <div id="settingsPanelSystems" class="p-6 overflow-y-auto">
-        <p class="text-sm text-slate-500 mb-4">Map facility name keywords to normalized health system names. Keywords are matched case-insensitively.</p>
-
-        <!-- Non-MSP: system rollup isn't editable from this screen. Direct
-             users to the Non-MSP Clients tab where they can add accounts. -->
-        <div id="systemMappingsCodeManagedBanner" class="hidden mb-4 p-3 bg-amber-50 border border-amber-200 rounded text-sm text-amber-800">
-          <i data-lucide="info" class="w-4 h-4 inline-block mr-1"></i>
-          Health system groupings can't be edited here on the non-MSP dashboard. To force-include a specific account, switch to the <strong>Non-MSP Clients</strong> tab.
-        </div>
-
-        <div class="border rounded-lg overflow-hidden mb-4">
-          <table class="w-full text-sm">
-            <thead class="bg-slate-100">
-              <tr>
-                <th class="text-left p-3 font-semibold text-slate-700">Keywords (comma-separated)</th>
-                <th class="text-left p-3 font-semibold text-slate-700 w-48">Health System</th>
-                <th class="text-center p-3 font-semibold text-slate-700 w-36" title="Break out per diem metrics by facility instead of rolling up to system level">Per Diem Breakout</th>
-                <th class="text-center p-3 font-semibold text-slate-700 w-20" title="Hide this health system from all tabs and filters">Hide</th>
-                <th class="w-16 p-3"></th>
-              </tr>
-            </thead>
-            <tbody id="mappingsTableBody" class="divide-y">
-              <!-- Mappings loaded here -->
-            </tbody>
-          </table>
-        </div>
-
-        <div class="flex justify-between items-center">
-          <div class="flex gap-2">
-            <button onclick="addMappingRow()" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded text-sm font-medium flex items-center gap-1">
-              <i data-lucide="plus" class="w-4 h-4"></i> Add Mapping
-            </button>
-            <button onclick="resetMappingsToDefaults()" class="bg-slate-200 hover:bg-slate-300 text-slate-700 px-4 py-2 rounded text-sm font-medium flex items-center gap-1">
-              <i data-lucide="rotate-ccw" class="w-4 h-4"></i> Reset to Defaults
-            </button>
-          </div>
-          <div class="flex gap-2">
-            <button onclick="exportMappings()" class="bg-slate-200 hover:bg-slate-300 text-slate-700 px-4 py-2 rounded text-sm font-medium flex items-center gap-1">
-              <i data-lucide="download" class="w-4 h-4"></i> Export
-            </button>
-            <label class="bg-slate-200 hover:bg-slate-300 text-slate-700 px-4 py-2 rounded text-sm font-medium flex items-center gap-1 cursor-pointer">
-              <i data-lucide="upload" class="w-4 h-4"></i> Import
-              <input type="file" accept=".json" onchange="importMappings(event)" class="hidden">
-            </label>
-          </div>
-        </div>
-      </div>
-
-      <!-- Program Managers Tab -->
-      <div id="settingsPanelPM" class="p-6 overflow-y-auto hidden">
-        <p class="text-sm text-slate-500 mb-4">Assign a GHR Program Manager to each facility. Used to group headcount in the Trend tab PM view.</p>
-
-        <div class="border rounded-lg overflow-hidden mb-4">
-          <table class="w-full text-sm">
-            <thead class="bg-slate-100">
-              <tr>
-                <th class="text-left p-3 font-semibold text-slate-700">Facility</th>
-                <th class="text-left p-3 font-semibold text-slate-700 w-72">Program Manager</th>
-              </tr>
-            </thead>
-            <tbody id="pmMappingsTableBody" class="divide-y">
-              <!-- PM mappings loaded here -->
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      <!-- Non-MSP Client Allowlist Tab (visible only on non-MSP) -->
-      <div id="settingsPanelAllowlist" class="p-6 overflow-y-auto hidden">
-        <p class="text-sm text-slate-500 mb-4">
-          Keep a specific client visible on the dashboard even when they have no active work at the moment.
-          Anyone with active placements or orders is already included automatically — this list is for accounts you want to keep an eye on regardless.
-        </p>
-
-        <div class="border rounded-lg overflow-hidden mb-4">
-          <table class="w-full text-sm">
-            <thead class="bg-slate-100">
-              <tr>
-                <th class="text-left p-3 font-semibold text-slate-700 w-32">Source</th>
-                <th class="text-left p-3 font-semibold text-slate-700 w-32">Client ID</th>
-                <th class="text-left p-3 font-semibold text-slate-700 w-64">Display Name <span class="font-normal text-xs text-slate-400">(optional)</span></th>
-                <th class="text-left p-3 font-semibold text-slate-700">Notes <span class="font-normal text-xs text-slate-400">(optional)</span></th>
-                <th class="w-14 p-3"></th>
-              </tr>
-            </thead>
-            <tbody id="allowlistTableBody" class="divide-y">
-              <!-- Allowlist rows loaded here -->
-            </tbody>
-          </table>
-        </div>
-
-        <div class="flex justify-between items-center gap-4 flex-wrap">
-          <button onclick="addAllowlistRow()" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded text-sm font-medium flex items-center gap-1.5 whitespace-nowrap">
-            <i data-lucide="plus" class="w-4 h-4"></i> Add Client
-          </button>
-          <p class="text-xs text-slate-500 max-w-md">
-            Removing a row here just removes the manual override. Clients with active work are still included automatically.
-          </p>
-        </div>
-      </div>
-      
-      <div class="bg-slate-100 p-4 border-t border-slate-200 flex justify-end gap-2">
-        <button onclick="closeSettingsModal()" class="bg-slate-200 hover:bg-slate-300 text-slate-700 px-6 py-2 rounded text-sm font-medium">
-          Cancel
-        </button>
-        <button onclick="saveSettings()" class="bg-emerald-600 hover:bg-emerald-700 text-white px-6 py-2 rounded text-sm font-medium flex items-center gap-1">
-          <i data-lucide="check" class="w-4 h-4"></i> Save Changes
-        </button>
-      </div>
-    </div>
-  </div>
-
-  <div id="kpiContainer" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-2 sm:gap-4 mb-4 sm:mb-6 shrink-0 min-h-[80px] sm:min-h-[100px]"></div>
-
-  <div class="flex flex-col sm:flex-row justify-between items-center mb-4 gap-4 shrink-0">
-    <div id="legendContainer" class="flex flex-wrap items-center gap-4 text-xs font-medium text-slate-600 bg-white p-3 rounded-md border border-slate-200 inline-flex shadow-sm min-h-[38px] flex-1"></div>
-    <div class="flex items-center gap-3 shrink-0">
-      <div class="flex bg-white border border-slate-200 rounded-lg p-1 shadow-sm" id="viewToggles">
-        <button onclick="store.dispatch('SET_VIEW','list')" id="btnViewList"
-                class="px-4 py-1.5 text-xs font-bold rounded-md transition-colors bg-blue-50 text-blue-700 shadow-sm border border-blue-100 flex items-center gap-1.5">
-          <i data-lucide="list" class="w-3.5 h-3.5"></i> List
-        </button>
-        <button onclick="store.dispatch('SET_VIEW','hotjobs')" id="btnViewHot"
-                class="px-4 py-1.5 text-xs font-bold rounded-md transition-colors text-slate-500 hover:text-slate-700 flex items-center gap-1.5">
-          <i data-lucide="flame" class="w-3.5 h-3.5"></i> Hot Jobs
-        </button>
-        <button onclick="store.dispatch('SET_VIEW','trend')" id="btnViewTrend"
-                class="px-4 py-1.5 text-xs font-bold rounded-md transition-colors text-slate-500 hover:text-slate-700 flex items-center gap-1.5">
-          <i data-lucide="trending-up" class="w-3.5 h-3.5"></i> Trend
-        </button>
-        <button onclick="store.dispatch('SET_VIEW','perdiem')" id="btnViewPerDiem"
-                class="px-4 py-1.5 text-xs font-bold rounded-md transition-colors text-slate-500 hover:text-slate-700 flex items-center gap-1.5">
-          <i data-lucide="clock" class="w-3.5 h-3.5"></i> Per Diem
-        </button>
-        <button onclick="store.dispatch('SET_VIEW','pending')" id="btnViewPending"
-                class="px-4 py-1.5 text-xs font-bold rounded-md transition-colors text-slate-500 hover:text-slate-700 flex items-center gap-1.5">
-          <i data-lucide="file-clock" class="w-3.5 h-3.5"></i> Pending
-        </button>
-        <button onclick="store.dispatch('SET_VIEW','financials')" id="btnViewFinancials"
-                class="px-4 py-1.5 text-xs font-bold rounded-md transition-colors text-slate-500 hover:text-slate-700 flex items-center gap-1.5">
-          <i data-lucide="dollar-sign" class="w-3.5 h-3.5"></i> Financials
-        </button>
-        <button onclick="store.dispatch('SET_VIEW','contracts')" id="btnViewContracts"
-                class="px-4 py-1.5 text-xs font-bold rounded-md transition-colors text-slate-500 hover:text-slate-700 flex items-center gap-1.5">
-          <i data-lucide="file-diff" class="w-3.5 h-3.5"></i> Contracts
-        </button>
-      </div>
-      <button onclick="exportTravelAgingReport()" id="btnTravelAgingReport"
-              class="px-4 py-1.5 text-xs font-bold rounded-lg transition-colors bg-purple-600 hover:bg-purple-700 text-white shadow-sm flex items-center gap-1.5">
-        <i data-lucide="plane" class="w-3 h-3"></i> Travel Aging Report
-      </button>
-    </div>
-  </div>
-
-  <div id="mainContent" class="flex-1 relative overflow-visible md:overflow-hidden flex flex-col min-h-0">
-    <div id="listViewWrapper" class="bg-white shadow-lg rounded-lg border border-slate-200 flex flex-col md:h-full overflow-visible md:overflow-hidden min-h-0">
-      <!-- Mobile scroll hint -->
-      <div class="md:hidden bg-blue-50 text-blue-700 text-xs px-3 py-2 flex items-center gap-2 border-b border-blue-100">
-        <i data-lucide="move-horizontal" class="w-4 h-4"></i>
-        <span>Swipe left/right to see all columns</span>
-      </div>
-      <!-- Single scroll container for header + body -->
-      <div class="overflow-x-auto flex-1 overflow-y-visible md:overflow-y-auto">
-        <div class="min-w-[900px]">
-          <div class="grid grid-cols-12 bg-slate-100 p-4 font-bold text-slate-600 border-b border-slate-200 text-sm uppercase tracking-wider sticky top-0 z-20 shrink-0" id="tableHeader">
-            <div class="col-span-1 cursor-pointer hover:text-blue-600 flex items-center" onclick="store.dispatch('SORT','id')">ID <i data-lucide="arrow-up-down" class="ml-1 w-3 h-3 opacity-50"></i></div>
-            <div class="col-span-1 cursor-pointer hover:text-blue-600 flex items-center truncate" onclick="store.dispatch('SORT','program')">Category <i data-lucide="arrow-up-down" class="ml-1 w-3 h-3 opacity-50"></i></div>
-            <div class="col-span-3 cursor-pointer hover:text-blue-600 flex items-center" onclick="store.dispatch('SORT','facility')">System / Facility / Specialty <i data-lucide="arrow-up-down" class="ml-1 w-3 h-3 opacity-50"></i></div>
-            <div class="col-span-1 text-center cursor-pointer hover:text-blue-600 flex flex-col justify-center items-center" onclick="store.dispatch('SORT','numPositions')">
-              <div class="flex items-center"># <i data-lucide="arrow-up-down" class="ml-1 w-3 h-3 opacity-50"></i></div>
-              <div class="text-[9px] text-slate-400 font-normal">Pos</div>
-            </div>
-            <div class="col-span-1 text-center cursor-pointer hover:text-blue-600 flex justify-center items-center" onclick="store.dispatch('SORT','billRate')">Bill Rate <i data-lucide="arrow-up-down" class="ml-1 w-3 h-3 opacity-50"></i></div>
-            <div class="col-span-1 text-center cursor-pointer hover:text-blue-600 flex justify-center items-center" onclick="store.dispatch('SORT','daysPast')">Days <i data-lucide="arrow-up-down" class="ml-1 w-3 h-3 opacity-50"></i></div>
-            <div class="col-span-1 text-center cursor-pointer hover:text-blue-600 flex justify-center items-center" onclick="store.dispatch('SORT','margin')">Margin <i data-lucide="arrow-up-down" class="ml-1 w-3 h-3 opacity-50"></i></div>
-            <div class="col-span-1 text-center cursor-pointer hover:text-blue-600 flex justify-center items-center" onclick="store.dispatch('SORT','impact')">Impact <i data-lucide="arrow-up-down" class="ml-1 w-3 h-3 opacity-50"></i></div>
-            <div class="col-span-1 text-center cursor-pointer hover:text-blue-600 flex flex-col justify-center items-center" onclick="store.dispatch('SORT','ghrSubs')">
-              <div class="flex items-center">Active <i data-lucide="arrow-up-down" class="ml-1 w-3 h-3 opacity-50"></i></div>
-              <div class="text-[9px] text-slate-400 font-normal" id="hdrActiveSplit">GHR / Agency</div>
-            </div>
-            <div class="col-span-1 text-center cursor-pointer hover:text-blue-600 flex flex-col justify-center items-center" onclick="store.dispatch('SORT','ghrDeclines')">
-              <div class="flex items-center">Declines <i data-lucide="arrow-up-down" class="ml-1 w-3 h-3 opacity-50"></i></div>
-              <div class="text-[9px] text-slate-400 font-normal" id="hdrDeclinesSplit">GHR / Agency</div>
-            </div>
-          </div>
-          <div id="jobsContainer" class="divide-y divide-slate-100 min-h-0 relative">
-            <div class="absolute inset-0 flex flex-col items-center justify-center text-slate-400">
-              <i data-lucide="loader" class="w-12 h-12 mb-2 opacity-50 animate-spin"></i>
-              <p>Loading data...</p>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <div id="hotJobsViewWrapper" class="hidden flex flex-col h-full overflow-hidden bg-slate-50">
-      <div class="flex justify-between items-center p-4">
-        <h2 class="text-lg font-bold text-slate-800 flex items-center gap-2"><i data-lucide="flame" class="text-orange-500"></i> Hot Jobs List</h2>
-        <!-- Old Button Removed here, handled in Header -->
-      </div>
-      <div id="hotJobsContainer" class="flex-1 overflow-y-auto scroller p-6"></div>
-    </div>
-
-    <div id="financialsViewWrapper" class="hidden flex flex-col h-full overflow-hidden bg-white shadow-lg rounded-lg border border-slate-200">
-      <div class="flex-1 overflow-y-auto scroller p-6">
-        <div id="financialsContent" class="space-y-6"></div>
-      </div>
-    </div>
-
-    <div id="perDiemViewWrapper" class="hidden flex flex-col h-full overflow-hidden bg-white shadow-lg rounded-lg border border-slate-200">
-      <div class="flex-1 overflow-y-auto scroller p-6">
-        <div id="perDiemContent" class="space-y-6"></div>
-      </div>
-    </div>
-
-    <div id="trendViewWrapper" class="hidden flex flex-col h-full overflow-hidden bg-white shadow-lg rounded-lg border border-slate-200">
-      <div class="flex-1 overflow-y-auto scroller p-6">
-        <div id="trendContent" class="space-y-6"></div>
-      </div>
-    </div>
-
-    <div id="pendingViewWrapper" class="hidden flex flex-col h-full overflow-hidden bg-white shadow-lg rounded-lg border border-slate-200">
-      <div class="flex-1 overflow-y-auto scroller p-6">
-        <div id="pendingContent" class="space-y-6"></div>
-      </div>
-    </div>
-
-    <div id="contractsViewWrapper" class="hidden flex flex-col h-full overflow-hidden bg-white shadow-lg rounded-lg border border-slate-200">
-      <div class="flex-1 overflow-y-auto scroller p-6">
-        <div id="contractsContent" class="space-y-6"></div>
-      </div>
-    </div>
-  </div>
-
-  <!-- ACTION MODAL -->
-  <div id="actionModal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center z-50 backdrop-blur-sm">
-    <div class="bg-white p-6 rounded-lg shadow-2xl w-[500px] border border-slate-200 max-h-[90vh] flex flex-col">
-      <h3 class="text-lg font-bold mb-4 text-slate-800 shrink-0" id="modalTitle">Confirm Action</h3>
-
-      <div class="overflow-y-auto flex-1 pr-2">
-        <div id="modalContent">
-          <div id="standardInputContainer" class="hidden">
-            <div id="marginInputContainer" class="hidden mb-4">
-              <label class="block text-xs font-bold text-slate-500 mb-1">New Margin %</label>
-              <input type="number" id="modalMarginValue" class="w-full border border-slate-300 rounded p-2 text-sm focus:outline-none focus:border-blue-500" />
-            </div>
-          </div>
-
-          <div id="nextStepContainer" class="hidden mb-4">
-            <label class="block text-xs font-bold text-slate-500 mb-1">Action / Next Step</label>
-            <textarea id="nextStepText" class="w-full border border-slate-300 rounded p-2 text-sm focus:outline-none focus:border-blue-500 h-24 mb-2" placeholder="Describe the next step..."></textarea>
-          </div>
-
-          <div id="leverInputContainer" class="hidden mb-4">
-            <label class="block text-xs font-bold text-slate-500 mb-1">Assign To / Tag (Required)</label>
-            <input type="text" id="leverTagInput" class="w-full border border-slate-300 rounded p-2 text-sm focus:outline-none focus:border-blue-500 bg-slate-50" placeholder="Select a team member below..." readonly />
-          </div>
-
-          <div id="commonTagContainer" class="hidden mb-4">
-            <span class="text-[10px] uppercase font-bold text-slate-400">Quick Tag Team:</span>
-            <div class="flex flex-wrap gap-1 mt-1" id="tagContainer"></div>
-          </div>
-
-          <div id="dateInputContainer" class="hidden mb-4">
-            <label class="block text-xs font-bold text-slate-500 mb-1" id="dateInputLabel">Date</label>
-            <input type="date" id="modalDateInput" class="w-full border border-slate-300 rounded p-2 text-sm focus:outline-none focus:border-blue-500" />
-          </div>
-
-          <div id="removeReasonContainer" class="hidden mb-4">
-            <label class="block text-xs font-bold text-slate-500 mb-1">Reason for Removal</label>
-            <select id="removeReasonInput" class="w-full border border-slate-300 rounded p-2 text-sm focus:outline-none focus:border-blue-500 bg-white">
-              <option value="">Select a reason...</option>
-              <option value="Candidate Withdrew">Candidate Withdrew</option>
-              <option value="Not Qualified">Not Qualified</option>
-              <option value="Offer Declined">Offer Declined</option>
-              <option value="Position Filled">Position Filled</option>
-              <option value="Unresponsive">Unresponsive</option>
-              <option value="Other">Other</option>
-            </select>
-          </div>
-
-          <div id="candidateActionContainer" class="hidden mb-4 space-y-3">
-            <p class="text-sm text-slate-600 mb-2">Select an action for <span id="candidateNameDisplay" class="font-bold"></span>:</p>
-
-            <button class="w-full text-left p-3 border rounded hover:bg-yellow-50 hover:border-yellow-300 transition-colors flex items-center justify-between group"
-              onclick="document.getElementById('candidateActionType').value='confirm_interview'; document.getElementById('candidateActionContainer').classList.add('hidden'); document.getElementById('leverInputContainer').classList.remove('hidden'); document.getElementById('commonTagContainer').classList.remove('hidden'); document.getElementById('dateInputContainer').classList.remove('hidden'); document.getElementById('dateInputLabel').innerText='Interview Date'; document.getElementById('modalDateInput').valueAsDate = new Date(); View.renderTags('lever');">
-              <span class="font-medium text-slate-700">Confirm Interview Scheduled</span>
-              <i data-lucide="check-circle" class="w-4 h-4 text-slate-300 group-hover:text-yellow-600"></i>
-            </button>
-
-            <button class="w-full text-left p-3 border rounded hover:bg-red-50 hover:border-red-300 transition-colors flex items-center justify-between group"
-              onclick="document.getElementById('candidateActionType').value='remove_candidate'; document.getElementById('candidateActionContainer').classList.add('hidden'); document.getElementById('leverInputContainer').classList.remove('hidden'); document.getElementById('commonTagContainer').classList.remove('hidden'); document.getElementById('removeReasonContainer').classList.remove('hidden'); View.renderTags('lever');">
-              <span class="font-medium text-slate-700">Remove Candidate from Queue</span>
-              <i data-lucide="trash-2" class="w-4 h-4 text-slate-300 group-hover:text-red-600"></i>
-            </button>
-
-            <input type="hidden" id="candidateActionType" />
-          </div>
-
-          <div id="summaryContainer" class="hidden">
-            <textarea id="summaryText" class="w-full border border-slate-300 rounded p-2 text-xs font-mono bg-slate-50 h-64 mb-2 focus:outline-none"></textarea>
-            <button onclick="window.copySummary(this)" class="text-xs text-blue-600 hover:underline">Copy to Clipboard</button>
-          </div>
-
-          <div id="nextStepHistoryContainer" class="hidden">
-            <div id="nextStepHistoryContent" class="space-y-2 max-h-[400px] overflow-y-auto"></div>
-          </div>
-        </div>
-      </div>
-
-      <div class="flex justify-end gap-2 mt-4 shrink-0">
-        <button id="modalCancelBtn" class="px-4 py-2 text-slate-600 hover:bg-slate-100 rounded text-sm">Cancel</button>
-        <button id="modalConfirmBtn" class="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 text-sm font-medium">Confirm</button>
-      </div>
-    </div>
-  </div>
-
-  <!-- CONNECTION VALIDATION OVERLAY - Shows on page load until connection confirmed -->
-  <div id="connectionValidationOverlay" class="fixed inset-0 bg-slate-900/90 z-[200] flex items-center justify-center backdrop-blur-sm">
-    <div class="bg-white rounded-xl shadow-2xl w-[450px] border border-slate-200 overflow-hidden">
-      <div id="validationContent">
-        <!-- Validating State -->
-        <div id="validatingState" class="p-8 text-center">
-          <div class="inline-flex items-center justify-center w-16 h-16 bg-blue-100 rounded-full mb-4">
-            <i data-lucide="database" class="w-8 h-8 text-blue-600 animate-pulse"></i>
-          </div>
-          <h3 class="font-bold text-slate-800 text-xl mb-2">Connecting to Database</h3>
-          <p class="text-slate-500 text-sm mb-4">Validating database connection...</p>
-          <div class="flex justify-center">
-            <div class="w-8 h-8 border-4 border-blue-200 border-t-blue-600 rounded-full animate-spin"></div>
-          </div>
-        </div>
-
-        <!-- Failed State (hidden by default) -->
-        <div id="validationFailedState" class="hidden">
-          <div class="bg-red-50 p-5 border-b border-red-200 flex items-center gap-4">
-            <div class="bg-red-100 rounded-full p-3">
-              <i data-lucide="database-zap" class="w-8 h-8 text-red-600"></i>
-            </div>
-            <div>
-              <h3 class="font-bold text-red-800 text-xl">Connection Failed</h3>
-              <p class="text-red-600 text-sm">Unable to connect to database</p>
-            </div>
-          </div>
-
-          <div class="p-6">
-            <div class="bg-amber-50 border border-amber-200 rounded-lg p-4 mb-5">
-              <div class="flex items-start gap-3">
-                <i data-lucide="alert-triangle" class="w-5 h-5 text-amber-600 mt-0.5 shrink-0"></i>
-                <div class="text-sm text-amber-800">
-                  <p class="font-medium mb-1">Database Unavailable</p>
-                  <p>The application requires a live database connection to function. Please check your network connection and try again.</p>
-                </div>
-              </div>
-            </div>
-
-            <p id="connectionErrorDetails" class="text-xs text-slate-400 text-center mb-4 font-mono"></p>
-          </div>
-
-          <div class="p-4 bg-slate-50 border-t border-slate-200 flex justify-center gap-3">
-            <button onclick="retryConnection()"
-                    class="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-lg text-sm font-medium transition-colors shadow-sm">
-              <i data-lucide="refresh-cw" class="w-5 h-5"></i>
-              Retry Connection
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <!-- CONNECTION LOST MODAL - Blocks UI until page refresh -->
-  <div id="connectionLostModal" class="hidden fixed inset-0 bg-black/60 z-[100] flex items-center justify-center backdrop-blur-md">
-    <div class="bg-white rounded-lg shadow-2xl w-[450px] border border-red-200 overflow-hidden">
-      <div class="bg-red-50 p-5 border-b border-red-200 flex items-center gap-4">
-        <div class="bg-red-100 rounded-full p-3">
-          <i data-lucide="wifi-off" class="w-8 h-8 text-red-600"></i>
-        </div>
-        <div>
-          <h3 class="font-bold text-red-800 text-xl">Connection Lost</h3>
-          <p class="text-red-600 text-sm">Database connection unavailable</p>
-        </div>
-      </div>
-
-      <div class="p-6">
-        <div class="bg-amber-50 border border-amber-200 rounded-lg p-4 mb-5">
-          <div class="flex items-start gap-3">
-            <i data-lucide="alert-triangle" class="w-5 h-5 text-amber-600 mt-0.5 shrink-0"></i>
-            <div class="text-sm text-amber-800">
-              <p class="font-medium mb-1">Changes cannot be saved</p>
-              <p>The connection to the database has been lost. Please refresh the page to reconnect before making any changes.</p>
-            </div>
-          </div>
-        </div>
-
-        <p class="text-sm text-slate-500 text-center mb-4">
-          If the problem persists after refreshing, check your network connection or contact IT.
-        </p>
-      </div>
-
-      <div class="p-4 bg-slate-50 border-t border-slate-200 flex justify-center">
-        <button onclick="location.reload()"
-                class="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-lg text-sm font-medium transition-colors shadow-sm">
-          <i data-lucide="refresh-cw" class="w-5 h-5"></i>
-          Refresh Page
-        </button>
-      </div>
-    </div>
-  </div>
-
-  <script>
     const $ = (id) => document.getElementById(id);
 
     // App version - loaded from environment variable via API, with fallback
@@ -10307,6 +9560,9 @@
     };
 
     // 7. EVENT LISTENERS
+/* Standalone boot disabled — the workspace owns the page lifecycle and
+   feeds these views itself. Original block preserved below for reference. */
+if (false) {
     document.addEventListener('DOMContentLoaded', () => {
       lucide.createIcons();
 
@@ -10343,6 +9599,7 @@
         // If not connected, the validation overlay will remain visible with retry button
       })();
     });
+}
 
     window.View = View;
     window.Utils = Utils;
@@ -11144,7 +10401,42 @@
             window.showToast('Error restoring version', 'error');
         }
     };
-  </script>
+  
 
-</body>
-</html>
+
+/* ── Bridge + inline-handler exports ─────────────────────────────────────── */
+[
+  'addMappingRow','deleteMapping','updateMapping','resetMappingsToDefaults',
+  'searchPMUsers','removeAllowlistRow','_onAllowlistSourceChange',
+  'updatePerDiemDateRange','exportContractsCSV','toggleContractReviewed',
+  'toggleShowReviewed','exportFinancialData',
+].forEach(function(name){
+  try { if (typeof eval(name) === 'function') window[name] = eval(name); } catch (e) {}
+});
+
+window.ReportViews = {
+  // The module builds its own window.store during load, and the renderers read
+  // window.store.state — so writes must target that object, not the local
+  // binding, or the data lands somewhere nothing reads.
+  setState: function(patch){
+    var target = (window.store && window.store.state) ? window.store
+               : (typeof store !== 'undefined' ? store : null);
+    if (!target) return;
+    target.state = target.state || {};
+    Object.assign(target.state, patch || {});
+  },
+  render: function(view, host){
+    var map = { trend:'trend', perdiem:'perDiem', financials:'financials', contracts:'contracts' };
+    var fn = map[view];
+    if (typeof View === 'undefined' || !fn || typeof View[fn] !== 'function') return;
+    try {
+      View[fn]();
+      if (window.lucide && window.lucide.createIcons) window.lucide.createIcons();
+    } catch (e) {
+      console.error('report view "' + view + '" failed:', e);
+      if (host) host.innerHTML =
+        '<div class="p-6 text-sm text-slate-500">This report could not be rendered.</div>';
+    }
+  },
+};
+})();
