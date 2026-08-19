@@ -683,7 +683,7 @@ function selectedFacilities(){return [...document.querySelectorAll('#meetingFaci
 function renderFacilityPicker(){const sys=document.getElementById('meetingSystem').value;const box=document.getElementById('meetingFacilities');const facilities=meetingConfig[sys]||[];box.innerHTML=facilities.length?facilities.map(f=>`<label class="facility-option"><input type="checkbox" value="${f}" checked><span>${f}</span></label>`).join(''):'<div class="facility-empty">Select a system first.</div>';box.querySelectorAll('.facility-option input').forEach(c=>c.addEventListener('change',()=>c.closest('.facility-option').classList.toggle('selected',c.checked)));box.querySelectorAll('.facility-option').forEach(x=>x.classList.add('selected'))}
 function openMeetingSetup(){document.getElementById('meetingSetupModal').hidden=false;document.getElementById('meetingSystem').value=meetingState.system||'';renderFacilityPicker()}
 function closeMeetingSetup(){document.getElementById('meetingSetupModal').hidden=true}
-function previewMeeting(){const sys=document.getElementById('meetingSystem').value;const facilities=selectedFacilities();if(!sys){toast('Select a health system to preview the meeting.');return}if(!facilities.length){toast('Select at least one facility.');return}meetingState={active:true,preview:true,system:sys,facilities,recipients:document.getElementById('meetingRecipients').value.trim(),stage:0,actions:[],startedAt:null,completed:[],overviewStage:null};closeMeetingSetup();document.getElementById('meetingOverviewContent').innerHTML=buildMeetingOverview();document.getElementById('meetingOverviewModal').hidden=false}
+function previewMeeting(){const sys=document.getElementById('meetingSystem').value;const facilities=selectedFacilities();if(!sys){toast('Select a health system to preview the meeting.');return}if(!facilities.length){toast('Select at least one facility.');return}meetingState={active:true,preview:true,meetingId:`${sys}-${new Date().toISOString().slice(0,19).replace(/[:T]/g,'')}`.replace(/[^A-Za-z0-9-]/g,'_'),system:sys,facilities,recipients:document.getElementById('meetingRecipients').value.trim(),stage:0,actions:[],startedAt:new Date().toISOString(),completed:[],overviewStage:null};closeMeetingSetup();document.getElementById('meetingOverviewContent').innerHTML=buildMeetingOverview();document.getElementById('meetingOverviewModal').hidden=false}
 function closeMeetingOverview(reset=true){document.getElementById('meetingOverviewModal').hidden=true;if(reset){meetingState.active=false;meetingState.preview=false}}
 function backToMeetingScope(){document.getElementById('meetingOverviewModal').hidden=true;meetingState.active=false;meetingState.preview=false;openMeetingSetup()}
 function stageOverviewSubtitle(i){return [
@@ -706,11 +706,11 @@ function gotoMeetingStage(i){if(!meetingState.active||meetingState.preview)retur
 function openStageOverview(i){if(!meetingState.active||meetingState.preview||i<0||i>3)return;meetingState.stage=i;meetingState.overviewStage=i;const stage=meetingStages[i];activeView=stage.view;legendFilter.clear();selected=null;document.querySelectorAll('#nav button').forEach(x=>x.classList.toggle('active',x.dataset.view===activeView));render();document.getElementById('stageOverviewKicker').textContent=`IMPACT Stage ${i+1} of 4`;document.getElementById('stageOverviewTitle').textContent=`${stage.label} overview`;document.getElementById('stageOverviewSubtitle').textContent=stageOverviewSubtitle(i);document.getElementById('stageOverviewContent').innerHTML=buildStageOverview(i);document.getElementById('diveIntoStage').textContent=`Dive Into ${stage.label} →`;document.getElementById('stageOverviewModal').hidden=false}
 function closeStageOverview(){document.getElementById('stageOverviewModal').hidden=true}
 function diveIntoStage(){const i=meetingState.overviewStage==null?meetingState.stage:meetingState.overviewStage;closeStageOverview();gotoMeetingStage(i);toast(`${meetingStages[i].label} detail is ready.`)}
-function completeMeetingStage(){if(!meetingState.active||meetingState.preview)return;const i=meetingStages.findIndex(s=>s.view===activeView);const stage=i>=0?i:meetingState.stage;if(stage<0||stage>3)return;if(!(meetingState.completed||[]).includes(stage))meetingState.completed.push(stage);meetingState.stage=stage;logMeetingAction('Stage Review Completed',meetingStages[stage].label);if(stage>=3){openRecap();return}openStageOverview(stage+1)}
+function completeMeetingStage(){if(!meetingState.active||meetingState.preview)return;setTimeout(saveMeeting,0);const i=meetingStages.findIndex(s=>s.view===activeView);const stage=i>=0?i:meetingState.stage;if(stage<0||stage>3)return;if(!(meetingState.completed||[]).includes(stage))meetingState.completed.push(stage);meetingState.stage=stage;logMeetingAction('Stage Review Completed',meetingStages[stage].label);if(stage>=3){openRecap();return}openStageOverview(stage+1)}
 function renderMeetingStageFooter(){const el=document.getElementById('meetingStageFooter');if(!el)return;const i=meetingStages.findIndex(s=>s.view===activeView);if(!meetingState.active||meetingState.preview||i<0){el.hidden=true;return}meetingState.stage=i;const stage=meetingStages[i],done=(meetingState.completed||[]).includes(i),last=i===3,next=last?'Meeting Recap':meetingStages[i+1].label;el.hidden=false;el.innerHTML=`<div class="stage-footer-row"><div class="stage-footer-copy"><span class="stage-footer-badge">${done?'✓':i+1}</span><div><b>${done?`${stage.label} review completed`:`Finish the ${stage.label} review`}</b><span>${done?'You can revisit the summary or continue the guided review.':`When the team is done reviewing ${stage.label}, complete this stage to preview ${next}.`}</span></div></div><div class="stage-footer-actions"><button class="stage-summary-btn" data-stage-summary>View ${stage.label} Summary</button><button class="stage-complete" data-complete-stage>${last?'Finish Onboarding & Generate Recap':`Complete ${stage.label} → ${next} Overview`}</button></div></div>`}
 function nextMeetingStage(){completeMeetingStage()}
-function logMeetingAction(action,detail=''){if(!meetingState.active||meetingState.preview)return;const stage=(meetingStages[meetingState.stage]||{label:'Meeting'}).label;meetingState.actions.push({stage,action,detail,time:new Date()});renderMeetingBanner();renderMeetingStageFooter()}
-function endMeeting(){if(!meetingState.active)return;meetingState.active=false;meetingState.preview=false;document.getElementById('meetingBanner').hidden=true;document.getElementById('meetingStageFooter').hidden=true;closeStageOverview();updateMeetingNavGuidance();toast('IMPACT Meeting closed.')}
+function logMeetingAction(action,detail=''){if(!meetingState.active||meetingState.preview)return;const stage=(meetingStages[meetingState.stage]||{label:'Meeting'}).label;meetingState.actions.push({stage,action,detail,time:new Date()});saveMeeting();renderMeetingBanner();renderMeetingStageFooter()}
+function endMeeting(){if(!meetingState.active)return;meetingState.endedAt=new Date().toISOString();saveMeeting();meetingState.active=false;meetingState.preview=false;document.getElementById('meetingBanner').hidden=true;document.getElementById('meetingStageFooter').hidden=true;closeStageOverview();updateMeetingNavGuidance();toast('IMPACT Meeting closed.')}
 function scopedRows(key){const rows=(data[key]||[]).filter(meetingRecordMatch);return key==='extensions'&&!canSeeAffiliateExtensions()?rows.filter(r=>r.source==='GHR'):rows}
 function parseK(v){if(!v)return 0;const m=String(v).replace(/,/g,'').match(/(-?\d+(?:\.\d+)?)\s*k/i);if(m)return parseFloat(m[1]);const n=String(v).replace(/[^0-9.-]/g,'');return n?parseFloat(n)/1000:0}
 function moneyK(v){const sign=v<0?'-':'';return `${sign}$${Math.abs(v).toFixed(1)}k`}
@@ -722,8 +722,8 @@ function closeRecap(){document.getElementById('meetingRecapModal').hidden=true}
 function finishMeeting(){closeRecap();closeStageOverview();meetingState.active=false;meetingState.preview=false;document.getElementById('meetingBanner').hidden=true;document.getElementById('meetingStageFooter').hidden=true;updateMeetingNavGuidance();toast('IMPACT Meeting completed. Recap retained as the meeting output.')}
 function plainRecapText(){const m=meetingMetrics();return `IMPACT Meeting Recap - ${meetingState.system}\nScope: ${meetingState.facilities.join(', ')}\nClosed capture: ${m.capture}%\nOpen exposure: ${moneyK(m.openExposure)}\nExtension risk: ${moneyK(m.extRisk)}\nProjected 45-day net headcount: ${m.projectedNet>=0?'+':''}${m.projectedNet}`}
 document.getElementById('nav').addEventListener('click',e=>{const b=e.target.closest('button');if(!b)return;const target=b.dataset.view;const i=meetingStages.findIndex(s=>s.view===target);if(meetingState.active&&!meetingState.preview&&i>=0&&target!==activeView){openStageOverview(i);return}if(target!==activeView)legendFilter.clear();activeView=target;selected=null;if(meetingState.active&&i>=0)meetingState.stage=i;document.querySelectorAll('#nav button').forEach(x=>x.classList.toggle('active',x===b));render()});
-tbody.addEventListener('click',e=>{const id=e.target.closest('.id-btn');if(id){selected=selected===id.dataset.id?null:id.dataset.id;render();requestAnimationFrame(()=>selected&&document.querySelector('.detail-row')?.scrollIntoView({behavior:'smooth',block:'nearest'}));return}const tab=e.target.closest('[data-demand-panel]');if(tab){demandPanels[tab.dataset.job]=tab.dataset.demandPanel;render();return}const lever=e.target.closest('[data-lever]');if(lever){const key=lever.dataset.job+'|'+lever.dataset.lever;leverState[key]=!lever.classList.contains('on');logMeetingAction(leverState[key]?'Lever Applied':'Lever Cleared',lever.dataset.lever+' · Job '+lever.dataset.job);render();toast(lever.dataset.lever+(leverState[key]?' selected.':' cleared.'));return}const save=e.target.closest('[data-save-extension]');if(save){const r=data.extensions.find(x=>x.id===save.dataset.saveExtension);const edit=getExtensionEdit(r);const note=tbody.querySelector(`[data-ext-note="${r.id}"]`);if(note)edit.notes=note.value;logMeetingAction('Extension Updated',r.id+' · client decision / note saved');toast('Extension update saved.');render();return}const onboardSave=e.target.closest('[data-save-onboarding]');if(onboardSave){const r=data.onboarding.find(x=>x.id===onboardSave.dataset.saveOnboarding);const e=getOnboardingEdit(r);const start=tbody.querySelector(`[data-onboard-start="${r.id}"]`)?.value.trim()||e.currentStart;const category=tbody.querySelector(`[data-onboard-category="${r.id}"]`)?.value||e.delayCategory;const context=tbody.querySelector(`[data-onboard-context="${r.id}"]`)?.value.trim()||'';if(start!==e.currentStart&&!context){toast('Add meeting context before saving a moved start date.');return}if(start!==r.current){const old=r.current;r.moves=r.moves||[];r.moves.push([new Date().toLocaleDateString('en-US',{month:'short',day:'numeric'}),`${old} → ${start}`,context||category]);r.current=start;r.moveCount=(r.moveCount||0)+1;r.delayCategory=category;r.reason=context||r.reason;e.previousMeetingStart=old;logMeetingAction('Start Date Updated',`${r.candidate} · ${old} → ${start} · ${category}`)}else if(context){logMeetingAction('Onboarding Context Added',`${r.candidate} · ${category}`)}e.currentStart=start;e.delayCategory=category;e.context=context;toast('Onboarding update saved.');render();return}const a=e.target.closest('[data-action]');if(a){if(!['View ATS / VMS','View History','VNDLY','Bullhorn','View VNDLY','View Bullhorn'].includes(a.dataset.action))logMeetingAction(a.dataset.action,selected?('Record '+selected):'');toast(a.dataset.action+' captured in the mock.')}});
-tbody.addEventListener('change',e=>{if(e.target.matches('[data-ext-step]')){const [id,key]=e.target.dataset.extStep.split('|');const r=data.extensions.find(x=>x.id===id);getExtensionEdit(r).steps[key]=e.target.checked;logMeetingAction('Extension Progress Updated',`${id} · ${key} → ${e.target.checked?'complete':'open'}`);toast('Extension progress updated.');render();return}if(e.target.matches('[data-interview]')){interviewOverrides[e.target.dataset.interview]=e.target.value;logMeetingAction('Interview Status Updated',e.target.dataset.interview.replace('|',' · ')+' → '+e.target.value);toast('Interview status updated with manual override.');render();return}if(e.target.matches('[data-ext-decision]')){const r=data.extensions.find(x=>x.id===e.target.dataset.extDecision);getExtensionEdit(r).decision=e.target.value;logMeetingAction('Client Extension Decision',r.id+' → '+e.target.value);toast('Client decision updated.');return}});
+tbody.addEventListener('click',e=>{const id=e.target.closest('.id-btn');if(id){selected=selected===id.dataset.id?null:id.dataset.id;render();requestAnimationFrame(()=>selected&&document.querySelector('.detail-row')?.scrollIntoView({behavior:'smooth',block:'nearest'}));return}const tab=e.target.closest('[data-demand-panel]');if(tab){demandPanels[tab.dataset.job]=tab.dataset.demandPanel;render();return}const lever=e.target.closest('[data-lever]');if(lever){const key=lever.dataset.job+'|'+lever.dataset.lever;leverState[key]=!lever.classList.contains('on');queueStateSave('lever',lever.dataset.job+'|'+lever.dataset.lever,{on:leverState[lever.dataset.job+'|'+lever.dataset.lever]});logMeetingAction(leverState[key]?'Lever Applied':'Lever Cleared',lever.dataset.lever+' · Job '+lever.dataset.job);render();toast(lever.dataset.lever+(leverState[key]?' selected.':' cleared.'));return}const save=e.target.closest('[data-save-extension]');if(save){const r=data.extensions.find(x=>x.id===save.dataset.saveExtension);const edit=getExtensionEdit(r);const note=tbody.querySelector(`[data-ext-note="${r.id}"]`);if(note)edit.notes=note.value;queueStateSave('extension',r.id,edit);logMeetingAction('Extension Updated',r.id+' · client decision / note saved');toast('Extension update saved.');render();return}const onboardSave=e.target.closest('[data-save-onboarding]');if(onboardSave){const r=data.onboarding.find(x=>x.id===onboardSave.dataset.saveOnboarding);const e=getOnboardingEdit(r);const start=tbody.querySelector(`[data-onboard-start="${r.id}"]`)?.value.trim()||e.currentStart;const category=tbody.querySelector(`[data-onboard-category="${r.id}"]`)?.value||e.delayCategory;const context=tbody.querySelector(`[data-onboard-context="${r.id}"]`)?.value.trim()||'';if(start!==e.currentStart&&!context){toast('Add meeting context before saving a moved start date.');return}if(start!==r.current){const old=r.current;r.moves=r.moves||[];r.moves.push([new Date().toLocaleDateString('en-US',{month:'short',day:'numeric'}),`${old} → ${start}`,context||category]);r.current=start;r.moveCount=(r.moveCount||0)+1;r.delayCategory=category;r.reason=context||r.reason;e.previousMeetingStart=old;logMeetingAction('Start Date Updated',`${r.candidate} · ${old} → ${start} · ${category}`)}else if(context){queueStateSave('onboarding',r.id,getOnboardingEdit(r));logMeetingAction('Onboarding Context Added',`${r.candidate} · ${category}`)}e.currentStart=start;e.delayCategory=category;e.context=context;toast('Onboarding update saved.');render();return}const a=e.target.closest('[data-action]');if(a){if(!['View ATS / VMS','View History','VNDLY','Bullhorn','View VNDLY','View Bullhorn'].includes(a.dataset.action))logMeetingAction(a.dataset.action,selected?('Record '+selected):'');toast(a.dataset.action+' captured in the mock.')}});
+tbody.addEventListener('change',e=>{if(e.target.matches('[data-ext-step]')){const [id,key]=e.target.dataset.extStep.split('|');const r=data.extensions.find(x=>x.id===id);getExtensionEdit(r).steps[key]=e.target.checked;logMeetingAction('Extension Progress Updated',`${id} · ${key} → ${e.target.checked?'complete':'open'}`);toast('Extension progress updated.');render();return}if(e.target.matches('[data-interview]')){interviewOverrides[e.target.dataset.interview]=e.target.value;queueStateSave('interview',e.target.dataset.interview,{value:e.target.value});logMeetingAction('Interview Status Updated',e.target.dataset.interview.replace('|',' · ')+' → '+e.target.value);toast('Interview status updated with manual override.');render();return}if(e.target.matches('[data-ext-decision]')){const r=data.extensions.find(x=>x.id===e.target.dataset.extDecision);getExtensionEdit(r).decision=e.target.value;queueStateSave('extension',r.id,getExtensionEdit(r));logMeetingAction('Client Extension Decision',r.id+' → '+e.target.value);toast('Client decision updated.');return}});
 document.addEventListener('click',e=>{if(e.target.closest('[data-export-extensions]'))downloadExtensionsExcel()});
 document.addEventListener('change',e=>{if(e.target.id==='openGroupBy'){openGrouping=e.target.value;selected=null;render()}});
 ['extensionEndFrom','extensionEndTo','extensionStatusFilter'].forEach(id=>document.getElementById(id).addEventListener('change',()=>{selected=null;render()}));
@@ -994,6 +994,91 @@ function closedCoverageNote(payload){
   return `${total.toLocaleString()} closed records carry no close date in the source and are not counted here (${detail}). Capture rate shown is therefore optimistic.`;
 }
 
+/* ---- Persistence ------------------------------------------------------
+   Levers, extension decisions, onboarding edits and interview overrides are
+   captured in the meeting and owned by no source system, so they live in
+   impactmgr.workspace_state. Saves are debounced and fire-and-forget: a
+   toggle must never block on a round trip, but it must not be lost either,
+   so a failed save is surfaced rather than swallowed.
+   --------------------------------------------------------------------- */
+const _pendingSaves = new Map();
+let _saveTimer = null;
+let _saveFailed = false;
+
+function queueStateSave(scope, entityId, state){
+  _pendingSaves.set(`${scope}|${entityId}`, {scope, entityId, state});
+  clearTimeout(_saveTimer);
+  _saveTimer = setTimeout(flushStateSaves, 600);
+}
+
+async function flushStateSaves(){
+  if(!_pendingSaves.size) return;
+  const batch = Array.from(_pendingSaves.values());
+  _pendingSaves.clear();
+  try{
+    const r = await fetch(`${API_BASE_URL}/workspace-state`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(batch),
+    });
+    if(!r.ok) throw new Error(`workspace-state → ${r.status}`);
+    if(_saveFailed){ _saveFailed = false; setConnectionState(true, 'Live data'); }
+  }catch(e){
+    console.error('save failed:', e);
+    _saveFailed = true;
+    setConnectionState(false, 'Changes are not being saved');
+    toast('Changes could not be saved — check your connection');
+    // Put them back so the next flush retries rather than dropping the edit.
+    batch.forEach(item => _pendingSaves.set(`${item.scope}|${item.entityId}`, item));
+  }
+}
+
+// Flush on the way out so a fast close doesn't lose the last toggle.
+window.addEventListener('beforeunload', () => {
+  if(!_pendingSaves.size) return;
+  const batch = JSON.stringify(Array.from(_pendingSaves.values()));
+  navigator.sendBeacon?.(`${API_BASE_URL}/workspace-state`, new Blob([batch], {type:'application/json'}));
+});
+
+async function loadWorkspaceState(){
+  try{
+    const saved = await getJSON('/workspace-state');
+    Object.entries(saved.lever || {}).forEach(([k, v]) => {
+      if(v && v.state && typeof v.state.on === 'boolean') leverState[k] = v.state.on;
+    });
+    Object.entries(saved.extension || {}).forEach(([k, v]) => { if(v && v.state) extensionEdits[k] = v.state; });
+    Object.entries(saved.onboarding || {}).forEach(([k, v]) => { if(v && v.state) onboardingEdits[k] = v.state; });
+    Object.entries(saved.interview || {}).forEach(([k, v]) => {
+      if(v && v.state && v.state.value !== undefined) interviewOverrides[k] = v.state.value;
+    });
+    return true;
+  }catch(e){
+    console.error('workspace state load failed:', e);
+    return false;
+  }
+}
+
+async function saveMeeting(){
+  if(!meetingState.active || !meetingState.meetingId) return;
+  try{
+    await fetch(`${API_BASE_URL}/meetings`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        meetingId: meetingState.meetingId,
+        healthSystem: meetingState.system,
+        facilities: meetingState.facilities,
+        recipients: meetingState.recipients,
+        stage: meetingState.stage,
+        completed: meetingState.completed || [],
+        actions: meetingState.actions || [],
+        startedAt: meetingState.startedAt,
+        endedAt: meetingState.endedAt || null,
+      }),
+    });
+  }catch(e){ console.error('meeting save failed:', e); }
+}
+
 async function loadAllData(){
   const results = await Promise.allSettled([
     getJSON('/get-positions'),
@@ -1018,6 +1103,7 @@ async function loadAllData(){
   data.pending = [];
 
   results.forEach(r => { if(r.status === 'rejected') console.error('data load:', r.reason); });
+  if(!(await loadWorkspaceState())) failed.push('saved changes');
   DATA_READY = true;
   return failed;
 }
