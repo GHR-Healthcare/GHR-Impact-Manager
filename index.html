@@ -749,15 +749,18 @@ function renderPlaceholder(){
     return;
   }
   const view = activeView;
-  if(!_reportLoaded.has(view)){
+  if(!_reportLoadPromise){
     host.innerHTML = '<div class="p-6 text-sm text-slate-500">Loading…</div>';
-    ensureReportData(view).then(() => {
-      // Guard against a fast tab switch landing the result in the wrong host.
-      if(activeView === view) ReportViews.render(view, host);
-    });
-    return;
   }
-  ReportViews.render(view, host);
+  ensureReportData()
+    .then(() => { if(activeView === view) ReportViews.render(view, host); })
+    .catch(e => {
+      console.error('report data load failed:', e);
+      if(activeView === view){
+        host.innerHTML = '<div class="p-6 text-sm text-slate-600">Could not load report data.<br>'
+          + '<span class="text-xs text-slate-500">' + String(e && e.message || e) + '</span></div>';
+      }
+    });
 }
 function empty(n){return `<tr><td colspan="${n}"><div class="empty">No records match the selected filters.</div></td></tr>`}
 function detailRow(r,type,colspan){return `<tr class="detail-row"><td colspan="${colspan}"><div class="detail">${detail(r,type)}</div></td></tr>`}
@@ -1343,48 +1346,33 @@ async function saveMeeting(){
   }catch(e){ console.error('meeting save failed:', e); }
 }
 
-// The ported reports read their own slices of the legacy store, so they are
-// fetched separately and only when one of those tabs is first opened — no
-// reason to pull trend/financial/per-diem/contract data for a meeting that
-// never leaves the four stages.
-const REPORT_SOURCES = {
-  trend:      [['/trend-data', 'trendData'], ['/hours-data', 'hoursData']],
-  perdiem:    [['/perdiem-data', 'perDiemData']],
-  financials: [['/financial-data', 'financialData']],
-  contracts:  [['/contracts-comparison', 'contractsComparison'], ['/reviewed-contracts', 'reviewedContracts']],
-};
+// The ported reports are fed by the previous UI's own loader.
+//
+// Hand-rolling the fetches looked equivalent and was not: that loader parses
+// date strings into Date objects, derives healthSystem through
+// Utils.getHealthSystem(), and sets the *Loaded flags each renderer gates on.
+// Skipping it produced a different failure per view — Revenue crashed on a
+// missing chart lib, Trends span on an unset flag, Per Diem threw
+// "d.toISOString is not a function" on raw strings. Calling the real loader
+// removes that whole class of bug instead of patching each symptom.
+let _reportLoadPromise = null;
 
-// Each renderer short-circuits to a spinner on its own *Loaded flag rather
-// than checking whether the data is there, so the flag has to be set too or
-// the view spins forever with the payload sitting right next to it.
-const REPORT_FLAGS = {
-  trend:      ['trendLoaded', 'hoursLoaded'],
-  perdiem:    ['perDiemLoaded'],
-  financials: [],
-  contracts:  ['contractsLoaded'],
-};
-const _reportLoaded = new Set();
-
-async function ensureReportData(view){
-  if(_reportLoaded.has(view) || !window.ReportViews) return true;
-  const sources = REPORT_SOURCES[view] || [];
-  const results = await Promise.allSettled(sources.map(([path]) => getJSON(path)));
-  const patch = {};
-  results.forEach((r, i) => {
-    const key = sources[i][1];
-    if(r.status === 'fulfilled'){
-      const v = r.value;
-      // Endpoints vary between a bare array and a wrapper object.
-      patch[key] = Array.isArray(v) ? v
-                 : (v && (v.monthlyData || v.rows || v.data)) || v;
-    }else{
-      console.error(`report data ${sources[i][0]} failed:`, r.reason);
-    }
-  });
-  (REPORT_FLAGS[view] || []).forEach(f => { patch[f] = true; });
-  window.ReportViews.setState({ ...patch, dataSource: APP_CONFIG.dataSource });
-  _reportLoaded.add(view);
-  return results.every(r => r.status === 'fulfilled');
+function ensureReportData(){
+  if(_reportLoadPromise) return _reportLoadPromise;
+  if(typeof window.loadDataFromDatabase !== 'function'){
+    return Promise.reject(new Error('report loader unavailable'));
+  }
+  // loadDataFromDatabase covers trend / hours / per diem / financial /
+  // stats / pending, but not contracts — that has its own loader, which is
+  // why Contracts kept spinning while everything else filled in.
+  _reportLoadPromise = Promise.resolve(window.loadDataFromDatabase())
+    .then(() => typeof window.loadContractsData === 'function'
+      ? Promise.resolve(window.loadContractsData()).catch(e => {
+          console.error('contracts load failed:', e);
+        })
+      : undefined)
+    .catch(e => { _reportLoadPromise = null; throw e; });
+  return _reportLoadPromise;
 }
 
 async function loadAllData(){
