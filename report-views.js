@@ -10434,8 +10434,15 @@ window.ReportViews = {
       if (window.lucide && window.lucide.createIcons) window.lucide.createIcons();
     } catch (e) {
       console.error('report view "' + view + '" failed:', e);
+      // Show the actual failure rather than a dead end — a generic message
+      // gives nobody anything to act on, including the next person debugging.
       if (host) host.innerHTML =
-        '<div class="p-6 text-sm text-slate-500">This report could not be rendered.</div>';
+        '<div class="p-6 text-sm text-slate-600">' +
+        '<div class="font-semibold text-slate-800 mb-1">This report could not be rendered.</div>' +
+        '<div class="text-xs text-slate-500 mb-2">' + view + '</div>' +
+        '<pre class="text-xs bg-slate-50 border border-slate-200 rounded p-3 overflow-auto whitespace-pre-wrap">' +
+        String((e && (e.stack || e.message)) || e).replace(/[<>&]/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;'}[c])) +
+        '</pre></div>';
     }
   },
 };
