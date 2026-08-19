@@ -3,6 +3,7 @@ import pyodbc
 import os
 import json
 from shared_code.auth import require_allowed_domain
+from shared_code.vndly_reasons import canonical_reason, reason_category
 
 
 B4_GHR_PREDICATE = "(o.Agency LIKE '%GHR%' OR o.Agency LIKE '%Planet Healthcare%')"
@@ -169,6 +170,17 @@ def _finalize(rows):
         for k in ('bill_rate', 'hours_per_week'):
             if r.get(k) is not None:
                 r[k] = float(r[k])
+
+        # VNDLY writes the same reason several ways ('Terminated - attendance'
+        # vs 'Terminated-attendance'), which would split one reason across two
+        # rows in any grouping. Canonicalise on read — the staging tables are
+        # reloaded from VNDLY, so a warehouse-side fix would be overwritten.
+        if r.get('source_system') == 'VNDLY':
+            raw_reason = r.get('delay_reason')
+            r['delay_reason'] = canonical_reason(raw_reason)
+            r['delay_category'] = reason_category(raw_reason)
+        else:
+            r['delay_category'] = 'Delayed Start' if (r.get('delayed_flag') == 'Yes') else None
 
         tracked = bool(r.get('movement_tracked'))
         moves = r.get('move_count')
