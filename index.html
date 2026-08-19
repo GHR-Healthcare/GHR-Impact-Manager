@@ -561,16 +561,27 @@ const interviewOverrides={};
 const extensionEdits={};
 const onboardingEdits={};
 const currentUserRole='Delivery';
-const meetingConfig={
- 'UPHS':['HUP','Radnor Women’s Health','Penn Presbyterian'],
- 'Cooper':['Cooper'],
- 'Mercy General':['Mercy General'],
- 'St. Luke’s':['St. Luke’s'],
- 'Riverside Health':['Riverside Health'],
- 'Summit Care':['Summit Care'],
- 'Valley Regional':['Valley Regional'],
- 'Catholic Health':['Catholic Health']
-};
+// Meeting scope is derived from whatever the workspace has loaded, so a new
+// health system appears here the moment it appears in the data. This was a
+// hardcoded map of five systems, which silently excluded every other client
+// from ever being the subject of a meeting.
+function meetingScopeOptions(){
+  const out = {};
+  [...(data.open||[]), ...(data.extensions||[]), ...(data.onboarding||[]), ...(data.results||[])]
+    .forEach(r => {
+      const sys = (r._raw && r._raw.health_system) || '';
+      const fac = (r._raw && r._raw.facility) || '';
+      if(!sys) return;
+      out[sys] = out[sys] || new Set();
+      if(fac) out[sys].add(fac);
+    });
+  return Object.keys(out).sort().reduce((acc, k) => {
+    acc[k] = [...out[k]].sort();
+    return acc;
+  }, {});
+}
+Object.defineProperty(window, 'meetingConfig', { get: meetingScopeOptions });
+
 const meetingSystemAliases={
  'UPHS':['UPHS','Penn Presbyterian'],
  'Cooper':['Cooper'],
@@ -658,6 +669,79 @@ const money = v => {
        : Math.abs(n) >= 1e3 ? `$${(n/1e3).toFixed(1)}k` : `$${n.toFixed(0)}`;
 };
 
+/* Stage headline numbers, computed from the loaded records.
+
+   These were literals in the prototype — $286.4k captured, 68% capture rate,
+   148 open jobs — which read as live figures in a meeting and were not. Each
+   tile below derives from the same rows the table underneath is showing, so
+   the header and the list can never disagree. A figure with no source says
+   "—" rather than carrying a plausible number.                              */
+function stageKpis(view){
+  const R = currentRecords().filter(searchMatch);
+  const val13 = r => num(r._raw && (r._raw.value_13wk || r._raw.extension_value_13wk));
+
+  if(view === 'results'){
+    const won = R.filter(r => r.g === 'GHR WON');
+    const aff = R.filter(r => r.g === 'AFFILIATE WON');
+    const lost = R.filter(r => /MISSED|CANCEL|DECLINE/i.test(r.g || ''));
+    const rev = won.reduce((a,r) => a + val13(r), 0);
+    const missed = lost.concat(aff).reduce((a,r) => a + val13(r), 0);
+    const decided = won.length + aff.length;
+    const days = won.concat(aff).map(r => num(r.days)).filter(d => d > 0);
+    return [
+      ['Revenue Captured', money(rev), `${won.length} GHR win${won.length===1?'':'s'}`, 'green'],
+      ['Monthly Equivalent', money(rev * 4.33), 'rolling', 'green'],
+      ['Annualized', money(rev * 52), 'run-rate', 'green'],
+      ['Capture Rate', decided ? `${Math.round(won.length/decided*100)}%` : '—', 'GHR share of awards', 'blue'],
+      ['Avg Days to Close', days.length ? Math.round(days.reduce((a,b)=>a+b,0)/days.length) : '—', 'closed jobs', 'purple'],
+      ['Revenue Missed', money(missed), 'affiliate / unfilled', 'red'],
+    ];
+  }
+  if(view === 'open' || view === 'hot'){
+    const days = R.map(r => num(r.days)).filter(d => d > 0);
+    const subs = R.reduce((a,r) => a + (r.candidates || []).filter(c => !c.isDeclined).length, 0);
+    const dec = R.reduce((a,r) => a + (r.candidates || []).filter(c => c.isDeclined).length, 0);
+    const offers = R.reduce((a,r) => a + (r.candidates || [])
+      .filter(c => /offer/i.test(c.stage || '') && !c.isDeclined).length, 0);
+    const ghrSubs = R.reduce((a,r) => a + (r.candidates || []).filter(c => c.source === 'GHR').length, 0);
+    const openings = R.reduce((a,r) => a + num(r.pos || 1), 0);
+    return [
+      ['Avg Days Open', days.length ? Math.round(days.reduce((a,b)=>a+b,0)/days.length) : '—', 'in view', 'purple'],
+      ['Pending Offers', offers, 'awaiting decision', 'amber'],
+      ['Declines', dec, 'across these jobs', 'red'],
+      ['Open Jobs', R.length, 'in view', 'red'],
+      ['Openings', openings, 'positions', 'blue'],
+      ['GHR Share of Subs', subs ? `${Math.round(ghrSubs/subs*100)}%` : '—', 'active submissions', 'green'],
+    ];
+  }
+  if(view === 'extensions'){
+    const crit = R.filter(r => num(r.days) <= 7).length;
+    const st = k => R.filter(r => (r._raw && r._raw.decision_state) === k).length;
+    return [
+      ['Ending in 45 Days', R.length, 'GHR seats', 'blue'],
+      ['No Decision', st('None recorded'), 'nothing recorded', 'red'],
+      ['Offered', st('Offered'), 'extension offered', 'amber'],
+      ['Extended', st('Extended'), 'already extended', 'green'],
+      ['Critical (≤7d)', crit, 'decide now', 'red'],
+      ['Value at Stake', money(R.reduce((a,r) => a + val13(r), 0)), '13-week', 'purple'],
+    ];
+  }
+  if(view === 'onboarding'){
+    const tracked = R.filter(r => r.movementTracked !== false);
+    const delayed = tracked.map(r => num(r._raw && r._raw.days_delayed)).filter(d => d > 0);
+    const moved2 = tracked.filter(r => num(r.moveCount) >= 2).length;
+    return [
+      ['Scheduled Starts', R.filter(r => r.g === 'ON TRACK').length, 'on track', 'blue'],
+      ['Delayed Starts', R.filter(r => r.g === 'DELAYED START').length, '', 'amber'],
+      ['Moved 2+ Times', moved2, 'repeat movement', 'purple'],
+      ['Avg Days Delayed', delayed.length ? (delayed.reduce((a,b)=>a+b,0)/delayed.length).toFixed(1) : '—', 'where tracked', 'amber'],
+      ['Total Days Delayed', delayed.reduce((a,b)=>a+b,0) || '—', 'current cohort', 'red'],
+      ['Cancellations', R.filter(r => r.g === 'CANCELED').length, '', 'red'],
+    ];
+  }
+  return null;
+}
+
 function reportKpis(view){
   const st = (window.store && window.store.state) || {};
   if(view === 'financials'){
@@ -729,7 +813,7 @@ function reportKpis(view){
   return null;
 }
 
-function renderKPIs(){const nativeCfg=NATIVE_VIEWS[activeView];if(nativeCfg){const rk=reportKpis(activeView);kpis.innerHTML=(rk||[]).map((x,i)=>`<div class="kpi"><div class="kpi-label">${x[0]}</div><div class="kpi-value ${x[3]||''}">${x[1]}</div><div class="kpi-sub">${x[2]||''}</div><div class="icon ${x[3]||''}">${['◷','⌛','♙','↗','△','✓'][i]}</div></div>`).join('');legend.innerHTML='';kpis.style.visibility=rk&&rk.length?'':'hidden';legend.style.visibility='hidden';kpis.style.display='';legend.style.display='';document.getElementById('viewTitle').innerHTML=`<div class="view-main"><b>${nativeCfg.title}</b></div><div class="view-sub">${nativeCfg.note||''}</div>`;return}kpis.style.visibility='';legend.style.visibility='';kpis.style.display='';legend.style.display='';const cfg=activeView==='hot'?{...viewConfig.open,title:'Priority Jobs',note:'High-age and high-value openings.'}:(viewConfig[activeView]||viewConfig.results);kpis.innerHTML=cfg.kpis.map((x,i)=>`<div class="kpi"><div class="kpi-label">${x[0]}</div><div class="kpi-value ${x[3]||''}">${x[1]}</div><div class="kpi-sub">${x[2]||''}</div><div class="icon ${x[3]||''}">${['◷','⌛','♙','↗','△','✓'][i]}</div></div>`).join('');const legendPreds=legendPredicatesForView();legend.innerHTML=cfg.legend.map(x=>{const label=x[1],on=legendFilter.has(label),clickable=!!(legendPreds&&legendPreds[label]);return `<span class="legend-chip${on?' on':''}${clickable?'':' static'}"${clickable?` data-legend="${label.replace(/"/g,'&quot;')}" role="button" tabindex="0" title="Filter to ${label}"`:''}><i class="circle" style="${x[0]==='outline'?'background:#fff;border:1px solid #8a99ad':'background:'+x[0]}"></i>${label}</span>`;}).join('')+(legendFilter.size?`<button class="legend-clear" data-legend-clear>Clear ${legendFilter.size} filter${legendFilter.size===1?'':'s'}</button>`:'');const exportBtn=activeView==='extensions'?`<button class="inline-export" data-export-extensions>⇩ Export Excel</button><span class="visibility-note">🔒 Delivery View · GHR only</span>`:'';const groupCtl=(activeView==='open'||activeView==='hot')?`<span class="groupby"><label>Group by</label><select id="openGroupBy"><option value="none"${openGrouping==='none'?' selected':''}>No Grouping</option><option value="specialty"${openGrouping==='specialty'?' selected':''}>Position Type</option><option value="category"${openGrouping==='category'?' selected':''}>Category</option><option value="system"${openGrouping==='system'?' selected':''}>Health System</option></select></span>`:'';const extCount=activeView==='extensions'?`<span class="filter-count" id="extensionFilterCount" hidden></span>`:'';const covNote=(activeView==='results'&&CLOSED_COVERAGE_NOTE)?`<div class="coverage-note">${CLOSED_COVERAGE_NOTE}</div>`:'';document.getElementById('viewTitle').innerHTML=`<div class="view-main"><b>${cfg.title}</b>${extCount}${exportBtn}${groupCtl}</div><div class="view-sub">${cfg.note}</div>${covNote}`;}
+function renderKPIs(){const nativeCfg=NATIVE_VIEWS[activeView];if(nativeCfg){const rk=reportKpis(activeView);kpis.innerHTML=(rk||[]).map((x,i)=>`<div class="kpi"><div class="kpi-label">${x[0]}</div><div class="kpi-value ${x[3]||''}">${x[1]}</div><div class="kpi-sub">${x[2]||''}</div><div class="icon ${x[3]||''}">${['◷','⌛','♙','↗','△','✓'][i]}</div></div>`).join('');legend.innerHTML='';kpis.style.visibility=rk&&rk.length?'':'hidden';legend.style.visibility='hidden';kpis.style.display='';legend.style.display='';document.getElementById('viewTitle').innerHTML=`<div class="view-main"><b>${nativeCfg.title}</b></div><div class="view-sub">${nativeCfg.note||''}</div>`;return}kpis.style.visibility='';legend.style.visibility='';kpis.style.display='';legend.style.display='';const cfg=activeView==='hot'?{...viewConfig.open,title:'Priority Jobs',note:'High-age and high-value openings.'}:(viewConfig[activeView]||viewConfig.results);const tiles=stageKpis(activeView)||cfg.kpis;kpis.innerHTML=tiles.map((x,i)=>`<div class="kpi"><div class="kpi-label">${x[0]}</div><div class="kpi-value ${x[3]||''}">${x[1]}</div><div class="kpi-sub">${x[2]||''}</div><div class="icon ${x[3]||''}">${['◷','⌛','♙','↗','△','✓'][i]}</div></div>`).join('');const legendPreds=legendPredicatesForView();legend.innerHTML=cfg.legend.map(x=>{const label=x[1],on=legendFilter.has(label),clickable=!!(legendPreds&&legendPreds[label]);return `<span class="legend-chip${on?' on':''}${clickable?'':' static'}"${clickable?` data-legend="${label.replace(/"/g,'&quot;')}" role="button" tabindex="0" title="Filter to ${label}"`:''}><i class="circle" style="${x[0]==='outline'?'background:#fff;border:1px solid #8a99ad':'background:'+x[0]}"></i>${label}</span>`;}).join('')+(legendFilter.size?`<button class="legend-clear" data-legend-clear>Clear ${legendFilter.size} filter${legendFilter.size===1?'':'s'}</button>`:'');const exportBtn=activeView==='extensions'?`<button class="inline-export" data-export-extensions>⇩ Export Excel</button><span class="visibility-note">🔒 Delivery View · GHR only</span>`:'';const groupCtl=(activeView==='open'||activeView==='hot')?`<span class="groupby"><label>Group by</label><select id="openGroupBy"><option value="none"${openGrouping==='none'?' selected':''}>No Grouping</option><option value="specialty"${openGrouping==='specialty'?' selected':''}>Position Type</option><option value="category"${openGrouping==='category'?' selected':''}>Category</option><option value="system"${openGrouping==='system'?' selected':''}>Health System</option></select></span>`:'';const extCount=activeView==='extensions'?`<span class="filter-count" id="extensionFilterCount" hidden></span>`:'';const covNote=(activeView==='results'&&CLOSED_COVERAGE_NOTE)?`<div class="coverage-note">${CLOSED_COVERAGE_NOTE}</div>`:'';document.getElementById('viewTitle').innerHTML=`<div class="view-main"><b>${cfg.title}</b>${extCount}${exportBtn}${groupCtl}</div><div class="view-sub">${cfg.note}</div>${covNote}`;}
 function head(cols){thead.innerHTML='<tr>'+cols.map(c=>`<th class="${c.center?'center':''}">${c.label}${c.sorted?(c.sorted==='asc'?' ↑':' ↓'):''}${c.sub?`<div class="th-sub">${c.sub}</div>`:''}</th>`).join('')+'</tr>'}
 function groupRow(label,count,colspan,meta=''){return `<tr class="group"><td colspan="${colspan}">${groupLabel(label)}<span class="count">${count}</span>${meta?`<span class="group-meta">${meta}</span>`:''}</td></tr>`}
 function idCell(r){return `<button class="id-btn" data-id="${r.id}" aria-expanded="${selected===r.id}"><span class="id-badge">${r.id}</span><span class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></span></button>`}
@@ -1055,8 +1139,19 @@ if(type==='onboarding')return onboardingDetail(r);
 return `<div class="ext-layout"><section class="panel">${autoHeader('VNDLY + Bullhorn')}<div class="panel-title">System Match</div><div class="panel-sub">Compare extension details across both systems and flag data differences without generating a next step.</div>${extensionCompare(r)}</section><section class="panel">${autoHeader('Team-owned extension workflow')}<div class="panel-title">Extension Progress</div><div class="panel-sub">Client, RTO, and extension-send checkpoints are selectable by the team.</div>${extensionProgress(r)}</section></div>`}
 
 function selectedFacilities(){return [...document.querySelectorAll('#meetingFacilities input[type="checkbox"]:checked')].map(x=>x.value)}
+function populateMeetingSystems(){
+ const sel=document.getElementById('meetingSystem');
+ if(!sel)return;
+ const cfg=meetingScopeOptions();
+ const keys=Object.keys(cfg);
+ const keep=sel.value;
+ sel.innerHTML=keys.length
+   ? keys.map(k=>`<option value="${k.replace(/"/g,'&quot;')}">${k}</option>`).join('')
+   : '<option value="">No systems in the loaded data</option>';
+ if(keys.includes(keep))sel.value=keep;
+}
 function renderFacilityPicker(){const sys=document.getElementById('meetingSystem').value;const box=document.getElementById('meetingFacilities');const facilities=meetingConfig[sys]||[];box.innerHTML=facilities.length?facilities.map(f=>`<label class="facility-option"><input type="checkbox" value="${f}" checked><span>${f}</span></label>`).join(''):'<div class="facility-empty">Select a system first.</div>';box.querySelectorAll('.facility-option input').forEach(c=>c.addEventListener('change',()=>c.closest('.facility-option').classList.toggle('selected',c.checked)));box.querySelectorAll('.facility-option').forEach(x=>x.classList.add('selected'))}
-function openMeetingSetup(){document.getElementById('meetingSetupModal').hidden=false;document.getElementById('meetingSystem').value=meetingState.system||'';renderFacilityPicker()}
+function openMeetingSetup(){document.getElementById('meetingSetupModal').hidden=false;populateMeetingSystems();document.getElementById('meetingSystem').value=meetingState.system||document.getElementById('meetingSystem').value;renderFacilityPicker()}
 function closeMeetingSetup(){document.getElementById('meetingSetupModal').hidden=true}
 function previewMeeting(){const sys=document.getElementById('meetingSystem').value;const facilities=selectedFacilities();if(!sys){toast('Select a health system to preview the meeting.');return}if(!facilities.length){toast('Select at least one facility.');return}meetingState={active:true,preview:true,meetingId:`${sys}-${new Date().toISOString().slice(0,19).replace(/[:T]/g,'')}`.replace(/[^A-Za-z0-9-]/g,'_'),system:sys,facilities,recipients:document.getElementById('meetingRecipients').value.trim(),stage:0,actions:[],startedAt:new Date().toISOString(),completed:[],overviewStage:null};closeMeetingSetup();document.getElementById('meetingOverviewContent').innerHTML=buildMeetingOverview();document.getElementById('meetingOverviewModal').hidden=false}
 function closeMeetingOverview(reset=true){document.getElementById('meetingOverviewModal').hidden=true;if(reset){meetingState.active=false;meetingState.preview=false}}
