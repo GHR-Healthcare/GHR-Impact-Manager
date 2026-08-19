@@ -331,7 +331,9 @@ button{cursor:pointer}
 <div class="toast" id="toast"></div>
 
 <script>
-const data={
+var data={results:[],open:[],pending:[],onboarding:[],extensions:[]};
+var DATA_READY=false;
+const MOCK_DATA={
 results:[
  {g:'GHR WON',id:'366212',cat:'Travel Nursing',sys:'UPHS · HUP · ICU Nights',pos:'1',outcome:'GHR Fill',winner:'GHR Healthcare',rate:'$96/hr',rank:'#1 of 8',rankTone:'top',impact:'+$42.4k',effective:'Jul 29',evidence:'GHR start confirmed',owner:'Jen Dierkes',days:9,ghr:[3,2,1],aff:[4,1,0],foot:'GHR 31% · Aya 24% · AMN 18%',history:['Jul 22. Job opened','Jul 23. GHR candidate submitted','Jul 25. Auto offer accepted','Jul 29. Start confirmed']},
  {g:'GHR WON',id:'366188',cat:'Local Contract',sys:'Cooper · ED · Emergency RN',pos:'2',outcome:'2 GHR Fills',winner:'GHR Healthcare',rate:'$84/hr',rank:'#3 of 11',rankTone:'top',impact:'+$67.6k',effective:'Jul 30',evidence:'2 GHR starts booked',owner:'Jake Gehman',days:12,ghr:[5,3,2],aff:[3,1,0],foot:'GHR 42% · TravelNurse 33% · MedPro 17%',history:['Jul 18. Job opened','Jul 20. Five GHR submissions','Jul 24. Two offers','Jul 30. Starts booked']},
@@ -538,8 +540,8 @@ function pieSlicePath(cx,cy,R,r0,a0,a1){const p=(rr,a)=>`${(cx+rr*Math.cos(a)).t
 function marketSharePie(r){const d=pieHeadcounts(r),colors=['#3157d5','#f97316','#7c3aed','#9aa7b8','#0aa36c'];const ghr=d.rows.find(x=>/^ghr$/i.test(x.name))||{pct:0,heads:0};let a=-Math.PI/2;const slices=d.rows.map((x,i)=>{const a1=a+(x.pct/100)*Math.PI*2;const tip=`${x.name} · ${x.heads} clinician${x.heads===1?'':'s'}&#10;Starts ${x.start} · Ends ${x.end}`;const path=`<path d="${pieSlicePath(80,80,72,46,a+0.006,a1-0.006)}" fill="${colors[i%colors.length]}" data-pie-tip="${tip}"></path>`;a=a1;return path}).join('');return `<div class="pie-wrap"><div class="share-pie-svg"><svg viewBox="0 0 160 160" width="160" height="160">${slices}</svg><div class="pie-center"><b>${ghr.pct}%</b><span>GHR Share</span><em>${d.total} clinicians</em></div></div><div class="pie-legend">${d.rows.map((x,i)=>`<div class="pie-item" data-pie-tip="${x.name} · ${x.heads} clinician${x.heads===1?'':'s'}&#10;Starts ${x.start} · Ends ${x.end}"><i style="background:${colors[i%colors.length]}"></i><span>${x.name}</span><b>${x.heads} · ${x.pct}%</b></div>`).join('')}</div></div>`}
 function accountCapturePie(capture){const other=Math.max(0,100-capture);return `<div class="account-share-card"><div class="trend-head"><b>Closed Market Share</b><span>Agency starts</span></div><div class="account-share-inner"><div class="share-pie" style="background:conic-gradient(#3157d5 0 ${capture}%,#f97316 ${capture}% 100%)"><div class="pie-center"><b>${capture}%</b><span>GHR</span></div></div><div class="pie-legend"><div class="pie-item"><i style="background:#3157d5"></i><span>GHR</span><b>${capture}%</b></div><div class="pie-item"><i style="background:#f97316"></i><span>Affiliates</span><b>${other}%</b></div></div></div></div>`}
 
-function compareDateStatus(a,b){const diff=Math.abs((new Date(a)-new Date(b))/86400000);if(diff===0)return {tone:'green',label:'Match',note:'dates match'};if(diff<=2)return {tone:'amber',label:'Minor Gap',note:`${diff} day difference`};return {tone:'red',label:'Critical Gap',note:`${diff} day difference`};}
-function compareFieldStatus(field,a,b){if(a!==b)return {tone:'red',label:'Mismatch',note:`${a} vs ${b}`};if(field==='Extension Offered')return a==='Yes'?{tone:'green',label:'Offered',note:'recorded in both'}:{tone:'gray',label:'Not Offered',note:'not started'};if(field==='Time Off Pending')return a==='Yes'?{tone:'amber',label:'RTO Pending',note:'pending in both'}:{tone:'green',label:'Clear',note:'no RTO pending'};if(field==='Extension Accepted')return a==='Yes'?{tone:'green',label:'Approved',note:'accepted in both'}:{tone:'gray',label:'Pending',note:'not accepted'};return {tone:'green',label:'Confirmed',note:'systems match'};}
+function compareDateStatus(a,b){if(a==null||b==null||a==='—'||b==='—')return {tone:'gray',label:'Not linked',note:'no matching counterpart record'};const diff=Math.abs((new Date(a)-new Date(b))/86400000);if(diff===0)return {tone:'green',label:'Match',note:'dates match'};if(diff<=2)return {tone:'amber',label:'Minor Gap',note:`${diff} day difference`};return {tone:'red',label:'Critical Gap',note:`${diff} day difference`};}
+function compareFieldStatus(field,a,b){if(a==null||b==null)return {tone:'gray',label:'Not linked',note:'no matching counterpart record'};if(a!==b)return {tone:'red',label:'Mismatch',note:`${a} vs ${b}`};if(field==='Extension Offered')return a==='Yes'?{tone:'green',label:'Offered',note:'recorded in both'}:{tone:'gray',label:'Not Offered',note:'not started'};if(field==='Time Off Pending')return a==='Yes'?{tone:'amber',label:'RTO Pending',note:'pending in both'}:{tone:'green',label:'Clear',note:'no RTO pending'};if(field==='Extension Accepted')return a==='Yes'?{tone:'green',label:'Approved',note:'accepted in both'}:{tone:'gray',label:'Pending',note:'not accepted'};return {tone:'green',label:'Confirmed',note:'systems match'};}
 function extensionSummary(r){const checks=[compareDateStatus(r.vndly.end,r.bullhorn.end),compareFieldStatus('Extension Offered',r.vndly.offered,r.bullhorn.offered),compareFieldStatus('Time Off Pending',r.vndly.timeoff,r.bullhorn.timeoff),compareFieldStatus('Extension Accepted',r.vndly.accepted,r.bullhorn.accepted)];const reds=checks.filter(x=>x.tone==='red').length, ambers=checks.filter(x=>x.tone==='amber').length;if(reds)return {tone:'red',label:`${reds} critical issue${reds>1?'s':''}`,note:ambers?`${ambers} warning${ambers>1?'s':''} also present`:'Immediate review required'};if(r.vndly.accepted==='Yes'&&r.bullhorn.accepted==='Yes'&&!ambers)return {tone:'green',label:'Approved',note:'Extension accepted in both systems'};if(ambers)return {tone:'amber',label:`${ambers} warning${ambers>1?'s':''}`,note:'Review before extension deadline'};return {tone:'gray',label:'In Progress',note:'Systems match; extension not yet approved'};}
 function dot(tone){return `<span class="status-dot ${tone}"></span>`}
 function extensionCompare(r){const rows=[['End Date',r.vndly.end,r.bullhorn.end,compareDateStatus(r.vndly.end,r.bullhorn.end),`PM · ${r.pmName}`],['Extension Offered',r.vndly.offered,r.bullhorn.offered,compareFieldStatus('Extension Offered',r.vndly.offered,r.bullhorn.offered),`PM · ${r.pmName}`],['Time Off Pending',r.vndly.timeoff,r.bullhorn.timeoff,compareFieldStatus('Time Off Pending',r.vndly.timeoff,r.bullhorn.timeoff),`PM · ${r.pmName}`],['Extension Accepted',r.vndly.accepted,r.bullhorn.accepted,compareFieldStatus('Extension Accepted',r.vndly.accepted,r.bullhorn.accepted),`PM · ${r.pmName}`]];return `<table class="compare-table"><thead><tr><th>Field</th><th class="status-col">Status</th><th>VNDLY</th><th>Bullhorn</th><th>Owner</th></tr></thead><tbody>${rows.map(x=>`<tr><td>${x[0]}</td><td class="status-cell"><div class="status-stack">${dot(x[3].tone)}<span class="status-text">${x[3].label}</span></div></td><td>${x[1]}</td><td>${x[2]}</td><td>${x[4]}</td></tr>`).join('')}</tbody></table><div class="sync-stats">${(()=>{const t=rows.map(x=>x[3].tone);const c=v=>t.filter(x=>x===v).length;return `<div class="metric"><span>In Sync</span><b>${c('green')}</b></div><div class="metric"><span>Mismatches</span><b>${c('red')}</b></div><div class="metric"><span>Warnings</span><b>${c('amber')}</b></div><div class="metric"><span>Not Started</span><b>${c('gray')}</b></div>`})()}</div><div class="fill-col"><div><div class="pace-title" style="margin-top:0">Extension Window · ${r.days} day${r.days===1?'':'s'} left</div><div class="window-bar"><i class="${extensionDayClass(r.days)}" style="width:${Math.max(6,Math.min(100,Math.round(r.days/45*100)))}%"></i></div><div class="window-scale"><span>Contract end</span><span>45-day window</span></div></div></div><div class="compare-note-mini anchor-bottom">Green = confirmed or approved. Yellow = timing / RTO warning. Red = system mismatch. Gray = not yet started.</div>`;}
@@ -692,6 +694,181 @@ document.addEventListener('click',e=>{if(e.target.closest('[data-complete-stage]
 ['search','system','facility','category','specialty','minAge','maxAge'].forEach(id=>document.getElementById(id).addEventListener(id==='search'||id==='minAge'||id==='maxAge'?'input':'change',render));
 function toast(msg){const t=document.getElementById('toast');t.textContent=msg;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),2200)}
 /* ────────────────────────────────────────────────────────────────────────
+   Live data layer.
+
+   The meeting views were built against MOCK_DATA, whose records carry
+   pre-formatted display strings ('$41.8k', 'Sep 18, 2026'). Rather than
+   rewrite every renderer, each adapter below maps an API payload into that
+   same shape, so the views stay untouched and the formatting stays in one
+   place.
+
+   ?demo=1 keeps MOCK_DATA, which is how the meeting flow gets demoed
+   without live data behind it.
+   ──────────────────────────────────────────────────────────────────────── */
+const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
+function fmtDate(iso){
+  if(!iso) return '—';
+  const d = new Date(iso + (String(iso).length === 10 ? 'T00:00:00' : ''));
+  if(isNaN(d)) return '—';
+  return `${MONTHS[d.getMonth()]} ${d.getDate()}, ${d.getFullYear()}`;
+}
+function fmtShortDate(iso){
+  if(!iso) return '—';
+  const d = new Date(iso + (String(iso).length === 10 ? 'T00:00:00' : ''));
+  if(isNaN(d)) return '—';
+  return `${MONTHS[d.getMonth()]} ${d.getDate()}`;
+}
+function fmtMoneyK(n){
+  const v = Number(n);
+  if(!isFinite(v) || v === 0) return '$0';
+  return Math.abs(v) >= 1000000 ? `$${(v/1000000).toFixed(2)}M` : `$${(v/1000).toFixed(1)}k`;
+}
+function titleize(s){ return String(s||'').trim() || '—'; }
+
+async function getJSON(path){
+  const r = await fetch(`${API_BASE_URL}${path}`);
+  if(!r.ok) throw new Error(`${path} → ${r.status}`);
+  return r.json();
+}
+
+/* ---- Extensions ------------------------------------------------------- */
+// Urgency label mirrors the band the endpoint derives from days_left.
+const URGENCY_LABEL = { critical:'Critical', high:'High', medium:'Watch', low:'Stable' };
+
+function adaptExtensions(rows){
+  return (rows||[]).map(r => {
+    // Client decision has no source column — it is captured in the meeting.
+    // Until that persists, every seat opens as undecided.
+    const decision = 'Not Requested';
+    return {
+      g: 'NO DECISION',
+      id: r.id,
+      seat: r.cost_center || r.unit || '—',
+      sys: [r.health_system, r.facility, r.unit, r.clinician].filter(Boolean).join(' · '),
+      role: [r.role, r.care_type, r.time_type].filter(Boolean).join(' · ') || '—',
+      source: r.source,
+      end: fmtDate(r.end_date),
+      days: r.days_left,
+      value: fmtMoneyK(r.extension_value_13wk),
+      status: 'No Decision',
+      pmName: titleize(r.account_manager),
+      recruiterName: titleize(r.hiring_manager),
+      talentRole: 'Account Manager',
+      next: r.is_extension
+        ? 'Already an extension — confirm whether the client extends again'
+        : 'Confirm client intent to extend or close the seat',
+      urgency: URGENCY_LABEL[r.urgency] || 'Stable',
+      clientDecision: decision,
+      notes: '',
+      // The stage reconciles the VMS record against GHR's ATS. B4Health is
+      // the VMS side; the Bullhorn mirror lives on a separate host and isn't
+      // joined yet, so that side is explicitly unknown rather than mirrored
+      // back — otherwise every seat would read as a false "Match".
+      vndly: {
+        end: fmtDate(r.end_date),
+        offered: null,
+        timeoff: null,
+        accepted: null,
+      },
+      bullhorn: { end: null, offered: null, timeoff: null, accepted: null },
+      _raw: r,
+    };
+  });
+}
+
+/* ---- Onboarding ------------------------------------------------------- */
+function adaptOnboarding(rows){
+  return (rows||[]).map(r => {
+    const moves = r.move_count || 0;
+    const delayed = r.days_delayed || 0;
+    return {
+      id: r.id,
+      g: r.group,
+      candidate: titleize(r.clinician),
+      sys: [r.health_system, r.facility, r.unit].filter(Boolean).join(' · '),
+      source: r.source,
+      scheduled: fmtDate(r.original_start),
+      current: fmtDate(r.current_start),
+      variance: delayed > 0 ? `+${delayed} days` : delayed < 0 ? `${delayed} days` : 'On schedule',
+      status: r.group === 'CANCELED' ? 'Canceled'
+            : r.group === 'DELAYED START' ? 'Delayed'
+            : r.group === 'START DATE CHANGED' ? 'Moved' : 'On Track',
+      officialStartState: titleize(r.contract_status),
+      delayCategory: titleize(r.delay_reason) !== '—' ? titleize(r.delay_reason) : 'Not categorized',
+      reason: titleize(r.delay_reason) !== '—' ? titleize(r.delay_reason)
+            : (r.delayed_flag === 'Yes' ? 'Delay flagged, reason not recorded' : 'No delay recorded'),
+      moveCount: moves,
+      owner: titleize(r.account_manager),
+      nextOwner: `PM · ${titleize(r.account_manager)}`,
+      nextStep: moves >= 2
+        ? 'Repeat start movement — escalate with the client before reconfirming'
+        : 'Reconfirm start date with clinician and facility',
+      revenue: fmtMoneyK((r.awarded_rate||0) * (r.hours_per_week||0) * 13),
+      // The endpoint returns aggregate movement, not a per-change log; the
+      // detail timeline shows the endpoints of the slip instead of every hop.
+      moves: moves > 0
+        ? [[fmtShortDate(r.original_start), `${fmtShortDate(r.original_start)} → ${fmtShortDate(r.current_start)}`, `${moves} change${moves===1?'':'s'} recorded`]]
+        : [],
+      _raw: r,
+    };
+  });
+}
+
+/* ---- Open Jobs -------------------------------------------------------- */
+function adaptOpen(rows){
+  return (rows||[]).filter(r => r && r.position_id).map(r => {
+    const ghrSubs = r.ghrSubs||0, avSubs = r.avSubs||0;
+    const ghrDec = r.ghrDeclines||0, avDec = r.avDeclines||0;
+    const rate = Number(r.bill_rate);
+    const days = r.date_added
+      ? Math.max(0, Math.round((Date.now() - new Date(r.date_added).getTime())/86400000))
+      : 0;
+    return {
+      id: String(r.position_id),
+      cat: titleize(r.program),
+      sys: [r.health_system, r.facility, r.specialty].filter(Boolean).join(' · '),
+      pos: r.num_positions || 1,
+      rate: isFinite(rate) && rate > 0 ? `$${rate.toFixed(0)}/hr` : '—',
+      days,
+      margin: '—',
+      impact: '—',
+      active: `${ghrSubs} / ${avSubs}`,
+      declines: `${ghrDec} / ${avDec}`,
+      rank: '—',
+      vendor: '—',
+      next: r.requisition_reason || 'Review pipeline and submission coverage',
+      owner: titleize(r.hiring_manager),
+      ghr: [ghrSubs, 0, 0],
+      aff: [avSubs, 0, 0],
+      _raw: r,
+    };
+  });
+}
+
+async function loadAllData(){
+  const results = await Promise.allSettled([
+    getJSON('/get-positions'),
+    getJSON('/extensions-data'),
+    getJSON('/onboarding-data'),
+  ]);
+  const [positions, extensions, onboarding] = results;
+  const failed = [];
+
+  data.open = positions.status === 'fulfilled' ? adaptOpen(positions.value) : (failed.push('open jobs'), []);
+  data.extensions = extensions.status === 'fulfilled' ? adaptExtensions(extensions.value) : (failed.push('extensions'), []);
+  data.onboarding = onboarding.status === 'fulfilled' ? adaptOnboarding(onboarding.value) : (failed.push('onboarding'), []);
+  // Closed + Pending are not yet wired to an endpoint; they stay empty rather
+  // than showing fabricated rows.
+  data.results = [];
+  data.pending = [];
+
+  results.forEach(r => { if(r.status === 'rejected') console.error('data load:', r.reason); });
+  DATA_READY = true;
+  return failed;
+}
+
+/* ────────────────────────────────────────────────────────────────────────
    Bootstrap: instance routing, auth, config.
 
    Both Static Web Apps deploy from main off the same index.html; the only
@@ -783,11 +960,35 @@ async function boot(){
   }
 
   applyConfig(cfg);
-  setConnectionState(true);
   document.title = 'GHR Impact Manager — MSP';
   loadAzureUser();
+
+  // ?demo=1 renders the built-in sample book instead of live data, so the
+  // meeting flow can be walked through without a backend behind it.
+  if(new URLSearchParams(location.search).get('demo') === '1'){
+    data = MOCK_DATA;
+    DATA_READY = true;
+    setConnectionState(true, 'Demo data — not live');
+    document.title = 'GHR Impact Manager — MSP (demo)';
+    revealApp();
+    render();
+    return;
+  }
+
   revealApp();
+  render();                       // paint the shell while data is in flight
+
+  let failed = [];
+  try{
+    failed = await loadAllData();
+  }catch(e){
+    console.error('data load failed:', e);
+    failed = ['all sections'];
+  }
+  setConnectionState(failed.length === 0,
+    failed.length ? 'Could not load: ' + failed.join(', ') : 'Live data');
   render();
+  if(failed.length) toast('Could not load: ' + failed.join(', '));
 }
 
 boot();
