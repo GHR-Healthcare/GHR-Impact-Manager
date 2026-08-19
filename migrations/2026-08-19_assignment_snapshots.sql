@@ -52,3 +52,60 @@ GRANT SELECT, INSERT, UPDATE ON dbo.STAGING_VNDLY_WORKORDERS_Snapshot TO [svc-im
 --   FROM dhc.B4HealthOrder_Snapshot
 --   GROUP BY Contract_ID
 --   HAVING COUNT(DISTINCT Start_Date) > 1;
+
+
+-- ─────────────────────────────────────────────────────────────────────────
+-- SCHEDULING
+--
+-- Preferred: append this to the existing daily warehouse load.
+--
+-- The load already runs every morning (see
+-- BH_PLACEMENT_RAW_TO_B4HealthOrder_RUN_DIM, user GHRDataWarehouse) and
+-- already writes to these schemas, so it needs no new credential, no new
+-- auth path and no extra service. It also does not depend on anyone opening
+-- the app: a day nobody signs in is a day of movement nobody can measure,
+-- and a start that moves and moves back inside that gap is invisible
+-- forever.
+--
+-- Idempotent — safe to run more than once a day, and safe to re-run after a
+-- failed load. Run AFTER B4HealthOrder and STAGING_VNDLY_WORKORDERS refresh.
+-- ─────────────────────────────────────────────────────────────────────────
+
+INSERT INTO dhc.B4HealthOrder_Snapshot
+    (Contract_ID, Snapshot_Date, Start_Date, End_Date, Contract_Status,
+     Health_System, Agency, Awarded_Rate, Delayed_Starts, Captured_At)
+SELECT LTRIM(RTRIM(o.Contract_ID)), CAST(GETDATE() AS DATE), CAST(o.Start_Date AS DATE),
+       CAST(o.End_Date AS DATE), o.Contract_Status, o.Health_System, o.Agency,
+       TRY_CAST(o.Awarded_Rate AS DECIMAL(10,2)), o.Delayed_Starts, SYSUTCDATETIME()
+FROM dhc.B4HealthOrder o WITH (NOLOCK)
+WHERE (o.Start_Date >= DATEADD(DAY,-90,CAST(GETDATE() AS DATE))
+       OR o.End_Date >= CAST(GETDATE() AS DATE))
+  AND LTRIM(RTRIM(o.Contract_ID)) <> ''
+  AND NOT EXISTS (
+      SELECT 1 FROM dhc.B4HealthOrder_Snapshot s
+      WHERE s.Contract_ID = LTRIM(RTRIM(o.Contract_ID))
+        AND s.Snapshot_Date = CAST(GETDATE() AS DATE));
+
+INSERT INTO dbo.STAGING_VNDLY_WORKORDERS_Snapshot
+    (WOSystemKey, Snapshot_Date, Start_Date, End_Date, Current_Status,
+     Health_System, Vendor_Name, Bill_Rate, Captured_At)
+SELECT CAST(w.WOSystemKey AS NVARCHAR(120)), CAST(GETDATE() AS DATE),
+       TRY_CAST(w.[Start Date] AS DATE), TRY_CAST(w.[End Date] AS DATE),
+       w.[Current Status], w.[Health System], w.[Vendor Name],
+       TRY_CAST(w.[Bill Rate] AS DECIMAL(10,2)), SYSUTCDATETIME()
+FROM dbo.STAGING_VNDLY_WORKORDERS w WITH (NOLOCK)
+WHERE (TRY_CAST(w.[Start Date] AS DATE) >= DATEADD(DAY,-90,CAST(GETDATE() AS DATE))
+       OR TRY_CAST(w.[End Date] AS DATE) >= CAST(GETDATE() AS DATE))
+  AND w.WOSystemKey IS NOT NULL
+  AND NOT EXISTS (
+      SELECT 1 FROM dbo.STAGING_VNDLY_WORKORDERS_Snapshot s
+      WHERE s.WOSystemKey = w.WOSystemKey
+        AND s.Snapshot_Date = CAST(GETDATE() AS DATE));
+
+-- Alternative if it cannot live in the ETL: a Logic App or Automation runbook
+-- on a daily recurrence running the two statements above directly against
+-- ghrdhc. Calling the app's /api/snapshot-assignments endpoint instead would
+-- work but is the worse option — it needs x-ms-client-principal, so it means
+-- a function key or an auth bypass for a job that only writes to SQL.
+--
+-- Day 1 was seeded manually on 2026-08-19: 2,018 B4 + 1,009 VNDLY rows.
