@@ -5,35 +5,45 @@ import json
 from shared_code.auth import require_allowed_domain
 
 
-# GHR-owned agencies in B4Health. Verified against the live extension window:
-# 'GHR Allied', 'GHR Acute', 'GHR Travel'. Everything else is an affiliate on
-# the MSP panel, and 'Planet Healthcare' is GHR-family the same way the
-# submission logic in GetPositions treats it.
-GHR_AGENCY_PREDICATE = "(o.Agency LIKE 'GHR%' OR o.Agency LIKE '%Planet Healthcare%')"
+# GHR-owned vendors differ by VMS. B4Health writes 'GHR Allied' / 'GHR Acute'
+# / 'GHR Travel'; VNDLY writes 'GHR Nursing' / 'GHR Allied' / 'GHR Search' /
+# 'GHR Locum Tenens'. Both are matched on the 'GHR' stem, and Planet
+# Healthcare is treated as GHR-family the same way GetPositions does.
+B4_GHR_PREDICATE = "(o.Agency LIKE '%GHR%' OR o.Agency LIKE '%Planet Healthcare%')"
+VNDLY_GHR_PREDICATE = "(w.[Vendor Name] LIKE '%GHR%' OR w.[Vendor Name] LIKE '%Planet Healthcare%')"
 
-# Contracts that are cancelled or were never awarded aren't extension
-# candidates — there's no seat to extend.
-EXTENSION_EXCLUDED_STATUSES = ('Closed And Cancelled', 'Closed Not Awarded')
+# Cancelled / never-awarded seats aren't extension candidates — there's no
+# seat to extend.
+B4_EXCLUDED_STATUSES = ('Closed And Cancelled', 'Closed Not Awarded')
 
-# How far ahead the Extensions stage looks. Matches the stage copy: "GHR
-# contracts ending within 45 days."
+# On VNDLY only a live seat can extend. Everything else is terminal
+# ('Ended', 'Ended by Job Close', 'Rejected', 'Withdrawn', 'Offer Declined')
+# or hasn't started ('Applied', 'Verification In Progress').
+VNDLY_ACTIVE_STATUSES = ('Active',)
+
 EXTENSION_HORIZON_DAYS = 45
 
 
-def _extensions_data(cursor, horizon_days, include_affiliate):
-    """Rows for the Extensions meeting stage: seats ending inside the horizon.
+def _urgency(days):
+    """Mirrors the stage legend: deeper red = fewer days to secure a decision."""
+    if days is None:
+        return 'low'
+    if days <= 7:
+        return 'critical'
+    if days <= 14:
+        return 'high'
+    if days <= 21:
+        return 'medium'
+    return 'low'
 
-    Urgency is derived from days-left rather than stored, so it stays correct
-    without a nightly job. The client *decision* (Offered / Pending Acceptance
-    / Approved / No Decision) is deliberately NOT sourced here — B4Health has
-    no such column. That state is captured during the IMPACT meeting and lives
-    in the app DB, so this endpoint returns only what the source system knows.
-    """
-    status_list = ', '.join("'" + s.replace("'", "''") + "'" for s in EXTENSION_EXCLUDED_STATUSES)
-    agency_filter = '' if include_affiliate else f'AND {GHR_AGENCY_PREDICATE}'
 
+def _b4_rows(cursor, horizon, include_affiliate):
+    """Extension candidates still being managed in B4Health."""
+    status_list = ', '.join("'" + s.replace("'", "''") + "'" for s in B4_EXCLUDED_STATUSES)
+    agency_filter = '' if include_affiliate else f'AND {B4_GHR_PREDICATE}'
     cursor.execute(f'''
         SELECT
+            'B4'                                        AS source_system,
             LTRIM(RTRIM(o.Contract_ID))                 AS id,
             LTRIM(RTRIM(ISNULL(o.First_Name, '') + ' ' + ISNULL(o.Last_Name, ''))) AS clinician,
             o.Health_System                             AS health_system,
@@ -46,53 +56,102 @@ def _extensions_data(cursor, horizon_days, include_affiliate):
             CAST(o.Start_Date AS DATE)                  AS start_date,
             CAST(o.End_Date AS DATE)                    AS end_date,
             DATEDIFF(DAY, CAST(GETDATE() AS DATE), o.End_Date) AS days_left,
-            CASE WHEN {GHR_AGENCY_PREDICATE} THEN 'GHR' ELSE 'Affiliate' END AS source,
+            CASE WHEN {B4_GHR_PREDICATE} THEN 'GHR' ELSE 'Affiliate' END AS source,
             o.Agency                                    AS agency,
             o.Contract_Status                           AS contract_status,
             o.Account_Manager                           AS account_manager,
             o.Hiring_Manager                            AS hiring_manager,
             o.Cost_Center                               AS cost_center,
-            TRY_CAST(o.Awarded_Rate AS DECIMAL(10,2))   AS awarded_rate,
+            TRY_CAST(o.Awarded_Rate AS DECIMAL(10,2))   AS bill_rate,
             TRY_CAST(o.Hours_per_Peek AS DECIMAL(10,2)) AS hours_per_week,
-            -- 13-week forward value of the seat if it extends.
-            CAST(
-                TRY_CAST(o.Awarded_Rate AS DECIMAL(10,2))
-                * TRY_CAST(o.Hours_per_Peek AS DECIMAL(10,2))
-                * 13 AS DECIMAL(12,2)
-            )                                           AS extension_value_13wk,
-            -- A seat that already carries a parent is itself an extension, so
-            -- the relationship is worth surfacing in the meeting.
+            -- B4 has no "original end date", so an extension is only visible
+            -- through the parent-contract chain.
             CASE WHEN o.Parent_Contract_ID IS NOT NULL AND LTRIM(RTRIM(o.Parent_Contract_ID)) <> ''
                  THEN 1 ELSE 0 END                      AS is_extension,
-            LTRIM(RTRIM(ISNULL(o.Parent_Contract_ID, ''))) AS parent_contract_id
+            LTRIM(RTRIM(ISNULL(o.Parent_Contract_ID, ''))) AS parent_ref
         FROM dhc.B4HealthOrder o WITH (NOLOCK)
         WHERE o.End_Date BETWEEN CAST(GETDATE() AS DATE)
                              AND DATEADD(DAY, ?, CAST(GETDATE() AS DATE))
             AND o.Contract_Status NOT IN ({status_list})
             {agency_filter}
-        ORDER BY o.End_Date ASC
-    ''', horizon_days)
+    ''', horizon)
+    return [dict(zip([c[0] for c in cursor.description], r)) for r in cursor.fetchall()]
 
-    columns = [c[0] for c in cursor.description]
-    rows = []
-    for row in cursor.fetchall():
-        r = dict(zip(columns, row))
+
+def _vndly_rows(cursor, horizon, include_affiliate):
+    """Extension candidates on VNDLY.
+
+    Richer than B4 in two ways: [Original End Date] makes an already-extended
+    seat directly visible rather than inferred from a parent chain, and the
+    modifications feed records explicit 'Date Extension' events.
+
+    Hours aren't on the work order, so they come from the linked job.
+    """
+    status_list = ', '.join("'" + s.replace("'", "''") + "'" for s in VNDLY_ACTIVE_STATUSES)
+    vendor_filter = '' if include_affiliate else f'AND {VNDLY_GHR_PREDICATE}'
+    cursor.execute(f'''
+        SELECT
+            'VNDLY'                                     AS source_system,
+            CAST(w.WOSystemKey AS NVARCHAR(50))          AS id,
+            LTRIM(RTRIM(ISNULL(w.[Contractor First Name], '') + ' ' + ISNULL(w.[Contractor Last Name], ''))) AS clinician,
+            w.[Health System]                            AS health_system,
+            COALESCE(w.[Default Work Site Name], w.[Job Site]) AS facility,
+            w.[Organization Unit]                        AS unit,
+            COALESCE(w.[Job Title], w.[Title])           AS role,
+            NULL                                         AS care_type,
+            w.[Busines Unit - Name]                      AS program,
+            NULL                                         AS time_type,
+            TRY_CAST(w.[Start Date] AS DATE)             AS start_date,
+            TRY_CAST(w.[End Date] AS DATE)               AS end_date,
+            DATEDIFF(DAY, CAST(GETDATE() AS DATE), TRY_CAST(w.[End Date] AS DATE)) AS days_left,
+            CASE WHEN {VNDLY_GHR_PREDICATE} THEN 'GHR' ELSE 'Affiliate' END AS source,
+            w.[Vendor Name]                              AS agency,
+            w.[Current Status]                           AS contract_status,
+            w.[Resource Manager]                         AS account_manager,
+            w.[Hiring Manager]                           AS hiring_manager,
+            NULL                                         AS cost_center,
+            TRY_CAST(w.[Bill Rate] AS DECIMAL(10,2))     AS bill_rate,
+            j.hours_per_week                             AS hours_per_week,
+            -- An end date past the original is an extension, full stop.
+            CASE WHEN TRY_CAST(w.[End Date] AS DATE) > TRY_CAST(w.[Original End Date] AS DATE)
+                 THEN 1 ELSE 0 END                       AS is_extension,
+            CONVERT(VARCHAR(10), TRY_CAST(w.[Original End Date] AS DATE), 120) AS parent_ref
+        FROM dbo.STAGING_VNDLY_WORKORDERS w WITH (NOLOCK)
+        -- STAGING_VNDLY_JOBS holds 664 rows across only 387 distinct [Job Id],
+        -- so joining it raw fans work orders out — measured at 112 rows where
+        -- the truth is 60. Collapse to one row per job before joining.
+        -- Note the key is the int [Job Id] on both sides; [JobSystemKey] is an
+        -- nvarchar business key ('CUH-3-294') and will not join to it.
+        LEFT JOIN (
+            SELECT [Job Id] AS job_id,
+                   MAX(TRY_CAST([Standard Hours Per Week] AS DECIMAL(10,2))) AS hours_per_week
+            FROM dbo.STAGING_VNDLY_JOBS WITH (NOLOCK)
+            GROUP BY [Job Id]
+        ) j ON j.job_id = w.[Job Id]
+        WHERE TRY_CAST(w.[End Date] AS DATE) BETWEEN CAST(GETDATE() AS DATE)
+                                                 AND DATEADD(DAY, ?, CAST(GETDATE() AS DATE))
+            AND w.[Current Status] IN ({status_list})
+            {vendor_filter}
+    ''', horizon)
+    return [dict(zip([c[0] for c in cursor.description], r)) for r in cursor.fetchall()]
+
+
+def _serialize(rows):
+    out = []
+    for r in rows:
         for k in ('start_date', 'end_date'):
             if r.get(k) is not None:
                 r[k] = r[k].isoformat() if hasattr(r[k], 'isoformat') else str(r[k])
-        for k in ('awarded_rate', 'hours_per_week', 'extension_value_13wk'):
+        for k in ('bill_rate', 'hours_per_week'):
             if r.get(k) is not None:
                 r[k] = float(r[k])
-        days = r.get('days_left')
-        # Mirrors the stage legend: deeper red = fewer days to secure a decision.
-        r['urgency'] = (
-            'critical' if days is not None and days <= 7 else
-            'high'     if days is not None and days <= 14 else
-            'medium'   if days is not None and days <= 21 else
-            'low'
-        )
-        rows.append(r)
-    return rows
+        rate, hrs = r.get('bill_rate'), r.get('hours_per_week')
+        # 13-week forward value of the seat if it extends. Left null rather
+        # than assuming a standard week when hours aren't known.
+        r['extension_value_13wk'] = round(rate * hrs * 13, 2) if rate and hrs else None
+        r['urgency'] = _urgency(r.get('days_left'))
+        out.append(r)
+    return out
 
 
 def main(req: func.HttpRequest) -> func.HttpResponse:
@@ -104,11 +163,10 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
         horizon = int(req.params.get('days') or EXTENSION_HORIZON_DAYS)
     except (TypeError, ValueError):
         horizon = EXTENSION_HORIZON_DAYS
-    # The stage is a delivery view (GHR only) by default; affiliate rows are
-    # opt-in so the same endpoint can back a panel-wide comparison later.
     include_affiliate = str(req.params.get('includeAffiliate', '')).lower() in ('1', 'true', 'yes')
 
     conn = None
+    rows, errors = [], []
     try:
         conn = pyodbc.connect(
             f"DRIVER={{ODBC Driver 17 for SQL Server}};"
@@ -120,8 +178,26 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
         )
         cursor = conn.cursor()
         cursor.execute('SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED')
-        rows = _extensions_data(cursor, horizon, include_affiliate)
-        print(f"Extensions: returning {len(rows)} rows (horizon {horizon}d, affiliate={include_affiliate})")
+
+        # B4 and VNDLY are unioned rather than deduped: during the transition
+        # they cover different workers, and once a system is fully cut over B4
+        # simply stops producing rows for it. Same treatment GetFinancialData
+        # applies for the transitioned systems (RUMC, Holy Redeemer, Cooper).
+        for label, fn in (('B4', _b4_rows), ('VNDLY', _vndly_rows)):
+            try:
+                rows.extend(fn(cursor, horizon, include_affiliate))
+            except Exception as e:
+                print(f"Extensions: {label} branch failed: {e}")
+                import traceback
+                traceback.print_exc()
+                errors.append(f'{label}: {e}')
+
+        rows = _serialize(rows)
+        rows.sort(key=lambda r: (r.get('days_left') if r.get('days_left') is not None else 9999))
+        b4n = sum(1 for r in rows if r['source_system'] == 'B4')
+        vnn = sum(1 for r in rows if r['source_system'] == 'VNDLY')
+        print(f"Extensions: {len(rows)} rows (B4 {b4n}, VNDLY {vnn}; horizon {horizon}d, "
+              f"affiliate={include_affiliate}; errors: {errors or 'none'})")
         return func.HttpResponse(
             json.dumps(rows, default=str),
             mimetype="application/json",
