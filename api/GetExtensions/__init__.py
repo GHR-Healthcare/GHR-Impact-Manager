@@ -112,7 +112,15 @@ def _vndly_rows(cursor, horizon, include_affiliate):
             -- filtering on the reason alone silently drops those.
             SELECT
                 WOSystemKey                                     AS wo,
-                COUNT(*)                                        AS ext_events,
+                -- The feed carries exact duplicates — 1,212 rows over 977
+                -- distinct events, up to 7 copies of one change — so counting
+                -- rows overstates activity. Measured on the extension signal:
+                -- 274 rows for 238 real events, 13% inflation. Count the event,
+                -- not the row.
+                COUNT(DISTINCT CONCAT(
+                    CONVERT(VARCHAR(19), [Last Modified], 120), '|',
+                    ISNULL([Reason for Modification], ''), '|',
+                    ISNULL([Other Reason], '')))                AS ext_events,
                 MAX([Last Modified])                            AS last_ext_at,
                 -- The free text is where the actual decision lives
                 -- ('Extension offered for Chemistry unit - new end date
