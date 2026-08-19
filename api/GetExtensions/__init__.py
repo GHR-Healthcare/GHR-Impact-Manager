@@ -166,10 +166,23 @@ def _vndly_rows(cursor, horizon, include_affiliate):
             CASE WHEN TRY_CAST(w.[End Date] AS DATE) > TRY_CAST(w.[Original End Date] AS DATE)
                  THEN 1 ELSE 0 END                       AS is_extension,
             CONVERT(VARCHAR(10), TRY_CAST(w.[Original End Date] AS DATE), 120) AS parent_ref,
-            -- No VNDLY↔Bullhorn match table exists, so margin is unknown here
-            -- rather than approximated from the VMS fee split.
-            NULL                                         AS margin_pct,
-            NULL                                         AS clinician_pay_rate,
+            -- VNDLY is not a uniform fee tier the way B4 is. Its [Pay Rate] is
+            -- a real clinician rate on part of the book and a copy of the bill
+            -- rate on the rest: 1,151 rows sit at >=90% of bill (unusable,
+            -- mostly pay == bill), 135 sit in a credible 40-89% band averaging
+            -- 33.8% margin, and 52 fall below 40% which reads as bad data.
+            -- Margin is computed only inside the credible band; everything else
+            -- returns null and falls through to the override/default.
+            CASE WHEN TRY_CAST(w.[Bill Rate] AS FLOAT) > 0
+                  AND TRY_CAST(w.[Pay Rate]  AS FLOAT) > 0
+                  AND TRY_CAST(w.[Pay Rate] AS FLOAT) / TRY_CAST(w.[Bill Rate] AS FLOAT)
+                      BETWEEN 0.40 AND 0.89
+                 THEN ROUND((TRY_CAST(w.[Bill Rate] AS FLOAT) - TRY_CAST(w.[Pay Rate] AS FLOAT))
+                            / TRY_CAST(w.[Bill Rate] AS FLOAT) * 100, 1)
+            END                                          AS margin_pct,
+            CASE WHEN TRY_CAST(w.[Pay Rate] AS FLOAT) / NULLIF(TRY_CAST(w.[Bill Rate] AS FLOAT),0)
+                      BETWEEN 0.40 AND 0.89
+                 THEN TRY_CAST(w.[Pay Rate] AS FLOAT) END AS clinician_pay_rate,
             ISNULL(x.ext_events, 0)                      AS extension_events,
             CONVERT(VARCHAR(19), x.last_ext_at, 120)     AS last_extension_at,
             x.ext_note                                   AS extension_note,
