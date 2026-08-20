@@ -4300,6 +4300,8 @@
           let ageMatch = true;
           if (s.filters.ageMin !== null && j.daysPast < s.filters.ageMin) ageMatch = false;
           if (s.filters.ageMax !== null && j.daysPast > s.filters.ageMax) ageMatch = false;
+          // Perm chip: same program test the row bubble uses for its outline.
+          if (s.filters.permOnly && !String(j.program || '').toLowerCase().includes('perm')) ageMatch = false;
 
           let searchMatch = true;
           // Corrected to use s.searchQuery instead of s.filters.searchId
@@ -5282,16 +5284,36 @@
         lucide.createIcons();
       },
 
+      /*
+       * Aging legend, doubling as the age filter. Each chip drives the same
+       * s.filters.ageMin/ageMax the Days Age inputs write, so there is one
+       * filter behind both controls and they stay in sync rather than
+       * competing. Perm is not an age band — it keys off the program name, the
+       * same test the row bubble uses (job.program contains "perm").
+       */
+      AGING_BUCKETS: [
+        { key: '1-5',  label: '1-5 Days',   dot: 'bg-[#22C55E]', min: 1,  max: 5 },
+        { key: '6-10', label: '6-10 Days',  dot: 'bg-[#FACC15]', min: 6,  max: 10 },
+        { key: '11-15', label: '11-15 Days', dot: 'bg-[#EF4444]', min: 11, max: 15 },
+        { key: '16+',  label: '16+ Days',   dot: 'bg-red-800',   min: 16, max: null },
+        { key: 'perm', label: 'Perm',       dot: 'border border-slate-500 bg-white', perm: true },
+      ],
+
       legend() {
         const el = $('legendContainer');
         if (!el) return;
-        el.innerHTML = `
-          <div class="flex items-center gap-2"><div class="w-3 h-3 rounded-full bg-[#22C55E]"></div> 1-5 Days</div>
-          <div class="flex items-center gap-2"><div class="w-3 h-3 rounded-full bg-[#FACC15]"></div> 6-10 Days</div>
-          <div class="flex items-center gap-2"><div class="w-3 h-3 rounded-full bg-[#EF4444]"></div> 11-15 Days</div>
-          <div class="flex items-center gap-2"><div class="w-3 h-3 rounded-full bg-red-800"></div> 16+ Days</div>
-          <div class="flex items-center gap-2"><div class="w-3 h-3 rounded-full border border-slate-500 bg-white"></div> Perm</div>
-        `;
+        const f = window.store.state.filters;
+        el.innerHTML = View.AGING_BUCKETS.map(b => {
+          const on = b.perm ? f.permOnly === true
+                            : (f.ageMin === b.min && f.ageMax === b.max && !f.permOnly);
+          return `<button type="button" onclick="store.dispatch('TOGGLE_AGE_BUCKET','${b.key}')"
+              title="${on ? 'Clear this filter' : 'Filter to ' + b.label}"
+              class="flex items-center gap-2 px-2 py-1 rounded-md border transition-colors ${
+                on ? 'bg-blue-50 border-blue-300 text-blue-800 font-semibold'
+                   : 'border-transparent hover:bg-slate-50 hover:border-slate-200'}">
+              <div class="w-3 h-3 rounded-full ${b.dot}"></div> ${b.label}
+            </button>`;
+        }).join('');
       },
 
       financials() {
@@ -9958,7 +9980,7 @@
         perDiemFromMonth: null,
         perDiemToMonth: null,
         perDiemGHROnly: true,
-        filters: { systems: new Set(), facilities: new Set(), categories: new Set(), specialties: new Set(), ageMin: null, ageMax: null, searchId: '' },
+        filters: { systems: new Set(), facilities: new Set(), categories: new Set(), specialties: new Set(), ageMin: null, ageMax: null, permOnly: false, searchId: '' },
         filterSelection: {
           systems: new Set(), facilities: new Set(), categories: new Set(), specialties: new Set(),
           // Non-MSP filter dimensions — populated from the API's division/region/customText fields.
@@ -10160,11 +10182,35 @@
               break;
             }
 
+            case 'TOGGLE_AGE_BUCKET': {
+              const b = View.AGING_BUCKETS.find(x => x.key === payload);
+              if (!b) break;
+              if (b.perm) {
+                s.filters.permOnly = !s.filters.permOnly;
+                if (s.filters.permOnly) { s.filters.ageMin = null; s.filters.ageMax = null; }
+              } else {
+                const already = s.filters.ageMin === b.min && s.filters.ageMax === b.max && !s.filters.permOnly;
+                s.filters.permOnly = false;
+                s.filters.ageMin = already ? null : b.min;
+                s.filters.ageMax = already ? null : b.max;
+              }
+              // Mirror into the Days Age inputs so the two controls never
+              // disagree about what is filtered.
+              const minEl = $('minAge'), maxEl = $('maxAge');
+              if (minEl) minEl.value = s.filters.ageMin ?? '';
+              if (maxEl) maxEl.value = s.filters.ageMax ?? '';
+              View.legend();
+              View.main();
+              break;
+            }
+
             case 'SET_AGE_RANGE': {
               const min = $('minAge')?.value ?? '';
               const max = $('maxAge')?.value ?? '';
               s.filters.ageMin = min !== '' ? parseInt(min, 10) : null;
               s.filters.ageMax = max !== '' ? parseInt(max, 10) : null;
+              s.filters.permOnly = false;
+              View.legend();
               View.main();
               break;
             }
