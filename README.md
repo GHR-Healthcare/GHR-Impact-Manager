@@ -2,6 +2,19 @@
 
 ## Version History
 
+**2.4.10** - One layout across all ten tabs: KPI cards stop moving
+
+The tabs had drifted into three different layouts. KPI cards sat **above** the tab row on List / Per Diem / Revenue (the shared `#kpiContainer`), **inside the panel below the tab row** on Trend / Closed / Extensions / Onboarding / Priority Jobs / Pending, and **inline at the top of the content** on Contracts — with two different card designs between them. Switching tabs moved the cards.
+
+Now every view renders through `View.renderKpiCards()` into the shared container above the tab row. One card design, one position, no shift on tab change.
+
+- The five per-wrapper tile containers are gone, along with the now-dead `stageTile()` helper and Contracts' local `kpiCard()`.
+- Stage cards gained icons to match the existing card design instead of the plainer tile look.
+- Trend's cards are next-7-day *deltas* rather than totals, and the shared card has no subtitle line — so the comparison week moved into the label (`Total Headcount vs Aug 20`) rather than being dropped.
+- Stage panels reclaim the freed vertical space for their tables.
+
+Card counts still vary by tab (4-6) because the metrics do, but card size and position are now identical everywhere.
+
 **2.4.9** - Row-expansion audit: Placements pane was reading fields that don't exist
 
 Audit of the drop-down detail panes across the list views — whether the data each needs actually resolves, and whether every edit reaches the database.

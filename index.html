@@ -600,7 +600,6 @@
         <h2 class="text-lg font-bold text-slate-800 flex items-center gap-2"><i data-lucide="flame" class="text-orange-500"></i> Hot Jobs List</h2>
         <!-- Old Button Removed here, handled in Header -->
       </div>
-      <div class="px-6 pt-4"><div class="grid grid-cols-2 lg:grid-cols-4 gap-3" id="hotJobsKpiTiles"></div></div>
       <div id="hotJobsContainer" class="flex-1 overflow-y-auto scroller p-6"></div>
     </div>
 
@@ -624,7 +623,6 @@
 
     <div id="pendingViewWrapper" class="hidden flex flex-col h-full overflow-hidden bg-white shadow-lg rounded-lg border border-slate-200">
       <div class="flex-1 overflow-y-auto scroller p-6">
-        <div class="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-4" id="pendingKpiTiles"></div>
         <div id="pendingContent" class="space-y-6"></div>
       </div>
     </div>
@@ -633,30 +631,27 @@
     <div id="closedViewWrapper" class="hidden flex flex-col h-full overflow-hidden bg-white shadow-lg rounded-lg border border-slate-200">
       <!-- Tiles and heading stay fixed; the table area below scrolls, which is
            what the sticky header sticks against. -->
-      <div class="p-4 pb-0 shrink-0">
-        <div class="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-4" id="closedKpiTiles"></div>
-      </div>
-      <div class="px-4 pb-4 flex-1 min-h-0 flex flex-col" id="closedContent"></div>
+      <!-- KPI cards render into the shared #kpiContainer above the tab row,
+           the same place Open Jobs puts them, so they never shift between tabs. -->
+      <div class="p-4 flex-1 min-h-0 flex flex-col" id="closedContent"></div>
     </div>
 
     <!-- Extensions: own KPI tiles + content, same shape as trendViewWrapper. -->
     <div id="extensionsViewWrapper" class="hidden flex flex-col h-full overflow-hidden bg-white shadow-lg rounded-lg border border-slate-200">
       <!-- Tiles and heading stay fixed; the table area below scrolls, which is
            what the sticky header sticks against. -->
-      <div class="p-4 pb-0 shrink-0">
-        <div class="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-4" id="extensionsKpiTiles"></div>
-      </div>
-      <div class="px-4 pb-4 flex-1 min-h-0 flex flex-col" id="extensionsContent"></div>
+      <!-- KPI cards render into the shared #kpiContainer above the tab row,
+           the same place Open Jobs puts them, so they never shift between tabs. -->
+      <div class="p-4 flex-1 min-h-0 flex flex-col" id="extensionsContent"></div>
     </div>
 
     <!-- Onboarding: own KPI tiles + content, same shape as trendViewWrapper. -->
     <div id="onboardingViewWrapper" class="hidden flex flex-col h-full overflow-hidden bg-white shadow-lg rounded-lg border border-slate-200">
       <!-- Tiles and heading stay fixed; the table area below scrolls, which is
            what the sticky header sticks against. -->
-      <div class="p-4 pb-0 shrink-0">
-        <div class="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-4" id="onboardingKpiTiles"></div>
-      </div>
-      <div class="px-4 pb-4 flex-1 min-h-0 flex flex-col" id="onboardingContent"></div>
+      <!-- KPI cards render into the shared #kpiContainer above the tab row,
+           the same place Open Jobs puts them, so they never shift between tabs. -->
+      <div class="p-4 flex-1 min-h-0 flex flex-col" id="onboardingContent"></div>
     </div>
 
     <div id="contractsViewWrapper" class="hidden flex flex-col h-full overflow-hidden bg-white shadow-lg rounded-lg border border-slate-200">
@@ -846,7 +841,7 @@
     const $ = (id) => document.getElementById(id);
 
     // App version - loaded from environment variable via API, with fallback
-    let APP_VERSION = '2.4.9';
+    let APP_VERSION = '2.4.10';
 
     const API_BASE_URL = '/api';
     
@@ -4454,7 +4449,10 @@
         // already does, so the shared containers stay hidden for them.
         const kpiEl = $('kpiContainer');
         const legendEl = $('legendContainer');
-        const kpiViews = new Set(['list', 'perdiem', 'financials']);
+        // Every view renders its cards into the shared container, so they stay
+        // in one place instead of appearing above the tab row on some tabs and
+        // inside the panel on others.
+        const kpiViews = new Set(View.VIEWS.map(v => v.key));
         if (kpiEl) {
           kpiEl.style.visibility = kpiViews.has(view) ? 'visible' : 'hidden';
           kpiEl.style.display = kpiViews.has(view) ? '' : 'none';
@@ -4561,17 +4559,18 @@
         // Per-view tiles, rendered into this wrapper like Trend and the stage
         // views rather than the shared #kpiContainer (which belongs to
         // List / Per Diem / Revenue).
-        const pjTiles = $('hotJobsKpiTiles');
-        if (pjTiles) {
+        {
           const openings = list.reduce((a, j) => a + (Number(j.numPositions) || 1), 0);
           const subs = list.reduce((a, j) => a + (Number(j.ghrSubs) || 0) + (Number(j.avSubs) || 0), 0);
           const avgAge = list.length ? Math.round(list.reduce((a, j) => a + (Number(j.daysPast) || 0), 0) / list.length) : 0;
           const stale = list.filter(j => (Number(j.daysPast) || 0) >= 16).length;
-          pjTiles.innerHTML =
-            View.stageTile('Priority Jobs', list.length) +
-            View.stageTile('Openings', openings, 'positions') +
-            View.stageTile('Avg Days Open', avgAge, stale ? `${stale} at 16+ days` : '', stale ? 'text-red-600' : '') +
-            View.stageTile('Active Submissions', subs);
+          View.renderKpiCards([
+            { label: 'Priority Jobs', val: list.length, icon: 'flame', color: 'orange' },
+            { label: 'Openings', val: openings, icon: 'hash', color: 'blue' },
+            { label: 'Avg Days Open', val: avgAge, icon: 'clock', color: 'purple' },
+            { label: 'At 16+ Days', val: stale, icon: 'alert-triangle', color: 'red' },
+            { label: 'Active Submissions', val: subs, icon: 'users', color: 'emerald' },
+          ]);
         }
 
         const container = document.getElementById('hotJobsContainer');
@@ -5237,14 +5236,6 @@
        * rather than fighting the shared #kpiContainer, which belongs to
        * List / Per Diem / Revenue.
        */
-      stageTile(label, value, note, color) {
-        return `<div class="bg-white border border-slate-200 rounded-lg px-4 py-3 shadow-sm">
-            <div class="text-[10px] uppercase tracking-wide text-slate-400 font-semibold">${label}</div>
-            <div class="text-2xl font-bold ${color || 'text-slate-800'} mt-0.5">${value}</div>
-            ${note ? `<div class="text-[10px] text-slate-500 mt-1">${note}</div>` : ''}
-          </div>`;
-      },
-
       /*
        * Shared table chrome for the stage views, so Closed / Extensions /
        * Onboarding get an identical header rather than three that drift.
@@ -5558,12 +5549,13 @@
         const events = rows.reduce((a, r) => a + (Number(r.extension_events || r.ext_events) || 0), 0);
         const value = rows.reduce((a, r) => a + (Number(r.extension_value_13wk) || 0), 0);
         const undecided = rows.filter(r => View.extensionGroup(r) === 'NO DECISION').length;
-        const tiles = $('extensionsKpiTiles');
-        if (tiles) tiles.innerHTML =
-          View.stageTile('Seats In Window', rows.length) +
-          View.stageTile('Expiring ≤14 Days', expiring, 'need a decision', expiring ? 'text-red-600' : '') +
-          View.stageTile('No Decision Yet', undecided, 'of ' + rows.length, undecided ? 'text-amber-600' : '') +
-          View.stageTile('13-Week Value', value ? money(value) : '—', 'where hours are known');
+        View.renderKpiCards([
+          { label: 'Seats In Window', val: rows.length, icon: 'repeat', color: 'blue' },
+          { label: 'Expiring ≤14 Days', val: expiring, icon: 'alert-triangle', color: 'red' },
+          { label: 'No Decision Yet', val: undecided, icon: 'help-circle', color: 'amber' },
+          { label: 'Extension Events', val: events, icon: 'activity', color: 'indigo' },
+          { label: '13-Week Value', val: value ? money(value) : '—', icon: 'dollar-sign', color: 'emerald' },
+        ]);
 
         // Group by workflow state, in the reference's order.
         const groups = {};
@@ -5733,12 +5725,13 @@
         const cancelled = rows.filter(r => View.onboardingGroup(r) === 'CANCELED').length;
         const moved = rows.filter(r => View.onboardingSlip(r)).length;
         const soon = rows.filter(r => r.days_until_start != null && r.days_until_start >= 0 && r.days_until_start <= 7).length;
-        const tiles = $('onboardingKpiTiles');
-        if (tiles) tiles.innerHTML =
-          View.stageTile('Starts In Window', rows.length) +
-          View.stageTile('Delayed', delayed, 'flagged by the source', delayed ? 'text-amber-600' : '') +
-          View.stageTile('Moved Since Review', moved, 'needs context', moved ? 'text-red-600' : '') +
-          View.stageTile('Starting ≤7 Days', soon, cancelled ? cancelled + ' cancelled' : '');
+        View.renderKpiCards([
+          { label: 'Starts In Window', val: rows.length, icon: 'user-check', color: 'blue' },
+          { label: 'Delayed', val: delayed, icon: 'clock', color: 'amber' },
+          { label: 'Moved Since Review', val: moved, icon: 'alert-triangle', color: 'red' },
+          { label: 'Cancelled', val: cancelled, icon: 'x-circle', color: 'slate' },
+          { label: 'Starting ≤7 Days', val: soon, icon: 'calendar', color: 'emerald' },
+        ]);
 
         const tone = { 'ON TRACK': 'good', 'DELAYED START': 'medium', 'START DATE CHANGED': 'high', 'CANCELED': 'bad' };
         const groups = {};
@@ -5813,12 +5806,12 @@
         const top = Object.entries(byGroup).sort((a, b) => b[1] - a[1])[0];
         const windowDays = s.closedMeta?.coverage?.windowDays;
         const value = rows.reduce((a, r) => a + (Number(r.value_13wk) || 0), 0);
-        const tiles = $('closedKpiTiles');
-        if (tiles) tiles.innerHTML =
-          View.stageTile('Closed In Window', rows.length, windowDays ? `last ${windowDays} days` : '') +
-          View.stageTile('Top Outcome', top ? top[0] : '—', top ? `${top[1]} of ${rows.length}` : '') +
-          View.stageTile('Outcome Types', Object.keys(byGroup).length) +
-          View.stageTile('13-Week Value', value ? money(value) : '—', 'where hours are known');
+        View.renderKpiCards([
+          { label: windowDays ? `Closed (${windowDays}d)` : 'Closed In Window', val: rows.length, icon: 'check-circle', color: 'blue' },
+          { label: 'Top Outcome', val: top ? top[0] : '—', icon: 'pie-chart', color: 'indigo' },
+          { label: 'Outcome Types', val: Object.keys(byGroup).length, icon: 'layers', color: 'purple' },
+          { label: '13-Week Value', val: value ? money(value) : '—', icon: 'dollar-sign', color: 'emerald' },
+        ]);
 
         const body = rows.map(r => `
           <tr class="hover:bg-slate-50 border-b border-slate-100">
@@ -9208,7 +9201,6 @@
             </div>
           </div>
           ${partialDataBanner}
-          <div class="grid grid-cols-2 ${isNonMspTrend ? '' : 'lg:grid-cols-4'} gap-3 mb-4" id="trendKpiTiles"></div>
           <div class="bg-white rounded-xl border border-slate-200 p-4 shadow-sm">
             <div id="trendChartLegend" class="flex flex-wrap justify-center gap-x-5 gap-y-2 mb-3 text-[11px] text-slate-600"></div>
             <canvas id="trendChart" height="100"></canvas>
@@ -9437,26 +9429,22 @@
         // The delta is next week vs THIS week, so the "vs" line names the current week —
         // it previously named nextWeek, i.e. the very week being measured.
         const currentLabel = weeks[currentWeekIdx] ? fmtWeekEnd(weeks[currentWeekIdx].end) : '—';
-        const tile = (label, delta) => `
-          <div class="bg-white border border-slate-200 rounded-lg px-4 py-3 shadow-sm">
-            <div class="text-[10px] uppercase tracking-wide text-slate-400 font-semibold">${label}</div>
-            <div class="text-[10px] text-slate-400 mb-1">Next 7 Days Projection</div>
-            <div class="text-2xl font-bold">${delta}</div>
-            <div class="text-[10px] text-slate-500 mt-1">vs ${currentLabel}</div>
-          </div>
-        `;
+        // Trend's cards are next-7-day deltas rather than totals, so the
+        // comparison week goes in the label — the shared card shape has no
+        // subtitle line, and that context would otherwise be lost.
+        const tile = (label, delta, icon, color) =>
+          ({ label: `${label} <span class="text-slate-400 normal-case font-normal">vs ${currentLabel}</span>`,
+             val: delta, icon, color });
         // Non-MSP: pendingTotal is always 0, which makes Expected Starts permanently ±0
         // and Booked Starts numerically identical to Total Headcount. Show only the two
         // tiles that mean something.
-        const trendKpiTilesHtml = isNonMspTrend
-          ? tile('Total Headcount', fmtDelta(hcDelta)) +
-            tile('Projected Revenue', fmtDeltaDollars(revenueDelta))
-          : tile('Total Headcount', fmtDelta(hcDelta)) +
-            tile('Booked Starts <span class="text-slate-400 normal-case font-normal">(confirmed)</span>', fmtDelta(bookedStartsDelta)) +
-            tile('Expected Starts <span class="text-slate-400 normal-case font-normal">(unconfirmed)</span>', fmtDelta(nextExpectedAddlHc)) +
-            tile('Projected Revenue', fmtDeltaDollars(revenueDelta));
-        const trendKpiTilesEl = document.getElementById('trendKpiTiles');
-        if (trendKpiTilesEl) trendKpiTilesEl.innerHTML = trendKpiTilesHtml;
+        View.renderKpiCards(isNonMspTrend
+          ? [tile('Total Headcount', fmtDelta(hcDelta), 'users', 'blue'),
+             tile('Projected Revenue', fmtDeltaDollars(revenueDelta), 'dollar-sign', 'emerald')]
+          : [tile('Total Headcount', fmtDelta(hcDelta), 'users', 'blue'),
+             tile('Booked Starts', fmtDelta(bookedStartsDelta), 'check-circle', 'indigo'),
+             tile('Expected Starts', fmtDelta(nextExpectedAddlHc), 'help-circle', 'amber'),
+             tile('Projected Revenue', fmtDeltaDollars(revenueDelta), 'dollar-sign', 'emerald')]);
 
         // Overlay lines shared across account/PM/division views: Total, Pipeline,
         // Projected Headcount. Same three lines the Category view shows, so
@@ -10064,16 +10052,16 @@
         // Per-view tiles, rendered into this wrapper like the other tabs.
         // Buckets come from statusBucket, so they mirror exactly what the view
         // shows rather than recounting raw statuses.
-        const pdTiles = $('pendingKpiTiles');
-        if (pdTiles) {
+        {
           const nBucket = b => filtered.filter(r => statusBucket(r.status) === b).length;
           const ghr = filtered.filter(r => r.is_ghr).length;
-          pdTiles.innerHTML =
-            View.stageTile('In Pipeline', filtered.length, 'active submissions') +
-            View.stageTile('Submitted', nBucket('sub')) +
-            View.stageTile('Offers Out', nBucket('off'), '', nBucket('off') ? 'text-blue-600' : '') +
-            View.stageTile('Ready To Onboard', nBucket('rto'), filtered.length ? `${Math.round((ghr / filtered.length) * 100)}% GHR` : '',
-                           nBucket('rto') ? 'text-emerald-600' : '');
+          View.renderKpiCards([
+            { label: 'In Pipeline', val: filtered.length, icon: 'file-clock', color: 'blue' },
+            { label: 'Submitted', val: nBucket('sub'), icon: 'send', color: 'indigo' },
+            { label: 'Offers Out', val: nBucket('off'), icon: 'mail', color: 'purple' },
+            { label: 'Ready To Onboard', val: nBucket('rto'), icon: 'user-check', color: 'emerald' },
+            { label: 'GHR Share', val: filtered.length ? Math.round((ghr / filtered.length) * 100) + '%' : '—', icon: 'percent', color: 'slate' },
+          ]);
         }
 
         // Status color helpers
@@ -10671,12 +10659,15 @@
         const hiddenMissingB4V = missingInB4V.filter(r => sysOk(r.client_name) && reviewed.has(bullhornKey(r))).length;
         const totalHidden = hiddenMismatches + hiddenMissingBH + hiddenMissingB4V;
 
-        const kpiCard = (label, value, color) => `
-          <div class="bg-white rounded-lg border border-slate-200 p-3 shadow-sm">
-            <div class="text-[10px] uppercase tracking-wide text-slate-400 font-semibold">${label}</div>
-            <div class="text-2xl font-bold text-${color} mt-0.5">${value.toLocaleString()}</div>
-          </div>
-        `;
+        // Cards go to the shared container above the tab row, like every other
+        // view, rather than inline at the top of this panel.
+        View.renderKpiCards([
+          { label: 'Bullhorn Placements', val: (counts.bullhorn_total || 0).toLocaleString(), icon: 'briefcase', color: 'slate' },
+          { label: 'B4/VNDLY Assignments', val: (counts.assignments_total || 0).toLocaleString(), icon: 'users', color: 'blue' },
+          { label: 'Exact Matches', val: (counts.exact_matches || 0).toLocaleString(), icon: 'check-circle', color: 'emerald' },
+          { label: 'Date Mismatches', val: fMismatches.length.toLocaleString(), icon: 'alert-triangle', color: 'amber' },
+          { label: 'Missing Somewhere', val: (fMissingBH.length + fMissingB4V.length).toLocaleString(), icon: 'help-circle', color: 'red' },
+        ]);
 
         const reviewBtn = (key) => {
           const isReviewed = reviewed.has(key);
@@ -10768,13 +10759,6 @@
             </div>
           </div>
 
-          <div class="grid grid-cols-2 md:grid-cols-5 gap-3 mb-6">
-            ${kpiCard('Bullhorn Placements', counts.bullhorn_total || 0, 'slate-700')}
-            ${kpiCard('B4/VNDLY Assignments', counts.assignments_total || 0, 'slate-700')}
-            ${kpiCard('Exact Matches', counts.exact_matches || 0, 'emerald-600')}
-            ${kpiCard('Date Mismatches', fMismatches.length, 'amber-600')}
-            ${kpiCard('Missing Somewhere', fMissingBH.length + fMissingB4V.length, 'red-600')}
-          </div>
 
           <section class="mb-8">
             <h3 class="text-sm font-bold text-amber-700 mb-2 flex items-center gap-2">
