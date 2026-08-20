@@ -2,6 +2,17 @@
 
 ## Version History
 
+**2.4.6** - Per-view KPI tiles on every tab, and date-only values stop shifting a day
+
+- **Priority Jobs** and **Pending** were the last two tabs with no tiles. Priority Jobs shows jobs / openings / avg days open (flagging how many are 16+) / active submissions; Pending shows pipeline / submitted / offers out / ready-to-onboard with GHR share. Both render into their own wrapper, the pattern Trend and the stage views use, rather than the shared `#kpiContainer` which belongs to List / Per Diem / Revenue. Contracts already rendered its own cards inline. That completes per-view metrics across all ten tabs.
+- Pending's buckets come from `statusBucket`, the same classifier the view itself uses, so the tiles can't disagree with the rows beneath them.
+
+**Date fix.** `toDateOrNull` turns a date-only string like `"2026-08-20"` into UTC midnight, which local formatting renders as Aug 19 anywhere west of UTC. New `Utils.fmtDate()` takes the zone *from the value*: exactly-midnight-UTC is a date-only value and formats in UTC, anything carrying a real time component formats locally — because blanket-UTC would shift genuine timestamps the other way. Applied to the candidate submission and decline dates, and the Placements pane now shares the helper instead of hardcoding UTC.
+
+Worth noting the sweep found fewer real problems than expected: of nine unguarded `toLocaleDateString()` calls, six were `new Date()` — a real instant with real local time, never at risk. Only the three formatting *source* dates needed changing.
+
+6 assertions on the formatter across date-only strings, local datetimes, late-evening values that would cross midnight, Date objects and null.
+
 **2.4.5** - Margin: one read path over two stores, and the default is marked as an assumption
 
 Reconciles the two margin mechanisms. They turned out not to be duplicates — they cover different entity spaces, and one of them was silently lossy.

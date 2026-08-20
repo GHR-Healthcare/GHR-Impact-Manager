@@ -594,6 +594,7 @@
         <h2 class="text-lg font-bold text-slate-800 flex items-center gap-2"><i data-lucide="flame" class="text-orange-500"></i> Hot Jobs List</h2>
         <!-- Old Button Removed here, handled in Header -->
       </div>
+      <div class="px-6 pt-4"><div class="grid grid-cols-2 lg:grid-cols-4 gap-3" id="hotJobsKpiTiles"></div></div>
       <div id="hotJobsContainer" class="flex-1 overflow-y-auto scroller p-6"></div>
     </div>
 
@@ -617,6 +618,7 @@
 
     <div id="pendingViewWrapper" class="hidden flex flex-col h-full overflow-hidden bg-white shadow-lg rounded-lg border border-slate-200">
       <div class="flex-1 overflow-y-auto scroller p-6">
+        <div class="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-4" id="pendingKpiTiles"></div>
         <div id="pendingContent" class="space-y-6"></div>
       </div>
     </div>
@@ -832,7 +834,7 @@
     const $ = (id) => document.getElementById(id);
 
     // App version - loaded from environment variable via API, with fallback
-    let APP_VERSION = '2.4.5';
+    let APP_VERSION = '2.4.6';
 
     const API_BASE_URL = '/api';
     
@@ -2524,6 +2526,28 @@
        * and the source is returned so the UI can distinguish a deliberate
        * number from a tenant-wide assumption.
        */
+      /*
+       * Format a source date for display.
+       *
+       * toDateOrNull turns a date-only string like "2026-08-20" into UTC
+       * midnight, which local formatting renders as Aug 19 anywhere west of
+       * UTC. A value carrying a real time component must NOT be shifted,
+       * though — so take the zone from the value: exactly-midnight-UTC is a
+       * date-only value and formats in UTC, anything else is a real instant and
+       * formats locally. (A true timestamp landing exactly on UTC midnight is
+       * treated as date-only; the failure mode there is benign.)
+       */
+      fmtDate(v, opts) {
+        const d = Utils.toDateOrNull(v);
+        if (!d) return '';
+        const dateOnly = d.getUTCHours() === 0 && d.getUTCMinutes() === 0 &&
+                         d.getUTCSeconds() === 0 && d.getUTCMilliseconds() === 0;
+        return d.toLocaleDateString('en-US', {
+          ...(opts || { month: 'short', day: 'numeric', year: 'numeric' }),
+          ...(dateOnly ? { timeZone: 'UTC' } : {}),
+        });
+      },
+
       marginFor(id, job) {
         if (job && job.marginOverridden) {
           const m = parseFloat(job.margin);
@@ -4484,6 +4508,22 @@
         const list = this.getFilteredJobs(s)
           .filter(j => j.levers && j.levers.hotJob && j.levers.hotJob.done);
 
+        // Per-view tiles, rendered into this wrapper like Trend and the stage
+        // views rather than the shared #kpiContainer (which belongs to
+        // List / Per Diem / Revenue).
+        const pjTiles = $('hotJobsKpiTiles');
+        if (pjTiles) {
+          const openings = list.reduce((a, j) => a + (Number(j.numPositions) || 1), 0);
+          const subs = list.reduce((a, j) => a + (Number(j.ghrSubs) || 0) + (Number(j.avSubs) || 0), 0);
+          const avgAge = list.length ? Math.round(list.reduce((a, j) => a + (Number(j.daysPast) || 0), 0) / list.length) : 0;
+          const stale = list.filter(j => (Number(j.daysPast) || 0) >= 16).length;
+          pjTiles.innerHTML =
+            View.stageTile('Priority Jobs', list.length) +
+            View.stageTile('Openings', openings, 'positions') +
+            View.stageTile('Avg Days Open', avgAge, stale ? `${stale} at 16+ days` : '', stale ? 'text-red-600' : '') +
+            View.stageTile('Active Submissions', subs);
+        }
+
         const container = document.getElementById('hotJobsContainer');
         if (!container) return;
 
@@ -4881,7 +4921,7 @@
                     ${cands.length === 0 ? '<div class="p-4 text-center text-slate-400 italic">No candidates found</div>' : cands.map((c) => {
                       const originalIndex = job.candidates.indexOf(c);
                       const daysAgo = c.date ? Utils.calcDays(c.date) : '-';
-                      const subDateStr = c.date ? c.date.toLocaleDateString() : 'N/A';
+                      const subDateStr = c.date ? Utils.fmtDate(c.date) : 'N/A';
                       
                       const agLower = (c.agency || '').toLowerCase();
                       // GHR or Planet Healthcare = internal, but not "The Planet Group"
@@ -4933,7 +4973,7 @@
                       if(c.date) rightContent += `<div class="font-bold text-slate-700">${daysAgo}d ago</div>`;
                       
                       if (c.isDeclined && c.declineDate) {
-                          rightContent += `<div class="text-red-400 text-[9px] mt-0.5">Dec: ${c.declineDate.toLocaleDateString()}</div>`;
+                          rightContent += `<div class="text-red-400 text-[9px] mt-0.5">Dec: ${Utils.fmtDate(c.declineDate)}</div>`;
                       }
 
                       // Determine if candidate is actionable (active tab, not already declined/removed)
@@ -5078,15 +5118,7 @@
       detailPlacementsPane(job, placements) {
         const rows = placements || [];
         const ghr = rows.filter(r => r.is_ghr).length;
-        // Same short form the rest of the app uses for assignment dates.
-        const fmtDate = d => {
-          const dt = Utils.toDateOrNull(d);
-          // timeZone UTC on purpose: assignment dates are date-only, and
-          // toDateOrNull turns "2026-07-01" into UTC midnight, which formats as
-          // Jun 30 in any western-of-UTC zone. Formatting in UTC keeps the
-          // calendar date the source actually stated.
-          return dt ? dt.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' }) : '—';
-        };
+        const fmtDate = d => Utils.fmtDate(d, { month: 'short', day: 'numeric' }) || '—';
         return `
           <div class="fade-in">
             <h4 class="font-bold mb-3 text-sm uppercase text-slate-500">Active Placements</h4>
@@ -9839,6 +9871,21 @@
           if (!drillCatMatch(r)) return false;
           return true;
         });
+
+        // Per-view tiles, rendered into this wrapper like the other tabs.
+        // Buckets come from statusBucket, so they mirror exactly what the view
+        // shows rather than recounting raw statuses.
+        const pdTiles = $('pendingKpiTiles');
+        if (pdTiles) {
+          const nBucket = b => filtered.filter(r => statusBucket(r.status) === b).length;
+          const ghr = filtered.filter(r => r.is_ghr).length;
+          pdTiles.innerHTML =
+            View.stageTile('In Pipeline', filtered.length, 'active submissions') +
+            View.stageTile('Submitted', nBucket('sub')) +
+            View.stageTile('Offers Out', nBucket('off'), '', nBucket('off') ? 'text-blue-600' : '') +
+            View.stageTile('Ready To Onboard', nBucket('rto'), filtered.length ? `${Math.round((ghr / filtered.length) * 100)}% GHR` : '',
+                           nBucket('rto') ? 'text-emerald-600' : '');
+        }
 
         // Status color helpers
         const statusColor = (status) => {
