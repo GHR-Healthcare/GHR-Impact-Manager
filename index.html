@@ -2578,6 +2578,13 @@
 
       interviewKey(jobId, c) { return `${jobId}|${(c && c.name) || ''}`; },
 
+      // Is this agency string us? GHR or Planet Healthcare, matching how the
+      // rest of the app already tests it (per-diem, stats, candidate rows).
+      isGhrAgency(a) {
+        const x = String(a || '').toLowerCase();
+        return x.includes('ghr') || x.includes('planet healthcare');
+      },
+
       interviewDerivedStage(c) {
         if (c.isDeclined) return 'Declined';
         if (c.awardedDate) return 'Offer Accepted';
@@ -4906,10 +4913,18 @@
           // Row-detail sub-tabs. Levers is the existing panel and stays the
           // default; Rate / Pipeline / Placements are new. Same pill idiom as
           // the Trend tab's Group By control so the app reads as one piece.
-          const activePlacements = (s.statsData?.onAssignment || []).filter(r =>
-            r.facility && job.facility && r.facility === job.facility &&
-            Utils.cleanFilterText(r.specialty || '') === Utils.jobSpecialtyKey(job)
-          );
+          // Comparable placements at the same facility. Matching on facility
+          // plus specialty: assignment rows carry a care type / specialty while
+          // a job carries a title, so compare against the job's STRUCTURED
+          // specialty when one exists and otherwise fall back to facility only
+          // — an over-broad list beats a pane that is always empty, which is
+          // what comparing a job title to a care type produced.
+          const jobSpec = Utils.cleanFilterText(job.specialtyName || '');
+          const activePlacements = (s.statsData?.onAssignment || []).filter(r => {
+            if (!r.facility || !job.facility || r.facility !== job.facility) return false;
+            if (!jobSpec) return true;
+            return Utils.cleanFilterText(r.specialty || '') === jobSpec;
+          });
           const detailTabs = [
             ['levers', 'Levers', null],
             ['rate', 'Rate', null],
@@ -5175,8 +5190,16 @@
       },
 
       detailPlacementsPane(job, placements) {
+        const s = window.store.state;
         const rows = placements || [];
-        const ghr = rows.filter(r => r.is_ghr).length;
+        // Say which basis was used, so an over-broad list is not mistaken for a
+        // specialty-matched one.
+        const jobSpecNote = Utils.cleanFilterText(job.specialtyName || '')
+          ? ' matching this specialty'
+          : ' (facility only — no structured specialty on this job)';
+        // Assignment rows expose candidate_name and an agency STRING — there is
+        // no worker_name or is_ghr on them, which is what this pane read before.
+        const ghr = rows.filter(r => Utils.isGhrAgency(r.agency)).length;
         const fmtDate = d => Utils.fmtDate(d, { month: 'short', day: 'numeric' }) || '—';
         return `
           <div class="fade-in">
@@ -5191,8 +5214,11 @@
               <div class="bg-white border border-slate-200 rounded-lg divide-y divide-slate-100 max-h-56 overflow-y-auto">
                 ${rows.map(r => `
                   <div class="flex items-center gap-3 px-3 py-2 text-xs">
-                    <span class="px-1.5 py-0.5 rounded text-[9px] font-bold ${r.is_ghr ? 'bg-blue-100 text-blue-700' : 'bg-purple-100 text-purple-700'}">${r.is_ghr ? 'GHR' : 'AV'}</span>
-                    <span class="font-medium text-slate-700 flex-1 truncate">${r.worker_name || 'Unknown'}</span>
+                    <span class="px-1.5 py-0.5 rounded text-[9px] font-bold ${Utils.isGhrAgency(r.agency) ? 'bg-blue-100 text-blue-700' : 'bg-purple-100 text-purple-700'}">${Utils.isGhrAgency(r.agency) ? 'GHR' : 'AV'}</span>
+                    <span class="font-medium text-slate-700 flex-1 truncate">${
+                      (s.redactMode && !Utils.isGhrAgency(r.agency))
+                        ? Utils.redactName(r.candidate_name || '')
+                        : (r.candidate_name || 'Unknown')}</span>
                     <span class="text-slate-400">${fmtDate(r.startDate)} &rarr; ${fmtDate(r.endDate)}</span>
                   </div>`).join('')}
               </div>`
@@ -5200,7 +5226,7 @@
                  No active placements matching this facility and specialty.
                </div>`}
             <p class="text-[10px] text-slate-400 mt-3">
-              Matched on facility + specialty against active assignments, for rate and vendor comparison.
+              Active assignments at this facility${jobSpecNote}, for rate and vendor comparison.
             </p>
           </div>`;
       },
