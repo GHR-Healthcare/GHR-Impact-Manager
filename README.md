@@ -2,6 +2,21 @@
 
 ## Version History
 
+**2.4.5** - Margin: one read path over two stores, and the default is marked as an assumption
+
+Reconciles the two margin mechanisms. They turned out not to be duplicates — they cover different entity spaces, and one of them was silently lossy.
+
+- An open **job's** margin already worked: `recordChange` writes `margin_update` and the loader replays it back onto `job.margin`. Kept as-is.
+- A **contract** (an Extensions / Onboarding / Closed row) has no job behind it, and the replay does `if (!job) return` for ids missing from `jobMap` — so a contract-level override written to `/changes` would have been accepted and then dropped on reload. Those go to `workspace_state` scope `margin` instead.
+- **`Utils.marginFor(id, job)`** unifies reading: job override → contract override → configured default → none, returning the source alongside the value so no caller needs to know which store applied.
+- **`Utils.marginLabel()`** renders `31%` for a deliberate override and `~25%` for the configured default, taking the prototype's convention — an assumption applied tenant-wide shouldn't look like a decision made about this seat.
+- Extensions and Onboarding details gain a Rate & GM block: bill rate and GM/hour read-only, GM% overridable, blank clears back to the default. Changes feed the meeting recap.
+- Bill rate stays read-only throughout: it is source-owned. GM% is a rate we apply, which is why it is the only editable half — MSP carries no clinician pay rate, so there is no bill-minus-pay margin to read.
+
+A junk `job.margin` now falls back to the tenant default rather than rendering nothing — caught by test, not by reading.
+
+16 assertions across both stores, override vs default sourcing, numeric-id coercion, and unparseable values on either side.
+
 **2.4.4** - Onboarding becomes actionable: revised start, delay category, context
 
 Same split as Extensions — status badge in the row, editing in the expanded detail — following the reference.

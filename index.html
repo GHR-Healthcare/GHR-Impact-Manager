@@ -832,7 +832,7 @@
     const $ = (id) => document.getElementById(id);
 
     // App version - loaded from environment variable via API, with fallback
-    let APP_VERSION = '2.4.4';
+    let APP_VERSION = '2.4.5';
 
     const API_BASE_URL = '/api';
     
@@ -2508,6 +2508,46 @@
        */
       jobSpecialtyKey(job) {
         return Utils.cleanFilterText(job.specialtyName || job.specialty);
+      },
+
+      /*
+       * Margin resolution, one read path over two stores.
+       *
+       * An open JOB's margin lives in the change log: recordChange writes
+       * margin_update and the loader replays it back onto job.margin, so that
+       * path already works and is audited. A CONTRACT (an Extensions /
+       * Onboarding / Closed row) has no job, and the replay skips ids missing
+       * from jobMap — so a contract override would be written and silently
+       * dropped. Those go to workspace_state instead.
+       *
+       * Reading is unified here so no caller has to know which store applies,
+       * and the source is returned so the UI can distinguish a deliberate
+       * number from a tenant-wide assumption.
+       */
+      marginFor(id, job) {
+        if (job && job.marginOverridden) {
+          const m = parseFloat(job.margin);
+          if (isFinite(m)) return { pct: m, source: 'override' };
+        }
+        const saved = window.store.state.workspaceState?.margin?.[String(id)]?.state;
+        const c = parseFloat(saved?.pct);
+        if (isFinite(c)) return { pct: c, source: 'override' };
+        // A job's own margin is normally the configured default copied onto it.
+        // If it is missing or unparseable, fall back to the tenant default from
+        // /api/get-config rather than giving up and showing nothing.
+        const onJob = parseFloat(job ? job.margin : NaN);
+        const dflt = isFinite(onJob) ? onJob : parseFloat(defaultMargin);
+        if (isFinite(dflt) && dflt > 0) return { pct: dflt, source: 'default' };
+        return { pct: null, source: 'none' };
+      },
+
+      // An override is a deliberate number for this record; the default is an
+      // assumption applied everywhere. The tilde keeps them distinguishable at
+      // a glance rather than presenting a guess as a decision.
+      marginLabel(id, job) {
+        const m = Utils.marginFor(id, job);
+        if (m.pct == null) return '—';
+        return m.source === 'override' ? `${m.pct}%` : `~${m.pct}%`;
       },
 
       matchesSelectedTeams(recordTeam, selectedTeams) {
@@ -4984,8 +5024,8 @@
             <h4 class="font-bold mb-3 text-sm uppercase text-slate-500">Rate &amp; Margin</h4>
             <div class="grid grid-cols-2 md:grid-cols-3 gap-3 max-w-2xl">
               ${View.detailStat('Bill Rate', money(bill), job.billRateEstimated ? 'estimated' : '')}
-              ${View.detailStat('GM %', isNaN(marginPct) ? '—' : marginPct + '%',
-                                job.marginOverridden ? 'per-job override' : 'configured default')}
+              ${View.detailStat('GM %', Utils.marginLabel(job.id, job),
+                                job.marginOverridden ? 'per-job override' : 'configured default — “~” marks an assumption')}
               ${View.detailStat('GM / Hour', money(gmHr))}
             </div>
             <p class="text-[10px] text-slate-400 mt-3 leading-snug">
@@ -5165,6 +5205,49 @@
       ],
       EXT_GROUP_ORDER: ['NO DECISION', 'RTO', 'OFFERED', 'PENDING ACCEPTANCE', 'APPROVED', 'BACKFILL', 'EXCEPTION'],
 
+      /*
+       * GM block for a CONTRACT row. There is no job behind these, so the
+       * override lands in workspace_state (see Utils.marginFor). Bill rate is
+       * source-owned; GM% is a rate we apply, so it is the only editable half.
+       */
+      contractMarginBlock(r) {
+        const m = Utils.marginFor(r.id, null);
+        const bill = Number(r.bill_rate) || 0;
+        const gmHr = bill && m.pct != null ? bill * (m.pct / 100) : null;
+        const money = v => (v || v === 0) ? '$' + Number(v).toFixed(2) : '—';
+        return `
+          <div class="mt-4 pt-4 border-t border-slate-200">
+            <h5 class="text-xs font-bold uppercase tracking-wide text-slate-500 mb-2">Rate &amp; GM</h5>
+            <div class="flex flex-wrap items-end gap-3">
+              <div class="bg-white border border-slate-200 rounded-lg px-3 py-2">
+                <div class="text-[9px] uppercase tracking-wide text-slate-400 font-semibold">Bill Rate</div>
+                <div class="text-sm font-bold text-slate-800 mt-0.5">${money(bill)}</div>
+              </div>
+              <div class="bg-white border border-slate-200 rounded-lg px-3 py-2">
+                <div class="text-[9px] uppercase tracking-wide text-slate-400 font-semibold">GM %</div>
+                <div class="text-sm font-bold text-slate-800 mt-0.5">${Utils.marginLabel(r.id, null)}</div>
+              </div>
+              <div class="bg-white border border-slate-200 rounded-lg px-3 py-2">
+                <div class="text-[9px] uppercase tracking-wide text-slate-400 font-semibold">GM / Hour</div>
+                <div class="text-sm font-bold text-slate-800 mt-0.5">${money(gmHr)}</div>
+              </div>
+              <div>
+                <label class="block text-[9px] font-semibold text-slate-500 uppercase tracking-wide mb-1">Override GM %</label>
+                <div class="flex gap-1.5">
+                  <input type="number" min="0" max="100" step="0.5" class="ct-margin w-20 bg-white border border-slate-300 rounded-md px-2 py-1.5 text-sm"
+                         data-id="${r.id}" value="${m.source === 'override' ? m.pct : ''}" placeholder="${m.pct ?? ''}">
+                  <button onclick="store.dispatch('SAVE_CONTRACT_MARGIN','${r.id}')"
+                          class="px-2.5 py-1.5 bg-slate-700 hover:bg-slate-800 text-white rounded-md text-xs font-semibold">Set</button>
+                </div>
+              </div>
+            </div>
+            <p class="text-[10px] text-slate-400 mt-2">
+              “~” marks the configured default rather than a number set for this seat.
+              MSP carries no clinician pay rate, so GM is a rate we apply, not one read from the data.
+            </p>
+          </div>`;
+      },
+
       extensionEdit(r) {
         const saved = window.store.state.workspaceState?.extension?.[r.id]?.state;
         return {
@@ -5255,6 +5338,7 @@
                   </p>
                 </div>
               </div>
+              ${View.contractMarginBlock(r)}
             </td>
           </tr>`;
       },
@@ -5419,6 +5503,7 @@
                   </div>
                 </div>
               </div>
+              ${View.contractMarginBlock(r)}
             </td>
           </tr>`;
       },
@@ -10766,6 +10851,47 @@
               const val = document.getElementById('searchId').value;
               s.filters.searchId = val.trim().toLowerCase();
               View.main();
+              break;
+            }
+
+            case 'SAVE_CONTRACT_MARGIN': {
+              const id = payload;
+              const raw = document.querySelector(`.ct-margin[data-id="${id}"]`)?.value ?? '';
+              const pct = parseFloat(raw);
+              if (raw !== '' && (!isFinite(pct) || pct < 0 || pct > 100)) {
+                window.showToast?.('GM% must be between 0 and 100.', 'error');
+                break;
+              }
+              // Blank clears the override and falls back to the configured default.
+              const state = raw === '' ? null : { pct };
+              (async () => {
+                try {
+                  const resp = await fetch(`${API_BASE_URL}/workspace-state`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify([{ scope: 'margin', entityId: String(id), state }]),
+                  });
+                  if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                  s.workspaceState.margin = s.workspaceState.margin || {};
+                  if (state) {
+                    s.workspaceState.margin[String(id)] = {
+                      state, updatedAt: new Date().toISOString(),
+                      updatedBy: (typeof getCurrentUser === 'function' ? getCurrentUser() : null),
+                    };
+                  } else {
+                    delete s.workspaceState.margin[String(id)];
+                  }
+                  if (s.meeting) {
+                    window.store.dispatch('LOG_MEETING_ACTION',
+                      state ? `GM% set to ${pct}% on ${id}` : `GM% override cleared on ${id}`);
+                  }
+                  window.showToast?.(state ? `GM% set to ${pct}%.` : 'GM% override cleared.', 'success');
+                  View.extensions(); View.onboarding();
+                } catch (e) {
+                  console.warn('Margin save failed:', e);
+                  window.showToast?.('Could not save: ' + (e.message || e), 'error');
+                }
+              })();
               break;
             }
 
