@@ -2,6 +2,19 @@
 
 ## Version History
 
+**2.4.8** - Frozen table headers with per-column sort and filter on the stage tabs; Start Meeting centred
+
+- **Header row freezes.** Closed / Extensions / Onboarding now scroll their rows under a sticky header. Their wrappers were reworked so the KPI tiles stay fixed and the table area is the scroll container — a sticky `thead` sticks to its scrolling ancestor, and the old `overflow-x-auto` wrapper was quietly becoming that ancestor. Open Jobs already had a sticky header, so all four now behave the same.
+- **Sort on every column**, with an indicator. Third click clears rather than cycling, so each view's own default ordering stays reachable. Nulls sort last in *both* directions — a missing value isn't "smallest", it's unknown, and burying it beats ranking it.
+- **Per-column filters** in a second header row, case-insensitive substring. An empty result says "Nothing matches these column filters" rather than the generic empty state, so a filtered-to-nothing table doesn't read as a quiet week. A Reset link appears only once a sort or filter is active.
+- **Grouping survives sorting.** Extensions and Onboarding keep their workflow-state groups and sort *within* them; the default days-left / move-count ordering applies only when no column sort is active.
+- All of it lives in `stageShell`, so the three stage tabs share one implementation rather than three that drift apart.
+- **Start Meeting moved to the centre** of the header, as the reference had it — it's the primary action, so it sits apart from the utility cluster. Past Meetings stays with the other utilities on the right.
+
+17 assertions across sticky markup, sort direction and arrows, numeric vs text sorting, nulls-last in both directions, filter narrowing and its empty state, the reset affordance, and grouping being preserved under sort.
+
+Known inconsistency: Open Jobs has sticky + sort but no per-column filters — its header is a CSS grid rather than a table, so the filter row doesn't transplant directly.
+
 **2.4.7** - Interview stage overrides — the last WorkspaceState scope is wired
 
 All five scopes (`lever`, `extension`, `onboarding`, `interview`, `margin`) now have a UI.

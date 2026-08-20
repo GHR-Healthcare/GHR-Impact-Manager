@@ -173,6 +173,16 @@
         <p id="appSubtitle" class="text-slate-500 text-xs sm:text-base mt-1 hidden sm:block">High-Performance Optimization Build</p>
       </div>
       
+      <!-- Start Meeting, centred — the primary action on this screen, so it
+           sits apart from the utility cluster on the right. -->
+      <div class="flex justify-center order-last w-full lg:order-none lg:w-auto lg:flex-1">
+        <button id="btnStartMeeting" onclick="store.dispatch('OPEN_MEETING_SETUP')"
+                class="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white px-5 rounded-md shadow-sm text-sm font-semibold transition-colors h-[38px]"
+                title="Start an IMPACT meeting">
+          <i data-lucide="play-circle" class="w-4 h-4"></i> Start Meeting
+        </button>
+      </div>
+
       <!-- User Display & Logout - Top Right -->
       <div class="flex items-center gap-1 sm:gap-2 flex-wrap">
         <!-- Connection Status Indicator -->
@@ -274,15 +284,11 @@
             <i data-lucide="eye-off" id="privacyIcon" class="w-4 h-4 text-red-400"></i>
           </button>
           
-          <!-- IMPACT meeting controls. These replace the AI Impact Call Summary
-               and Change History buttons, which are retired. Snapshot saving on
-               the /history endpoint is untouched — only its viewer is gone. -->
-          <button id="btnStartMeeting" onclick="store.dispatch('OPEN_MEETING_SETUP')"
-                  class="flex items-center gap-1 sm:gap-2 bg-emerald-600 hover:bg-emerald-700 text-white px-2 sm:px-4 rounded-md shadow-sm text-xs sm:text-sm font-medium transition-colors h-[32px] sm:h-[38px]"
-                  title="Start an IMPACT meeting">
-            <i data-lucide="play-circle" class="w-4 h-4"></i>
-            <span class="hidden sm:inline">Start Meeting</span>
-          </button>
+          <!-- Past meetings sits with the other utilities; Start Meeting is
+               centred in the header (see below), as the reference had it.
+               Both replace the retired AI Impact Call Summary and Change
+               History buttons. Snapshot saving on /history is untouched —
+               only its viewer is gone. -->
           <button id="btnMeetingHistory" onclick="store.dispatch('OPEN_MEETING_HISTORY')"
                   class="flex items-center gap-1 sm:gap-2 bg-purple-600 hover:bg-purple-700 text-white px-2 sm:px-4 rounded-md shadow-sm text-xs sm:text-sm font-medium transition-colors h-[32px] sm:h-[38px]"
                   title="Past IMPACT meetings">
@@ -625,26 +631,32 @@
 
     <!-- Closed: own KPI tiles + content, same shape as trendViewWrapper. -->
     <div id="closedViewWrapper" class="hidden flex flex-col h-full overflow-hidden bg-white shadow-lg rounded-lg border border-slate-200">
-      <div class="p-4 overflow-y-auto">
+      <!-- Tiles and heading stay fixed; the table area below scrolls, which is
+           what the sticky header sticks against. -->
+      <div class="p-4 pb-0 shrink-0">
         <div class="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-4" id="closedKpiTiles"></div>
-        <div id="closedContent"></div>
       </div>
+      <div class="px-4 pb-4 flex-1 min-h-0 flex flex-col" id="closedContent"></div>
     </div>
 
     <!-- Extensions: own KPI tiles + content, same shape as trendViewWrapper. -->
     <div id="extensionsViewWrapper" class="hidden flex flex-col h-full overflow-hidden bg-white shadow-lg rounded-lg border border-slate-200">
-      <div class="p-4 overflow-y-auto">
+      <!-- Tiles and heading stay fixed; the table area below scrolls, which is
+           what the sticky header sticks against. -->
+      <div class="p-4 pb-0 shrink-0">
         <div class="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-4" id="extensionsKpiTiles"></div>
-        <div id="extensionsContent"></div>
       </div>
+      <div class="px-4 pb-4 flex-1 min-h-0 flex flex-col" id="extensionsContent"></div>
     </div>
 
     <!-- Onboarding: own KPI tiles + content, same shape as trendViewWrapper. -->
     <div id="onboardingViewWrapper" class="hidden flex flex-col h-full overflow-hidden bg-white shadow-lg rounded-lg border border-slate-200">
-      <div class="p-4 overflow-y-auto">
+      <!-- Tiles and heading stay fixed; the table area below scrolls, which is
+           what the sticky header sticks against. -->
+      <div class="p-4 pb-0 shrink-0">
         <div class="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-4" id="onboardingKpiTiles"></div>
-        <div id="onboardingContent"></div>
       </div>
+      <div class="px-4 pb-4 flex-1 min-h-0 flex flex-col" id="onboardingContent"></div>
     </div>
 
     <div id="contractsViewWrapper" class="hidden flex flex-col h-full overflow-hidden bg-white shadow-lg rounded-lg border border-slate-200">
@@ -834,7 +846,7 @@
     const $ = (id) => document.getElementById(id);
 
     // App version - loaded from environment variable via API, with fallback
-    let APP_VERSION = '2.4.7';
+    let APP_VERSION = '2.4.8';
 
     const API_BASE_URL = '/api';
     
@@ -5207,8 +5219,56 @@
           </div>`;
       },
 
-      // Shared chrome: loading spinner, error banner, empty state, table shell.
-      stageShell(key, title, subtitle, bodyHtml, cols) {
+      /*
+       * Shared table chrome for the stage views, so Closed / Extensions /
+       * Onboarding get an identical header rather than three that drift.
+       *
+       * Owns: loading and error states, the frozen header, per-column sort, and
+       * per-column filters. A column declares how to read its value (`key`) and
+       * whether it participates; the views just supply rows and cell markup.
+       *
+       * The header is sticky against the scroll container the wrapper provides,
+       * so it stays put while rows scroll under it — matching the List tab,
+       * whose grid header has always been sticky.
+       */
+      stageSort: {},
+      stageColFilter: {},
+
+      stageColValue(col, r) {
+        if (!col || !col.key) return '';
+        return typeof col.key === 'function' ? col.key(r) : r[col.key];
+      },
+
+      // Apply the per-column filters, then the active sort. Returns a new array.
+      stageApply(viewKey, rows, cols) {
+        const filters = View.stageColFilter[viewKey] || {};
+        let out = rows.filter(r => cols.every(c => {
+          const q = (filters[c.label] || '').trim().toLowerCase();
+          if (!q || !c.key) return true;
+          return String(View.stageColValue(c, r) ?? '').toLowerCase().includes(q);
+        }));
+        const sort = View.stageSort[viewKey];
+        if (sort && sort.label) {
+          const col = cols.find(c => c.label === sort.label);
+          if (col && col.key) {
+            const dir = sort.dir === 'desc' ? -1 : 1;
+            out = out.slice().sort((a, b) => {
+              const av = View.stageColValue(col, a), bv = View.stageColValue(col, b);
+              // Nulls last regardless of direction — a missing value is not
+              // "smallest", it is unknown, and burying it beats ranking it.
+              if (av == null && bv == null) return 0;
+              if (av == null) return 1;
+              if (bv == null) return -1;
+              const an = Number(av), bn = Number(bv);
+              if (isFinite(an) && isFinite(bn)) return (an - bn) * dir;
+              return String(av).localeCompare(String(bv)) * dir;
+            });
+          }
+        }
+        return out;
+      },
+
+      stageShell(key, title, subtitle, bodyHtml, cols, opts) {
         const s = window.store.state;
         if (!s[key + 'Loaded']) {
           return `<div class="p-6 text-slate-500 bg-slate-50 border border-slate-200 rounded flex items-center gap-3">
@@ -5217,28 +5277,55 @@
             </div>`;
         }
         const err = s[key + 'Error'];
+        const sort = View.stageSort[key] || {};
+        const filters = View.stageColFilter[key] || {};
+        const anyFilter = Object.values(filters).some(v => (v || '').trim());
+        const th = (c) => {
+          const sortable = !!c.key;
+          const active = sort.label === c.label;
+          const arrow = !sortable ? '' : active
+            ? (sort.dir === 'desc' ? ' <span class="text-blue-600">&#9660;</span>' : ' <span class="text-blue-600">&#9650;</span>')
+            : ' <span class="text-slate-300">&#8645;</span>';
+          return `<th class="px-3 py-2 text-${c.align || 'left'} font-semibold whitespace-nowrap bg-slate-100 ${
+                      sortable ? 'cursor-pointer hover:text-slate-700 select-none' : ''}"
+                      ${sortable ? `onclick="store.dispatch('SORT_STAGE',{view:'${key}',label:${JSON.stringify(c.label)}})"` : ''}
+                      ${sortable ? `title="Sort by ${c.label || 'this column'}"` : ''}>${c.label}${arrow}</th>`;
+        };
+        const filterCell = (c) => {
+          if (!c.key) return '<th class="px-2 py-1 bg-slate-50"></th>';
+          return `<th class="px-2 py-1 bg-slate-50">
+              <input value="${(filters[c.label] || '').replace(/"/g, '&quot;')}"
+                     oninput="store.dispatch('FILTER_STAGE',{view:'${key}',label:${JSON.stringify(c.label)},value:this.value})"
+                     placeholder="filter"
+                     class="w-full min-w-[4.5rem] border border-slate-200 rounded px-1.5 py-0.5 text-[10px] font-normal normal-case bg-white">
+            </th>`;
+        };
         return `
-          <div class="flex items-center justify-between mb-3 pb-3 border-b border-slate-100">
+          <div class="flex items-center justify-between mb-3 pb-3 border-b border-slate-100 shrink-0">
             <div>
               <h2 class="text-lg font-bold text-slate-700">${title}</h2>
               <p class="text-xs text-slate-400">${subtitle}</p>
             </div>
+            ${anyFilter || sort.label ? `<button onclick="store.dispatch('RESET_STAGE_TABLE','${key}')"
+                class="text-[11px] font-semibold text-blue-600 hover:text-blue-800">Reset sort &amp; filters</button>` : ''}
           </div>
-          ${err ? `<div class="mb-4 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 flex items-start gap-3">
+          ${err ? `<div class="mb-4 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 flex items-start gap-3 shrink-0">
               <i data-lucide="alert-triangle" class="w-4 h-4 text-amber-600 mt-0.5 flex-shrink-0"></i>
               <div class="text-xs text-amber-900">
                 <div class="font-semibold">${title} failed to load</div>
                 <div class="mt-1 font-mono text-[10px] break-all text-amber-800">${err}</div>
               </div>
             </div>` : ''}
-          <div class="rounded-lg border border-slate-200 overflow-x-auto">
-            <table class="w-full text-xs">
-              <thead>
-                <tr class="bg-slate-100 text-slate-500 uppercase tracking-wide text-[10px]">
-                  ${cols.map(c => `<th class="px-3 py-2 text-${c.align || 'left'} font-semibold whitespace-nowrap">${c.label}</th>`).join('')}
+          <div class="rounded-lg border border-slate-200 flex-1 min-h-0 overflow-auto">
+            <table class="w-full text-xs border-separate border-spacing-0">
+              <thead class="sticky top-0 z-10">
+                <tr class="text-slate-500 uppercase tracking-wide text-[10px]">
+                  ${cols.map(th).join('')}
                 </tr>
+                <tr>${cols.map(filterCell).join('')}</tr>
               </thead>
-              <tbody>${bodyHtml || `<tr><td colspan="${cols.length}" class="px-3 py-8 text-center text-slate-400">Nothing in this window.</td></tr>`}</tbody>
+              <tbody>${bodyHtml || `<tr><td colspan="${cols.length}" class="px-3 py-8 text-center text-slate-400">${
+                  anyFilter ? 'Nothing matches these column filters.' : 'Nothing in this window.'}</td></tr>`}</tbody>
             </table>
           </div>`;
       },
@@ -5424,7 +5511,18 @@
 
       extensions() {
         const s = window.store.state;
-        const rows = (s.extensionsRows || []).filter(View.stageFilter);
+        const extCols = [
+          { label: '' },
+          { label: 'Clinician',       key: 'clinician' },
+          { label: 'Source',          key: 'source_system', align: 'center' },
+          { label: 'Ends',            key: 'end_date',      align: 'center' },
+          { label: 'Days Left',       key: 'days_left',     align: 'center' },
+          { label: 'Client Decision', key: r => View.extensionEdit(r).decision, align: 'center' },
+          { label: 'PM',              key: 'account_manager' },
+          { label: '13-Wk Value',     key: 'extension_value_13wk', align: 'right' },
+        ];
+        const rows = View.stageApply('extensions',
+          (s.extensionsRows || []).filter(View.stageFilter), extCols);
         const money = v => (v || v === 0) ? '$' + Number(v).toLocaleString(undefined, { maximumFractionDigits: 0 }) : '—';
         const expiring = rows.filter(r => r.days_left != null && r.days_left <= 14).length;
         const events = rows.reduce((a, r) => a + (Number(r.extension_events || r.ext_events) || 0), 0);
@@ -5442,7 +5540,11 @@
         rows.forEach(r => { (groups[View.extensionGroup(r)] = groups[View.extensionGroup(r)] || []).push(r); });
         let body = '';
         View.EXT_GROUP_ORDER.forEach(g => {
-          const list = (groups[g] || []).sort((a, b) => (a.days_left ?? 999) - (b.days_left ?? 999));
+          // Rows arrive already sorted when a column sort is active; only fall
+          // back to the default days-left ordering when none is.
+          const list = View.stageSort.extensions?.label
+            ? (groups[g] || [])
+            : (groups[g] || []).slice().sort((a, b) => (a.days_left ?? 999) - (b.days_left ?? 999));
           if (!list.length) return;
           const gv = list.reduce((a, r) => a + (Number(r.extension_value_13wk) || 0), 0);
           body += `<tr class="bg-slate-200">
@@ -5474,12 +5576,7 @@
         const el = $('extensionsContent');
         if (el) el.innerHTML = View.stageShell('extensions', 'Extensions',
           'Assignments approaching their end date, grouped by where the extension decision stands',
-          body, [
-            { label: '' }, { label: 'Clinician' }, { label: 'Source', align: 'center' },
-            { label: 'Ends', align: 'center' }, { label: 'Days Left', align: 'center' },
-            { label: 'Client Decision', align: 'center' }, { label: 'PM' },
-            { label: '13-Wk Value', align: 'right' },
-          ]);
+          body, extCols);
         lucide.createIcons();
       },
 
@@ -5589,7 +5686,19 @@
 
       onboarding() {
         const s = window.store.state;
-        const rows = (s.onboardingRows || []).filter(View.stageFilter);
+        const onbCols = [
+          { label: '' },
+          { label: 'Clinician',     key: 'clinician' },
+          { label: 'Source',        key: 'source_system', align: 'center' },
+          { label: 'Status',        key: r => View.onboardingGroup(r), align: 'center' },
+          { label: 'Current Start', key: 'current_start',  align: 'center' },
+          { label: 'Moves',         key: 'move_count',     align: 'center' },
+          { label: 'Moved',         key: r => View.onboardingSlip(r), align: 'center' },
+          { label: 'Delay Reason',  key: r => View.onboardingEdit(r).context || r.delay_reason || '' },
+          { label: 'PM',            key: 'account_manager' },
+        ];
+        const rows = View.stageApply('onboarding',
+          (s.onboardingRows || []).filter(View.stageFilter), onbCols);
         const delayed = rows.filter(r => View.onboardingGroup(r) === 'DELAYED START').length;
         const cancelled = rows.filter(r => View.onboardingGroup(r) === 'CANCELED').length;
         const moved = rows.filter(r => View.onboardingSlip(r)).length;
@@ -5606,7 +5715,9 @@
         rows.forEach(r => { const g = View.onboardingGroup(r); (groups[g] = groups[g] || []).push(r); });
         let body = '';
         View.ONB_GROUP_ORDER.forEach(g => {
-          const list = (groups[g] || []).sort((a, b) => (b.move_count || 0) - (a.move_count || 0));
+          const list = View.stageSort.onboarding?.label
+            ? (groups[g] || [])
+            : (groups[g] || []).slice().sort((a, b) => (b.move_count || 0) - (a.move_count || 0));
           if (!list.length) return;
           const mv = list.reduce((a, r) => a + (Number(r.move_count) || 0), 0);
           body += `<tr class="bg-slate-200">
@@ -5648,18 +5759,24 @@
         const el = $('onboardingContent');
         if (el) el.innerHTML = View.stageShell('onboarding', 'Onboarding',
           'Upcoming and recent starts, grouped by whether the date has moved since it was last reviewed',
-          body, [
-            { label: '' }, { label: 'Clinician' }, { label: 'Source', align: 'center' },
-            { label: 'Status', align: 'center' }, { label: 'Current Start', align: 'center' },
-            { label: 'Moves', align: 'center' }, { label: 'Moved', align: 'center' },
-            { label: 'Delay Reason' }, { label: 'PM' },
-          ]);
+          body, onbCols);
         lucide.createIcons();
       },
 
       closed() {
         const s = window.store.state;
-        const rows = (s.closedRows || []).filter(View.stageFilter);
+        const closedCols = [
+          { label: 'Clinician',    key: 'clinician' },
+          { label: 'Facility',     key: 'facility' },
+          { label: 'Role',         key: 'role' },
+          { label: 'Source',       key: 'source_system', align: 'center' },
+          { label: 'Closed',       key: 'closed_on',     align: 'center' },
+          { label: 'Outcome',      key: 'group',         align: 'center' },
+          { label: 'Reason',       key: 'outcome_reason' },
+          { label: '13-Wk Value',  key: 'value_13wk',    align: 'right' },
+        ];
+        const rows = View.stageApply('closed',
+          (s.closedRows || []).filter(View.stageFilter), closedCols);
         const money = v => (v || v === 0) ? '$' + Number(v).toLocaleString(undefined, { maximumFractionDigits: 0 }) : '—';
         const byGroup = {};
         rows.forEach(r => { byGroup[r.group] = (byGroup[r.group] || 0) + 1; });
@@ -5688,12 +5805,7 @@
         const el = $('closedContent');
         if (el) el.innerHTML = View.stageShell('closed', 'Closed',
           'Assignments that ended, grouped by why — reasons canonicalised across VNDLY spelling variants',
-          body, [
-            { label: 'Clinician' }, { label: 'Facility' }, { label: 'Role' },
-            { label: 'Source', align: 'center' }, { label: 'Closed', align: 'center' },
-            { label: 'Outcome', align: 'center' }, { label: 'Reason' },
-            { label: '13-Wk Value', align: 'right' },
-          ]);
+          body, closedCols);
         lucide.createIcons();
       },
 
@@ -10945,6 +11057,35 @@
               const val = document.getElementById('searchId').value;
               s.filters.searchId = val.trim().toLowerCase();
               View.main();
+              break;
+            }
+
+            case 'SORT_STAGE': {
+              const { view, label } = payload || {};
+              const cur = View.stageSort[view];
+              // Third click clears rather than cycling forever back to asc, so
+              // the view's own default ordering is reachable again.
+              if (cur && cur.label === label) {
+                View.stageSort[view] = cur.dir === 'asc' ? { label, dir: 'desc' } : {};
+              } else {
+                View.stageSort[view] = { label, dir: 'asc' };
+              }
+              View[view]?.();
+              break;
+            }
+
+            case 'FILTER_STAGE': {
+              const { view, label, value } = payload || {};
+              View.stageColFilter[view] = View.stageColFilter[view] || {};
+              View.stageColFilter[view][label] = value;
+              View[view]?.();
+              break;
+            }
+
+            case 'RESET_STAGE_TABLE': {
+              View.stageSort[payload] = {};
+              View.stageColFilter[payload] = {};
+              View[payload]?.();
               break;
             }
 
