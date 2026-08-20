@@ -52,16 +52,16 @@ def _b4_rows(cursor, lookback, lookahead, include_affiliate):
             NULL                                        AS original_start,
             CAST(o.End_Date AS DATE)                    AS end_date,
             NULL                                        AS onboarded_date,
-            CASE WHEN h.cid IS NULL THEN NULL ELSE
-                (h.distinct_starts - 1)
-                -- History only covers loads taken so far, so a start changed
-                -- since the last load shows as a single distinct value that no
-                -- longer matches the live row — count that as one more move,
-                -- otherwise very recent slips read as "on track".
-                + CASE WHEN o.Start_Date <> h.last_start THEN 1 ELSE 0 END
-            END                                         AS move_count,
+            -- How far a start slipped, and how many times, are NOT derivable
+            -- here. Both came from HIST_B4HealthOrder, which is populated by
+            -- Bullhorn placement matching, and MSP reads B4 + VNDLY only.
+            -- NULL rather than 0 so _finalize flags movement_tracked=false and
+            -- the UI shows "not tracked" instead of a confident zero. (The
+            -- join to that history table was removed; these two columns still
+            -- referenced its alias, which made the whole B4 query invalid.)
+            CAST(NULL AS INT)                           AS move_count,
             CASE WHEN o.Delayed_Starts = 'Yes' THEN 1 ELSE 0 END AS delay_flagged,
-            DATEDIFF(DAY, h.first_start, o.Start_Date)  AS days_delayed,
+            CAST(NULL AS INT)                           AS days_delayed,
             DATEDIFF(DAY, CAST(GETDATE() AS DATE), o.Start_Date) AS days_until_start,
             o.Delayed_Starts                            AS delayed_flag,
             o.Delayed_Starts_Reasons                    AS delay_reason,
