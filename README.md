@@ -2,6 +2,21 @@
 
 ## Version History
 
+**2.4.3** - Extensions become actionable: client decision, workflow checkpoints, persisted
+
+Wires `WorkspaceState` to the Extensions tab, following the reference's shape: a read-only decision badge in the row, editing in the expanded detail.
+
+- **Rows group by workflow state** — `NO DECISION · RTO · OFFERED · PENDING ACCEPTANCE · APPROVED · BACKFILL · EXCEPTION` — each header carrying its count and total contract value, sorted by days left within a group.
+- **Detail owns the editing**: the three team checkpoints (Confirm Client / Gather RTO / Send Extension), a six-value Client Decision, and shared notes. `Extension Accepted` is deliberately **read-only** — the source systems own it. Team-owned checkpoints are editable, system-confirmed facts are not, the same discipline that keeps the MSP fee split from being labelled margin.
+- **Persists to `impactmgr.workspace_state`** and reflects locally, so the badge and the row's group update without a reload. Last-saved-by and timestamp are shown.
+- **Decisions land in the meeting recap** through the same log the job mutations use, so a recap reads "Extension decision “Approved” for A Nurse · Inspira" alongside lever and margin changes.
+
+Two data gaps are **stated in the app** rather than quietly omitted, so they can be explained in a demo instead of looking like bugs:
+- The Gather RTO step shows its owner as `Recruiter · not in data` — B4 and VNDLY carry an account manager and the client's hiring manager; neither is a GHR recruiter. The step is still real and checkable, only the attribution is missing.
+- The linked-backfill panel from the reference is absent, with a line saying nothing in B4 or VNDLY ties an ending seat to its replacement job.
+
+20 assertions across grouping (every decision and step path), badge tones, the two gap notices, group ordering, and tile counts reacting to saved state.
+
 **2.4.2** - Meetings record what changed, not just which stages were walked
 
 `LOG_MEETING_ACTION` existed but nothing called it, so a saved meeting listed the stages you visited and nothing about what you decided in them. Mutations now feed the meeting log through the one function they already all pass through.

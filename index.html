@@ -832,7 +832,7 @@
     const $ = (id) => document.getElementById(id);
 
     // App version - loaded from environment variable via API, with fallback
-    let APP_VERSION = '2.4.2';
+    let APP_VERSION = '2.4.3';
 
     const API_BASE_URL = '/api';
     
@@ -1778,6 +1778,19 @@
                 if (window.store.state.view === key) window.store.dispatch('REFRESH_UI');
               }
             }));
+
+            // Per-record workspace state (extension decisions, revised starts,
+            // margin overrides). Non-fatal: without it the stage views still
+            // render, they just show no saved decisions.
+            try {
+              const wsResp = await fetch(`${API_BASE_URL}/workspace-state`);
+              if (wsResp.ok) {
+                const ws = await wsResp.json();
+                window.store.state.workspaceState = (ws && !ws.error) ? ws : {};
+              }
+            } catch (e) {
+              console.warn('Error loading workspace state:', e);
+            }
 
             // Load pending submissions data (GHR only)
             try {
@@ -5134,6 +5147,118 @@
         return `<span class="px-1.5 py-0.5 rounded text-[9px] font-bold ${tones[tone] || tones.low}">${text}</span>`;
       },
 
+      /* ---- Extensions: decision badge in the row, editing in the detail ----
+       * Mirrors the reference: the row carries a read-only decision badge and
+       * rows group by workflow state; the expanded detail owns the editable
+       * checkpoints. Team-owned steps are editable, system-confirmed facts are
+       * not — "Extension Accepted" comes from VNDLY/Bullhorn and stays read-only,
+       * the same discipline that keeps the MSP fee split from being called margin.
+       */
+      EXT_DECISIONS: ['Not Requested', 'Interested', 'Approved to Offer', 'Approved', 'Declined', 'Backfill Required'],
+      EXT_STEPS: [
+        { key: 'confirmClient',  label: 'Confirm Client',  owner: 'pm',
+          blurb: 'Record whether the client wants to extend, close, or backfill.' },
+        { key: 'gatherRTO',      label: 'Gather RTO',      owner: 'recruiter',
+          blurb: 'Capture clinician requested time off before finalizing the extension.' },
+        { key: 'sendExtension',  label: 'Send Extension',  owner: 'pm',
+          blurb: 'Confirm the extension has been sent and recorded.' },
+      ],
+      EXT_GROUP_ORDER: ['NO DECISION', 'RTO', 'OFFERED', 'PENDING ACCEPTANCE', 'APPROVED', 'BACKFILL', 'EXCEPTION'],
+
+      extensionEdit(r) {
+        const saved = window.store.state.workspaceState?.extension?.[r.id]?.state;
+        return {
+          decision: saved?.decision || 'Not Requested',
+          notes: saved?.notes || '',
+          steps: saved?.steps || {},
+        };
+      },
+
+      extensionGroup(r) {
+        const e = View.extensionEdit(r);
+        if (e.decision === 'Approved') return 'APPROVED';
+        if (e.decision === 'Backfill Required') return 'BACKFILL';
+        if (e.decision === 'Declined') return 'EXCEPTION';
+        if (e.steps.sendExtension) return 'PENDING ACCEPTANCE';
+        if (e.decision === 'Approved to Offer') return 'OFFERED';
+        if (e.steps.gatherRTO) return 'RTO';
+        return 'NO DECISION';
+      },
+
+      extensionDecisionBadge(d) {
+        const tone = d === 'Approved' ? 'good'
+          : (d === 'Declined' || d === 'Backfill Required') ? 'bad'
+          : (d === 'Approved to Offer' || d === 'Interested') ? 'info' : 'low';
+        return View.stageBadge(d, tone);
+      },
+
+      extensionDetail(r) {
+        const e = View.extensionEdit(r);
+        const meta = window.store.state.workspaceState?.extension?.[r.id];
+        const pm = r.account_manager || '—';
+        return `
+          <tr class="bg-slate-50">
+            <td colspan="8" class="px-4 py-4 border-b border-slate-200">
+              <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <div>
+                  <h5 class="text-xs font-bold uppercase tracking-wide text-slate-500 mb-1">Extension Progress</h5>
+                  <p class="text-[10px] text-slate-400 mb-3">Team owns the client, RTO and send checkpoints. Acceptance stays system-confirmed.</p>
+                  <div class="space-y-1.5">
+                    ${View.EXT_STEPS.map(st => `
+                      <label class="flex items-start gap-2 bg-white border border-slate-200 rounded-lg px-3 py-2 cursor-pointer hover:border-slate-300">
+                        <input type="checkbox" class="mt-0.5 w-4 h-4 ext-step" data-id="${r.id}" data-step="${st.key}" ${e.steps[st.key] ? 'checked' : ''}>
+                        <span class="flex-1">
+                          <span class="block text-xs font-semibold text-slate-700">${st.label}</span>
+                          <span class="block text-[10px] text-slate-400">${st.blurb}</span>
+                        </span>
+                        <span class="text-[10px] text-slate-400 whitespace-nowrap">${
+                          st.owner === 'pm'
+                            ? `PM · ${pm}`
+                            // No recruiter name exists on the MSP side: B4 and
+                            // VNDLY carry an account manager and the client's
+                            // hiring manager, neither of which is a GHR
+                            // recruiter. The step is still real and checkable;
+                            // only the attribution is missing, and saying so
+                            // beats relabelling it PM.
+                            : `Recruiter · <span class="italic text-slate-300" title="Not recorded in B4 or VNDLY">not in data</span>`
+                        }</span>
+                      </label>`).join('')}
+                    <div class="flex items-start gap-2 bg-slate-100 border border-slate-200 rounded-lg px-3 py-2">
+                      <span class="mt-0.5 text-slate-400">${r.is_extension ? '✓' : '○'}</span>
+                      <span class="flex-1">
+                        <span class="block text-xs font-semibold text-slate-600">Extension Accepted</span>
+                        <span class="block text-[10px] text-slate-400">Confirmed from the source systems — not editable.</span>
+                      </span>
+                      <span class="text-[10px] text-slate-400">System</span>
+                    </div>
+                  </div>
+                </div>
+                <div>
+                  <h5 class="text-xs font-bold uppercase tracking-wide text-slate-500 mb-3">Decision</h5>
+                  <label class="block text-[10px] font-semibold text-slate-500 uppercase tracking-wide mb-1">Client Decision</label>
+                  <select class="ext-decision w-full bg-white border border-slate-300 rounded-md px-3 py-2 text-sm mb-3" data-id="${r.id}">
+                    ${View.EXT_DECISIONS.map(d => `<option ${e.decision === d ? 'selected' : ''}>${d}</option>`).join('')}
+                  </select>
+                  <label class="block text-[10px] font-semibold text-slate-500 uppercase tracking-wide mb-1">Shared Notes</label>
+                  <textarea class="ext-notes w-full bg-white border border-slate-300 rounded-md px-3 py-2 text-xs h-20"
+                            data-id="${r.id}" placeholder="Client or extension context…">${e.notes}</textarea>
+                  <div class="flex items-center gap-3 mt-3">
+                    <button onclick="store.dispatch('SAVE_EXTENSION','${r.id}')"
+                            class="px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-md text-xs font-semibold shadow-sm">
+                      Save Extension Update
+                    </button>
+                    ${meta?.updatedBy ? `<span class="text-[10px] text-slate-400">Last saved by ${meta.updatedBy}${
+                      meta.updatedAt ? ' · ' + new Date(meta.updatedAt).toLocaleString() : ''}</span>` : ''}
+                  </div>
+                  <p class="text-[10px] text-slate-400 mt-3 leading-snug">
+                    Linked backfill isn&rsquo;t shown &mdash; nothing in B4 or VNDLY ties an ending seat to its replacement job.
+                  </p>
+                </div>
+              </div>
+            </td>
+          </tr>`;
+      },
+
       extensions() {
         const s = window.store.state;
         const rows = (s.extensionsRows || []).filter(View.stageFilter);
@@ -5141,32 +5266,55 @@
         const expiring = rows.filter(r => r.days_left != null && r.days_left <= 14).length;
         const events = rows.reduce((a, r) => a + (Number(r.extension_events || r.ext_events) || 0), 0);
         const value = rows.reduce((a, r) => a + (Number(r.extension_value_13wk) || 0), 0);
+        const undecided = rows.filter(r => View.extensionGroup(r) === 'NO DECISION').length;
         const tiles = $('extensionsKpiTiles');
         if (tiles) tiles.innerHTML =
           View.stageTile('Seats In Window', rows.length) +
           View.stageTile('Expiring ≤14 Days', expiring, 'need a decision', expiring ? 'text-red-600' : '') +
-          View.stageTile('Extension Events', events, 'distinct, de-duplicated') +
+          View.stageTile('No Decision Yet', undecided, 'of ' + rows.length, undecided ? 'text-amber-600' : '') +
           View.stageTile('13-Week Value', value ? money(value) : '—', 'where hours are known');
 
-        const body = rows.map(r => `
-          <tr class="hover:bg-slate-50 border-b border-slate-100">
-            <td class="px-3 py-2 font-medium text-slate-700 whitespace-nowrap">${r.clinician || '—'}</td>
-            <td class="px-3 py-2 text-slate-500">${r.facility || '—'}</td>
-            <td class="px-3 py-2 text-slate-500">${r.role || r.care_type || '—'}</td>
-            <td class="px-3 py-2 text-center">${View.stageBadge(r.source_system || r.source || '—', 'info')}</td>
-            <td class="px-3 py-2 text-center text-slate-600">${r.end_date || '—'}</td>
-            <td class="px-3 py-2 text-center">${r.days_left != null ? View.stageBadge(r.days_left + 'd', r.urgency || 'low') : '—'}</td>
-            <td class="px-3 py-2 text-center text-slate-600">${r.extension_events || r.ext_events || 0}</td>
-            <td class="px-3 py-2 text-right text-slate-600">${money(r.extension_value_13wk)}</td>
-          </tr>`).join('');
+        // Group by workflow state, in the reference's order.
+        const groups = {};
+        rows.forEach(r => { (groups[View.extensionGroup(r)] = groups[View.extensionGroup(r)] || []).push(r); });
+        let body = '';
+        View.EXT_GROUP_ORDER.forEach(g => {
+          const list = (groups[g] || []).sort((a, b) => (a.days_left ?? 999) - (b.days_left ?? 999));
+          if (!list.length) return;
+          const gv = list.reduce((a, r) => a + (Number(r.extension_value_13wk) || 0), 0);
+          body += `<tr class="bg-slate-200">
+              <td colspan="8" class="px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-600">
+                ${g} <span class="text-slate-400 font-semibold ml-1">${list.length}</span>
+                ${gv ? `<span class="text-slate-400 font-normal ml-2">${money(gv)} contract value</span>` : ''}
+              </td></tr>`;
+          list.forEach(r => {
+            const open = s.expandedExtensions.has(r.id);
+            const e = View.extensionEdit(r);
+            body += `
+              <tr class="hover:bg-slate-50 border-b border-slate-100 cursor-pointer" onclick="store.dispatch('TOGGLE_EXTENSION_ROW','${r.id}')">
+                <td class="px-3 py-2 text-slate-400">${open ? '&#9660;' : '&#9654;'}</td>
+                <td class="px-3 py-2">
+                  <div class="font-medium text-slate-700">${r.clinician || '—'}</div>
+                  <div class="text-[10px] text-slate-400">${r.facility || '—'} · ${r.role || r.care_type || '—'}</div>
+                </td>
+                <td class="px-3 py-2 text-center">${View.stageBadge(r.source_system || r.source || '—', 'info')}</td>
+                <td class="px-3 py-2 text-center text-slate-600">${r.end_date || '—'}</td>
+                <td class="px-3 py-2 text-center">${r.days_left != null ? View.stageBadge(r.days_left + 'd', r.urgency || 'low') : '—'}</td>
+                <td class="px-3 py-2 text-center">${View.extensionDecisionBadge(e.decision)}</td>
+                <td class="px-3 py-2 text-slate-500">${r.account_manager || '—'}</td>
+                <td class="px-3 py-2 text-right text-slate-600">${money(r.extension_value_13wk)}</td>
+              </tr>`;
+            if (open) body += View.extensionDetail(r);
+          });
+        });
 
         const el = $('extensionsContent');
         if (el) el.innerHTML = View.stageShell('extensions', 'Extensions',
-          'Assignments approaching their end date, with extension activity from the VNDLY modifications feed',
+          'Assignments approaching their end date, grouped by where the extension decision stands',
           body, [
-            { label: 'Clinician' }, { label: 'Facility' }, { label: 'Role' },
-            { label: 'Source', align: 'center' }, { label: 'Ends', align: 'center' },
-            { label: 'Days Left', align: 'center' }, { label: 'Ext. Events', align: 'center' },
+            { label: '' }, { label: 'Clinician' }, { label: 'Source', align: 'center' },
+            { label: 'Ends', align: 'center' }, { label: 'Days Left', align: 'center' },
+            { label: 'Client Decision', align: 'center' }, { label: 'PM' },
             { label: '13-Wk Value', align: 'right' },
           ]);
         lucide.createIcons();
@@ -10298,6 +10446,9 @@
         rowDetailTab: {},
         // Closed / Extensions / Onboarding stage data (MSP-only endpoints).
         extensionsRows: [], extensionsMeta: null, extensionsLoaded: false, extensionsError: null,
+        // WorkspaceState, keyed scope -> entityId -> { state, updatedAt, updatedBy }.
+        workspaceState: {},
+        expandedExtensions: new Set(),
         onboardingRows: [], onboardingMeta: null, onboardingLoaded: false, onboardingError: null,
         closedRows: [], closedMeta: null, closedLoaded: false, closedError: null,
         sort: { key: 'daysPast', dir: 'desc' },
@@ -10484,6 +10635,55 @@
               const val = document.getElementById('searchId').value;
               s.filters.searchId = val.trim().toLowerCase();
               View.main();
+              break;
+            }
+
+            case 'TOGGLE_EXTENSION_ROW': {
+              if (s.expandedExtensions.has(payload)) s.expandedExtensions.delete(payload);
+              else s.expandedExtensions.add(payload);
+              View.extensions();
+              break;
+            }
+
+            case 'SAVE_EXTENSION': {
+              const id = payload;
+              // Read straight off the open detail — the inputs are the source of
+              // truth until saved, so nothing is mirrored into state twice.
+              const decision = document.querySelector(`.ext-decision[data-id="${id}"]`)?.value || 'Not Requested';
+              const notes = document.querySelector(`.ext-notes[data-id="${id}"]`)?.value || '';
+              const steps = {};
+              document.querySelectorAll(`.ext-step[data-id="${id}"]`).forEach(cb => {
+                steps[cb.dataset.step] = cb.checked;
+              });
+              const state = { decision, notes, steps };
+              (async () => {
+                try {
+                  const resp = await fetch(`${API_BASE_URL}/workspace-state`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify([{ scope: 'extension', entityId: id, state }]),
+                  });
+                  if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                  // Reflect locally so the badge and grouping update without a reload.
+                  s.workspaceState.extension = s.workspaceState.extension || {};
+                  s.workspaceState.extension[id] = {
+                    state, updatedAt: new Date().toISOString(),
+                    updatedBy: (typeof getCurrentUser === 'function' ? getCurrentUser() : null),
+                  };
+                  // Same funnel the job mutations use, so an extension decision
+                  // lands in the meeting recap like everything else.
+                  if (s.meeting) {
+                    const row = (s.extensionsRows || []).find(r => r.id === id);
+                    const who = row ? `${row.clinician || 'seat ' + id}${row.facility ? ' · ' + row.facility : ''}` : `seat ${id}`;
+                    window.store.dispatch('LOG_MEETING_ACTION', `Extension decision “${decision}” for ${who}`);
+                  }
+                  window.showToast?.('Extension updated.', 'success');
+                  View.extensions();
+                } catch (e) {
+                  console.warn('Extension save failed:', e);
+                  window.showToast?.('Could not save: ' + (e.message || e), 'error');
+                }
+              })();
               break;
             }
 
