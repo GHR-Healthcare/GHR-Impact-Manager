@@ -4566,6 +4566,7 @@
 
         if (expanded) {
           const view = s.rowSubView[job.id] || 'active';
+          const detailTab = s.rowDetailTab[job.id] || 'levers';
           const cands = job.candidates.filter(c => view === 'active' ? !c.isDeclined : c.isDeclined);
 
           // --- LEVER SORTING LOGIC (Columnar Flow with Next Step Spanning Bottom) ---
@@ -4606,9 +4607,36 @@
 
           // -------------------------------------------
 
+          // Row-detail sub-tabs. Levers is the existing panel and stays the
+          // default; Rate / Pipeline / Placements are new. Same pill idiom as
+          // the Trend tab's Group By control so the app reads as one piece.
+          const activePlacements = (s.statsData?.onAssignment || []).filter(r =>
+            r.facility && job.facility && r.facility === job.facility &&
+            Utils.cleanFilterText(r.specialty || '') === Utils.jobSpecialtyKey(job)
+          );
+          const detailTabs = [
+            ['levers', 'Levers', null],
+            ['rate', 'Rate', null],
+            ['pipeline', 'Pipeline', job.ghrSubs + job.avSubs],
+            ['placements', 'Placements', activePlacements.length],
+          ];
+          const detailTabStrip = `
+            <div class="flex items-center gap-1.5 mb-5">
+              ${detailTabs.map(([key, label, count]) => {
+                const on = detailTab === key;
+                return `<button onclick="event.stopPropagation();window.store.dispatch('SET_DETAIL_TAB',{id:'${job.id}',tab:'${key}'})"
+                        class="px-3 py-1.5 rounded-full text-xs font-semibold border transition-colors flex items-center gap-1.5 ${
+                          on ? 'bg-blue-50 border-blue-300 text-blue-700'
+                             : 'bg-white border-slate-200 text-slate-500 hover:text-slate-700 hover:border-slate-300'}">
+                        ${label}${count != null ? `<span class="${on ? 'text-blue-400' : 'text-slate-400'} font-medium">${count}</span>` : ''}
+                      </button>`;
+              }).join('')}
+            </div>`;
+
           html += `
             <div class="bg-slate-50 p-6 border-b shadow-inner cursor-auto fade-in" onclick="event.stopPropagation()">
-              <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
+              ${detailTabStrip}
+              <div class="grid grid-cols-1 md:grid-cols-2 gap-8 ${detailTab === 'levers' ? '' : 'hidden'}">
                 <div>
                   <h4 class="font-bold mb-3 text-sm uppercase text-slate-500">Impact Levers</h4>
                   
@@ -4744,11 +4772,133 @@
 
                 </div>
               </div>
+              ${detailTab === 'rate' ? View.detailRatePane(job) : ''}
+              ${detailTab === 'pipeline' ? View.detailPipelinePane(job) : ''}
+              ${detailTab === 'placements' ? View.detailPlacementsPane(job, activePlacements) : ''}
             </div>
           `;
         }
 
         return html;
+      },
+
+      /*
+       * Row-detail panes for the Rate / Pipeline / Placements sub-tabs.
+       * Levers stays inline above — it was already there.
+       */
+      detailStat(label, value, note) {
+        return `<div class="bg-white border border-slate-200 rounded-lg px-3 py-2.5">
+            <div class="text-[9px] uppercase tracking-wide text-slate-400 font-semibold">${label}</div>
+            <div class="text-lg font-bold text-slate-800 leading-tight mt-0.5">${value}</div>
+            ${note ? `<div class="text-[10px] text-slate-400 mt-0.5">${note}</div>` : ''}
+          </div>`;
+      },
+
+      detailRatePane(job) {
+        const money = v => (v || v === 0) ? '$' + Number(v).toFixed(2) : '—';
+        const bill = Number(job.billRate) || 0;
+        const marginPct = Number(job.margin);
+        // MSP has no clinician pay rate, so GM% IS the configured margin —
+        // either the tenant default or a per-job override. The bill/pay split
+        // the new endpoints return is an MSP FEE split, not a margin, and is
+        // deliberately not shown here as one.
+        const gmHr = bill && !isNaN(marginPct) ? bill * (marginPct / 100) : null;
+        // No weekly GM: the open-jobs feed carries no hours-per-week, so it
+        // would read "unknown" on nearly every row. Extensions/Onboarding do
+        // return hours_per_week, so it belongs on those panes, not this one.
+        return `
+          <div class="fade-in">
+            <h4 class="font-bold mb-3 text-sm uppercase text-slate-500">Rate &amp; Margin</h4>
+            <div class="grid grid-cols-2 md:grid-cols-3 gap-3 max-w-2xl">
+              ${View.detailStat('Bill Rate', money(bill), job.billRateEstimated ? 'estimated' : '')}
+              ${View.detailStat('GM %', isNaN(marginPct) ? '—' : marginPct + '%',
+                                job.marginOverridden ? 'per-job override' : 'configured default')}
+              ${View.detailStat('GM / Hour', money(gmHr))}
+            </div>
+            <p class="text-[10px] text-slate-400 mt-3 leading-snug">
+              GM% is the configured margin rate (or this job&rsquo;s override), not a value read from the
+              source data &mdash; MSP carries no clinician pay rate. The bill/pay split the newer
+              endpoints return is an MSP fee split, not a margin, and is deliberately not shown as one.
+            </p>
+          </div>`;
+      },
+
+      detailPipelinePane(job) {
+        const cands = job.candidates || [];
+        const active = cands.filter(c => !c.isDeclined);
+        // Furthest stage reached per candidate, so the funnel never counts one
+        // person twice.
+        const offered = active.filter(c => c.offerDate || c.awardedDate).length;
+        const interviewed = active.filter(c => c.interviewDate && !c.offerDate && !c.awardedDate).length;
+        const submitted = active.length - offered - interviewed;
+        const declined = cands.filter(c => c.isDeclined).length;
+        const stages = [
+          ['Submitted', submitted, 'bg-blue-500'],
+          ['Interview', interviewed, 'bg-indigo-500'],
+          ['Offer', offered, 'bg-emerald-500'],
+        ];
+        const max = Math.max(1, ...stages.map(x => x[1]));
+        return `
+          <div class="fade-in">
+            <h4 class="font-bold mb-3 text-sm uppercase text-slate-500">Pipeline</h4>
+            <div class="space-y-2 max-w-xl">
+              ${stages.map(([label, n, color]) => `
+                <div class="flex items-center gap-3">
+                  <span class="text-xs font-medium text-slate-600 w-20 flex-shrink-0">${label}</span>
+                  <div class="flex-1 bg-slate-200 rounded-full h-2.5 overflow-hidden">
+                    <div class="${color} h-full rounded-full" style="width:${(n / max) * 100}%"></div>
+                  </div>
+                  <span class="text-xs font-bold text-slate-700 w-8 text-right">${n}</span>
+                </div>`).join('')}
+            </div>
+            <div class="flex gap-3 mt-4">
+              ${View.detailStat('Active Submissions', active.length)}
+              ${View.detailStat('Declined', declined)}
+              ${View.detailStat('Openings', job.numPositions || 1)}
+            </div>
+            <p class="text-[10px] text-slate-400 mt-3">
+              Each candidate is counted once, at the furthest stage they reached.
+            </p>
+          </div>`;
+      },
+
+      detailPlacementsPane(job, placements) {
+        const rows = placements || [];
+        const ghr = rows.filter(r => r.is_ghr).length;
+        // Same short form the rest of the app uses for assignment dates.
+        const fmtDate = d => {
+          const dt = Utils.toDateOrNull(d);
+          // timeZone UTC on purpose: assignment dates are date-only, and
+          // toDateOrNull turns "2026-07-01" into UTC midnight, which formats as
+          // Jun 30 in any western-of-UTC zone. Formatting in UTC keeps the
+          // calendar date the source actually stated.
+          return dt ? dt.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' }) : '—';
+        };
+        return `
+          <div class="fade-in">
+            <h4 class="font-bold mb-3 text-sm uppercase text-slate-500">Active Placements</h4>
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+              ${View.detailStat('Active At Facility', rows.length)}
+              ${View.detailStat('GHR', ghr)}
+              ${View.detailStat('Affiliate', rows.length - ghr)}
+              ${View.detailStat('GHR Share', rows.length ? Math.round((ghr / rows.length) * 100) + '%' : '—')}
+            </div>
+            ${rows.length ? `
+              <div class="bg-white border border-slate-200 rounded-lg divide-y divide-slate-100 max-h-56 overflow-y-auto">
+                ${rows.map(r => `
+                  <div class="flex items-center gap-3 px-3 py-2 text-xs">
+                    <span class="px-1.5 py-0.5 rounded text-[9px] font-bold ${r.is_ghr ? 'bg-blue-100 text-blue-700' : 'bg-purple-100 text-purple-700'}">${r.is_ghr ? 'GHR' : 'AV'}</span>
+                    <span class="font-medium text-slate-700 flex-1 truncate">${r.worker_name || 'Unknown'}</span>
+                    <span class="text-slate-400">${fmtDate(r.startDate)} &rarr; ${fmtDate(r.endDate)}</span>
+                  </div>`).join('')}
+              </div>`
+            : `<div class="bg-white border border-slate-200 rounded-lg p-6 text-center text-slate-400 text-xs">
+                 No active placements matching this facility and specialty.
+               </div>`}
+            <p class="text-[10px] text-slate-400 mt-3">
+              Matched on facility + specialty against active assignments, for rate and vendor comparison.
+            </p>
+          </div>`;
       },
 
       kpis(list) {
@@ -9547,6 +9697,7 @@
         view: 'list',
         expandedRows: new Set(),
         rowSubView: {},
+        rowDetailTab: {},
         sort: { key: 'daysPast', dir: 'desc' },
         modal: { open: false, type: null, jobId: null, key: null, val: null, candidateIndex: null },
         sessionLog: [],
@@ -9817,6 +9968,7 @@
               if (s.expandedRows.has(id)) s.expandedRows.delete(id);
               else s.expandedRows.add(id);
               if (!s.rowSubView[id]) s.rowSubView[id] = 'active';
+              if (!s.rowDetailTab[id]) s.rowDetailTab[id] = 'levers';
               View.rowUpdate(id);
               break;
             }
@@ -9875,6 +10027,12 @@
 
             case 'SET_SUB_VIEW': {
               s.rowSubView[payload.id] = payload.view;
+              View.rowUpdate(payload.id);
+              break;
+            }
+
+            case 'SET_DETAIL_TAB': {
+              s.rowDetailTab[payload.id] = payload.tab;
               View.rowUpdate(payload.id);
               break;
             }
