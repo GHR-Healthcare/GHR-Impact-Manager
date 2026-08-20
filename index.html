@@ -841,7 +841,7 @@
     const $ = (id) => document.getElementById(id);
 
     // App version - loaded from environment variable via API, with fallback
-    let APP_VERSION = '2.4.11';
+    let APP_VERSION = '2.4.12';
 
     const API_BASE_URL = '/api';
     
@@ -4584,6 +4584,10 @@
             { label: 'Avg Days Open', val: avgAge, icon: 'clock', color: 'purple' },
             { label: 'At 16+ Days', val: stale, icon: 'alert-triangle', color: 'red' },
             { label: 'Active Submissions', val: subs, icon: 'users', color: 'emerald' },
+            { label: 'Avg Bill Rate', val: (() => {
+                const rates = list.map(j => Number(j.billRate)).filter(v => isFinite(v) && v > 0);
+                return rates.length ? '$' + (rates.reduce((a, b) => a + b, 0) / rates.length).toFixed(0) : '—';
+              })(), icon: 'dollar-sign', color: 'emerald' },
           ]);
         }
 
@@ -5569,6 +5573,7 @@
           { label: 'Expiring ≤14 Days', val: expiring, icon: 'alert-triangle', color: 'red' },
           { label: 'No Decision Yet', val: undecided, icon: 'help-circle', color: 'amber' },
           { label: 'Extension Events', val: events, icon: 'activity', color: 'indigo' },
+          { label: 'Already Extended', val: rows.filter(r => r.is_extension).length, icon: 'refresh-cw', color: 'purple' },
           { label: '13-Week Value', val: value ? money(value) : '—', icon: 'dollar-sign', color: 'emerald' },
         ]);
 
@@ -5746,6 +5751,10 @@
           { label: 'Moved Since Review', val: moved, icon: 'alert-triangle', color: 'red' },
           { label: 'Cancelled', val: cancelled, icon: 'x-circle', color: 'slate' },
           { label: 'Starting ≤7 Days', val: soon, icon: 'calendar', color: 'emerald' },
+          { label: '13-Week Value', val: (() => {
+              const v = rows.reduce((a, r) => a + (Number(r.value_13wk) || 0), 0);
+              return v ? '$' + v.toLocaleString(undefined, { maximumFractionDigits: 0 }) : '—';
+            })(), icon: 'dollar-sign', color: 'indigo' },
         ]);
 
         const tone = { 'ON TRACK': 'good', 'DELAYED START': 'medium', 'START DATE CHANGED': 'high', 'CANCELED': 'bad' };
@@ -5825,6 +5834,17 @@
           { label: windowDays ? `Closed (${windowDays}d)` : 'Closed In Window', val: rows.length, icon: 'check-circle', color: 'blue' },
           { label: 'Top Outcome', val: top ? top[0] : '—', icon: 'pie-chart', color: 'indigo' },
           { label: 'Outcome Types', val: Object.keys(byGroup).length, icon: 'layers', color: 'purple' },
+          { label: 'Ended Early', val: rows.filter(r => /terminat|resign|cancel/i.test(r.group || '')).length,
+            icon: 'alert-triangle', color: 'red' },
+          { label: 'Avg Tenure', val: (() => {
+              // Only rows with both ends of the span — a partial one would drag
+              // the average toward zero rather than being left out.
+              const spans = rows.map(r => {
+                const a = Utils.toDateOrNull(r.start_date), b = Utils.toDateOrNull(r.closed_on);
+                return (a && b) ? Math.round((b - a) / 86400000) : null;
+              }).filter(v => v != null && v >= 0);
+              return spans.length ? Math.round(spans.reduce((x, y) => x + y, 0) / spans.length) + 'd' : '—';
+            })(), icon: 'calendar', color: 'slate' },
           { label: '13-Week Value', val: value ? money(value) : '—', icon: 'dollar-sign', color: 'emerald' },
         ]);
 
@@ -9513,10 +9533,17 @@
         // Non-MSP: pendingTotal is always 0, which makes Expected Starts permanently ±0
         // and Booked Starts numerically identical to Total Headcount. Show only the two
         // tiles that mean something.
+        // Two more on the same next-7-day delta basis, so the row fills out
+        // without mixing absolutes into a set of deltas.
+        const ghrDelta = (weekData[nextIdx]?.ghr || 0) - (weekData[currentWeekIdx]?.ghr || 0);
+        const affDelta = (weekData[nextIdx]?.aff || 0) - (weekData[currentWeekIdx]?.aff || 0);
         View.renderKpiCards(isNonMspTrend
           ? [tile('Total Headcount', fmtDelta(hcDelta), 'users', 'blue'),
+             tile('Booked Starts', fmtDelta(bookedStartsDelta), 'check-circle', 'indigo'),
              tile('Projected Revenue', fmtDeltaDollars(revenueDelta), 'dollar-sign', 'emerald')]
           : [tile('Total Headcount', fmtDelta(hcDelta), 'users', 'blue'),
+             tile('GHR', fmtDelta(ghrDelta), 'user-check', 'blue'),
+             tile('Affiliate', fmtDelta(affDelta), 'users', 'purple'),
              tile('Booked Starts', fmtDelta(bookedStartsDelta), 'check-circle', 'indigo'),
              tile('Expected Starts', fmtDelta(nextExpectedAddlHc), 'help-circle', 'amber'),
              tile('Projected Revenue', fmtDeltaDollars(revenueDelta), 'dollar-sign', 'emerald')]);
@@ -10136,6 +10163,13 @@
             { label: 'Offers Out', val: nBucket('off'), icon: 'mail', color: 'purple' },
             { label: 'Ready To Onboard', val: nBucket('rto'), icon: 'user-check', color: 'emerald' },
             { label: 'GHR Share', val: filtered.length ? Math.round((ghr / filtered.length) * 100) + '%' : '—', icon: 'percent', color: 'slate' },
+            { label: 'Oldest Open', val: (() => {
+                const ages = filtered.map(r => {
+                  const ms = latestMilestoneMs(r);
+                  return ms == null ? null : Math.floor((nowMs - ms) / 86400000);
+                }).filter(v => v != null);
+                return ages.length ? Math.max(...ages) + 'd' : '—';
+              })(), icon: 'clock', color: 'amber' },
           ]);
         }
 
@@ -10742,6 +10776,7 @@
           { label: 'Exact Matches', val: (counts.exact_matches || 0).toLocaleString(), icon: 'check-circle', color: 'emerald' },
           { label: 'Date Mismatches', val: fMismatches.length.toLocaleString(), icon: 'alert-triangle', color: 'amber' },
           { label: 'Missing Somewhere', val: (fMissingBH.length + fMissingB4V.length).toLocaleString(), icon: 'help-circle', color: 'red' },
+          { label: 'Marked Reviewed', val: totalHidden.toLocaleString(), icon: 'eye-off', color: 'slate' },
         ]);
 
         const reviewBtn = (key) => {
