@@ -2,6 +2,23 @@
 
 ## Version History
 
+**2.4.4** - Onboarding becomes actionable: revised start, delay category, context
+
+Same split as Extensions — status badge in the row, editing in the expanded detail — following the reference.
+
+- **Rows group as the reference does**: `CANCELED · DELAYED START · START DATE CHANGED · ON TRACK`, each header carrying its count and total start-date moves, sorted by move count.
+- **`START DATE CHANGED` is derivable, not invented.** The reference compares each start against the one recorded at the previous meeting, and no source field carries that — but `workspace_state` already stores a revised start per seat, so the last *saved* start **is** the previously-recorded start. Movement is measured against it.
+- **Detail** shows source-owned facts (current start, last recorded start, times moved, source status) beside the editable box: revised start, six delay categories, meeting context.
+- **Context is required when the date moved.** Saving a moved start without a reason is refused rather than silently recorded — that's the reference's "Context required" prompt, enforced.
+- **Feeds the meeting recap**: "Start for C RN · Cooper recorded as 2026-09-15 (Compliance) — moved +14d".
+
+Three data limits stated in the app:
+- **Original Start** reads `not in data` — neither feed carries one, which is why total slip from the first scheduled date isn't shown. The panel says so.
+- **Times Moved** is B4-blind: only VNDLY reports start-change events, so B4 rows show `—` with a tooltip rather than `0`.
+- A never-reviewed seat says `never reviewed` instead of implying it hasn't moved.
+
+20 assertions across group derivation, slip maths and its red threshold, the context-required refusal, the never-reviewed path, and both data-gap notices.
+
 **2.4.3** - Extensions become actionable: client decision, workflow checkpoints, persisted
 
 Wires `WorkspaceState` to the Extensions tab, following the reference's shape: a read-only decision badge in the row, editing in the expanded detail.

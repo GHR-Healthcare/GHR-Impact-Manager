@@ -832,7 +832,7 @@
     const $ = (id) => document.getElementById(id);
 
     // App version - loaded from environment variable via API, with fallback
-    let APP_VERSION = '2.4.3';
+    let APP_VERSION = '2.4.4';
 
     const API_BASE_URL = '/api';
     
@@ -5320,45 +5320,175 @@
         lucide.createIcons();
       },
 
+      /* ---- Onboarding: status badge in the row, editing in the detail ----
+       * Same split as Extensions. The reference compares each start against the
+       * one recorded at the previous meeting; no source field carries that, but
+       * workspace_state already stores a revised start per seat — so the last
+       * SAVED start is the previously-recorded start, which is what makes the
+       * reference's "START DATE CHANGED" group derivable rather than invented.
+       */
+      ONB_CATEGORIES: ['None', 'Compliance', 'Clinician', 'Client', 'Onboarding', 'Lack of Onboarding'],
+      ONB_GROUP_ORDER: ['CANCELED', 'DELAYED START', 'START DATE CHANGED', 'ON TRACK'],
+
+      onboardingEdit(r) {
+        const saved = window.store.state.workspaceState?.onboarding?.[r.id]?.state;
+        return {
+          currentStart: saved?.currentStart || r.current_start || '',
+          delayCategory: saved?.delayCategory || 'None',
+          context: saved?.context || '',
+          // The start as recorded last time this seat was saved. Null means it
+          // has never been reviewed, so there is nothing to have moved from.
+          recordedStart: saved?.currentStart || null,
+        };
+      },
+
+      // Slip between what was recorded last time and what the source says now.
+      // Deliberately not "days delayed from the original start" — neither feed
+      // carries an original start date, so that number does not exist.
+      onboardingSlip(r) {
+        const e = View.onboardingEdit(r);
+        if (!e.recordedStart || !r.current_start) return null;
+        const a = Utils.toDateOrNull(e.recordedStart), b = Utils.toDateOrNull(r.current_start);
+        if (!a || !b) return null;
+        return Math.round((b - a) / 86400000);
+      },
+
+      onboardingGroup(r) {
+        if (r.group === 'CANCELED') return 'CANCELED';
+        const slip = View.onboardingSlip(r);
+        if (slip) return 'START DATE CHANGED';
+        if (r.group === 'DELAYED START') return 'DELAYED START';
+        return 'ON TRACK';
+      },
+
+      onboardingDetail(r) {
+        const e = View.onboardingEdit(r);
+        const slip = View.onboardingSlip(r);
+        const meta = window.store.state.workspaceState?.onboarding?.[r.id];
+        const notInData = '<span class="italic text-slate-300" title="Not recorded in B4 or VNDLY">not in data</span>';
+        const metric = (label, value) => `<div class="bg-white border border-slate-200 rounded-lg px-3 py-2">
+            <div class="text-[9px] uppercase tracking-wide text-slate-400 font-semibold">${label}</div>
+            <div class="text-sm font-bold text-slate-800 mt-0.5">${value}</div>
+          </div>`;
+        return `
+          <tr class="bg-slate-50">
+            <td colspan="9" class="px-4 py-4 border-b border-slate-200">
+              <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <div>
+                  <h5 class="text-xs font-bold uppercase tracking-wide text-slate-500 mb-1">Start Status</h5>
+                  <p class="text-[10px] text-slate-400 mb-3">From the source systems. Not editable here.</p>
+                  <div class="grid grid-cols-2 gap-2">
+                    ${metric('Current Start (source)', r.current_start || '—')}
+                    ${metric('Last Recorded Start', e.recordedStart || '<span class="text-slate-300">never reviewed</span>')}
+                    ${metric('Original Start', notInData)}
+                    ${metric('Times Moved', r.move_count == null ? notInData : r.move_count)}
+                    ${metric('Moved Since Recorded', slip == null ? '—' : (slip > 0 ? '+' : '') + slip + 'd')}
+                    ${metric('Source Status', r.group || '—')}
+                  </div>
+                  <p class="text-[10px] text-slate-400 mt-3 leading-snug">
+                    Neither feed carries an original start date, so total slip from
+                    the first scheduled date can&rsquo;t be shown &mdash; movement is
+                    measured against the start recorded at the last review.
+                    ${r.move_count == null ? 'Move count is B4-blind: only VNDLY reports start-change events.' : ''}
+                  </p>
+                </div>
+                <div>
+                  <h5 class="text-xs font-bold uppercase tracking-wide text-slate-500 mb-1">Start Date Feedback</h5>
+                  <p class="text-[10px] text-slate-400 mb-3">Update the expected start and record why it moved.</p>
+                  ${slip ? `<div class="mb-3 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-[11px] text-amber-900">
+                      <b>Context required.</b> Last recorded ${e.recordedStart}, source now says ${r.current_start}.
+                      Record why before saving.
+                    </div>` : ''}
+                  <label class="block text-[10px] font-semibold text-slate-500 uppercase tracking-wide mb-1">Current Start Date</label>
+                  <input type="date" class="onb-start w-full bg-white border border-slate-300 rounded-md px-3 py-2 text-sm mb-3"
+                         data-id="${r.id}" value="${(e.currentStart || '').slice(0, 10)}">
+                  <label class="block text-[10px] font-semibold text-slate-500 uppercase tracking-wide mb-1">Delay Category</label>
+                  <select class="onb-category w-full bg-white border border-slate-300 rounded-md px-3 py-2 text-sm mb-3" data-id="${r.id}">
+                    ${View.ONB_CATEGORIES.map(c => `<option ${e.delayCategory === c ? 'selected' : ''}>${c}</option>`).join('')}
+                  </select>
+                  <label class="block text-[10px] font-semibold text-slate-500 uppercase tracking-wide mb-1">Meeting Context</label>
+                  <textarea class="onb-context w-full bg-white border border-slate-300 rounded-md px-3 py-2 text-xs h-20"
+                            data-id="${r.id}" placeholder="Why did the date move? What changed since the last review?">${e.context}</textarea>
+                  <div class="flex items-center gap-3 mt-3">
+                    <button onclick="store.dispatch('SAVE_ONBOARDING','${r.id}')"
+                            class="px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-md text-xs font-semibold shadow-sm">
+                      Save Start Update
+                    </button>
+                    ${meta?.updatedBy ? `<span class="text-[10px] text-slate-400">Last saved by ${meta.updatedBy}${
+                      meta.updatedAt ? ' · ' + new Date(meta.updatedAt).toLocaleString() : ''}</span>` : ''}
+                  </div>
+                </div>
+              </div>
+            </td>
+          </tr>`;
+      },
+
       onboarding() {
         const s = window.store.state;
         const rows = (s.onboardingRows || []).filter(View.stageFilter);
-        const delayed = rows.filter(r => r.group === 'DELAYED START').length;
-        const cancelled = rows.filter(r => r.group === 'CANCELED').length;
+        const delayed = rows.filter(r => View.onboardingGroup(r) === 'DELAYED START').length;
+        const cancelled = rows.filter(r => View.onboardingGroup(r) === 'CANCELED').length;
+        const moved = rows.filter(r => View.onboardingSlip(r)).length;
         const soon = rows.filter(r => r.days_until_start != null && r.days_until_start >= 0 && r.days_until_start <= 7).length;
         const tiles = $('onboardingKpiTiles');
         if (tiles) tiles.innerHTML =
           View.stageTile('Starts In Window', rows.length) +
           View.stageTile('Delayed', delayed, 'flagged by the source', delayed ? 'text-amber-600' : '') +
-          View.stageTile('Cancelled', cancelled, 'never converted', cancelled ? 'text-red-600' : '') +
-          View.stageTile('Starting ≤7 Days', soon);
+          View.stageTile('Moved Since Review', moved, 'needs context', moved ? 'text-red-600' : '') +
+          View.stageTile('Starting ≤7 Days', soon, cancelled ? cancelled + ' cancelled' : '');
 
-        const groupTone = { 'ON TRACK': 'good', 'DELAYED START': 'medium', 'CANCELED': 'bad' };
-        const body = rows.map(r => `
-          <tr class="hover:bg-slate-50 border-b border-slate-100">
-            <td class="px-3 py-2 font-medium text-slate-700 whitespace-nowrap">${r.clinician || '—'}</td>
-            <td class="px-3 py-2 text-slate-500">${r.facility || '—'}</td>
-            <td class="px-3 py-2 text-slate-500">${r.role || '—'}</td>
-            <td class="px-3 py-2 text-center">${View.stageBadge(r.source_system || r.source || '—', 'info')}</td>
-            <td class="px-3 py-2 text-center text-slate-600">${r.current_start || '—'}</td>
-            <td class="px-3 py-2 text-center">${View.stageBadge(r.group || '—', groupTone[r.group] || 'low')}</td>
-            <td class="px-3 py-2 text-slate-500">${r.delay_reason || '—'}</td>
-            <td class="px-3 py-2 text-center text-slate-600">${
-              // Null is meaningful here: B4 cannot say how far a start slipped,
-              // so "not tracked" beats a confident zero.
-              r.movement_tracked === false || r.days_delayed == null
-                ? '<span class="text-slate-300" title="Source does not record slip magnitude">not tracked</span>'
-                : r.days_delayed + 'd'}</td>
-          </tr>`).join('');
+        const tone = { 'ON TRACK': 'good', 'DELAYED START': 'medium', 'START DATE CHANGED': 'high', 'CANCELED': 'bad' };
+        const groups = {};
+        rows.forEach(r => { const g = View.onboardingGroup(r); (groups[g] = groups[g] || []).push(r); });
+        let body = '';
+        View.ONB_GROUP_ORDER.forEach(g => {
+          const list = (groups[g] || []).sort((a, b) => (b.move_count || 0) - (a.move_count || 0));
+          if (!list.length) return;
+          const mv = list.reduce((a, r) => a + (Number(r.move_count) || 0), 0);
+          body += `<tr class="bg-slate-200">
+              <td colspan="9" class="px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-600">
+                ${g} <span class="text-slate-400 font-semibold ml-1">${list.length}</span>
+                ${mv ? `<span class="text-slate-400 font-normal ml-2">${mv} start-date move${mv === 1 ? '' : 's'}</span>` : ''}
+              </td></tr>`;
+          list.forEach(r => {
+            const open = s.expandedOnboarding.has(r.id);
+            const e = View.onboardingEdit(r);
+            const slip = View.onboardingSlip(r);
+            body += `
+              <tr class="hover:bg-slate-50 border-b border-slate-100 cursor-pointer" onclick="store.dispatch('TOGGLE_ONBOARDING_ROW','${r.id}')">
+                <td class="px-3 py-2 text-slate-400">${open ? '&#9660;' : '&#9654;'}</td>
+                <td class="px-3 py-2">
+                  <div class="font-medium text-slate-700">${r.clinician || '—'}</div>
+                  <div class="text-[10px] text-slate-400">${r.facility || '—'} · ${r.role || '—'}</div>
+                </td>
+                <td class="px-3 py-2 text-center">${View.stageBadge(r.source_system || r.source || '—', 'info')}</td>
+                <td class="px-3 py-2 text-center">${View.stageBadge(g, tone[g] || 'low')}</td>
+                <td class="px-3 py-2 text-center text-slate-600">${r.current_start || '—'}</td>
+                <td class="px-3 py-2 text-center text-slate-600">${
+                  r.move_count == null
+                    ? '<span class="text-slate-300" title="Only VNDLY reports start-change events">—</span>'
+                    : r.move_count}</td>
+                <td class="px-3 py-2 text-center">${slip == null
+                    ? '<span class="text-slate-300">—</span>'
+                    : `<span class="${slip >= 7 ? 'text-red-600 font-semibold' : 'text-slate-600'}">${slip > 0 ? '+' : ''}${slip}d</span>`}</td>
+                <td class="px-3 py-2">
+                  <div class="text-slate-700">${e.delayCategory !== 'None' ? e.delayCategory : (r.delay_category || '—')}</div>
+                  <div class="text-[10px] text-slate-400 truncate max-w-[16rem]">${e.context || r.delay_reason || ''}</div>
+                </td>
+                <td class="px-3 py-2 text-slate-500">${r.account_manager || '—'}</td>
+              </tr>`;
+            if (open) body += View.onboardingDetail(r);
+          });
+        });
 
         const el = $('onboardingContent');
         if (el) el.innerHTML = View.stageShell('onboarding', 'Onboarding',
-          'Upcoming and recent starts, with delays as flagged by each source system',
+          'Upcoming and recent starts, grouped by whether the date has moved since it was last reviewed',
           body, [
-            { label: 'Clinician' }, { label: 'Facility' }, { label: 'Role' },
-            { label: 'Source', align: 'center' }, { label: 'Start', align: 'center' },
-            { label: 'Status', align: 'center' }, { label: 'Delay Reason' },
-            { label: 'Slipped', align: 'center' },
+            { label: '' }, { label: 'Clinician' }, { label: 'Source', align: 'center' },
+            { label: 'Status', align: 'center' }, { label: 'Current Start', align: 'center' },
+            { label: 'Moves', align: 'center' }, { label: 'Moved', align: 'center' },
+            { label: 'Delay Reason' }, { label: 'PM' },
           ]);
         lucide.createIcons();
       },
@@ -10449,6 +10579,7 @@
         // WorkspaceState, keyed scope -> entityId -> { state, updatedAt, updatedBy }.
         workspaceState: {},
         expandedExtensions: new Set(),
+        expandedOnboarding: new Set(),
         onboardingRows: [], onboardingMeta: null, onboardingLoaded: false, onboardingError: null,
         closedRows: [], closedMeta: null, closedLoaded: false, closedError: null,
         sort: { key: 'daysPast', dir: 'desc' },
@@ -10635,6 +10766,57 @@
               const val = document.getElementById('searchId').value;
               s.filters.searchId = val.trim().toLowerCase();
               View.main();
+              break;
+            }
+
+            case 'TOGGLE_ONBOARDING_ROW': {
+              if (s.expandedOnboarding.has(payload)) s.expandedOnboarding.delete(payload);
+              else s.expandedOnboarding.add(payload);
+              View.onboarding();
+              break;
+            }
+
+            case 'SAVE_ONBOARDING': {
+              const id = payload;
+              const currentStart = document.querySelector(`.onb-start[data-id="${id}"]`)?.value || '';
+              const delayCategory = document.querySelector(`.onb-category[data-id="${id}"]`)?.value || 'None';
+              const context = document.querySelector(`.onb-context[data-id="${id}"]`)?.value || '';
+              const row = (s.onboardingRows || []).find(r => r.id === id);
+              const moved = View.onboardingSlip(row || {});
+              // The reference requires context when the date has moved since the
+              // last review. Enforce it rather than saving a move with no reason.
+              if (moved && !context.trim()) {
+                window.showToast?.('Add context — the start moved since it was last recorded.', 'error');
+                break;
+              }
+              const state = { currentStart, delayCategory, context };
+              (async () => {
+                try {
+                  const resp = await fetch(`${API_BASE_URL}/workspace-state`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify([{ scope: 'onboarding', entityId: id, state }]),
+                  });
+                  if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                  s.workspaceState.onboarding = s.workspaceState.onboarding || {};
+                  s.workspaceState.onboarding[id] = {
+                    state, updatedAt: new Date().toISOString(),
+                    updatedBy: (typeof getCurrentUser === 'function' ? getCurrentUser() : null),
+                  };
+                  if (s.meeting) {
+                    const who = row ? `${row.clinician || 'seat ' + id}${row.facility ? ' · ' + row.facility : ''}` : `seat ${id}`;
+                    window.store.dispatch('LOG_MEETING_ACTION',
+                      `Start for ${who} recorded as ${currentStart}` +
+                      (delayCategory !== 'None' ? ` (${delayCategory})` : '') +
+                      (moved ? ` — moved ${moved > 0 ? '+' : ''}${moved}d` : ''));
+                  }
+                  window.showToast?.('Start update saved.', 'success');
+                  View.onboarding();
+                } catch (e) {
+                  console.warn('Onboarding save failed:', e);
+                  window.showToast?.('Could not save: ' + (e.message || e), 'error');
+                }
+              })();
               break;
             }
 
