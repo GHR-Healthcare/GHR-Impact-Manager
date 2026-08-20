@@ -841,7 +841,7 @@
     const $ = (id) => document.getElementById(id);
 
     // App version - loaded from environment variable via API, with fallback
-    let APP_VERSION = '2.4.13';
+    let APP_VERSION = '2.4.14';
 
     const API_BASE_URL = '/api';
     
@@ -2575,117 +2575,6 @@
 
       // Is this agency string us? GHR or Planet Healthcare, matching how the
       // rest of the app already tests it (per-diem, stats, candidate rows).
-      /* ------------------------------- CHART BONES -------------------------------
-       * Inline SVG, no library — matching how the reference drew these.
-       *
-       * These are scaffolding: the shapes are real and driven by real fields, but
-       * the questions they answer are still open (see the notes on each caller).
-       * Nothing here invents data — a segment with no value is omitted rather
-       * than shown as zero, and an empty set renders an explicit empty state.
-       */
-      // Compact analysis strip above a stage table. Collapsible, because the
-      // table is the working surface and these are context.
-      intelStrip(key, panels) {
-        const live = (panels || []).filter(Boolean);
-        if (!live.length) return '';
-        const open = window.store.state.intelOpen?.[key] !== false;
-        return `
-          <div class="mb-3 shrink-0 rounded-lg border border-slate-200 bg-white">
-            <button onclick="store.dispatch('TOGGLE_INTEL','${key}')"
-                    class="w-full flex items-center justify-between px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-500 hover:text-slate-700">
-              <span>Analysis</span>
-              <span class="text-slate-400">${open ? '&#9660;' : '&#9654;'}</span>
-            </button>
-            ${open ? `<div class="flex flex-wrap gap-6 px-4 pb-4 pt-1">${live.join('')}</div>` : ''}
-          </div>`;
-      },
-
-      intelPanel(title, chartHtml, legendHtml, note) {
-        return `
-          <div class="flex flex-col gap-1">
-            <div class="text-[10px] font-semibold uppercase tracking-wide text-slate-400">${title}</div>
-            <div class="flex items-center gap-3">
-              ${chartHtml}
-              ${legendHtml || ''}
-            </div>
-            ${note ? `<div class="text-[9px] text-slate-400 max-w-[15rem] leading-snug">${note}</div>` : ''}
-          </div>`;
-      },
-
-      donutSvg(segments, opts) {
-        const o = opts || {};
-        const size = o.size || 120, thickness = o.thickness || 18;
-        const r = (size - thickness) / 2, cx = size / 2, cy = size / 2;
-        const live = (segments || []).filter(s => Number(s.value) > 0);
-        const total = live.reduce((a, s) => a + Number(s.value), 0);
-        if (!total) {
-          return `<div class="flex items-center justify-center text-[10px] text-slate-400"
-                       style="width:${size}px;height:${size}px">no data</div>`;
-        }
-        const circ = 2 * Math.PI * r;
-        let offset = 0;
-        const arcs = live.map(s => {
-          const frac = Number(s.value) / total;
-          const dash = `${circ * frac} ${circ * (1 - frac)}`;
-          const el = `<circle cx="${cx}" cy="${cy}" r="${r}" fill="none"
-              stroke="${s.color}" stroke-width="${thickness}"
-              stroke-dasharray="${dash}" stroke-dashoffset="${-offset}"
-              transform="rotate(-90 ${cx} ${cy})"><title>${s.label}: ${s.value}</title></circle>`;
-          offset += circ * frac;
-          return el;
-        }).join('');
-        return `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}" role="img"
-                     aria-label="${live.map(s => `${s.label} ${s.value}`).join(', ')}">
-            ${arcs}
-            ${o.centerLabel ? `<text x="${cx}" y="${cy - 2}" text-anchor="middle"
-                 class="fill-slate-800" style="font-size:18px;font-weight:700">${o.centerLabel}</text>
-               <text x="${cx}" y="${cy + 12}" text-anchor="middle"
-                 class="fill-slate-400" style="font-size:8px;text-transform:uppercase">${o.centerSub || ''}</text>` : ''}
-          </svg>`;
-      },
-
-      chartLegend(segments) {
-        return `<div class="flex flex-col gap-1">
-            ${(segments || []).filter(s => Number(s.value) > 0).map(s => `
-              <div class="flex items-center gap-1.5 text-[10px] text-slate-600 whitespace-nowrap">
-                <span class="w-2.5 h-2.5 rounded-sm" style="background:${s.color}"></span>
-                <span class="font-medium">${s.label}</span>
-                <span class="text-slate-400">${s.value}</span>
-              </div>`).join('')}
-          </div>`;
-      },
-
-      // Where one value sits inside a distribution. Used for rate rank, where
-      // the peer set is other OPEN JOBS at the same facility — placements carry
-      // no rate field, so a placement-based comparison is not available.
-      rankStripSvg(values, mine, opts) {
-        const o = opts || {};
-        const vals = (values || []).map(Number).filter(v => isFinite(v) && v > 0).sort((a, b) => a - b);
-        if (!vals.length || !isFinite(mine)) {
-          return '<div class="text-[10px] text-slate-400">no comparable rates</div>';
-        }
-        const lo = vals[0], hi = vals[vals.length - 1], span = (hi - lo) || 1;
-        const pos = Math.max(0, Math.min(1, (mine - lo) / span));
-        const rank = vals.filter(v => v > mine).length + 1;
-        const w = o.width || 220;
-        return `
-          <div>
-            <svg width="${w}" height="26" viewBox="0 0 ${w} 26">
-              <line x1="4" y1="13" x2="${w - 4}" y2="13" stroke="#e2e8f0" stroke-width="6" stroke-linecap="round"/>
-              ${vals.map(v => {
-                const x = 4 + ((v - lo) / span) * (w - 8);
-                return `<circle cx="${x.toFixed(1)}" cy="13" r="2.5" fill="#cbd5e1"/>`;
-              }).join('')}
-              <circle cx="${(4 + pos * (w - 8)).toFixed(1)}" cy="13" r="5" fill="#2563eb"/>
-            </svg>
-            <div class="flex justify-between text-[9px] text-slate-400 -mt-1">
-              <span>$${lo.toFixed(0)}</span>
-              <span class="font-bold text-blue-700">#${rank} of ${vals.length}</span>
-              <span>$${hi.toFixed(0)}</span>
-            </div>
-          </div>`;
-      },
-
       isGhrAgency(a) {
         const x = String(a || '').toLowerCase();
         return x.includes('ghr') || x.includes('planet healthcare');
@@ -5383,6 +5272,117 @@
        * rather than fighting the shared #kpiContainer, which belongs to
        * List / Per Diem / Revenue.
        */
+      /* ------------------------------- CHART BONES -------------------------------
+       * Inline SVG, no library — matching how the reference drew these.
+       *
+       * These are scaffolding: the shapes are real and driven by real fields, but
+       * the questions they answer are still open (see the notes on each caller).
+       * Nothing here invents data — a segment with no value is omitted rather
+       * than shown as zero, and an empty set renders an explicit empty state.
+       */
+      // Compact analysis strip above a stage table. Collapsible, because the
+      // table is the working surface and these are context.
+      intelStrip(key, panels) {
+        const live = (panels || []).filter(Boolean);
+        if (!live.length) return '';
+        const open = window.store.state.intelOpen?.[key] !== false;
+        return `
+          <div class="mb-3 shrink-0 rounded-lg border border-slate-200 bg-white">
+            <button onclick="store.dispatch('TOGGLE_INTEL','${key}')"
+                    class="w-full flex items-center justify-between px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-500 hover:text-slate-700">
+              <span>Analysis</span>
+              <span class="text-slate-400">${open ? '&#9660;' : '&#9654;'}</span>
+            </button>
+            ${open ? `<div class="flex flex-wrap gap-6 px-4 pb-4 pt-1">${live.join('')}</div>` : ''}
+          </div>`;
+      },
+
+      intelPanel(title, chartHtml, legendHtml, note) {
+        return `
+          <div class="flex flex-col gap-1">
+            <div class="text-[10px] font-semibold uppercase tracking-wide text-slate-400">${title}</div>
+            <div class="flex items-center gap-3">
+              ${chartHtml}
+              ${legendHtml || ''}
+            </div>
+            ${note ? `<div class="text-[9px] text-slate-400 max-w-[15rem] leading-snug">${note}</div>` : ''}
+          </div>`;
+      },
+
+      donutSvg(segments, opts) {
+        const o = opts || {};
+        const size = o.size || 120, thickness = o.thickness || 18;
+        const r = (size - thickness) / 2, cx = size / 2, cy = size / 2;
+        const live = (segments || []).filter(s => Number(s.value) > 0);
+        const total = live.reduce((a, s) => a + Number(s.value), 0);
+        if (!total) {
+          return `<div class="flex items-center justify-center text-[10px] text-slate-400"
+                       style="width:${size}px;height:${size}px">no data</div>`;
+        }
+        const circ = 2 * Math.PI * r;
+        let offset = 0;
+        const arcs = live.map(s => {
+          const frac = Number(s.value) / total;
+          const dash = `${circ * frac} ${circ * (1 - frac)}`;
+          const el = `<circle cx="${cx}" cy="${cy}" r="${r}" fill="none"
+              stroke="${s.color}" stroke-width="${thickness}"
+              stroke-dasharray="${dash}" stroke-dashoffset="${-offset}"
+              transform="rotate(-90 ${cx} ${cy})"><title>${s.label}: ${s.value}</title></circle>`;
+          offset += circ * frac;
+          return el;
+        }).join('');
+        return `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}" role="img"
+                     aria-label="${live.map(s => `${s.label} ${s.value}`).join(', ')}">
+            ${arcs}
+            ${o.centerLabel ? `<text x="${cx}" y="${cy - 2}" text-anchor="middle"
+                 class="fill-slate-800" style="font-size:18px;font-weight:700">${o.centerLabel}</text>
+               <text x="${cx}" y="${cy + 12}" text-anchor="middle"
+                 class="fill-slate-400" style="font-size:8px;text-transform:uppercase">${o.centerSub || ''}</text>` : ''}
+          </svg>`;
+      },
+
+      chartLegend(segments) {
+        return `<div class="flex flex-col gap-1">
+            ${(segments || []).filter(s => Number(s.value) > 0).map(s => `
+              <div class="flex items-center gap-1.5 text-[10px] text-slate-600 whitespace-nowrap">
+                <span class="w-2.5 h-2.5 rounded-sm" style="background:${s.color}"></span>
+                <span class="font-medium">${s.label}</span>
+                <span class="text-slate-400">${s.value}</span>
+              </div>`).join('')}
+          </div>`;
+      },
+
+      // Where one value sits inside a distribution. Used for rate rank, where
+      // the peer set is other OPEN JOBS at the same facility — placements carry
+      // no rate field, so a placement-based comparison is not available.
+      rankStripSvg(values, mine, opts) {
+        const o = opts || {};
+        const vals = (values || []).map(Number).filter(v => isFinite(v) && v > 0).sort((a, b) => a - b);
+        if (!vals.length || !isFinite(mine)) {
+          return '<div class="text-[10px] text-slate-400">no comparable rates</div>';
+        }
+        const lo = vals[0], hi = vals[vals.length - 1], span = (hi - lo) || 1;
+        const pos = Math.max(0, Math.min(1, (mine - lo) / span));
+        const rank = vals.filter(v => v > mine).length + 1;
+        const w = o.width || 220;
+        return `
+          <div>
+            <svg width="${w}" height="26" viewBox="0 0 ${w} 26">
+              <line x1="4" y1="13" x2="${w - 4}" y2="13" stroke="#e2e8f0" stroke-width="6" stroke-linecap="round"/>
+              ${vals.map(v => {
+                const x = 4 + ((v - lo) / span) * (w - 8);
+                return `<circle cx="${x.toFixed(1)}" cy="13" r="2.5" fill="#cbd5e1"/>`;
+              }).join('')}
+              <circle cx="${(4 + pos * (w - 8)).toFixed(1)}" cy="13" r="5" fill="#2563eb"/>
+            </svg>
+            <div class="flex justify-between text-[9px] text-slate-400 -mt-1">
+              <span>$${lo.toFixed(0)}</span>
+              <span class="font-bold text-blue-700">#${rank} of ${vals.length}</span>
+              <span>$${hi.toFixed(0)}</span>
+            </div>
+          </div>`;
+      },
+
       /*
        * Shared table chrome for the stage views, so Closed / Extensions /
        * Onboarding get an identical header rather than three that drift.

@@ -2,6 +2,12 @@
 
 ## Version History
 
+**2.4.14** - Fix: chart helpers were defined on Utils but called as View
+
+`View.donutSvg is not a function` — the 2.4.13 helpers (`donutSvg`, `chartLegend`, `rankStripSvg`, `intelStrip`, `intelPanel`) were inserted next to `Utils.isGhrAgency`, so they landed on **`Utils`** while every caller says `View.`. That threw on Extensions, Onboarding and Closed, which meant those three tabs failed to render at all. Moved to `View`, beside `stageShell` where the other render helpers live.
+
+The reference-check that was supposed to catch this collected method names without tracking which object owned them, so a method on the wrong object looked defined. It's now object-aware: it finds each literal's extent by brace depth and validates `Utils.x` / `View.x` against that object's own members. Re-run across the file, the only unresolved name is `View.stats` in a comment.
+
 **2.4.13** - Chart / intel bones on the stage tabs, for review
 
 Scaffolding for the prototype's charts and intel panes — real shapes driven by real fields, so there's something concrete to react to before deciding what these should actually answer.
