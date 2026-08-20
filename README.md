@@ -2,6 +2,18 @@
 
 ## Version History
 
+**2.4.7** - Interview stage overrides — the last WorkspaceState scope is wired
+
+All five scopes (`lever`, `extension`, `onboarding`, `interview`, `margin`) now have a UI.
+
+- Submissions in the List row's Submission Log get a stage select: `Submitted · Interview Requested · Interview Scheduled · Interview Complete · Offer Pending · Offer Accepted · Post-Offer Decline · Declined`, taking the reference's vocabulary.
+- **Derived by default, overridable on top.** The source systems supply dates, from which a stage is inferable — but a recruiter often knows more than the dates do, and `Interview Requested` has no date field at all. So the derived value is the default, an override sits over it, and the row is tagged `auto` or `manual` so the two are never confused.
+- **Editable for internal submissions only**, as in the reference. An affiliate's pipeline is theirs to report, not ours to overwrite — affiliate rows keep the read-only derived status.
+- The select stops event propagation: the row itself opens the candidate-action modal, so without that, picking a stage would also open a modal.
+- Saves feed the meeting recap like every other mutation.
+
+12 assertions on the derivation precedence (declined beats offer beats interview), override behaviour, key format, and a nameless candidate.
+
 **2.4.6** - Per-view KPI tiles on every tab, and date-only values stop shifting a day
 
 - **Priority Jobs** and **Pending** were the last two tabs with no tiles. Priority Jobs shows jobs / openings / avg days open (flagging how many are 16+) / active submissions; Pending shows pipeline / submitted / offers out / ready-to-onboard with GHR share. Both render into their own wrapper, the pattern Trend and the stage views use, rather than the shared `#kpiContainer` which belongs to List / Per Diem / Revenue. Contracts already rendered its own cards inline. That completes per-view metrics across all ten tabs.

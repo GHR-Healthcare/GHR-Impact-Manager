@@ -834,7 +834,7 @@
     const $ = (id) => document.getElementById(id);
 
     // App version - loaded from environment variable via API, with fallback
-    let APP_VERSION = '2.4.6';
+    let APP_VERSION = '2.4.7';
 
     const API_BASE_URL = '/api';
     
@@ -2546,6 +2546,37 @@
           ...(opts || { month: 'short', day: 'numeric', year: 'numeric' }),
           ...(dateOnly ? { timeZone: 'UTC' } : {}),
         });
+      },
+
+      /*
+       * Interview stage for a submission.
+       *
+       * The source systems give dates (submitted / interview / offer / decline)
+       * from which a stage is derivable — but a recruiter often knows more than
+       * the dates do; "Interview Requested" has no date field at all. So the
+       * derived value is the default and a manual override sits on top, stored
+       * in workspace_state scope 'interview' keyed jobId|candidate.
+       *
+       * Editable only for internal submissions: an affiliate's pipeline is
+       * theirs to report, not ours to overwrite.
+       */
+      INTERVIEW_STAGES: ['Submitted', 'Interview Requested', 'Interview Scheduled',
+                         'Interview Complete', 'Offer Pending', 'Offer Accepted',
+                         'Post-Offer Decline', 'Declined'],
+
+      interviewKey(jobId, c) { return `${jobId}|${(c && c.name) || ''}`; },
+
+      interviewDerivedStage(c) {
+        if (c.isDeclined) return 'Declined';
+        if (c.awardedDate) return 'Offer Accepted';
+        if (c.offerDate) return 'Offer Pending';
+        if (c.interviewDate) return 'Interview Scheduled';
+        return 'Submitted';
+      },
+
+      interviewStage(jobId, c) {
+        const saved = window.store.state.workspaceState?.interview?.[Utils.interviewKey(jobId, c)]?.state;
+        return saved?.stage || Utils.interviewDerivedStage(c);
       },
 
       marginFor(id, job) {
@@ -4966,6 +4997,22 @@
                               centerContent = `<div class="${alertColor} font-bold uppercase tracking-wide truncate" title="${c.alert ? c.alert.text : 'Pending'}">${c.alert ? c.alert.text : 'Pending'}</div>`;
                           }
                           if(c.reqReason) centerContent += `<div class="text-slate-400 italic truncate" title="${c.reqReason}">Req: ${c.reqReason}</div>`;
+                      }
+
+                      // Manual interview stage, internal submissions only. The row itself
+                      // opens the candidate-action modal, so the select stops propagation —
+                      // otherwise picking a stage would also open a modal.
+                      if (isInternal) {
+                        const stage = Utils.interviewStage(job.id, c);
+                        const overridden = !!s.workspaceState?.interview?.[Utils.interviewKey(job.id, c)];
+                        centerContent += `<div class="mt-1 flex items-center gap-1" onclick="event.stopPropagation()">
+                            <select class="text-[10px] border border-slate-300 rounded px-1 py-0.5 bg-white"
+                                    onchange="event.stopPropagation();window.store.dispatch('SAVE_INTERVIEW',{jobId:'${job.id}',name:${JSON.stringify(c.name || '')},stage:this.value})">
+                              ${Utils.INTERVIEW_STAGES.map(o => `<option ${o === stage ? 'selected' : ''}>${o}</option>`).join('')}
+                            </select>
+                            <span class="text-[9px] ${overridden ? 'text-blue-500 font-semibold' : 'text-slate-300'}"
+                                  title="${overridden ? 'Manually set' : 'Derived from the source dates'}">${overridden ? 'manual' : 'auto'}</span>
+                          </div>`;
                       }
 
                       // Right Content: Dates
@@ -10898,6 +10945,34 @@
               const val = document.getElementById('searchId').value;
               s.filters.searchId = val.trim().toLowerCase();
               View.main();
+              break;
+            }
+
+            case 'SAVE_INTERVIEW': {
+              const { jobId, name, stage } = payload || {};
+              const key = `${jobId}|${name || ''}`;
+              (async () => {
+                try {
+                  const resp = await fetch(`${API_BASE_URL}/workspace-state`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify([{ scope: 'interview', entityId: key, state: { stage } }]),
+                  });
+                  if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                  s.workspaceState.interview = s.workspaceState.interview || {};
+                  s.workspaceState.interview[key] = {
+                    state: { stage }, updatedAt: new Date().toISOString(),
+                    updatedBy: (typeof getCurrentUser === 'function' ? getCurrentUser() : null),
+                  };
+                  if (s.meeting) {
+                    window.store.dispatch('LOG_MEETING_ACTION', `${name || 'Candidate'} marked “${stage}” on job ${jobId}`);
+                  }
+                  View.rowUpdate(jobId);
+                } catch (e) {
+                  console.warn('Interview save failed:', e);
+                  window.showToast?.('Could not save: ' + (e.message || e), 'error');
+                }
+              })();
               break;
             }
 

@@ -21,7 +21,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
         other_url = (os.environ.get('OTHER_INSTANCE_URL') or default_other).rstrip('/')
         config = {
             'defaultMargin': os.environ.get('DEFAULT_MARGIN', '25'),
-            'appVersion': os.environ.get('APP_VERSION', '2.4.6'),
+            'appVersion': os.environ.get('APP_VERSION', '2.4.7'),
             # 'msp' (default) or 'non_msp' — frontend uses this to hide tabs
             # that don't apply to the non-MSP instance (Pending, Per Diem).
             'dataSource': ds,
