@@ -267,10 +267,6 @@
                   onclick="store.dispatch('GENERATE_HOT_JOBS_EMAIL')" title="AI Hot Job Summary">
               <i data-lucide="flame" class="w-4 h-4"></i>
           </button>
-          <button class="flex items-center gap-1 sm:gap-2 bg-indigo-600 hover:bg-indigo-700 text-white px-2 sm:px-4 rounded-md shadow-sm text-xs sm:text-sm font-medium transition-colors h-[32px] sm:h-[38px]"
-                  onclick="store.dispatch('GENERATE_SUMMARY')" title="AI Impact Call Summary">
-              <i data-lucide="file-text" class="w-4 h-4"></i>
-          </button>
 
           <button id="privacyBtn"
                   class="flex items-center gap-1 sm:gap-2 bg-slate-700 hover:bg-slate-800 text-white px-2 sm:px-4 rounded-md shadow-sm text-xs sm:text-sm font-medium transition-colors h-[32px] sm:h-[38px]"
@@ -278,9 +274,18 @@
             <i data-lucide="eye-off" id="privacyIcon" class="w-4 h-4 text-red-400"></i>
           </button>
           
-          <button onclick="openHistoryModal()" 
+          <!-- IMPACT meeting controls. These replace the AI Impact Call Summary
+               and Change History buttons, which are retired. Snapshot saving on
+               the /history endpoint is untouched — only its viewer is gone. -->
+          <button id="btnStartMeeting" onclick="store.dispatch('OPEN_MEETING_SETUP')"
+                  class="flex items-center gap-1 sm:gap-2 bg-emerald-600 hover:bg-emerald-700 text-white px-2 sm:px-4 rounded-md shadow-sm text-xs sm:text-sm font-medium transition-colors h-[32px] sm:h-[38px]"
+                  title="Start an IMPACT meeting">
+            <i data-lucide="play-circle" class="w-4 h-4"></i>
+            <span class="hidden sm:inline">Start Meeting</span>
+          </button>
+          <button id="btnMeetingHistory" onclick="store.dispatch('OPEN_MEETING_HISTORY')"
                   class="flex items-center gap-1 sm:gap-2 bg-purple-600 hover:bg-purple-700 text-white px-2 sm:px-4 rounded-md shadow-sm text-xs sm:text-sm font-medium transition-colors h-[32px] sm:h-[38px]"
-                  title="View change history">
+                  title="Past IMPACT meetings">
             <i data-lucide="history" class="w-4 h-4"></i>
           </button>
         </div>
@@ -289,39 +294,58 @@
   </header>
 
   <!-- HISTORY MODAL -->
-  <div id="historyModal" class="hidden fixed inset-0 bg-black/50 z-[90] flex items-center justify-center backdrop-blur-sm">
-    <div class="bg-white rounded-lg shadow-2xl w-11/12 max-w-6xl border border-slate-200 overflow-hidden flex flex-col max-h-[90vh]">
+
+  <!-- IMPACT MEETING: setup, banner and history. The meeting walks the four
+       stage tabs in order, records what was decided, and saves to
+       /api/meetings so a past meeting can be reopened. -->
+  <div id="meetingSetupModal" class="hidden fixed inset-0 bg-black/50 z-[90] flex items-center justify-center backdrop-blur-sm">
+    <div class="bg-white rounded-lg shadow-2xl w-11/12 max-w-lg border border-slate-200 overflow-hidden flex flex-col">
       <div class="bg-slate-100 p-4 border-b border-slate-200 flex justify-between items-center">
-        <h3 class="text-2xl font-bold text-slate-900 flex items-center gap-2">
-          <i data-lucide="history" class="w-6 h-6 text-purple-600"></i> Change History
+        <h3 class="text-lg font-bold text-slate-900 flex items-center gap-2">
+          <i data-lucide="play-circle" class="w-5 h-5 text-emerald-600"></i> Start IMPACT Meeting
         </h3>
-        <button onclick="closeHistoryModal()" class="text-slate-400 hover:text-slate-700">
-          <i data-lucide="x" class="w-6 h-6"></i>
+        <button onclick="store.dispatch('CLOSE_MEETING_SETUP')" class="text-slate-400 hover:text-slate-700">
+          <i data-lucide="x" class="w-5 h-5"></i>
         </button>
       </div>
-      
-      <div class="p-6 overflow-y-auto">
-        <div class="mb-4 flex gap-3">
-          <div class="flex-1">
-            <label class="block text-sm font-medium mb-1">View State At:</label>
-            <select id="historyVersionSelect" onchange="loadHistoricalVersion()" class="w-full border rounded px-3 py-2 text-sm">
-              <option value="">Select a version...</option>
-            </select>
-          </div>
-          <div class="flex items-end gap-2">
-            <button onclick="compareVersions()" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded text-sm font-medium flex items-center gap-1">
-              <i data-lucide="git-compare" class="w-4 h-4"></i> Compare
-            </button>
-            <button onclick="restoreVersion()" class="bg-orange-600 hover:bg-orange-700 text-white px-4 py-2 rounded text-sm font-medium flex items-center gap-1">
-              <i data-lucide="rotate-ccw" class="w-4 h-4"></i> Restore
-            </button>
-          </div>
+      <div class="p-5 space-y-4">
+        <div>
+          <label class="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">Health System</label>
+          <select id="meetingSystemSelect" class="w-full bg-white border border-slate-300 rounded-md px-3 py-2 text-sm"></select>
+          <p class="text-[10px] text-slate-400 mt-1">Scopes the meeting. The filter bar still applies on top.</p>
         </div>
-        
-        <div id="historyContent" class="border rounded-lg p-4 bg-slate-50 min-h-[400px]">
-          <!-- History content loaded here -->
+        <div>
+          <label class="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">Recap Recipients</label>
+          <input id="meetingRecipients" type="text" placeholder="name@ghrhealthcare.com, …"
+                 class="w-full bg-white border border-slate-300 rounded-md px-3 py-2 text-sm">
+        </div>
+        <div>
+          <label class="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">Stages</label>
+          <div id="meetingStagePicks" class="space-y-1.5"></div>
         </div>
       </div>
+      <div class="bg-slate-50 p-4 border-t border-slate-200 flex justify-end gap-2">
+        <button onclick="store.dispatch('CLOSE_MEETING_SETUP')"
+                class="px-3 py-2 text-sm font-medium text-slate-600 hover:text-slate-800">Cancel</button>
+        <button onclick="store.dispatch('START_MEETING')"
+                class="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-md text-sm font-semibold shadow-sm">
+          Start Meeting
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <div id="meetingHistoryModal" class="hidden fixed inset-0 bg-black/50 z-[90] flex items-center justify-center backdrop-blur-sm">
+    <div class="bg-white rounded-lg shadow-2xl w-11/12 max-w-4xl border border-slate-200 overflow-hidden flex flex-col max-h-[90vh]">
+      <div class="bg-slate-100 p-4 border-b border-slate-200 flex justify-between items-center">
+        <h3 class="text-lg font-bold text-slate-900 flex items-center gap-2">
+          <i data-lucide="history" class="w-5 h-5 text-purple-600"></i> Past IMPACT Meetings
+        </h3>
+        <button onclick="store.dispatch('CLOSE_MEETING_HISTORY')" class="text-slate-400 hover:text-slate-700">
+          <i data-lucide="x" class="w-5 h-5"></i>
+        </button>
+      </div>
+      <div id="meetingHistoryBody" class="p-5 overflow-y-auto"></div>
     </div>
   </div>
 
@@ -466,6 +490,7 @@
     </div>
   </div>
 
+  <div id="meetingBanner" class="hidden mb-4"></div>
   <div id="kpiContainer" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-2 sm:gap-4 mb-4 sm:mb-6 shrink-0 min-h-[80px] sm:min-h-[100px]"></div>
 
   <div class="flex flex-col sm:flex-row justify-between items-center mb-4 gap-4 shrink-0">
@@ -807,7 +832,7 @@
     const $ = (id) => document.getElementById(id);
 
     // App version - loaded from environment variable via API, with fallback
-    let APP_VERSION = '2.4.0';
+    let APP_VERSION = '2.4.1';
 
     const API_BASE_URL = '/api';
     
@@ -4264,6 +4289,16 @@
           kpiEl.style.display = kpiViews.has(view) ? '' : 'none';
         }
         if (legendEl) legendEl.style.visibility = (view === 'list' || view === 'hotjobs') ? 'visible' : 'hidden';
+
+        // A meeting in progress follows the nav: clicking a tab that is one of
+        // its stages moves the meeting's pointer, so the banner never disagrees
+        // with what is on screen.
+        const m = s.meeting;
+        if (m) {
+          const i = View.meetingStageList().findIndex(st => st.view === view);
+          if (i >= 0) m.stageIdx = i;
+          View.renderMeetingBanner();
+        }
       },
 
       main() {
@@ -5174,6 +5209,230 @@
             { label: '13-Wk Value', align: 'right' },
           ]);
         lucide.createIcons();
+      },
+
+      /* ------------------------------ IMPACT MEETING ------------------------------
+       * A meeting walks the four stage tabs in order, records what was decided
+       * along the way, and saves to /api/meetings so it can be reopened later.
+       *
+       * Stage order matches the tab order so "next stage" and "next tab" are the
+       * same motion — the meeting drives the nav rather than living beside it.
+       */
+      MEETING_STAGES: [
+        { view: 'closed',     label: 'Closed',     blurb: 'What ended, and why' },
+        { view: 'list',       label: 'Open Jobs',  blurb: 'What needs filling' },
+        { view: 'extensions', label: 'Extensions', blurb: 'Who needs a decision' },
+        { view: 'onboarding', label: 'Onboarding', blurb: 'Who is starting' },
+      ],
+
+      meetingStageList() {
+        const m = window.store.state.meeting;
+        return View.MEETING_STAGES.filter(st => !m || !m.stages || m.stages.includes(st.view));
+      },
+
+      renderMeetingSetup() {
+        const s = window.store.state;
+        const sel = $('meetingSystemSelect');
+        if (sel) {
+          const systems = [...(s.filters.systems || [])].sort();
+          sel.innerHTML = `<option value="">All systems in view</option>` +
+            systems.map(x => `<option value="${x}">${x}</option>`).join('');
+        }
+        const picks = $('meetingStagePicks');
+        if (picks) {
+          picks.innerHTML = View.MEETING_STAGES.map(st => `
+            <label class="flex items-center gap-2 text-sm text-slate-700 cursor-pointer">
+              <input type="checkbox" class="meeting-stage-pick w-4 h-4" value="${st.view}" checked>
+              <span class="font-medium">${st.label}</span>
+              <span class="text-slate-400 text-xs">— ${st.blurb}</span>
+            </label>`).join('');
+        }
+        lucide.createIcons();
+      },
+
+      renderMeetingBanner() {
+        const el = $('meetingBanner');
+        if (!el) return;
+        const m = window.store.state.meeting;
+        if (!m) { el.classList.add('hidden'); el.innerHTML = ''; return; }
+        el.classList.remove('hidden');
+        const stages = View.meetingStageList();
+        const done = m.completed.length;
+        const cur = stages[m.stageIdx];
+        const pct = stages.length ? Math.round((done / stages.length) * 100) : 0;
+        el.innerHTML = `
+          <div class="bg-emerald-50 border border-emerald-200 rounded-lg px-4 py-3">
+            <div class="flex items-center justify-between gap-4 flex-wrap">
+              <div class="flex items-center gap-3">
+                <span class="px-2 py-0.5 rounded-full bg-emerald-600 text-white text-[10px] font-bold uppercase tracking-wide">Meeting</span>
+                <div>
+                  <div class="text-sm font-bold text-emerald-900">
+                    ${cur ? cur.label : 'Complete'}${m.healthSystem ? ` · ${m.healthSystem}` : ''}
+                  </div>
+                  <div class="text-[10px] text-emerald-700">
+                    ${done} of ${stages.length} stages complete${cur ? ` · ${cur.blurb}` : ''}
+                  </div>
+                </div>
+              </div>
+              <div class="flex items-center gap-2">
+                ${stages.map((st, i) => `
+                  <button onclick="store.dispatch('GOTO_MEETING_STAGE',${i})"
+                          title="${st.label}"
+                          class="w-2.5 h-2.5 rounded-full transition-colors ${
+                            m.completed.includes(st.view) ? 'bg-emerald-600'
+                            : i === m.stageIdx ? 'bg-emerald-400 ring-2 ring-emerald-300' : 'bg-emerald-200'}"></button>`).join('')}
+                <span class="text-[10px] font-semibold text-emerald-700 ml-1">${pct}%</span>
+                ${cur ? `<button onclick="store.dispatch('COMPLETE_MEETING_STAGE')"
+                        class="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-md text-xs font-semibold shadow-sm">
+                        ${m.stageIdx >= stages.length - 1 ? 'Finish' : 'Next Stage'}</button>`
+                      : `<button onclick="store.dispatch('END_MEETING')"
+                        class="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-md text-xs font-semibold shadow-sm">
+                        Save &amp; Close</button>`}
+                <button onclick="store.dispatch('END_MEETING')" title="End without finishing"
+                        class="text-emerald-700 hover:text-emerald-900 text-xs font-medium">End</button>
+              </div>
+            </div>
+          </div>`;
+        lucide.createIcons();
+      },
+
+      // Plain-text recap. Deliberately not HTML: it goes in the clipboard and an
+      // email body, and the actions are already plain strings.
+      meetingRecapText(m) {
+        const lines = [
+          `IMPACT Meeting Recap`,
+          m.healthSystem ? `Scope: ${m.healthSystem}` : `Scope: all systems in view`,
+          `Started: ${new Date(m.startedAt).toLocaleString()}`,
+          `Stages completed: ${m.completed.length} of ${View.meetingStageList().length}`,
+          '',
+        ];
+        if (!m.actions.length) lines.push('No actions were recorded.');
+        else {
+          const byStage = {};
+          m.actions.forEach(a => { (byStage[a.stage] = byStage[a.stage] || []).push(a); });
+          Object.keys(byStage).forEach(stage => {
+            lines.push(`${stage}:`);
+            byStage[stage].forEach(a => lines.push(`  • ${a.text}`));
+            lines.push('');
+          });
+        }
+        return lines.join('\n');
+      },
+
+      async saveMeeting(m, ended) {
+        try {
+          const resp = await fetch(`${API_BASE_URL}/meetings`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              meetingId: m.id,
+              healthSystem: m.healthSystem || null,
+              facilities: [...(window.store.state.filterSelection.facilities || [])],
+              recipients: m.recipients || null,
+              stage: m.stageIdx,
+              completed: m.completed,
+              actions: m.actions,
+              recapHtml: ended ? View.meetingRecapText(m) : null,
+              startedAt: m.startedAt,
+              endedAt: ended ? new Date().toISOString() : null,
+            }),
+          });
+          if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+          return true;
+        } catch (e) {
+          console.warn('Meeting save failed:', e);
+          window.showToast?.('Meeting could not be saved: ' + (e.message || e), 'error');
+          return false;
+        }
+      },
+
+      async renderMeetingHistory() {
+        const body = $('meetingHistoryBody');
+        if (!body) return;
+        body.innerHTML = `<div class="text-slate-500 text-sm">Loading…</div>`;
+        try {
+          const resp = await fetch(`${API_BASE_URL}/meetings?limit=50`);
+          if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+          const rows = await resp.json();
+          if (!Array.isArray(rows) || !rows.length) {
+            body.innerHTML = `<div class="text-center text-slate-400 text-sm py-8">No meetings recorded yet.</div>`;
+            return;
+          }
+          body.innerHTML = `
+            <div class="rounded-lg border border-slate-200 overflow-hidden divide-y divide-slate-100">
+              ${rows.map(r => `
+                <button onclick="store.dispatch('VIEW_MEETING','${r.meeting_id}')"
+                        class="w-full text-left px-4 py-3 hover:bg-slate-50 flex items-center justify-between gap-4">
+                  <div>
+                    <div class="text-sm font-semibold text-slate-700">
+                      ${r.health_system || 'All systems'}
+                      ${r.ended_at ? '' : '<span class="ml-2 text-[10px] font-bold text-amber-600 uppercase">in progress</span>'}
+                    </div>
+                    <div class="text-[11px] text-slate-400">
+                      ${r.started_at ? new Date(r.started_at).toLocaleString() : '—'}
+                      · ${(r.completed || []).length} stages · ${(r.actions || []).length} actions
+                      ${r.created_by ? ' · ' + r.created_by : ''}
+                    </div>
+                  </div>
+                  <i data-lucide="chevron-right" class="w-4 h-4 text-slate-400"></i>
+                </button>`).join('')}
+            </div>`;
+          lucide.createIcons();
+        } catch (e) {
+          body.innerHTML = `<div class="rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-xs text-amber-900">
+              <div class="font-semibold">Could not load meetings</div>
+              <div class="mt-1 font-mono text-[10px]">${e.message || e}</div>
+            </div>`;
+        }
+      },
+
+      async renderMeetingDetail(id) {
+        const body = $('meetingHistoryBody');
+        if (!body) return;
+        body.innerHTML = `<div class="text-slate-500 text-sm">Loading…</div>`;
+        try {
+          const resp = await fetch(`${API_BASE_URL}/meetings?id=${encodeURIComponent(id)}`);
+          if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+          const m = await resp.json();
+          if (m.error) throw new Error(m.error);
+          body.innerHTML = `
+            <button onclick="store.dispatch('OPEN_MEETING_HISTORY')"
+                    class="text-xs font-semibold text-blue-600 hover:text-blue-800 mb-3 flex items-center gap-1">
+              <i data-lucide="chevron-left" class="w-3 h-3"></i> All meetings
+            </button>
+            <div class="mb-4">
+              <div class="text-base font-bold text-slate-800">${m.health_system || 'All systems'}</div>
+              <div class="text-[11px] text-slate-400">
+                ${m.started_at ? new Date(m.started_at).toLocaleString() : '—'}
+                ${m.ended_at ? ' → ' + new Date(m.ended_at).toLocaleString() : ' · not finished'}
+                ${m.created_by ? ' · ' + m.created_by : ''}
+              </div>
+              ${m.recipients ? `<div class="text-[11px] text-slate-500 mt-1">Recap to: ${m.recipients}</div>` : ''}
+            </div>
+            <div class="flex flex-wrap gap-1.5 mb-4">
+              ${View.MEETING_STAGES.map(st => `
+                <span class="px-2 py-1 rounded text-[10px] font-bold ${
+                  (m.completed || []).includes(st.view)
+                    ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-400'}">${st.label}</span>`).join('')}
+            </div>
+            <h4 class="text-xs font-bold uppercase tracking-wide text-slate-500 mb-2">Actions Recorded</h4>
+            ${(m.actions || []).length
+              ? `<div class="rounded-lg border border-slate-200 divide-y divide-slate-100">
+                  ${m.actions.map(a => `<div class="px-3 py-2 text-xs">
+                      <span class="font-semibold text-slate-500 mr-2">${a.stage || '—'}</span>
+                      <span class="text-slate-700">${a.text || ''}</span>
+                    </div>`).join('')}
+                </div>`
+              : `<div class="text-slate-400 text-xs">Nothing was recorded.</div>`}
+            ${m.recap_html ? `<h4 class="text-xs font-bold uppercase tracking-wide text-slate-500 mt-4 mb-2">Recap As Sent</h4>
+              <pre class="bg-slate-50 border border-slate-200 rounded p-3 text-[11px] whitespace-pre-wrap">${m.recap_html}</pre>` : ''}`;
+          lucide.createIcons();
+        } catch (e) {
+          body.innerHTML = `<div class="rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-xs text-amber-900">
+              <div class="font-semibold">Could not load that meeting</div>
+              <div class="mt-1 font-mono text-[10px]">${e.message || e}</div>
+            </div>`;
+        }
       },
 
       kpis(list) {
@@ -10000,6 +10259,9 @@
         sort: { key: 'daysPast', dir: 'desc' },
         modal: { open: false, type: null, jobId: null, key: null, val: null, candidateIndex: null },
         sessionLog: [],
+        // Active IMPACT meeting, or null. Shape:
+        // { id, healthSystem, recipients, stages[], stageIdx, completed[], actions[], startedAt }
+        meeting: null,
         filename: 'Updated_Positions',
         redactMode: true
       },
@@ -10179,6 +10441,134 @@
               const val = document.getElementById('searchId').value;
               s.filters.searchId = val.trim().toLowerCase();
               View.main();
+              break;
+            }
+
+            case 'OPEN_MEETING_SETUP': {
+              View.renderMeetingSetup();
+              $('meetingSetupModal')?.classList.remove('hidden');
+              break;
+            }
+
+            case 'CLOSE_MEETING_SETUP': {
+              $('meetingSetupModal')?.classList.add('hidden');
+              break;
+            }
+
+            case 'START_MEETING': {
+              const picks = [...document.querySelectorAll('.meeting-stage-pick')]
+                .filter(c => c.checked).map(c => c.value);
+              if (!picks.length) {
+                window.showToast?.('Pick at least one stage.', 'error');
+                break;
+              }
+              const sys = $('meetingSystemSelect')?.value || '';
+              s.meeting = {
+                // Timestamp-based id: the MERGE upserts on it, so saving
+                // repeatedly through a meeting updates one row.
+                id: 'M' + Date.now(),
+                healthSystem: sys || null,
+                recipients: ($('meetingRecipients')?.value || '').trim() || null,
+                stages: picks,
+                stageIdx: 0,
+                completed: [],
+                actions: [],
+                startedAt: new Date().toISOString(),
+              };
+              // Scoping the meeting to a system drives the real filter, so every
+              // tab is already narrowed rather than the banner claiming a scope
+              // the data ignores.
+              if (sys) {
+                s.filterSelection.systems = new Set([sys]);
+                View.updateAllFilterOptions('systems');
+              }
+              $('meetingSetupModal')?.classList.add('hidden');
+              s.view = picks[0];
+              View.saveMeeting(s.meeting, false);
+              View.viewToggle();
+              View.renderMeetingBanner();
+              View.main();
+              break;
+            }
+
+            case 'GOTO_MEETING_STAGE': {
+              const m = s.meeting;
+              if (!m) break;
+              const stages = View.meetingStageList();
+              const st = stages[payload];
+              if (!st) break;
+              m.stageIdx = payload;
+              s.view = st.view;
+              View.viewToggle();
+              View.renderMeetingBanner();
+              View.main();
+              break;
+            }
+
+            case 'COMPLETE_MEETING_STAGE': {
+              const m = s.meeting;
+              if (!m) break;
+              const stages = View.meetingStageList();
+              const st = stages[m.stageIdx];
+              if (st && !m.completed.includes(st.view)) m.completed.push(st.view);
+              if (m.stageIdx < stages.length - 1) {
+                m.stageIdx += 1;
+                s.view = stages[m.stageIdx].view;
+              } else {
+                // Past the last stage: banner switches to Save & Close.
+                m.stageIdx = stages.length;
+              }
+              View.saveMeeting(m, false);
+              View.viewToggle();
+              View.renderMeetingBanner();
+              View.main();
+              break;
+            }
+
+            case 'LOG_MEETING_ACTION': {
+              // Anything the meeting should remember. Only recorded while a
+              // meeting is running, so normal use writes nothing.
+              const m = s.meeting;
+              if (!m || !payload) break;
+              const stages = View.meetingStageList();
+              m.actions.push({
+                stage: (stages[m.stageIdx] || stages[stages.length - 1] || {}).label || '—',
+                text: String(payload).slice(0, 500),
+                at: new Date().toISOString(),
+              });
+              View.saveMeeting(m, false);
+              break;
+            }
+
+            case 'END_MEETING': {
+              const m = s.meeting;
+              if (!m) break;
+              (async () => {
+                const ok = await View.saveMeeting(m, true);
+                if (ok) {
+                  const recap = View.meetingRecapText(m);
+                  try { await navigator.clipboard.writeText(recap); } catch {}
+                  window.showToast?.('Meeting saved. Recap copied to clipboard.', 'success');
+                }
+                s.meeting = null;
+                View.renderMeetingBanner();
+              })();
+              break;
+            }
+
+            case 'OPEN_MEETING_HISTORY': {
+              $('meetingHistoryModal')?.classList.remove('hidden');
+              View.renderMeetingHistory();
+              break;
+            }
+
+            case 'CLOSE_MEETING_HISTORY': {
+              $('meetingHistoryModal')?.classList.add('hidden');
+              break;
+            }
+
+            case 'VIEW_MEETING': {
+              View.renderMeetingDetail(payload);
               break;
             }
 
@@ -10634,36 +11024,6 @@
               break;
             }
 
-            case 'GENERATE_SUMMARY': {
-              const txt = $('summaryText');
-              if (!txt) break;
-
-              if (s.sessionLog.length === 0) txt.value = "No actions recorded this session.";
-              else {
-                const grouped = {};
-                s.sessionLog.forEach(item => {
-                  grouped[item.jobId] = grouped[item.jobId] || [];
-                  grouped[item.jobId].push(item);
-                });
-
-                let report = `GHR Impact Manager. Session Summary\nDate: ${new Date().toLocaleString()}\n----------------------------------------\n`;
-                Object.keys(grouped).forEach(id => {
-                  const job = s.jobs.find(j => j.id === id);
-                  report += `\nJob #${id}. ${job?.specialty || 'Unknown'}\n${job?.facility ? '(' + job.facility + ')' : ''}\n`;
-                  grouped[id].forEach(a => {
-                    let line = `  • ${a.type}`;
-                    if (a.desc) line += `: ${a.desc}`;
-                    if (a.tag) line += ` (@${a.tag})`;
-                    report += line + '\n';
-                  });
-                });
-
-                txt.value = report;
-              }
-
-              this.dispatch('OPEN_MODAL', { type: 'summary' });
-              break;
-            }
 
             case 'GENERATE_HOT_JOBS_EMAIL': {
               const hotJobs = View.getFilteredJobs(s).filter(j => j.levers && j.levers.hotJob && j.levers.hotJob.done);
@@ -10834,64 +11194,7 @@
     
     let currentHistoryVersion = null;
     
-    window.openHistoryModal = async function() {
-        try {
-            document.getElementById('historyModal').classList.remove('hidden');
-            
-            // Load history versions
-            try {
-                const response = await fetch(DB_CONFIG.historyEndpoint);
-                if (response.ok) {
-                    historyVersions = await response.json();
-                }
-            } catch (error) {
-                console.warn('Could not load history from database:', error);
-                // Try localStorage in demo mode
-                const localHistory = localStorage.getItem('ghr_demo_history');
-                if (localHistory) {
-                    historyVersions = JSON.parse(localHistory);
-                } else {
-                    historyVersions = [];
-                }
-            }
-            
-            // Sort by timestamp descending (most recent first)
-            // Handle both 'timestamp' and 'snapshot_timestamp' field names from API
-            historyVersions.sort((a, b) => {
-                const dateA = new Date(a.timestamp || a.snapshot_timestamp);
-                const dateB = new Date(b.timestamp || b.snapshot_timestamp);
-                return dateB - dateA;
-            });
-            
-            // Populate dropdown
-            const select = document.getElementById('historyVersionSelect');
-            select.innerHTML = '<option value="">Current State</option>' + 
-                historyVersions.map((v, idx) => {
-                    const dateStr = Utils.formatTimestamp(v.timestamp || v.snapshot_timestamp);
-                    const changeCount = v.changeCount || v.change_count || 0;
-                    return `<option value="${idx}">${dateStr} (${changeCount} changes)</option>`;
-                }).join('');
-            
-            // Show current state by default
-            document.getElementById('historyContent').innerHTML = `
-                <div class="text-center py-8 text-slate-500">
-                    <i data-lucide="clock" class="w-12 h-12 mx-auto mb-3 opacity-50"></i>
-                    <p class="text-lg font-medium">Select a version to view historical data</p>
-                    <p class="text-sm mt-2">${historyVersions.length} versions available</p>
-                </div>
-            `;
-            
-            lucide.createIcons();
-        } catch (error) {
-            console.error('Error opening history modal:', error);
-            window.showToast('Error loading history', 'error');
-        }
-    };
     
-    window.closeHistoryModal = function() {
-        document.getElementById('historyModal').classList.add('hidden');
-        currentHistoryVersion = null;
-    };
     
     // SETTINGS MODAL FUNCTIONS
     
@@ -11503,130 +11806,7 @@
         }
     }
     
-    window.compareVersions = async function() {
-        const select = document.getElementById('historyVersionSelect');
-        const versionIdx = select.value;
-        
-        if (versionIdx === '') {
-            window.showToast('Please select a version to compare with current state', 'info');
-            return;
-        }
-        
-        const historicalVersion = historyVersions[versionIdx];
-        const historicalChanges = historicalVersion.data.changes || [];
-        const currentChanges = changeLog || [];
-        
-        // Find differences by ID
-        const added = currentChanges.filter(c => !historicalChanges.find(h => h.id === c.id));
-        const removed = historicalChanges.filter(h => !currentChanges.find(c => c.id === h.id));
-        
-        // Calculate net change count
-        const netChange = currentChanges.length - historicalChanges.length;
-        const netChangeText = netChange > 0 ? `+${netChange}` : netChange.toString();
-        
-        const content = document.getElementById('historyContent');
-        content.innerHTML = `
-            <div class="mb-4 p-4 bg-purple-50 border-l-4 border-purple-500 rounded">
-                <div class="flex items-center gap-2 text-purple-800 font-bold mb-1">
-                    <i data-lucide="git-compare" class="w-4 h-4"></i>
-                    Comparing Versions
-                </div>
-                <div class="text-sm text-purple-700">
-                    <strong>Historical:</strong> ${Utils.formatTimestamp(historicalVersion.timestamp)} (${historicalChanges.length} changes)<br>
-                    <strong>Current:</strong> ${Utils.formatTimestamp(new Date())} (${currentChanges.length} changes)<br>
-                    <strong>Net Change:</strong> <span class="${netChange >= 0 ? 'text-green-600' : 'text-red-600'}">${netChangeText} changes</span>
-                </div>
-            </div>
-            
-            <div class="grid grid-cols-2 gap-4">
-                <div>
-                    <h4 class="font-bold text-green-700 mb-2 flex items-center gap-2">
-                        <i data-lucide="plus-circle" class="w-4 h-4"></i>
-                        Added Since Then (${added.length})
-                    </h4>
-                    <div class="space-y-2 max-h-[400px] overflow-y-auto">
-                        ${added.length > 0 ? added.map(change => `
-                            <div class="border border-green-300 bg-green-50 rounded p-2 text-sm">
-                                <div class="flex justify-between">
-                                    <span class="font-bold">${change.jobId}</span>
-                                    <span class="text-xs text-slate-500">${Utils.formatTimestamp(change.timestamp)}</span>
-                                </div>
-                                <div class="text-xs text-green-700">${formatChangeData(change)}</div>
-                                <div class="text-xs text-slate-400">By: ${change.user}</div>
-                            </div>
-                        `).join('') : '<div class="text-center py-4 text-slate-400 text-sm">No new changes since this version</div>'}
-                    </div>
-                </div>
-                <div>
-                    <h4 class="font-bold text-red-700 mb-2 flex items-center gap-2">
-                        <i data-lucide="minus-circle" class="w-4 h-4"></i>
-                        Removed (${removed.length})
-                    </h4>
-                    <div class="space-y-2 max-h-[400px] overflow-y-auto">
-                        ${removed.length > 0 ? removed.map(change => `
-                            <div class="border border-red-300 bg-red-50 rounded p-2 text-sm">
-                                <div class="flex justify-between">
-                                    <span class="font-bold">${change.jobId}</span>
-                                    <span class="text-xs text-slate-500">${Utils.formatTimestamp(change.timestamp)}</span>
-                                </div>
-                                <div class="text-xs text-red-700">${formatChangeData(change)}</div>
-                                <div class="text-xs text-slate-400">By: ${change.user}</div>
-                            </div>
-                        `).join('') : '<div class="text-center py-4 text-slate-400 text-sm">No changes removed</div>'}
-                    </div>
-                </div>
-            </div>
-        `;
-        
-        lucide.createIcons();
-    };
     
-    window.restoreVersion = async function() {
-        if (!currentHistoryVersion) {
-            window.showToast('Please select a version to restore', 'info');
-            return;
-        }
-        
-        const confirmMsg = `Are you sure you want to restore to the version from ${Utils.formatTimestamp(currentHistoryVersion.timestamp || currentHistoryVersion.snapshot_timestamp)}?\n\nThis will replace the current state with ${currentHistoryVersion.changeCount || currentHistoryVersion.change_count || 0} changes.`;
-        
-        if (!confirm(confirmMsg)) {
-            return;
-        }
-        
-        try {
-            // Restore the historical changes
-            changeLog = [...currentHistoryVersion.data.changes];
-            
-            // Save to localStorage in demo mode or database
-            try {
-                // Try to save to database
-                await fetch(DB_CONFIG.changesEndpoint, {
-                    method: 'DELETE'
-                });
-                
-                // Re-add all changes
-                for (const change of changeLog) {
-                    await fetch(DB_CONFIG.changesEndpoint, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify(change)
-                    });
-                }
-            } catch (error) {
-                // Fallback to localStorage
-                localStorage.setItem('ghr_demo_changes', JSON.stringify(changeLog));
-            }
-            
-            // Reload data to reflect restored state
-            await window.loadDataFromDatabase();
-            
-            window.showToast('Version restored successfully!', 'success');
-            closeHistoryModal();
-        } catch (error) {
-            console.error('Error restoring version:', error);
-            window.showToast('Error restoring version', 'error');
-        }
-    };
   </script>
 </body>
 </html>

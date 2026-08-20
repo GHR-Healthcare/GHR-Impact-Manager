@@ -2,6 +2,18 @@
 
 ## Version History
 
+**2.4.1** - IMPACT meetings: Start Meeting, guided stages, past-meeting history
+
+Ports the prototype's meeting layer into the existing app, and retires the two buttons it replaced.
+
+- **Start Meeting** opens a scope picker (health system, recap recipients, which of the four stages to walk). Choosing a system sets the real System filter, so every tab is genuinely narrowed rather than the banner claiming a scope the data ignores.
+- **A meeting drives the nav.** Stage order matches tab order, so "next stage" and "next tab" are one motion. The banner shows progress, lets you jump between stages, and follows the nav in reverse too — clicking a tab that is one of the meeting's stages moves the meeting's pointer, so the two can't disagree about what's on screen.
+- **Saves continuously.** `POST /api/meetings` MERGEs on a timestamp id, so starting, each stage completion and finishing all update one row — a meeting interrupted halfway is still there, and shows as `in progress` in history.
+- **Past meetings** are browsable via the history button: list, then detail with the stages completed, every action recorded, and the recap exactly as it was sent. Finishing copies the recap to the clipboard.
+- **Removed**: the AI Impact Call Summary button (`GENERATE_SUMMARY`) and the Change History viewer (button, modal, `openHistoryModal`/`closeHistoryModal`/`compareVersions`/`restoreVersion` — 245 lines). Snapshot *saving* on the `/history` endpoint is untouched; only its viewer is gone. The AI Hot Job Summary button stays, and keeps the shared `#summaryText` container it depends on.
+
+22 assertions across setup, stage walking, recap grouping, the POST envelope, and the history/detail round trip.
+
 **2.4.0** - IMPACT stages merged into the existing app UI
 
 Brings the new functionality from the marketing prototype into the app we already ship, rather than replacing the UI with it. The prototype's own shell is dropped; PR #58 carries only additive backend work plus these native views.
