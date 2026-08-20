@@ -841,7 +841,7 @@
     const $ = (id) => document.getElementById(id);
 
     // App version - loaded from environment variable via API, with fallback
-    let APP_VERSION = '2.4.12';
+    let APP_VERSION = '2.4.13';
 
     const API_BASE_URL = '/api';
     
@@ -2575,6 +2575,117 @@
 
       // Is this agency string us? GHR or Planet Healthcare, matching how the
       // rest of the app already tests it (per-diem, stats, candidate rows).
+      /* ------------------------------- CHART BONES -------------------------------
+       * Inline SVG, no library — matching how the reference drew these.
+       *
+       * These are scaffolding: the shapes are real and driven by real fields, but
+       * the questions they answer are still open (see the notes on each caller).
+       * Nothing here invents data — a segment with no value is omitted rather
+       * than shown as zero, and an empty set renders an explicit empty state.
+       */
+      // Compact analysis strip above a stage table. Collapsible, because the
+      // table is the working surface and these are context.
+      intelStrip(key, panels) {
+        const live = (panels || []).filter(Boolean);
+        if (!live.length) return '';
+        const open = window.store.state.intelOpen?.[key] !== false;
+        return `
+          <div class="mb-3 shrink-0 rounded-lg border border-slate-200 bg-white">
+            <button onclick="store.dispatch('TOGGLE_INTEL','${key}')"
+                    class="w-full flex items-center justify-between px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-500 hover:text-slate-700">
+              <span>Analysis</span>
+              <span class="text-slate-400">${open ? '&#9660;' : '&#9654;'}</span>
+            </button>
+            ${open ? `<div class="flex flex-wrap gap-6 px-4 pb-4 pt-1">${live.join('')}</div>` : ''}
+          </div>`;
+      },
+
+      intelPanel(title, chartHtml, legendHtml, note) {
+        return `
+          <div class="flex flex-col gap-1">
+            <div class="text-[10px] font-semibold uppercase tracking-wide text-slate-400">${title}</div>
+            <div class="flex items-center gap-3">
+              ${chartHtml}
+              ${legendHtml || ''}
+            </div>
+            ${note ? `<div class="text-[9px] text-slate-400 max-w-[15rem] leading-snug">${note}</div>` : ''}
+          </div>`;
+      },
+
+      donutSvg(segments, opts) {
+        const o = opts || {};
+        const size = o.size || 120, thickness = o.thickness || 18;
+        const r = (size - thickness) / 2, cx = size / 2, cy = size / 2;
+        const live = (segments || []).filter(s => Number(s.value) > 0);
+        const total = live.reduce((a, s) => a + Number(s.value), 0);
+        if (!total) {
+          return `<div class="flex items-center justify-center text-[10px] text-slate-400"
+                       style="width:${size}px;height:${size}px">no data</div>`;
+        }
+        const circ = 2 * Math.PI * r;
+        let offset = 0;
+        const arcs = live.map(s => {
+          const frac = Number(s.value) / total;
+          const dash = `${circ * frac} ${circ * (1 - frac)}`;
+          const el = `<circle cx="${cx}" cy="${cy}" r="${r}" fill="none"
+              stroke="${s.color}" stroke-width="${thickness}"
+              stroke-dasharray="${dash}" stroke-dashoffset="${-offset}"
+              transform="rotate(-90 ${cx} ${cy})"><title>${s.label}: ${s.value}</title></circle>`;
+          offset += circ * frac;
+          return el;
+        }).join('');
+        return `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}" role="img"
+                     aria-label="${live.map(s => `${s.label} ${s.value}`).join(', ')}">
+            ${arcs}
+            ${o.centerLabel ? `<text x="${cx}" y="${cy - 2}" text-anchor="middle"
+                 class="fill-slate-800" style="font-size:18px;font-weight:700">${o.centerLabel}</text>
+               <text x="${cx}" y="${cy + 12}" text-anchor="middle"
+                 class="fill-slate-400" style="font-size:8px;text-transform:uppercase">${o.centerSub || ''}</text>` : ''}
+          </svg>`;
+      },
+
+      chartLegend(segments) {
+        return `<div class="flex flex-col gap-1">
+            ${(segments || []).filter(s => Number(s.value) > 0).map(s => `
+              <div class="flex items-center gap-1.5 text-[10px] text-slate-600 whitespace-nowrap">
+                <span class="w-2.5 h-2.5 rounded-sm" style="background:${s.color}"></span>
+                <span class="font-medium">${s.label}</span>
+                <span class="text-slate-400">${s.value}</span>
+              </div>`).join('')}
+          </div>`;
+      },
+
+      // Where one value sits inside a distribution. Used for rate rank, where
+      // the peer set is other OPEN JOBS at the same facility — placements carry
+      // no rate field, so a placement-based comparison is not available.
+      rankStripSvg(values, mine, opts) {
+        const o = opts || {};
+        const vals = (values || []).map(Number).filter(v => isFinite(v) && v > 0).sort((a, b) => a - b);
+        if (!vals.length || !isFinite(mine)) {
+          return '<div class="text-[10px] text-slate-400">no comparable rates</div>';
+        }
+        const lo = vals[0], hi = vals[vals.length - 1], span = (hi - lo) || 1;
+        const pos = Math.max(0, Math.min(1, (mine - lo) / span));
+        const rank = vals.filter(v => v > mine).length + 1;
+        const w = o.width || 220;
+        return `
+          <div>
+            <svg width="${w}" height="26" viewBox="0 0 ${w} 26">
+              <line x1="4" y1="13" x2="${w - 4}" y2="13" stroke="#e2e8f0" stroke-width="6" stroke-linecap="round"/>
+              ${vals.map(v => {
+                const x = 4 + ((v - lo) / span) * (w - 8);
+                return `<circle cx="${x.toFixed(1)}" cy="13" r="2.5" fill="#cbd5e1"/>`;
+              }).join('')}
+              <circle cx="${(4 + pos * (w - 8)).toFixed(1)}" cy="13" r="5" fill="#2563eb"/>
+            </svg>
+            <div class="flex justify-between text-[9px] text-slate-400 -mt-1">
+              <span>$${lo.toFixed(0)}</span>
+              <span class="font-bold text-blue-700">#${rank} of ${vals.length}</span>
+              <span>$${hi.toFixed(0)}</span>
+            </div>
+          </div>`;
+      },
+
       isGhrAgency(a) {
         const x = String(a || '').toLowerCase();
         return x.includes('ghr') || x.includes('planet healthcare');
@@ -5159,6 +5270,24 @@
                                 job.marginOverridden ? 'per-job override' : 'configured default — “~” marks an assumption')}
               ${View.detailStat('GM / Hour', money(gmHr))}
             </div>
+            <div class="mt-4 pt-3 border-t border-slate-200">
+              <div class="text-[10px] font-semibold uppercase tracking-wide text-slate-400 mb-1">Rate Rank</div>
+              ${(() => {
+                // Peer set is other OPEN JOBS at the same facility. Placements
+                // would be the better comparison, but statsData.onAssignment
+                // carries no rate field — so this ranks demand, not placements,
+                // and the note says so rather than implying otherwise.
+                const peers = (window.store.state.jobs || [])
+                  .filter(j => j.facility === job.facility && Number(j.billRate) > 0)
+                  .map(j => Number(j.billRate));
+                return View.rankStripSvg(peers, Number(job.billRate), { width: 240 }) +
+                  `<div class="text-[9px] text-slate-400 mt-1 leading-snug">
+                     Against other open jobs at ${job.facility || 'this facility'}
+                     &mdash; active placements carry no rate in the stats feed,
+                     so this ranks demand rather than placed rates.
+                   </div>`;
+              })()}
+            </div>
             <p class="text-[10px] text-slate-400 mt-3 leading-snug">
               GM% is the configured margin rate (or this job&rsquo;s override), not a value read from the
               source data &mdash; MSP carries no clinician pay rate. The bill/pay split the newer
@@ -5303,7 +5432,7 @@
         return out;
       },
 
-      stageShell(key, title, subtitle, bodyHtml, cols, opts) {
+      stageShell(key, title, subtitle, bodyHtml, cols, intelHtml) {
         const s = window.store.state;
         if (!s[key + 'Loaded']) {
           return `<div class="p-6 text-slate-500 bg-slate-50 border border-slate-200 rounded flex items-center gap-3">
@@ -5355,6 +5484,7 @@
                 <div class="mt-1 font-mono text-[10px] break-all text-amber-800">${err}</div>
               </div>
             </div>` : ''}
+          ${intelHtml || ''}
           <div class="rounded-lg border border-slate-200 flex-1 min-h-0 overflow-auto">
             <table class="w-full text-xs border-separate border-spacing-0">
               <thead class="sticky top-0 z-10">
@@ -5616,9 +5746,30 @@
         });
 
         const el = $('extensionsContent');
+        const urgSeg = [
+          { label: '≤7 days',    value: rows.filter(r => r.days_left != null && r.days_left <= 7).length,  color: '#991b1b' },
+          { label: '8-14 days',  value: rows.filter(r => r.days_left > 7 && r.days_left <= 14).length,     color: '#ef4444' },
+          { label: '15-21 days', value: rows.filter(r => r.days_left > 14 && r.days_left <= 21).length,    color: '#facc15' },
+          { label: '22+ days',   value: rows.filter(r => r.days_left > 21).length,                        color: '#22c55e' },
+        ];
+        const decSeg = View.EXT_DECISIONS.map((d, i) => ({
+          label: d,
+          value: rows.filter(r => View.extensionEdit(r).decision === d).length,
+          color: ['#94a3b8', '#60a5fa', '#3b82f6', '#22c55e', '#ef4444', '#a855f7'][i],
+        }));
+        const intel = View.intelStrip('extensions', [
+          View.intelPanel('Runway',
+            View.donutSvg(urgSeg, { centerLabel: rows.length, centerSub: 'seats' }),
+            View.chartLegend(urgSeg),
+            'Days remaining on the contract. Low is urgent here.'),
+          View.intelPanel('Decision Mix',
+            View.donutSvg(decSeg, { centerLabel: rows.filter(r => View.extensionEdit(r).decision !== 'Not Requested').length, centerSub: 'decided' }),
+            View.chartLegend(decSeg),
+            'Client decision as recorded by the team, not read from a source system.'),
+        ]);
         if (el) el.innerHTML = View.stageShell('extensions', 'Extensions',
           'Assignments approaching their end date, grouped by where the extension decision stands',
-          body, extCols);
+          body, extCols, intel);
         lucide.createIcons();
       },
 
@@ -5804,9 +5955,28 @@
         });
 
         const el = $('onboardingContent');
+        const statusSeg = [
+          { label: 'On Track',    value: rows.filter(r => View.onboardingGroup(r) === 'ON TRACK').length,           color: '#22c55e' },
+          { label: 'Start Moved', value: rows.filter(r => View.onboardingGroup(r) === 'START DATE CHANGED').length, color: '#facc15' },
+          { label: 'Delayed',     value: rows.filter(r => View.onboardingGroup(r) === 'DELAYED START').length,      color: '#ef4444' },
+          { label: 'Cancelled',   value: rows.filter(r => View.onboardingGroup(r) === 'CANCELED').length,           color: '#991b1b' },
+        ];
+        const srcSeg = [
+          { label: 'GHR',       value: rows.filter(r => Utils.isGhrAgency(r.agency)).length,  color: '#3b82f6' },
+          { label: 'Affiliate', value: rows.filter(r => !Utils.isGhrAgency(r.agency)).length, color: '#a855f7' },
+        ];
+        const onbIntel = View.intelStrip('onboarding', [
+          View.intelPanel('Start Status',
+            View.donutSvg(statusSeg, { centerLabel: rows.length, centerSub: 'starts' }),
+            View.chartLegend(statusSeg),
+            'Start Moved is measured against the date recorded at the last review.'),
+          View.intelPanel('Vendor Split',
+            View.donutSvg(srcSeg, { centerLabel: rows.length ? Math.round((srcSeg[0].value / rows.length) * 100) + '%' : '—', centerSub: 'GHR' }),
+            View.chartLegend(srcSeg)),
+        ]);
         if (el) el.innerHTML = View.stageShell('onboarding', 'Onboarding',
           'Upcoming and recent starts, grouped by whether the date has moved since it was last reviewed',
-          body, onbCols);
+          body, onbCols, onbIntel);
         lucide.createIcons();
       },
 
@@ -5861,9 +6031,26 @@
           </tr>`).join('');
 
         const el = $('closedContent');
+        const capSeg = [
+          { label: 'GHR',       value: rows.filter(r => Utils.isGhrAgency(r.agency)).length,  color: '#3b82f6' },
+          { label: 'Affiliate', value: rows.filter(r => !Utils.isGhrAgency(r.agency)).length, color: '#a855f7' },
+        ];
+        const outPalette = ['#22c55e', '#ef4444', '#991b1b', '#94a3b8', '#facc15', '#a855f7', '#0ea5e9'];
+        const outSeg = Object.entries(byGroup).map(([g, v], i) => ({
+          label: g, value: v, color: outPalette[i % outPalette.length],
+        }));
+        const closedIntel = View.intelStrip('closed', [
+          View.intelPanel('Account Capture',
+            View.donutSvg(capSeg, { centerLabel: rows.length ? Math.round((capSeg[0].value / rows.length) * 100) + '%' : '—', centerSub: 'GHR' }),
+            View.chartLegend(capSeg),
+            'GHR share of everything that closed in this window. NOTE: share of SEATS, not of billings — say which you want.'),
+          View.intelPanel('Why It Ended',
+            View.donutSvg(outSeg, { centerLabel: rows.length, centerSub: 'closed' }),
+            View.chartLegend(outSeg)),
+        ]);
         if (el) el.innerHTML = View.stageShell('closed', 'Closed',
           'Assignments that ended, grouped by why — reasons canonicalised across VNDLY spelling variants',
-          body, closedCols);
+          body, closedCols, closedIntel);
         lucide.createIcons();
       },
 
@@ -10995,6 +11182,8 @@
         workspaceState: {},
         expandedExtensions: new Set(),
         expandedOnboarding: new Set(),
+        // Analysis strips default open; collapsed state is per stage view.
+        intelOpen: {},
         onboardingRows: [], onboardingMeta: null, onboardingLoaded: false, onboardingError: null,
         closedRows: [], closedMeta: null, closedLoaded: false, closedError: null,
         sort: { key: 'daysPast', dir: 'desc' },
@@ -11181,6 +11370,12 @@
               const val = document.getElementById('searchId').value;
               s.filters.searchId = val.trim().toLowerCase();
               View.main();
+              break;
+            }
+
+            case 'TOGGLE_INTEL': {
+              s.intelOpen[payload] = s.intelOpen[payload] === false;
+              View[payload]?.();
               break;
             }
 

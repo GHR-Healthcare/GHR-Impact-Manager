@@ -2,6 +2,29 @@
 
 ## Version History
 
+**2.4.13** - Chart / intel bones on the stage tabs, for review
+
+Scaffolding for the prototype's charts and intel panes — real shapes driven by real fields, so there's something concrete to react to before deciding what these should actually answer.
+
+New inline-SVG helpers (no library, as the reference did it): `donutSvg`, `chartLegend`, `rankStripSvg`, plus `intelStrip` / `intelPanel` for a collapsible Analysis strip above each stage table.
+
+| Tab | Panels |
+|---|---|
+| Extensions | **Runway** (days-left bands) · **Decision Mix** (six client-decision values) |
+| Onboarding | **Start Status** (on track / moved / delayed / cancelled) · **Vendor Split** (GHR vs affiliate) |
+| Closed | **Account Capture** (GHR share of closed seats) · **Why It Ended** (outcome groups) |
+| Open Jobs → Rate sub-tab | **Rate Rank** — this job's bill rate against peers, with position and `#n of m` |
+
+Two honesty constraints held throughout: a segment with no value is **omitted** rather than drawn as zero, and an empty set renders an explicit "no data" rather than an empty circle that reads as a real distribution.
+
+**Two open questions marked in the UI rather than guessed:**
+- **Account Capture is share of *seats*, not billings.** The note on the panel says so. Which one you want changes the query, not just the chart.
+- **Rate Rank ranks demand, not placements.** `statsData.onAssignment` carries no rate field, so the peer set is other *open jobs* at the same facility. The note says so. Ranking against placed rates needs a rate added to the stats feed.
+
+Not built, and still needing a decision: `demandIntel` — the prototype's own comment records that it generated candidate names from a seeded list where it had no fixture, so a meeting could be shown invented people beside real counts. That one needs its data source settled before it's worth porting.
+
+22 assertions on the helpers: arc counts, zero-omission, all-zero and null cases, legend filtering, rank position at both extremes, single-peer and no-peer cases, junk filtering, and the collapse state.
+
 **2.4.11** - Coloured legend filters on all four main tabs, banded per tab
 
 The legend chips existed only on Open Jobs. They now appear on Extensions, Onboarding and Closed too — with **bands that mean something on each tab**, following the reference's `LEGEND_PREDICATES` rather than copying one list everywhere.
