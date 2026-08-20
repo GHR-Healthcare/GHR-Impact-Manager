@@ -2,6 +2,20 @@
 
 ## Version History
 
+**2.4.9** - Row-expansion audit: Placements pane was reading fields that don't exist
+
+Audit of the drop-down detail panes across the list views — whether the data each needs actually resolves, and whether every edit reaches the database.
+
+**Bug found and fixed.** The Placements pane read `r.worker_name` and `r.is_ghr` off `statsData.onAssignment`. Neither exists: `GetStatsData` returns `candidate_name` and an agency *string*, on both the MSP and non-MSP paths. So every placement rendered as "Unknown", every row was badged Affiliate, and GHR share was permanently 0%. Its match condition was wrong too — it compared the job **title** against an assignment's care type, which almost never matches, so the pane was usually empty even when comparable placements existed. It now matches on facility plus the job's *structured* specialty where one exists, falls back to facility only where it doesn't, and says which basis it used.
+
+Also added `Utils.isGhrAgency()` rather than a fifth inline copy of the same `includes('ghr') || includes('planet healthcare')` test, and vendor names in that pane now honour `redactMode` like the Submission Log does.
+
+**Mutations verified as persisting.** Levers, job margin, next step and AV-open-date go through `recordChange` → `/changes` (and are replayed on load). Extension decisions, revised starts, interview stages and contract GM overrides go to `workspace_state`. All eight write paths confirmed, all feeding the meeting recap.
+
+**Header alignment.** Stage table headers now use the List tab's treatment (bold / slate-600 / wider tracking / matching padding), so the four tabs read as one table style. Deliberately *not* converted to a `<table>`: the List header, its job rows and its detail wrapper are all `grid grid-cols-12` with 23 `col-span` declarations, so converting the header alone would misalign it from its own rows, and converting all three risks visual regressions in the most-used view — against the "UI shouldn't change much" constraint. The four are already aligned on what matters: frozen header and sortable columns. Per-column filters exist only on the stage tabs because the shared filter bar applies just System and Facility there, whereas on Open Jobs it already applies eight dimensions plus ID search and a day range — strictly richer than a column filter would be.
+
+11 assertions on the Placements pane: correct field reads, GHR/affiliate counting from the agency string (including Planet Healthcare), share maths, both match bases and the disclosure of which was used, redaction, and the empty state.
+
 **2.4.8** - Frozen table headers with per-column sort and filter on the stage tabs; Start Meeting centred
 
 - **Header row freezes.** Closed / Extensions / Onboarding now scroll their rows under a sticky header. Their wrappers were reworked so the KPI tiles stay fixed and the table area is the scroll container — a sticky `thead` sticks to its scrolling ancestor, and the old `overflow-x-auto` wrapper was quietly becoming that ancestor. Open Jobs already had a sticky header, so all four now behave the same.

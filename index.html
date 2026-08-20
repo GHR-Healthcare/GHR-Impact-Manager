@@ -846,7 +846,7 @@
     const $ = (id) => document.getElementById(id);
 
     // App version - loaded from environment variable via API, with fallback
-    let APP_VERSION = '2.4.8';
+    let APP_VERSION = '2.4.9';
 
     const API_BASE_URL = '/api';
     
@@ -5312,7 +5312,11 @@
           const arrow = !sortable ? '' : active
             ? (sort.dir === 'desc' ? ' <span class="text-blue-600">&#9660;</span>' : ' <span class="text-blue-600">&#9650;</span>')
             : ' <span class="text-slate-300">&#8645;</span>';
-          return `<th class="px-3 py-2 text-${c.align || 'left'} font-semibold whitespace-nowrap bg-slate-100 ${
+          // Typography matches the List tab's header (bold / slate-600 /
+          // wider tracking) so the four tabs read as one table style. Kept at
+          // text-xs rather than List's text-sm because these tables carry 8-9
+          // denser columns — sized to their own body text, as List's is.
+          return `<th class="px-3 py-3 text-${c.align || 'left'} font-bold text-slate-600 text-xs uppercase tracking-wider whitespace-nowrap bg-slate-100 border-b border-slate-200 ${
                       sortable ? 'cursor-pointer hover:text-slate-700 select-none' : ''}"
                       ${sortable ? `onclick="store.dispatch('SORT_STAGE',{view:'${key}',label:${JSON.stringify(c.label)}})"` : ''}
                       ${sortable ? `title="Sort by ${c.label || 'this column'}"` : ''}>${c.label}${arrow}</th>`;
@@ -5345,7 +5349,7 @@
           <div class="rounded-lg border border-slate-200 flex-1 min-h-0 overflow-auto">
             <table class="w-full text-xs border-separate border-spacing-0">
               <thead class="sticky top-0 z-10">
-                <tr class="text-slate-500 uppercase tracking-wide text-[10px]">
+                <tr>
                   ${cols.map(th).join('')}
                 </tr>
                 <tr>${cols.map(filterCell).join('')}</tr>
