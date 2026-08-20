@@ -841,7 +841,7 @@
     const $ = (id) => document.getElementById(id);
 
     // App version - loaded from environment variable via API, with fallback
-    let APP_VERSION = '2.4.10';
+    let APP_VERSION = '2.4.11';
 
     const API_BASE_URL = '/api';
     
@@ -4457,7 +4457,21 @@
           kpiEl.style.visibility = kpiViews.has(view) ? 'visible' : 'hidden';
           kpiEl.style.display = kpiViews.has(view) ? '' : 'none';
         }
-        if (legendEl) legendEl.style.visibility = (view === 'list' || view === 'hotjobs') ? 'visible' : 'hidden';
+        // Legend chips are filters, and every view with bands defined gets them.
+        const hasBands = !!View.legendBands();
+        if (legendEl) {
+          legendEl.style.visibility = hasBands ? 'visible' : 'hidden';
+          legendEl.style.display = hasBands ? '' : 'none';
+        }
+        // Band keys are per-view ('e7' means nothing on Onboarding), so a
+        // selection carried across tabs would filter everything out with no
+        // visible chip explaining why. Clear on the way in, then redraw for
+        // whichever view we landed on.
+        if (View.__legendView !== view) {
+          View.__legendView = view;
+          s.filters.legendBands?.clear();
+          if (hasBands) View.legend();
+        }
 
         // A meeting in progress follows the nav: clicking a tab that is one of
         // its stages moves the meeting's pointer, so the banner never disagrees
@@ -5357,6 +5371,7 @@
       // than silently dropping every row.
       stageFilter(r) {
         const s = window.store.state;
+        if (!View.legendMatch(r)) return false;
         const sys = Utils.getHealthSystem(r.facility, r.health_system);
         if (Utils.isHiddenHealthSystem(sys)) return false;
         if (s.filterSelection.systems.size > 0 && !s.filterSelection.systems.has(sys)) return false;
@@ -6171,24 +6186,84 @@
        * competing. Perm is not an age band — it keys off the program name, the
        * same test the row bubble uses (job.program contains "perm").
        */
-      AGING_BUCKETS: [
-        { key: '1-5',  label: '1-5 Days',   dot: 'bg-[#22C55E]', min: 1,  max: 5 },
-        { key: '6-10', label: '6-10 Days',  dot: 'bg-[#FACC15]', min: 6,  max: 10 },
-        { key: '11-15', label: '11-15 Days', dot: 'bg-[#EF4444]', min: 11, max: 15 },
-        { key: '16+',  label: '16+ Days',   dot: 'bg-red-800',   min: 16, max: null },
-        { key: 'perm', label: 'Perm',       dot: 'border border-slate-500 bg-white', perm: true },
-      ],
+      /*
+       * Legend bands per view. The colours mean different things by tab and the
+       * reference treats them accordingly: on Open Jobs a high number is bad
+       * (aging), on Extensions a LOW number is bad (running out of runway), and
+       * Onboarding / Closed band by outcome rather than by days at all. One
+       * shared five-band list would have been wrong on three of the four tabs.
+       *
+       * Chips OR together — picking two bands widens the view rather than
+       * narrowing it to their intersection, which for disjoint day-bands would
+       * always be empty.
+       *
+       * Open Jobs keeps min/max so its chips continue to drive the same
+       * ageMin/ageMax the Days Age inputs write; the other views carry a
+       * predicate because their bands aren't a numeric range on one field.
+       */
+      LEGEND_BANDS: {
+        list: [
+          { key: '1-5',   label: '1-5 Days',   dot: 'bg-[#22C55E]', min: 1,  max: 5 },
+          { key: '6-10',  label: '6-10 Days',  dot: 'bg-[#FACC15]', min: 6,  max: 10 },
+          { key: '11-15', label: '11-15 Days', dot: 'bg-[#EF4444]', min: 11, max: 15 },
+          { key: '16+',   label: '16+ Days',   dot: 'bg-red-800',   min: 16, max: null },
+          { key: 'perm',  label: 'Perm',       dot: 'border border-slate-500 bg-white', perm: true },
+        ],
+        extensions: [
+          { key: 'e7',  label: '≤7 Days Left',    dot: 'bg-red-800',   pred: r => r.days_left != null && r.days_left <= 7 },
+          { key: 'e14', label: '8-14 Days Left',  dot: 'bg-[#EF4444]', pred: r => r.days_left > 7 && r.days_left <= 14 },
+          { key: 'e21', label: '15-21 Days Left', dot: 'bg-[#FACC15]', pred: r => r.days_left > 14 && r.days_left <= 21 },
+          { key: 'e22', label: '22+ Days Left',   dot: 'bg-[#22C55E]', pred: r => r.days_left > 21 },
+        ],
+        onboarding: [
+          { key: 'ontrack', label: 'On Track',    dot: 'bg-[#22C55E]', pred: r => View.onboardingGroup(r) === 'ON TRACK' },
+          { key: 'moved',   label: 'Start Moved', dot: 'bg-[#FACC15]', pred: r => View.onboardingGroup(r) === 'START DATE CHANGED' },
+          { key: 'delayed', label: 'Delayed',     dot: 'bg-[#EF4444]', pred: r => View.onboardingGroup(r) === 'DELAYED START' },
+          { key: 'cancel',  label: 'Cancelled',   dot: 'bg-red-800',   pred: r => View.onboardingGroup(r) === 'CANCELED' },
+        ],
+        closed: [
+          { key: 'lifecycle', label: 'Ran To Term',  dot: 'bg-[#22C55E]', pred: r => /lifecycle|complete/i.test(r.group || '') },
+          { key: 'ended',     label: 'Ended Early',  dot: 'bg-[#EF4444]', pred: r => /terminat|resign/i.test(r.group || '') },
+          { key: 'cancelled', label: 'Cancelled',    dot: 'bg-red-800',   pred: r => /cancel/i.test(r.group || '') },
+          { key: 'admin',     label: 'Administrative', dot: 'bg-slate-400', pred: r => /admin/i.test(r.group || '') },
+        ],
+      },
+
+      legendBands() {
+        // Priority Jobs is Open Jobs filtered, so it shares its bands.
+        const v = window.store.state.view;
+        return View.LEGEND_BANDS[v === 'hotjobs' ? 'list' : v] || null;
+      },
+
+      // OR across selected bands. Returns true when nothing is selected.
+      legendMatch(r) {
+        const sel = window.store.state.filters.legendBands;
+        if (!sel || !sel.size) return true;
+        const bands = View.legendBands();
+        if (!bands) return true;
+        for (const key of sel) {
+          const b = bands.find(x => x.key === key);
+          if (b && b.pred && b.pred(r)) return true;
+        }
+        return false;
+      },
 
       legend() {
         const el = $('legendContainer');
         if (!el) return;
+        const bands = View.legendBands();
+        if (!bands) { el.innerHTML = ''; return; }
         const f = window.store.state.filters;
-        el.innerHTML = View.AGING_BUCKETS.map(b => {
-          const on = b.perm ? f.permOnly === true
-                            : (f.ageMin === b.min && f.ageMax === b.max && !f.permOnly);
-          return `<button type="button" onclick="store.dispatch('TOGGLE_AGE_BUCKET','${b.key}')"
+        el.innerHTML = bands.map(b => {
+          // Open Jobs bands drive ageMin/ageMax (shared with the Days Age
+          // inputs); the other views track selection by band key.
+          const on = b.pred
+            ? !!f.legendBands?.has(b.key)
+            : b.perm ? f.permOnly === true
+                     : (f.ageMin === b.min && f.ageMax === b.max && !f.permOnly);
+          return `<button type="button" onclick="store.dispatch('TOGGLE_LEGEND_BAND','${b.key}')"
               title="${on ? 'Clear this filter' : 'Filter to ' + b.label}"
-              class="flex items-center gap-2 px-2 py-1 rounded-md border transition-colors ${
+              class="flex items-center gap-2 px-2 py-1 rounded-md border transition-colors whitespace-nowrap ${
                 on ? 'bg-blue-50 border-blue-300 text-blue-800 font-semibold'
                    : 'border-transparent hover:bg-slate-50 hover:border-slate-200'}">
               <div class="w-3 h-3 rounded-full ${b.dot}"></div> ${b.label}
@@ -10866,7 +10941,7 @@
         perDiemFromMonth: null,
         perDiemToMonth: null,
         perDiemGHROnly: true,
-        filters: { systems: new Set(), facilities: new Set(), categories: new Set(), specialties: new Set(), ageMin: null, ageMax: null, permOnly: false, searchId: '' },
+        filters: { systems: new Set(), facilities: new Set(), categories: new Set(), specialties: new Set(), ageMin: null, ageMax: null, permOnly: false, legendBands: new Set(), searchId: '' },
         filterSelection: {
           systems: new Set(), facilities: new Set(), categories: new Set(), specialties: new Set(),
           // Non-MSP filter dimensions — populated from the API's division/region/customText fields.
@@ -11400,9 +11475,18 @@
               break;
             }
 
-            case 'TOGGLE_AGE_BUCKET': {
-              const b = View.AGING_BUCKETS.find(x => x.key === payload);
+            case 'TOGGLE_LEGEND_BAND': {
+              const bands = View.legendBands() || [];
+              const b = bands.find(x => x.key === payload);
               if (!b) break;
+              // Predicate bands (Extensions / Onboarding / Closed) OR together.
+              if (b.pred) {
+                if (s.filters.legendBands.has(b.key)) s.filters.legendBands.delete(b.key);
+                else s.filters.legendBands.add(b.key);
+                View.legend();
+                View.main();
+                break;
+              }
               if (b.perm) {
                 s.filters.permOnly = !s.filters.permOnly;
                 if (s.filters.permOnly) { s.filters.ageMin = null; s.filters.ageMax = null; }

@@ -2,6 +2,26 @@
 
 ## Version History
 
+**2.4.11** - Coloured legend filters on all four main tabs, banded per tab
+
+The legend chips existed only on Open Jobs. They now appear on Extensions, Onboarding and Closed too — with **bands that mean something on each tab**, following the reference's `LEGEND_PREDICATES` rather than copying one list everywhere.
+
+| Tab | Bands |
+|---|---|
+| Open Jobs / Priority Jobs | `1-5` · `6-10` · `11-15` · `16+ Days` · `Perm` (aging — high is bad) |
+| Extensions | `≤7` · `8-14` · `15-21` · `22+ Days Left` (runway — **low** is bad) |
+| Onboarding | `On Track` · `Start Moved` · `Delayed` · `Cancelled` |
+| Closed | `Ran To Term` · `Ended Early` · `Cancelled` · `Administrative` |
+
+Reusing Open Jobs' five day-bands everywhere would have been wrong on three of the four tabs: on Extensions a *low* number is the urgent one, and Onboarding and Closed don't band by days at all.
+
+- **Chips OR together**, as in the reference — picking two bands widens the view. Intersecting disjoint day-bands would always be empty.
+- Open Jobs' chips still drive the same `ageMin`/`ageMax` the Days Age inputs write, so those two controls stay in sync; the other tabs carry a predicate, since their bands aren't a numeric range over one field.
+- **Selections clear on tab change.** Band keys are per-view, so a selection carried across tabs would filter everything out with no visible chip explaining why.
+- Trend, Per Diem, Revenue, Contracts and Pending have no bands defined, so the legend hides rather than showing chips that do nothing.
+
+19 assertions across per-view band sets, OR semantics, null handling, outcome predicates, chip rendering and highlight state, and the empty case.
+
 **2.4.10** - One layout across all ten tabs: KPI cards stop moving
 
 The tabs had drifted into three different layouts. KPI cards sat **above** the tab row on List / Per Diem / Revenue (the shared `#kpiContainer`), **inside the panel below the tab row** on Trend / Closed / Extensions / Onboarding / Priority Jobs / Pending, and **inline at the top of the content** on Contracts — with two different card designs between them. Switching tabs moved the cards.
