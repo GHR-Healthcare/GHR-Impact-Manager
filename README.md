@@ -2,6 +2,17 @@
 
 ## Version History
 
+**2.4.2** - Meetings record what changed, not just which stages were walked
+
+`LOG_MEETING_ACTION` existed but nothing called it, so a saved meeting listed the stages you visited and nothing about what you decided in them. Mutations now feed the meeting log through the one function they already all pass through.
+
+- **`recordChange()` is the single funnel.** All six mutation sites already called it to persist; it now also feeds an in-progress meeting. No meeting running means nothing is recorded, so ordinary use is unaffected.
+- **New `describeChange()`** turns a change type + payload into one readable line ("Pulled lever “Hot Job Promotion” on Registered Nurse #371922 · Inspira Medical (owner A Smith)"). One place knows how to word each type, so the recap and any future audit surface read the same way. Unknown types degrade to a sensible sentence rather than throwing.
+- **Recap bookkeeping can't break a save** — the feed is wrapped, so a logging failure never surfaces as a failed mutation.
+- **Retired `sessionLog`.** Its only reader was the AI Call Summary removed in 2.4.1, and it duplicated `job.history`, which is what the per-job history modal actually renders. The parallel array is gone; `job.history` stays.
+
+11 assertions across all four change types, unknown-type fallback, truncation, and the meeting-running / not-running branches.
+
 **2.4.1** - IMPACT meetings: Start Meeting, guided stages, past-meeting history
 
 Ports the prototype's meeting layer into the existing app, and retires the two buttons it replaced.

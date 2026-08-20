@@ -832,7 +832,7 @@
     const $ = (id) => document.getElementById(id);
 
     // App version - loaded from environment variable via API, with fallback
-    let APP_VERSION = '2.4.1';
+    let APP_VERSION = '2.4.2';
 
     const API_BASE_URL = '/api';
     
@@ -2096,6 +2096,49 @@
      * Record a change and save to database
      * Integrated with ConnectionManager for connection tracking
      */
+    /*
+     * Human-readable line for a mutation. One place that knows how to describe
+     * each change type, so the meeting recap and any future audit surface read
+     * the same way instead of each inventing its own wording.
+     */
+    function describeChange(jobId, changeType, changeData) {
+        const d = changeData || {};
+        const s = window.store.state;
+        const job = s.jobs?.find(j => j.id === jobId);
+        const where = job ? `${job.specialty || 'Job'} #${jobId}${job.facility ? ' · ' + job.facility : ''}` : `Job #${jobId}`;
+        const label = k => (CONSTANTS.LEVER_LABELS && CONSTANTS.LEVER_LABELS[k]) || k;
+        switch (changeType) {
+            case 'lever_update':
+                return `${d.done ? 'Pulled' : 'Cleared'} lever “${label(d.leverKey)}” on ${where}` +
+                       (d.done && d.user ? ` (owner ${d.user})` : '');
+            case 'margin_update':
+                return `Margin set to ${d.margin}% on ${where}` + (d.user ? ` (by ${d.user})` : '');
+            case 'next_step_update':
+                return `Next step on ${where}: ${(d.nextStep?.text || '').slice(0, 200)}`;
+            case 'av_open_date_update':
+                return `Opened to affiliate vendors ${d.avOpenDate} on ${where}`;
+            default:
+                return `${changeType.replace(/_/g, ' ')} on ${where}`;
+        }
+    }
+
+    /*
+     * Every mutation the app persists goes through here, so this is also where
+     * an in-progress meeting picks up what was decided. Before this, the
+     * meeting recorded which stages were walked but nothing about what actually
+     * changed during them.
+     */
+    function feedMeetingLog(jobId, changeType, changeData) {
+        const s = window.store.state;
+        if (!s.meeting) return;   // no meeting running: nothing to record
+        try {
+            window.store.dispatch('LOG_MEETING_ACTION', describeChange(jobId, changeType, changeData));
+        } catch (e) {
+            // Never let recap bookkeeping break the save that just succeeded.
+            console.warn('Meeting log skipped:', e);
+        }
+    }
+
     async function recordChange(jobId, changeType, changeData) {
         const change = {
             id: `change-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
@@ -2130,6 +2173,7 @@
 
             // Success - record it and create snapshot
             ConnectionManager.recordSuccess();
+            feedMeetingLog(jobId, changeType, changeData);
             await createHistorySnapshot();
 
             console.log('Recorded change to database:', change);
@@ -10258,7 +10302,6 @@
         closedRows: [], closedMeta: null, closedLoaded: false, closedError: null,
         sort: { key: 'daysPast', dir: 'desc' },
         modal: { open: false, type: null, jobId: null, key: null, val: null, candidateIndex: null },
-        sessionLog: [],
         // Active IMPACT meeting, or null. Shape:
         // { id, healthSystem, recipients, stages[], stageIdx, completed[], actions[], startedAt }
         meeting: null,
@@ -10883,9 +10926,10 @@
 
               const tag = $('leverTagInput')?.value || '';
               const pushLog = (type, desc, tagVal) => {
-                const item = { jobId: job.id, type, desc, tag: tagVal || null, time: new Date().toLocaleString() };
-                s.sessionLog.push(item);
-                job.history.push(item);
+                // job.history is what the per-job history modal renders. The
+                // parallel sessionLog array went with the AI Call Summary that
+                // was its only reader.
+                job.history.push({ jobId: job.id, type, desc, tag: tagVal || null, time: new Date().toLocaleString() });
               };
 
               if (s.modal.type === 'lever') {
@@ -11008,9 +11052,7 @@
               j.levers[payload.key].time = '';
 
               if (!j.history) j.history = [];
-              const logItem = { jobId: j.id, type: 'Undo', desc: `Reverted ${CONSTANTS.LEVER_LABELS[payload.key]}`, tag: null, time: new Date().toLocaleString() };
-              s.sessionLog.push(logItem);
-              j.history.push(logItem);
+              j.history.push({ jobId: j.id, type: 'Undo', desc: `Reverted ${CONSTANTS.LEVER_LABELS[payload.key]}`, tag: null, time: new Date().toLocaleString() });
               
               // Save to database
               recordChange(j.id, 'lever_update', {
