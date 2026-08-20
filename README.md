@@ -2,6 +2,16 @@
 
 ## Version History
 
+**2.4.0** - IMPACT stages merged into the existing app UI
+
+Brings the new functionality from the marketing prototype into the app we already ship, rather than replacing the UI with it. The prototype's own shell is dropped; PR #58 carries only additive backend work plus these native views.
+
+- **Tab bar is now ten tabs**: Closed · Open Jobs · Extensions · Onboarding · Priority Jobs · Trends · Per Diem · Revenue · Contracts · Pending. Hot Jobs → Priority Jobs, Financials → Revenue, Trend → Trends. `viewToggle` was a hand-rolled list where every tab appeared in three places (wrapper toggle, button class, non-MSP hide); it is now driven by a single `View.VIEWS` table, because adding three tabs to the old shape meant remembering all three spots — the same drift that kept losing the GHR/Affiliate guards.
+- **Extensions / Onboarding / Closed** render natively in the app's table + tile idiom, each owning its KPI tiles inside its own wrapper (the pattern Trend already used) rather than competing for the shared `#kpiContainer`. Each loads independently, records its own error, and shows a banner instead of an empty table that reads like a quiet week.
+- **Hidden on non-MSP.** All three read B4 + VNDLY directly with no `is_non_msp` branch, so they join Per Diem and Pending as MSP-only, and a request for one bounces to Open Jobs rather than opening a dead view.
+- **Onboarding shows "not tracked", not zero**, where a source can't say how far a start slipped — B4 has no such field, and a confident `0d` would be a lie.
+- **Row-detail sub-tabs** on the List rows: Levers (the existing panel, still the default) plus Rate, Pipeline and Placements. GM% is the configured margin rate or the per-job override; the bill/pay split the new endpoints return is an MSP *fee* split and is deliberately never labelled as margin.
+
 **2.2.10** - Non-MSP: division rollups (Travel/Planet→Nursing, Human Services→Education, LTC→Non-Acute)
 
 Extends the 2.2.9 alias map with the remaining org changes Bullhorn's `correlatedCustomText1` hasn't caught up with:

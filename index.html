@@ -471,34 +471,49 @@
   <div class="flex flex-col sm:flex-row justify-between items-center mb-4 gap-4 shrink-0">
     <div id="legendContainer" class="flex flex-wrap items-center gap-4 text-xs font-medium text-slate-600 bg-white p-3 rounded-md border border-slate-200 inline-flex shadow-sm min-h-[38px] flex-1"></div>
     <div class="flex items-center gap-3 shrink-0">
-      <div class="flex bg-white border border-slate-200 rounded-lg p-1 shadow-sm" id="viewToggles">
+      <!-- Tab bar. Order and labels are the product spec; the view/button/wrapper
+           wiring lives in View.VIEWS. overflow-x-auto so ten tabs degrade to a
+           scroll on narrow screens instead of breaking the header layout. -->
+      <div class="flex bg-white border border-slate-200 rounded-lg p-1 shadow-sm overflow-x-auto" id="viewToggles">
+        <button onclick="store.dispatch('SET_VIEW','closed')" id="btnViewClosed"
+                class="px-3 py-1.5 text-xs font-bold rounded-md transition-colors text-slate-500 hover:text-slate-700 flex items-center gap-1.5 whitespace-nowrap">
+          <i data-lucide="check-circle" class="w-3.5 h-3.5"></i> Closed
+        </button>
         <button onclick="store.dispatch('SET_VIEW','list')" id="btnViewList"
-                class="px-4 py-1.5 text-xs font-bold rounded-md transition-colors bg-blue-50 text-blue-700 shadow-sm border border-blue-100 flex items-center gap-1.5">
-          <i data-lucide="list" class="w-3.5 h-3.5"></i> List
+                class="px-3 py-1.5 text-xs font-bold rounded-md transition-colors bg-blue-50 text-blue-700 shadow-sm border border-blue-100 flex items-center gap-1.5 whitespace-nowrap">
+          <i data-lucide="list" class="w-3.5 h-3.5"></i> Open Jobs
+        </button>
+        <button onclick="store.dispatch('SET_VIEW','extensions')" id="btnViewExtensions"
+                class="px-3 py-1.5 text-xs font-bold rounded-md transition-colors text-slate-500 hover:text-slate-700 flex items-center gap-1.5 whitespace-nowrap">
+          <i data-lucide="repeat" class="w-3.5 h-3.5"></i> Extensions
+        </button>
+        <button onclick="store.dispatch('SET_VIEW','onboarding')" id="btnViewOnboarding"
+                class="px-3 py-1.5 text-xs font-bold rounded-md transition-colors text-slate-500 hover:text-slate-700 flex items-center gap-1.5 whitespace-nowrap">
+          <i data-lucide="user-check" class="w-3.5 h-3.5"></i> Onboarding
         </button>
         <button onclick="store.dispatch('SET_VIEW','hotjobs')" id="btnViewHot"
-                class="px-4 py-1.5 text-xs font-bold rounded-md transition-colors text-slate-500 hover:text-slate-700 flex items-center gap-1.5">
-          <i data-lucide="flame" class="w-3.5 h-3.5"></i> Hot Jobs
+                class="px-3 py-1.5 text-xs font-bold rounded-md transition-colors text-slate-500 hover:text-slate-700 flex items-center gap-1.5 whitespace-nowrap">
+          <i data-lucide="flame" class="w-3.5 h-3.5"></i> Priority Jobs
         </button>
         <button onclick="store.dispatch('SET_VIEW','trend')" id="btnViewTrend"
-                class="px-4 py-1.5 text-xs font-bold rounded-md transition-colors text-slate-500 hover:text-slate-700 flex items-center gap-1.5">
-          <i data-lucide="trending-up" class="w-3.5 h-3.5"></i> Trend
+                class="px-3 py-1.5 text-xs font-bold rounded-md transition-colors text-slate-500 hover:text-slate-700 flex items-center gap-1.5 whitespace-nowrap">
+          <i data-lucide="trending-up" class="w-3.5 h-3.5"></i> Trends
         </button>
         <button onclick="store.dispatch('SET_VIEW','perdiem')" id="btnViewPerDiem"
-                class="px-4 py-1.5 text-xs font-bold rounded-md transition-colors text-slate-500 hover:text-slate-700 flex items-center gap-1.5">
+                class="px-3 py-1.5 text-xs font-bold rounded-md transition-colors text-slate-500 hover:text-slate-700 flex items-center gap-1.5 whitespace-nowrap">
           <i data-lucide="clock" class="w-3.5 h-3.5"></i> Per Diem
         </button>
-        <button onclick="store.dispatch('SET_VIEW','pending')" id="btnViewPending"
-                class="px-4 py-1.5 text-xs font-bold rounded-md transition-colors text-slate-500 hover:text-slate-700 flex items-center gap-1.5">
-          <i data-lucide="file-clock" class="w-3.5 h-3.5"></i> Pending
-        </button>
         <button onclick="store.dispatch('SET_VIEW','financials')" id="btnViewFinancials"
-                class="px-4 py-1.5 text-xs font-bold rounded-md transition-colors text-slate-500 hover:text-slate-700 flex items-center gap-1.5">
-          <i data-lucide="dollar-sign" class="w-3.5 h-3.5"></i> Financials
+                class="px-3 py-1.5 text-xs font-bold rounded-md transition-colors text-slate-500 hover:text-slate-700 flex items-center gap-1.5 whitespace-nowrap">
+          <i data-lucide="dollar-sign" class="w-3.5 h-3.5"></i> Revenue
         </button>
         <button onclick="store.dispatch('SET_VIEW','contracts')" id="btnViewContracts"
-                class="px-4 py-1.5 text-xs font-bold rounded-md transition-colors text-slate-500 hover:text-slate-700 flex items-center gap-1.5">
+                class="px-3 py-1.5 text-xs font-bold rounded-md transition-colors text-slate-500 hover:text-slate-700 flex items-center gap-1.5 whitespace-nowrap">
           <i data-lucide="file-diff" class="w-3.5 h-3.5"></i> Contracts
+        </button>
+        <button onclick="store.dispatch('SET_VIEW','pending')" id="btnViewPending"
+                class="px-3 py-1.5 text-xs font-bold rounded-md transition-colors text-slate-500 hover:text-slate-700 flex items-center gap-1.5 whitespace-nowrap">
+          <i data-lucide="file-clock" class="w-3.5 h-3.5"></i> Pending
         </button>
       </div>
       <button onclick="exportTravelAgingReport()" id="btnTravelAgingReport"
@@ -578,6 +593,30 @@
     <div id="pendingViewWrapper" class="hidden flex flex-col h-full overflow-hidden bg-white shadow-lg rounded-lg border border-slate-200">
       <div class="flex-1 overflow-y-auto scroller p-6">
         <div id="pendingContent" class="space-y-6"></div>
+      </div>
+    </div>
+
+    <!-- Closed: own KPI tiles + content, same shape as trendViewWrapper. -->
+    <div id="closedViewWrapper" class="hidden flex flex-col h-full overflow-hidden bg-white shadow-lg rounded-lg border border-slate-200">
+      <div class="p-4 overflow-y-auto">
+        <div class="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-4" id="closedKpiTiles"></div>
+        <div id="closedContent"></div>
+      </div>
+    </div>
+
+    <!-- Extensions: own KPI tiles + content, same shape as trendViewWrapper. -->
+    <div id="extensionsViewWrapper" class="hidden flex flex-col h-full overflow-hidden bg-white shadow-lg rounded-lg border border-slate-200">
+      <div class="p-4 overflow-y-auto">
+        <div class="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-4" id="extensionsKpiTiles"></div>
+        <div id="extensionsContent"></div>
+      </div>
+    </div>
+
+    <!-- Onboarding: own KPI tiles + content, same shape as trendViewWrapper. -->
+    <div id="onboardingViewWrapper" class="hidden flex flex-col h-full overflow-hidden bg-white shadow-lg rounded-lg border border-slate-200">
+      <div class="p-4 overflow-y-auto">
+        <div class="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-4" id="onboardingKpiTiles"></div>
+        <div id="onboardingContent"></div>
       </div>
     </div>
 
@@ -768,7 +807,7 @@
     const $ = (id) => document.getElementById(id);
 
     // App version - loaded from environment variable via API, with fallback
-    let APP_VERSION = '2.2.10';
+    let APP_VERSION = '2.4.0';
 
     const API_BASE_URL = '/api';
     
@@ -1684,6 +1723,36 @@
                 window.store.state.trendLoaded = true;
                 window.store.state.trendLoadError = trendError.message || String(trendError);
             }
+
+            // Closed / Extensions / Onboarding — MSP-only stages (these endpoints
+            // read B4 + VNDLY directly). Each is independent: one failing must not
+            // take the others or the rest of the page with it, and each records its
+            // own error so the view can say so instead of rendering an empty table
+            // that looks like a quiet week.
+            const stageLoads = [
+              { key: 'extensions', route: 'extensions-data', pick: d => Array.isArray(d) ? d : (d.rows || []) },
+              { key: 'onboarding', route: 'onboarding-data', pick: d => Array.isArray(d) ? d : (d.rows || []) },
+              { key: 'closed',     route: 'closed-data',     pick: d => d.rows || [], meta: d => d },
+            ];
+            await Promise.all(stageLoads.map(async ({ key, route, pick, meta }) => {
+              try {
+                const resp = await fetch(`${API_BASE_URL}/${route}`);
+                if (!resp.ok) throw new Error(`HTTP ${resp.status} ${resp.statusText}`);
+                const data = await resp.json();
+                if (data && data.error) throw new Error(data.error);
+                window.store.state[key + 'Rows'] = pick(data);
+                window.store.state[key + 'Meta'] = meta ? meta(data) : null;
+                window.store.state[key + 'Error'] = null;
+              } catch (e) {
+                console.warn(`Error loading ${route}:`, e);
+                window.store.state[key + 'Rows'] = [];
+                window.store.state[key + 'Meta'] = null;
+                window.store.state[key + 'Error'] = e.message || String(e);
+              } finally {
+                window.store.state[key + 'Loaded'] = true;
+                if (window.store.state.view === key) window.store.dispatch('REFRESH_UI');
+              }
+            }));
 
             // Load pending submissions data (GHR only)
             try {
@@ -4136,31 +4205,57 @@
         if (!wasOpen) parent.classList.add('open');
       },
 
+      /*
+       * Single source of truth for the tab bar: view key -> button id, wrapper
+       * id, and whether the view exists on the non-MSP instance.
+       *
+       * Was a hand-rolled list where every tab appeared in three separate
+       * places (wrapper toggle, button class, non-MSP hide). Adding tabs to
+       * that meant remembering all three, which is how the GHR/Affiliate
+       * guards kept getting missed in some paths and not others.
+       *
+       * mspOnly: Extensions / Onboarding / Closed read B4 + VNDLY directly
+       * (no is_non_msp branch), and Per Diem / Pending have no non-MSP
+       * equivalent per BULLHORN_PORT_SPEC.md §5 + §8 — so all five are hidden
+       * there rather than opening onto a dead view.
+       */
+      VIEWS: [
+        { key: 'closed',     btn: 'btnViewClosed',     wrap: 'closedViewWrapper',     mspOnly: true },
+        { key: 'list',       btn: 'btnViewList',       wrap: 'listViewWrapper' },
+        { key: 'extensions', btn: 'btnViewExtensions', wrap: 'extensionsViewWrapper', mspOnly: true },
+        { key: 'onboarding', btn: 'btnViewOnboarding', wrap: 'onboardingViewWrapper', mspOnly: true },
+        { key: 'hotjobs',    btn: 'btnViewHot',        wrap: 'hotJobsViewWrapper' },
+        { key: 'trend',      btn: 'btnViewTrend',      wrap: 'trendViewWrapper' },
+        { key: 'perdiem',    btn: 'btnViewPerDiem',    wrap: 'perDiemViewWrapper',    mspOnly: true },
+        { key: 'financials', btn: 'btnViewFinancials', wrap: 'financialsViewWrapper' },
+        { key: 'contracts',  btn: 'btnViewContracts',  wrap: 'contractsViewWrapper' },
+        { key: 'pending',    btn: 'btnViewPending',    wrap: 'pendingViewWrapper',    mspOnly: true },
+      ],
+
       viewToggle() {
-        // Non-MSP instance has no submission funnel and no per-diem actuals
-        // (BULLHORN_PORT_SPEC.md §5 + §8). Hide those tab buttons entirely so
-        // users can't navigate to dead-empty views.
-        const isNonMsp = window.store.state.dataSource === 'non_msp';
-        const btnPerDiemHide = $('btnViewPerDiem');
-        const btnPendingHide = $('btnViewPending');
-        if (btnPerDiemHide) btnPerDiemHide.classList.toggle('hidden', isNonMsp);
-        if (btnPendingHide) btnPendingHide.classList.toggle('hidden', isNonMsp);
+        const s = window.store.state;
+        const isNonMsp = s.dataSource === 'non_msp';
 
-        // If the URL/state somehow landed on a hidden tab, bounce to List.
-        if (isNonMsp && (window.store.state.view === 'perdiem' || window.store.state.view === 'pending')) {
-          window.store.state.view = 'list';
-        }
+        // Bounce off a hidden tab before anything renders it.
+        const current = View.VIEWS.find(v => v.key === s.view);
+        if (isNonMsp && current?.mspOnly) s.view = 'list';
+        const view = s.view;
 
-        const view = window.store.state.view;
-        $('listViewWrapper')?.classList.toggle('hidden', view !== 'list');
-        $('hotJobsViewWrapper')?.classList.toggle('hidden', view !== 'hotjobs');
-        $('financialsViewWrapper')?.classList.toggle('hidden', view !== 'financials');
-        $('perDiemViewWrapper')?.classList.toggle('hidden', view !== 'perdiem');
-        $('trendViewWrapper')?.classList.toggle('hidden', view !== 'trend');
-        $('pendingViewWrapper')?.classList.toggle('hidden', view !== 'pending');
-        $('contractsViewWrapper')?.classList.toggle('hidden', view !== 'contracts');
+        const activeClass = "px-3 py-1.5 text-xs font-bold rounded-md transition-colors bg-blue-50 text-blue-700 shadow-sm border border-blue-100 flex items-center gap-1.5 whitespace-nowrap";
+        const inactiveClass = "px-3 py-1.5 text-xs font-bold rounded-md transition-colors text-slate-500 hover:text-slate-700 flex items-center gap-1.5 whitespace-nowrap";
 
-        // Use visibility to hide KPI and legend on other tabs (preserves layout)
+        View.VIEWS.forEach(v => {
+          const hide = isNonMsp && v.mspOnly;
+          $(v.wrap)?.classList.toggle('hidden', view !== v.key);
+          const btn = $(v.btn);
+          if (btn) {
+            btn.className = (view === v.key ? activeClass : inactiveClass) + (hide ? ' hidden' : '');
+          }
+        });
+
+        // KPI + legend belong to the List/Per Diem/Financials trio. The newer
+        // views render their own tiles inside their own wrapper, the way Trend
+        // already does, so the shared containers stay hidden for them.
         const kpiEl = $('kpiContainer');
         const legendEl = $('legendContainer');
         const kpiViews = new Set(['list', 'perdiem', 'financials']);
@@ -4168,26 +4263,7 @@
           kpiEl.style.visibility = kpiViews.has(view) ? 'visible' : 'hidden';
           kpiEl.style.display = kpiViews.has(view) ? '' : 'none';
         }
-        if (legendEl) legendEl.style.visibility = (view === 'financials' || view === 'perdiem' || view === 'trend' || view === 'pending' || view === 'contracts') ? 'hidden' : 'visible';
-
-        const btnList = $('btnViewList');
-        const btnHot = $('btnViewHot');
-        const btnFinancials = $('btnViewFinancials');
-        const btnPerDiem = $('btnViewPerDiem');
-        const btnTrend = $('btnViewTrend');
-
-        const activeClass = "px-4 py-1.5 text-xs font-bold rounded-md transition-colors bg-blue-50 text-blue-700 shadow-sm border border-blue-100 flex items-center gap-1.5";
-        const inactiveClass = "px-4 py-1.5 text-xs font-bold rounded-md transition-colors text-slate-500 hover:text-slate-700 flex items-center gap-1.5";
-
-        if (btnList) btnList.className = view === 'list' ? activeClass : inactiveClass;
-        if (btnHot) btnHot.className = view === 'hotjobs' ? activeClass : inactiveClass;
-        if (btnFinancials) btnFinancials.className = view === 'financials' ? activeClass : inactiveClass;
-        if (btnPerDiem) btnPerDiem.className = view === 'perdiem' ? activeClass : inactiveClass;
-        if (btnTrend) btnTrend.className = view === 'trend' ? activeClass : inactiveClass;
-        const btnPending = $('btnViewPending');
-        if (btnPending) btnPending.className = view === 'pending' ? activeClass : inactiveClass;
-        const btnContracts = $('btnViewContracts');
-        if (btnContracts) btnContracts.className = view === 'contracts' ? activeClass : inactiveClass;
+        if (legendEl) legendEl.style.visibility = (view === 'list' || view === 'hotjobs') ? 'visible' : 'hidden';
       },
 
       main() {
@@ -4199,6 +4275,9 @@
         else if (v === 'trend') this.trend();
         else if (v === 'pending') this.pending();
         else if (v === 'contracts') this.contracts();
+        else if (v === 'closed') this.closed();
+        else if (v === 'extensions') this.extensions();
+        else if (v === 'onboarding') this.onboarding();
         lucide.createIcons();
       },
 
@@ -4899,6 +4978,200 @@
               Matched on facility + specialty against active assignments, for rate and vendor comparison.
             </p>
           </div>`;
+      },
+
+      /* ---------------- Closed / Extensions / Onboarding stages ----------------
+       * Rendered natively in the app's own table + tile idiom. Each view owns
+       * its KPI tiles inside its own wrapper (the pattern Trend already uses)
+       * rather than fighting the shared #kpiContainer, which belongs to
+       * List / Per Diem / Revenue.
+       */
+      stageTile(label, value, note, color) {
+        return `<div class="bg-white border border-slate-200 rounded-lg px-4 py-3 shadow-sm">
+            <div class="text-[10px] uppercase tracking-wide text-slate-400 font-semibold">${label}</div>
+            <div class="text-2xl font-bold ${color || 'text-slate-800'} mt-0.5">${value}</div>
+            ${note ? `<div class="text-[10px] text-slate-500 mt-1">${note}</div>` : ''}
+          </div>`;
+      },
+
+      // Shared chrome: loading spinner, error banner, empty state, table shell.
+      stageShell(key, title, subtitle, bodyHtml, cols) {
+        const s = window.store.state;
+        if (!s[key + 'Loaded']) {
+          return `<div class="p-6 text-slate-500 bg-slate-50 border border-slate-200 rounded flex items-center gap-3">
+              <svg class="animate-spin h-5 w-5 text-blue-500" viewBox="0 0 24 24" fill="none"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg>
+              Loading ${title.toLowerCase()}…
+            </div>`;
+        }
+        const err = s[key + 'Error'];
+        return `
+          <div class="flex items-center justify-between mb-3 pb-3 border-b border-slate-100">
+            <div>
+              <h2 class="text-lg font-bold text-slate-700">${title}</h2>
+              <p class="text-xs text-slate-400">${subtitle}</p>
+            </div>
+          </div>
+          ${err ? `<div class="mb-4 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 flex items-start gap-3">
+              <i data-lucide="alert-triangle" class="w-4 h-4 text-amber-600 mt-0.5 flex-shrink-0"></i>
+              <div class="text-xs text-amber-900">
+                <div class="font-semibold">${title} failed to load</div>
+                <div class="mt-1 font-mono text-[10px] break-all text-amber-800">${err}</div>
+              </div>
+            </div>` : ''}
+          <div class="rounded-lg border border-slate-200 overflow-x-auto">
+            <table class="w-full text-xs">
+              <thead>
+                <tr class="bg-slate-100 text-slate-500 uppercase tracking-wide text-[10px]">
+                  ${cols.map(c => `<th class="px-3 py-2 text-${c.align || 'left'} font-semibold whitespace-nowrap">${c.label}</th>`).join('')}
+                </tr>
+              </thead>
+              <tbody>${bodyHtml || `<tr><td colspan="${cols.length}" class="px-3 py-8 text-center text-slate-400">Nothing in this window.</td></tr>`}</tbody>
+            </table>
+          </div>`;
+      },
+
+      // Filters a stage row against the shared filter bar. Stage rows carry
+      // health_system / facility, so System and Facility apply; the rest of the
+      // bar keys off fields these feeds don't have and is left alone rather
+      // than silently dropping every row.
+      stageFilter(r) {
+        const s = window.store.state;
+        const sys = Utils.getHealthSystem(r.facility, r.health_system);
+        if (Utils.isHiddenHealthSystem(sys)) return false;
+        if (s.filterSelection.systems.size > 0 && !s.filterSelection.systems.has(sys)) return false;
+        if (s.filterSelection.facilities.size > 0 && r.facility && !s.filterSelection.facilities.has(r.facility)) return false;
+        return true;
+      },
+
+      stageBadge(text, tone) {
+        const tones = {
+          critical: 'bg-red-100 text-red-700', high: 'bg-orange-100 text-orange-700',
+          medium: 'bg-amber-100 text-amber-700', low: 'bg-slate-100 text-slate-600',
+          good: 'bg-emerald-100 text-emerald-700', bad: 'bg-red-100 text-red-700',
+          info: 'bg-blue-100 text-blue-700',
+        };
+        return `<span class="px-1.5 py-0.5 rounded text-[9px] font-bold ${tones[tone] || tones.low}">${text}</span>`;
+      },
+
+      extensions() {
+        const s = window.store.state;
+        const rows = (s.extensionsRows || []).filter(View.stageFilter);
+        const money = v => (v || v === 0) ? '$' + Number(v).toLocaleString(undefined, { maximumFractionDigits: 0 }) : '—';
+        const expiring = rows.filter(r => r.days_left != null && r.days_left <= 14).length;
+        const events = rows.reduce((a, r) => a + (Number(r.extension_events || r.ext_events) || 0), 0);
+        const value = rows.reduce((a, r) => a + (Number(r.extension_value_13wk) || 0), 0);
+        const tiles = $('extensionsKpiTiles');
+        if (tiles) tiles.innerHTML =
+          View.stageTile('Seats In Window', rows.length) +
+          View.stageTile('Expiring ≤14 Days', expiring, 'need a decision', expiring ? 'text-red-600' : '') +
+          View.stageTile('Extension Events', events, 'distinct, de-duplicated') +
+          View.stageTile('13-Week Value', value ? money(value) : '—', 'where hours are known');
+
+        const body = rows.map(r => `
+          <tr class="hover:bg-slate-50 border-b border-slate-100">
+            <td class="px-3 py-2 font-medium text-slate-700 whitespace-nowrap">${r.clinician || '—'}</td>
+            <td class="px-3 py-2 text-slate-500">${r.facility || '—'}</td>
+            <td class="px-3 py-2 text-slate-500">${r.role || r.care_type || '—'}</td>
+            <td class="px-3 py-2 text-center">${View.stageBadge(r.source_system || r.source || '—', 'info')}</td>
+            <td class="px-3 py-2 text-center text-slate-600">${r.end_date || '—'}</td>
+            <td class="px-3 py-2 text-center">${r.days_left != null ? View.stageBadge(r.days_left + 'd', r.urgency || 'low') : '—'}</td>
+            <td class="px-3 py-2 text-center text-slate-600">${r.extension_events || r.ext_events || 0}</td>
+            <td class="px-3 py-2 text-right text-slate-600">${money(r.extension_value_13wk)}</td>
+          </tr>`).join('');
+
+        const el = $('extensionsContent');
+        if (el) el.innerHTML = View.stageShell('extensions', 'Extensions',
+          'Assignments approaching their end date, with extension activity from the VNDLY modifications feed',
+          body, [
+            { label: 'Clinician' }, { label: 'Facility' }, { label: 'Role' },
+            { label: 'Source', align: 'center' }, { label: 'Ends', align: 'center' },
+            { label: 'Days Left', align: 'center' }, { label: 'Ext. Events', align: 'center' },
+            { label: '13-Wk Value', align: 'right' },
+          ]);
+        lucide.createIcons();
+      },
+
+      onboarding() {
+        const s = window.store.state;
+        const rows = (s.onboardingRows || []).filter(View.stageFilter);
+        const delayed = rows.filter(r => r.group === 'DELAYED START').length;
+        const cancelled = rows.filter(r => r.group === 'CANCELED').length;
+        const soon = rows.filter(r => r.days_until_start != null && r.days_until_start >= 0 && r.days_until_start <= 7).length;
+        const tiles = $('onboardingKpiTiles');
+        if (tiles) tiles.innerHTML =
+          View.stageTile('Starts In Window', rows.length) +
+          View.stageTile('Delayed', delayed, 'flagged by the source', delayed ? 'text-amber-600' : '') +
+          View.stageTile('Cancelled', cancelled, 'never converted', cancelled ? 'text-red-600' : '') +
+          View.stageTile('Starting ≤7 Days', soon);
+
+        const groupTone = { 'ON TRACK': 'good', 'DELAYED START': 'medium', 'CANCELED': 'bad' };
+        const body = rows.map(r => `
+          <tr class="hover:bg-slate-50 border-b border-slate-100">
+            <td class="px-3 py-2 font-medium text-slate-700 whitespace-nowrap">${r.clinician || '—'}</td>
+            <td class="px-3 py-2 text-slate-500">${r.facility || '—'}</td>
+            <td class="px-3 py-2 text-slate-500">${r.role || '—'}</td>
+            <td class="px-3 py-2 text-center">${View.stageBadge(r.source_system || r.source || '—', 'info')}</td>
+            <td class="px-3 py-2 text-center text-slate-600">${r.current_start || '—'}</td>
+            <td class="px-3 py-2 text-center">${View.stageBadge(r.group || '—', groupTone[r.group] || 'low')}</td>
+            <td class="px-3 py-2 text-slate-500">${r.delay_reason || '—'}</td>
+            <td class="px-3 py-2 text-center text-slate-600">${
+              // Null is meaningful here: B4 cannot say how far a start slipped,
+              // so "not tracked" beats a confident zero.
+              r.movement_tracked === false || r.days_delayed == null
+                ? '<span class="text-slate-300" title="Source does not record slip magnitude">not tracked</span>'
+                : r.days_delayed + 'd'}</td>
+          </tr>`).join('');
+
+        const el = $('onboardingContent');
+        if (el) el.innerHTML = View.stageShell('onboarding', 'Onboarding',
+          'Upcoming and recent starts, with delays as flagged by each source system',
+          body, [
+            { label: 'Clinician' }, { label: 'Facility' }, { label: 'Role' },
+            { label: 'Source', align: 'center' }, { label: 'Start', align: 'center' },
+            { label: 'Status', align: 'center' }, { label: 'Delay Reason' },
+            { label: 'Slipped', align: 'center' },
+          ]);
+        lucide.createIcons();
+      },
+
+      closed() {
+        const s = window.store.state;
+        const rows = (s.closedRows || []).filter(View.stageFilter);
+        const money = v => (v || v === 0) ? '$' + Number(v).toLocaleString(undefined, { maximumFractionDigits: 0 }) : '—';
+        const byGroup = {};
+        rows.forEach(r => { byGroup[r.group] = (byGroup[r.group] || 0) + 1; });
+        const top = Object.entries(byGroup).sort((a, b) => b[1] - a[1])[0];
+        const windowDays = s.closedMeta?.coverage?.windowDays;
+        const value = rows.reduce((a, r) => a + (Number(r.value_13wk) || 0), 0);
+        const tiles = $('closedKpiTiles');
+        if (tiles) tiles.innerHTML =
+          View.stageTile('Closed In Window', rows.length, windowDays ? `last ${windowDays} days` : '') +
+          View.stageTile('Top Outcome', top ? top[0] : '—', top ? `${top[1]} of ${rows.length}` : '') +
+          View.stageTile('Outcome Types', Object.keys(byGroup).length) +
+          View.stageTile('13-Week Value', value ? money(value) : '—', 'where hours are known');
+
+        const body = rows.map(r => `
+          <tr class="hover:bg-slate-50 border-b border-slate-100">
+            <td class="px-3 py-2 font-medium text-slate-700 whitespace-nowrap">${r.clinician || '—'}</td>
+            <td class="px-3 py-2 text-slate-500">${r.facility || '—'}</td>
+            <td class="px-3 py-2 text-slate-500">${r.role || '—'}</td>
+            <td class="px-3 py-2 text-center">${View.stageBadge(r.source_system || r.source || '—', 'info')}</td>
+            <td class="px-3 py-2 text-center text-slate-600">${r.closed_on || '—'}</td>
+            <td class="px-3 py-2 text-center">${r.group ? View.stageBadge(r.group, 'low') : '—'}</td>
+            <td class="px-3 py-2 text-slate-500">${r.outcome_reason || '—'}</td>
+            <td class="px-3 py-2 text-right text-slate-600">${money(r.value_13wk)}</td>
+          </tr>`).join('');
+
+        const el = $('closedContent');
+        if (el) el.innerHTML = View.stageShell('closed', 'Closed',
+          'Assignments that ended, grouped by why — reasons canonicalised across VNDLY spelling variants',
+          body, [
+            { label: 'Clinician' }, { label: 'Facility' }, { label: 'Role' },
+            { label: 'Source', align: 'center' }, { label: 'Closed', align: 'center' },
+            { label: 'Outcome', align: 'center' }, { label: 'Reason' },
+            { label: '13-Wk Value', align: 'right' },
+          ]);
+        lucide.createIcons();
       },
 
       kpis(list) {
@@ -9698,6 +9971,10 @@
         expandedRows: new Set(),
         rowSubView: {},
         rowDetailTab: {},
+        // Closed / Extensions / Onboarding stage data (MSP-only endpoints).
+        extensionsRows: [], extensionsMeta: null, extensionsLoaded: false, extensionsError: null,
+        onboardingRows: [], onboardingMeta: null, onboardingLoaded: false, onboardingError: null,
+        closedRows: [], closedMeta: null, closedLoaded: false, closedError: null,
         sort: { key: 'daysPast', dir: 'desc' },
         modal: { open: false, type: null, jobId: null, key: null, val: null, candidateIndex: null },
         sessionLog: [],
