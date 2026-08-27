@@ -5726,22 +5726,22 @@
           `<option value="${g}" ${f.status === g ? 'selected' : ''}>${LABELS[g] || g}</option>`
         ).join('');
         return `
-          <div class="flex flex-col gap-1">
+          <div class="flex flex-col gap-1 ml-auto flex-1 min-w-[300px]">
             <div class="text-[10px] font-semibold uppercase tracking-wide text-slate-400">Extension Search</div>
-            <div class="flex items-end gap-2">
-              <div>
+            <div class="flex items-end gap-2 flex-wrap">
+              <div class="flex-1 min-w-[120px]">
                 <label class="${lbl}">End From</label>
-                <input type="date" id="extensionEndFrom" class="${field}" value="${f.endFrom}"
+                <input type="date" id="extensionEndFrom" class="${field} w-full" value="${f.endFrom}"
                        onchange="store.dispatch('SET_EXT_FILTER')">
               </div>
-              <div>
+              <div class="flex-1 min-w-[120px]">
                 <label class="${lbl}">End To</label>
-                <input type="date" id="extensionEndTo" class="${field}" value="${f.endTo}"
+                <input type="date" id="extensionEndTo" class="${field} w-full" value="${f.endTo}"
                        onchange="store.dispatch('SET_EXT_FILTER')">
               </div>
-              <div>
+              <div class="flex-1 min-w-[130px]">
                 <label class="${lbl}">Status</label>
-                <select id="extensionStatusFilter" class="${field}"
+                <select id="extensionStatusFilter" class="${field} w-full"
                         onchange="store.dispatch('SET_EXT_FILTER')">${opts}</select>
               </div>
             </div>
@@ -5929,7 +5929,6 @@
           color: ['#94a3b8', '#60a5fa', '#3b82f6', '#22c55e', '#ef4444', '#a855f7'][i],
         }));
         const intel = View.intelStrip('extensions', [
-          View.extSearchPanel(all.length, rows.length),
           View.intelPanel('Runway',
             View.donutSvg(urgSeg, { centerLabel: rows.length, centerSub: 'seats' }),
             View.chartLegend(urgSeg),
@@ -5938,6 +5937,9 @@
             View.donutSvg(decSeg, { centerLabel: rows.filter(r => View.extensionEdit(r).decision !== 'Not Requested').length, centerSub: 'decided' }),
             View.chartLegend(decSeg),
             'Client decision as recorded by the team, not read from a source system.'),
+          // Last, so the charts keep the left edge; the panel's own ml-auto
+          // pushes it right and flex-1 gives it the remaining width.
+          View.extSearchPanel(all.length, rows.length),
         ]);
         if (el) el.innerHTML = View.stageShell('extensions', 'Extensions',
           'Assignments approaching their end date, grouped by where the extension decision stands',
