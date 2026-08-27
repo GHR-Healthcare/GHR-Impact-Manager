@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>GHR Impact Manager</title>
   <link rel="icon" type="image/x-icon" href="favicon.ico">
+  <link rel="icon" type="image/png" href="ghr-logo.png">
 
   <!-- Libraries -->
   <script src="https://cdn.tailwindcss.com"></script>
@@ -164,13 +165,13 @@
     <div class="flex flex-col sm:flex-row justify-between items-start gap-2 mb-2">
       <div>
         <h1 class="text-xl sm:text-3xl font-bold text-slate-900 flex items-center gap-2 sm:gap-3">
-          <i data-lucide="activity" class="text-blue-600 w-6 h-6 sm:w-8 sm:h-8"></i>
+          <img src="ghr-logo.png" alt="GHR" class="w-7 h-7 sm:w-9 sm:h-9 shrink-0">
           GHR Impact Manager
           <!-- Instance badge — reveal + label from /api/get-config's dataSource. -->
           <span id="instanceBadge" class="hidden text-[10px] sm:text-xs font-semibold uppercase tracking-wide px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-700 border border-indigo-200"></span>
           <span id="versionDisplay" class="text-xs font-normal text-slate-400 ml-1"></span>
         </h1>
-        <p id="appSubtitle" class="text-slate-500 text-xs sm:text-base mt-1 hidden sm:block">High-Performance Optimization Build</p>
+        <p id="appSubtitle" class="text-slate-500 text-xs sm:text-base mt-1 hidden sm:block">Account Performance Workspace</p>
       </div>
       
       <!-- Start Meeting, centred — the primary action on this screen, so it
@@ -179,7 +180,7 @@
         <button id="btnStartMeeting" onclick="store.dispatch('OPEN_MEETING_SETUP')"
                 class="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white px-5 rounded-md shadow-sm text-sm font-semibold transition-colors h-[38px]"
                 title="Start an IMPACT meeting">
-          <i data-lucide="play-circle" class="w-4 h-4"></i> Start Meeting
+          <i data-lucide="play-circle" class="w-4 h-4"></i> Start IMPACT Meeting
         </button>
       </div>
 
@@ -1469,7 +1470,7 @@
                     if (subtitle) {
                         subtitle.textContent = isNonMspHeader
                           ? 'Non-MSP · Bullhorn + Symplr Education book'
-                          : 'High-Performance Optimization Build';
+                          : 'Account Performance Workspace';
                     }
                     // Re-run viewToggle so Pending / Per Diem buttons hide on
                     // the non-MSP instance now that we know which flavor we are.
@@ -5187,40 +5188,132 @@
 
       detailPipelinePane(job) {
         const cands = job.candidates || [];
-        const active = cands.filter(c => !c.isDeclined);
-        // Furthest stage reached per candidate, so the funnel never counts one
-        // person twice.
-        const offered = active.filter(c => c.offerDate || c.awardedDate).length;
-        const interviewed = active.filter(c => c.interviewDate && !c.offerDate && !c.awardedDate).length;
-        const submitted = active.length - offered - interviewed;
-        const declined = cands.filter(c => c.isDeclined).length;
-        const stages = [
-          ['Submitted', submitted, 'bg-blue-500'],
-          ['Interview', interviewed, 'bg-indigo-500'],
-          ['Offer', offered, 'bg-emerald-500'],
-        ];
-        const max = Math.max(1, ...stages.map(x => x[1]));
+        // Stage each candidate through interviewStage(), NOT the raw VMS
+        // interviewDate: B4 submissions carry no interview date column at all,
+        // and VNDLY populates [Client Interview Date] on 20 of 1576 rows (1.3%).
+        // Interview is therefore almost entirely a stage a user records in the
+        // app, and reading the raw date threw those recorded stages away.
+        const stageOf = c => Utils.interviewStage(job.id, c);
+        // The API already resolves this server-side; fall back to the agency
+        // string only where the flag is absent.
+        const isGhr = c => (c.isGHR != null ? !!c.isGHR : Utils.isGhrAgency(c.agency));
+
+        // Furthest stage reached, so nobody is counted twice.
+        const bucket = c => {
+          // Covers the whole Utils.INTERVIEW_STAGES vocabulary. 'Post-Offer
+          // Decline' is a decline, not a submission, and 'Interview Requested'
+          // is an interview — both used to fall through to Submitted.
+          const st = stageOf(c);
+          if (st === 'Declined' || st === 'Post-Offer Decline') return 'Declined';
+          if (st === 'Offer Accepted' || st === 'Offer Pending') return 'Offer';
+          if (st === 'Interview Requested' || st === 'Interview Scheduled'
+              || st === 'Interview Complete') return 'Interview';
+          return 'Submitted';
+        };
+        const active = cands.filter(c => bucket(c) !== 'Declined');
+        const declined = cands.filter(c => bucket(c) === 'Declined');
+
+        const STAGES = ['Submitted', 'Interview', 'Offer'];
+        const rows = STAGES.map(label => {
+          const inStage = active.filter(c => bucket(c) === label);
+          const ghr = inStage.filter(isGhr).length;
+          const aff = inStage.length - ghr;
+          return { label, ghr, aff, total: inStage.length,
+                   share: inStage.length ? Math.round((ghr / inStage.length) * 100) : 0 };
+        });
+
+        const totalGhr = active.filter(isGhr).length;
+        const totalAff = active.length - totalGhr;
+        const decGhr = declined.filter(isGhr).length;
+        const decAff = declined.length - decGhr;
+
+        const cell = v => `<td class="py-1.5 px-2 text-right tabular-nums">${v}</td>`;
         return `
-          <div class="fade-in">
-            <h4 class="font-bold mb-3 text-sm uppercase text-slate-500">Pipeline</h4>
-            <div class="space-y-2 max-w-xl">
-              ${stages.map(([label, n, color]) => `
-                <div class="flex items-center gap-3">
-                  <span class="text-xs font-medium text-slate-600 w-20 flex-shrink-0">${label}</span>
-                  <div class="flex-1 bg-slate-200 rounded-full h-2.5 overflow-hidden">
-                    <div class="${color} h-full rounded-full" style="width:${(n / max) * 100}%"></div>
-                  </div>
-                  <span class="text-xs font-bold text-slate-700 w-8 text-right">${n}</span>
-                </div>`).join('')}
+          <div class="fade-in grid grid-cols-1 xl:grid-cols-2 gap-6">
+            <div>
+              <h4 class="font-bold mb-3 text-sm uppercase text-slate-500">Stage Summary</h4>
+              <table class="w-full text-xs border border-slate-200 rounded-lg overflow-hidden">
+                <thead class="bg-slate-50 text-[10px] uppercase tracking-wide text-slate-500">
+                  <tr>
+                    <th class="py-1.5 px-2 text-left font-semibold">Stage</th>
+                    <th class="py-1.5 px-2 text-right font-semibold">GHR</th>
+                    <th class="py-1.5 px-2 text-right font-semibold">Affiliate</th>
+                    <th class="py-1.5 px-2 text-right font-semibold">Total</th>
+                    <th class="py-1.5 px-2 text-right font-semibold">GHR Share</th>
+                  </tr>
+                </thead>
+                <tbody class="divide-y divide-slate-100">
+                  ${rows.map(r => `<tr>
+                      <td class="py-1.5 px-2 font-medium text-slate-700">${r.label}</td>
+                      ${cell(r.ghr)}${cell(r.aff)}${cell(r.total)}
+                      <td class="py-1.5 px-2 text-right font-bold ${r.total ? 'text-emerald-600' : 'text-slate-300'}">${r.total ? r.share + '%' : '—'}</td>
+                    </tr>`).join('')}
+                </tbody>
+              </table>
+
+              <h5 class="text-[10px] uppercase tracking-wide text-slate-500 font-semibold mt-4 mb-2 flex items-center gap-3">
+                GHR Share by Stage
+                <span class="flex items-center gap-1 font-normal normal-case text-slate-400">
+                  <span class="inline-block w-2 h-2 rounded-sm bg-blue-600"></span>GHR
+                  <span class="inline-block w-2 h-2 rounded-sm bg-orange-500 ml-2"></span>Affiliate
+                </span>
+              </h5>
+              <div class="space-y-2">
+                ${rows.map(r => `
+                  <div class="flex items-center gap-3">
+                    <span class="text-xs font-medium text-slate-600 w-20 flex-shrink-0">${r.label}</span>
+                    <div class="flex-1 bg-slate-100 rounded-full h-2.5 overflow-hidden flex">
+                      ${r.total
+                        ? `<div class="bg-blue-600 h-full" style="width:${r.share}%"></div>
+                           <div class="bg-orange-500 h-full" style="width:${100 - r.share}%"></div>`
+                        : ''}
+                    </div>
+                    <span class="text-xs font-bold text-slate-700 w-10 text-right">${r.total ? r.share + '%' : '—'}</span>
+                  </div>`).join('')}
+              </div>
+
+              <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-4">
+                ${View.detailStat('Total GHR', totalGhr)}
+                ${View.detailStat('Total Affiliate', totalAff)}
+                ${View.detailStat('Active', `${totalGhr} / ${totalAff}`)}
+                ${View.detailStat('Declines', `${decGhr} / ${decAff}`)}
+              </div>
+              <p class="text-[10px] text-slate-400 mt-3 leading-snug">
+                Each candidate is counted once, at the furthest stage they reached.
+                Active and Declines are shown GHR / Affiliate.
+                ${rows[1].total === 0
+                  ? ' Interview is empty because neither VMS reliably records an interview date &mdash; it fills in as stages are set on the Levers tab.'
+                  : ''}
+              </p>
             </div>
-            <div class="flex gap-3 mt-4">
-              ${View.detailStat('Active Submissions', active.length)}
-              ${View.detailStat('Declined', declined)}
-              ${View.detailStat('Openings', job.numPositions || 1)}
+
+            <div>
+              <h4 class="font-bold mb-3 text-sm uppercase text-slate-500">Current Clinician Activity</h4>
+              ${cands.length ? `<div class="divide-y divide-slate-100 border border-slate-200 rounded-lg">
+                  ${cands.slice(0, 12).map(c => {
+                    const st = stageOf(c);
+                    const tone = st === 'Declined' ? 'bg-rose-100 text-rose-700'
+                               : st.startsWith('Offer') ? 'bg-emerald-100 text-emerald-700'
+                               : st.startsWith('Interview') ? 'bg-indigo-100 text-indigo-700'
+                               : 'bg-slate-100 text-slate-600';
+                    // calcDays() returns 0 for a missing date, which would
+                    // render a misleading "0d"; show nothing instead.
+                    const age = c.submitDate ? Utils.calcDays(c.submitDate) : null;
+                    return `<div class="flex items-center justify-between gap-3 px-3 py-2">
+                        <div class="min-w-0">
+                          <div class="text-xs font-semibold text-slate-800 truncate">${c.name || '—'}</div>
+                          <div class="text-[10px] text-slate-400 truncate">${isGhr(c) ? 'GHR' : (c.agency || 'Affiliate')}</div>
+                        </div>
+                        <div class="flex items-center gap-2 flex-shrink-0">
+                          <span class="text-[10px] font-semibold px-2 py-0.5 rounded-full ${tone}">${st}</span>
+                          <span class="text-[10px] text-slate-400 w-8 text-right">${age == null ? '' : age + 'd'}</span>
+                        </div>
+                      </div>`;
+                  }).join('')}
+                </div>
+                ${cands.length > 12 ? `<p class="text-[10px] text-slate-400 mt-2">Showing 12 of ${cands.length}.</p>` : ''}`
+                : '<p class="text-xs text-slate-400">No submissions on this job yet.</p>'}
             </div>
-            <p class="text-[10px] text-slate-400 mt-3">
-              Each candidate is counted once, at the furthest stage they reached.
-            </p>
           </div>`;
       },
 

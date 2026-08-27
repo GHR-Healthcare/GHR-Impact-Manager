@@ -2,6 +2,16 @@
 
 ## Version History
 
+**2.4.16** - Pipeline pane: GHR vs Affiliate (Fig 2), brand mark, IMPACT meeting label
+
+Pipeline sub-tab rebuilt to the Fig 2 shape: a Stage Summary table (GHR / Affiliate / Total / GHR Share), stacked share bars per stage, four totals, and a Current Clinician Activity list with per-candidate stage and age.
+
+The fix underneath it: the pane staged candidates off the raw `interviewDate`, but **B4 submissions carry no interview date column at all**, and VNDLY populates `[Client Interview Date]` on 20 of 1576 rows (1.3%). Interview is effectively a stage users record in the app, and reading the raw date discarded every recorded stage. Now staged through `Utils.interviewStage()`, which prefers the saved workspace stage. Where a job genuinely has none, the pane says why instead of showing a bare zero.
+
+Bucketing also missed two of the eight `INTERVIEW_STAGES`: `Interview Requested` and `Post-Offer Decline` both fell through to *Submitted*, so post-offer declines were counted as open submissions.
+
+Header: GHR brand mark replaces the generic glyph (also a PNG favicon), tagline is now *Account Performance Workspace* (in both the markup and the runtime branch that overwrites it), and Start Meeting reads **Start IMPACT Meeting**.
+
 **2.4.15** - Onboarding: real start-slip against a planned start
 
 `STAGING_VNDLY_JOBS` carries the start **as of the application**, and keeps it when the work order's own start later moves — so it serves as a planned start. Verified against live data on Active/Ended single-seat reqs: 453 of 469 with no delay logged match exactly (96.6%), and 6 of 8 with a delay logged show a later start. Differences are almost all whole shift-weeks (7/14/21/28/35 days), i.e. real movement rather than drift. It is *not* called "original" — it's the start at application time, not necessarily the first ever scheduled.
