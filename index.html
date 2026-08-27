@@ -98,7 +98,11 @@
   </style>
 </head>
 
-<body class="bg-slate-50 text-slate-800 min-h-screen w-full p-2 sm:p-6 flex flex-col overflow-x-hidden overflow-y-auto md:h-screen md:overflow-hidden">
+<!-- The page scrolls on desktop. It used to be pinned to the viewport
+     (md:h-screen md:overflow-hidden), so the table could only ever have
+     the height left over after the header, filter bar, KPI row, heading
+     and Analysis strip — four rows on Closed. -->
+<body class="bg-slate-50 text-slate-800 min-h-screen w-full p-2 sm:p-6 flex flex-col overflow-x-hidden overflow-y-auto">
 
   <!-- TOAST CONTAINER -->
   <div id="toastContainer" class="fixed top-4 right-4 z-[60] flex flex-col gap-2"></div>
@@ -559,15 +563,15 @@
     </div>
   </div>
 
-  <div id="mainContent" class="flex-1 relative overflow-visible md:overflow-hidden flex flex-col min-h-0">
-    <div id="listViewWrapper" class="bg-white shadow-lg rounded-lg border border-slate-200 flex flex-col md:h-full overflow-visible md:overflow-hidden min-h-0">
+  <div id="mainContent" class="flex-1 relative overflow-visible flex flex-col min-h-0">
+    <div id="listViewWrapper" class="bg-white shadow-lg rounded-lg border border-slate-200 flex flex-col overflow-visible min-h-0">
       <!-- Mobile scroll hint -->
       <div class="md:hidden bg-blue-50 text-blue-700 text-xs px-3 py-2 flex items-center gap-2 border-b border-blue-100">
         <i data-lucide="move-horizontal" class="w-4 h-4"></i>
         <span>Swipe left/right to see all columns</span>
       </div>
       <!-- Single scroll container for header + body -->
-      <div class="overflow-x-auto flex-1 overflow-y-visible md:overflow-y-auto">
+      <div class="overflow-x-auto md:h-[70vh] overflow-y-visible md:overflow-y-auto">
         <div class="min-w-[900px]">
           <div class="grid grid-cols-12 bg-slate-100 p-4 font-bold text-slate-600 border-b border-slate-200 text-sm uppercase tracking-wider sticky top-0 z-20 shrink-0" id="tableHeader">
             <div class="col-span-1 cursor-pointer hover:text-blue-600 flex items-center" onclick="store.dispatch('SORT','id')">ID <i data-lucide="arrow-up-down" class="ml-1 w-3 h-3 opacity-50"></i></div>
@@ -605,35 +609,35 @@
         <h2 class="text-lg font-bold text-slate-800 flex items-center gap-2"><i data-lucide="flame" class="text-orange-500"></i> Hot Jobs List</h2>
         <!-- Old Button Removed here, handled in Header -->
       </div>
-      <div id="hotJobsContainer" class="flex-1 overflow-y-auto scroller p-6"></div>
+      <div id="hotJobsContainer" class="md:h-[70vh] overflow-y-auto scroller p-6"></div>
     </div>
 
-    <div id="financialsViewWrapper" class="hidden flex flex-col md:h-full overflow-visible md:overflow-hidden min-h-0 bg-white shadow-lg rounded-lg border border-slate-200">
-      <div class="flex-1 overflow-y-auto scroller p-6">
+    <div id="financialsViewWrapper" class="hidden flex flex-col overflow-visible min-h-0 bg-white shadow-lg rounded-lg border border-slate-200">
+      <div class="md:h-[70vh] overflow-y-auto scroller p-6">
         <div id="financialsContent" class="space-y-6"></div>
       </div>
     </div>
 
-    <div id="perDiemViewWrapper" class="hidden flex flex-col md:h-full overflow-visible md:overflow-hidden min-h-0 bg-white shadow-lg rounded-lg border border-slate-200">
-      <div class="flex-1 overflow-y-auto scroller p-6">
+    <div id="perDiemViewWrapper" class="hidden flex flex-col overflow-visible min-h-0 bg-white shadow-lg rounded-lg border border-slate-200">
+      <div class="md:h-[70vh] overflow-y-auto scroller p-6">
         <div id="perDiemContent" class="space-y-6"></div>
       </div>
     </div>
 
-    <div id="trendViewWrapper" class="hidden flex flex-col md:h-full overflow-visible md:overflow-hidden min-h-0 bg-white shadow-lg rounded-lg border border-slate-200">
-      <div class="flex-1 overflow-y-auto scroller p-6">
+    <div id="trendViewWrapper" class="hidden flex flex-col overflow-visible min-h-0 bg-white shadow-lg rounded-lg border border-slate-200">
+      <div class="md:h-[70vh] overflow-y-auto scroller p-6">
         <div id="trendContent" class="space-y-6"></div>
       </div>
     </div>
 
-    <div id="pendingViewWrapper" class="hidden flex flex-col md:h-full overflow-visible md:overflow-hidden min-h-0 bg-white shadow-lg rounded-lg border border-slate-200">
-      <div class="flex-1 overflow-y-auto scroller p-6">
+    <div id="pendingViewWrapper" class="hidden flex flex-col overflow-visible min-h-0 bg-white shadow-lg rounded-lg border border-slate-200">
+      <div class="md:h-[70vh] overflow-y-auto scroller p-6">
         <div id="pendingContent" class="space-y-6"></div>
       </div>
     </div>
 
     <!-- Closed: own KPI tiles + content, same shape as trendViewWrapper. -->
-    <div id="closedViewWrapper" class="hidden flex flex-col md:h-full overflow-visible md:overflow-hidden min-h-0 bg-white shadow-lg rounded-lg border border-slate-200">
+    <div id="closedViewWrapper" class="hidden flex flex-col overflow-visible min-h-0 bg-white shadow-lg rounded-lg border border-slate-200">
       <!-- Tiles and heading stay fixed; the table area below scrolls, which is
            what the sticky header sticks against. -->
       <!-- KPI cards render into the shared #kpiContainer above the tab row,
@@ -642,7 +646,7 @@
     </div>
 
     <!-- Extensions: own KPI tiles + content, same shape as trendViewWrapper. -->
-    <div id="extensionsViewWrapper" class="hidden flex flex-col md:h-full overflow-visible md:overflow-hidden min-h-0 bg-white shadow-lg rounded-lg border border-slate-200">
+    <div id="extensionsViewWrapper" class="hidden flex flex-col overflow-visible min-h-0 bg-white shadow-lg rounded-lg border border-slate-200">
       <!-- Tiles and heading stay fixed; the table area below scrolls, which is
            what the sticky header sticks against. -->
       <!-- KPI cards render into the shared #kpiContainer above the tab row,
@@ -651,7 +655,7 @@
     </div>
 
     <!-- Onboarding: own KPI tiles + content, same shape as trendViewWrapper. -->
-    <div id="onboardingViewWrapper" class="hidden flex flex-col md:h-full overflow-visible md:overflow-hidden min-h-0 bg-white shadow-lg rounded-lg border border-slate-200">
+    <div id="onboardingViewWrapper" class="hidden flex flex-col overflow-visible min-h-0 bg-white shadow-lg rounded-lg border border-slate-200">
       <!-- Tiles and heading stay fixed; the table area below scrolls, which is
            what the sticky header sticks against. -->
       <!-- KPI cards render into the shared #kpiContainer above the tab row,
@@ -659,8 +663,8 @@
       <div class="p-4 flex-1 min-h-0 flex flex-col" id="onboardingContent"></div>
     </div>
 
-    <div id="contractsViewWrapper" class="hidden flex flex-col md:h-full overflow-visible md:overflow-hidden min-h-0 bg-white shadow-lg rounded-lg border border-slate-200">
-      <div class="flex-1 overflow-y-auto scroller p-6">
+    <div id="contractsViewWrapper" class="hidden flex flex-col overflow-visible min-h-0 bg-white shadow-lg rounded-lg border border-slate-200">
+      <div class="md:h-[70vh] overflow-y-auto scroller p-6">
         <div id="contractsContent" class="space-y-6"></div>
       </div>
     </div>
@@ -4600,7 +4604,7 @@
         if (!container) return;
 
         // Reset container classes for list view (remove grid if present)
-        container.className = "flex-1 overflow-y-auto scroller p-6 space-y-8";
+        container.className = "md:h-[70vh] overflow-y-auto scroller p-6 space-y-8";
 
         if (list.length === 0) {
           container.innerHTML = '<div class="p-8 text-center text-slate-400">No hot jobs selected. Use the flame icon in list view to select hot jobs.</div>';
@@ -5591,7 +5595,7 @@
                body, scrolling horizontally always and vertically only on
                desktop, so on mobile the page scrolls instead of trapping the
                table in a nested box. The sticky thead sticks against this. -->
-          <div class="rounded-lg border border-slate-200 overflow-x-auto flex-1 min-h-0 overflow-y-visible md:overflow-y-auto">
+          <div class="rounded-lg border border-slate-200 overflow-x-auto md:h-[70vh] overflow-y-visible md:overflow-y-auto">
             <table class="w-full min-w-[900px] text-xs border-separate border-spacing-0">
               <thead class="sticky top-0 z-10">
                 <tr>
