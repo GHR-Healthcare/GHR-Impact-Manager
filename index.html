@@ -5702,19 +5702,20 @@
       // Extension Search bar predicate. End date is compared as a plain
       // YYYY-MM-DD string so it never drifts by a timezone the way a Date
       // round-trip would; end_date arrives date-only from the API.
-      /* Extension Search, rendered as a panel inside the Extensions Analysis
-       * strip beside the donuts — it only applies to this tab, so it belongs
-       * with the tab's own furniture rather than floating in the global header.
+      /* Extension Search — its own bar above the Extensions table, not a panel
+       * inside the collapsible Analysis strip. It is a control, not analysis,
+       * and collapsing Analysis used to hide it. The Extensions strip is now
+       * empty anyway: neither of its donuts had a basis in the reference.
        *
-       * The strip is re-rendered wholesale on every View.main(), so the control
+       * stageShell re-renders wholesale on every View.main(), so the control
        * values are bound from state on each pass rather than left in the DOM.
        * SET_EXT_FILTER fires on change (not input), so a re-render can't land
        * mid-keystroke.
        */
-      extSearchPanel(total, shown) {
+      extSearchBar(total, shown) {
         const f = window.store.state.extFilter || { endFrom: '', endTo: '', status: 'All' };
         const active = !!(f.endFrom || f.endTo || (f.status && f.status !== 'All'));
-        const field = 'bg-white border border-slate-300 rounded-md px-2 py-1 text-xs focus:border-blue-500 outline-none shadow-sm';
+        const field = 'w-full bg-white border border-slate-300 rounded-md px-2 py-1.5 text-xs focus:border-blue-500 outline-none shadow-sm';
         const lbl = 'block text-[9px] font-semibold uppercase tracking-wide text-slate-400 mb-0.5';
         // Explicit labels — naive title-casing turns RTO into "Rto".
         const LABELS = {
@@ -5726,29 +5727,33 @@
           `<option value="${g}" ${f.status === g ? 'selected' : ''}>${LABELS[g] || g}</option>`
         ).join('');
         return `
-          <div class="flex flex-col gap-1 ml-auto flex-1 min-w-[300px]">
-            <div class="text-[10px] font-semibold uppercase tracking-wide text-slate-400">Extension Search</div>
-            <div class="flex items-end gap-2 flex-wrap">
-              <div class="flex-1 min-w-[120px]">
-                <label class="${lbl}">End From</label>
-                <input type="date" id="extensionEndFrom" class="${field} w-full" value="${f.endFrom}"
+          <div class="mb-3 shrink-0 rounded-lg border border-slate-200 bg-white px-4 py-3">
+            <div class="flex flex-wrap items-end gap-3">
+              <div class="mr-1">
+                <div class="text-[11px] font-bold uppercase tracking-wider text-slate-500">Extension Search</div>
+                <div class="text-[10px] text-slate-400">Filter by contract end date and extension status.</div>
+              </div>
+              <div class="flex-1 min-w-[130px] max-w-[200px]">
+                <label class="${lbl}">End Date From</label>
+                <input type="date" id="extensionEndFrom" class="${field}" value="${f.endFrom}"
                        onchange="store.dispatch('SET_EXT_FILTER')">
               </div>
-              <div class="flex-1 min-w-[120px]">
-                <label class="${lbl}">End To</label>
-                <input type="date" id="extensionEndTo" class="${field} w-full" value="${f.endTo}"
+              <div class="flex-1 min-w-[130px] max-w-[200px]">
+                <label class="${lbl}">End Date To</label>
+                <input type="date" id="extensionEndTo" class="${field}" value="${f.endTo}"
                        onchange="store.dispatch('SET_EXT_FILTER')">
               </div>
-              <div class="flex-1 min-w-[130px]">
-                <label class="${lbl}">Status</label>
-                <select id="extensionStatusFilter" class="${field} w-full"
+              <div class="flex-1 min-w-[150px] max-w-[220px]">
+                <label class="${lbl}">Extension Status</label>
+                <select id="extensionStatusFilter" class="${field}"
                         onchange="store.dispatch('SET_EXT_FILTER')">${opts}</select>
               </div>
-            </div>
-            <div class="text-[9px] text-slate-400 leading-snug flex items-center gap-2">
-              <span>${active ? `${shown} of ${total} match` : `${total} in window`}</span>
-              ${active ? `<button onclick="store.dispatch('CLEAR_EXT_FILTERS')"
-                    class="underline hover:text-slate-600">Clear</button>` : ''}
+              <div class="flex items-center gap-3 pb-1 ml-auto">
+                <span class="text-[11px] ${active ? 'text-slate-600 font-semibold' : 'text-slate-400'}">${
+                  active ? `${shown} of ${total} match` : `${total} in window`}</span>
+                ${active ? `<button onclick="store.dispatch('CLEAR_EXT_FILTERS')"
+                      class="text-[11px] font-semibold text-slate-500 hover:text-slate-700 underline">Clear</button>` : ''}
+              </div>
             </div>
           </div>`;
       },
@@ -5917,30 +5922,13 @@
         });
 
         const el = $('extensionsContent');
-        const urgSeg = [
-          { label: '≤7 days',    value: rows.filter(r => r.days_left != null && r.days_left <= 7).length,  color: '#991b1b' },
-          { label: '8-14 days',  value: rows.filter(r => r.days_left > 7 && r.days_left <= 14).length,     color: '#ef4444' },
-          { label: '15-21 days', value: rows.filter(r => r.days_left > 14 && r.days_left <= 21).length,    color: '#facc15' },
-          { label: '22+ days',   value: rows.filter(r => r.days_left > 21).length,                        color: '#22c55e' },
-        ];
-        const decSeg = View.EXT_DECISIONS.map((d, i) => ({
-          label: d,
-          value: rows.filter(r => View.extensionEdit(r).decision === d).length,
-          color: ['#94a3b8', '#60a5fa', '#3b82f6', '#22c55e', '#ef4444', '#a855f7'][i],
-        }));
-        const intel = View.intelStrip('extensions', [
-          View.intelPanel('Runway',
-            View.donutSvg(urgSeg, { centerLabel: rows.length, centerSub: 'seats' }),
-            View.chartLegend(urgSeg),
-            'Days remaining on the contract. Low is urgent here.'),
-          View.intelPanel('Decision Mix',
-            View.donutSvg(decSeg, { centerLabel: rows.filter(r => View.extensionEdit(r).decision !== 'Not Requested').length, centerSub: 'decided' }),
-            View.chartLegend(decSeg),
-            'Client decision as recorded by the team, not read from a source system.'),
-          // Last, so the charts keep the left edge; the panel's own ml-auto
-          // pushes it right and flex-1 gives it the remaining width.
-          View.extSearchPanel(all.length, rows.length),
-        ]);
+        // Runway and Decision Mix donuts removed: neither exists in the v24.6
+        // reference, which puts its charts (6-week lineCharts) in the stage
+        // overview modals instead. Runway also duplicated the coloured legend
+        // bands above the table, which do the same split and are clickable,
+        // and Decision Mix could only ever show one grey ring until decisions
+        // are recorded. Extension Search takes this slot instead.
+        const intel = View.extSearchBar(all.length, rows.length);
         if (el) el.innerHTML = View.stageShell('extensions', 'Extensions',
           'Assignments approaching their end date, grouped by where the extension decision stands',
           body, extCols, intel);
@@ -6150,25 +6138,9 @@
         });
 
         const el = $('onboardingContent');
-        const statusSeg = [
-          { label: 'On Track',    value: rows.filter(r => View.onboardingGroup(r) === 'ON TRACK').length,           color: '#22c55e' },
-          { label: 'Start Moved', value: rows.filter(r => View.onboardingGroup(r) === 'START DATE CHANGED').length, color: '#facc15' },
-          { label: 'Delayed',     value: rows.filter(r => View.onboardingGroup(r) === 'DELAYED START').length,      color: '#ef4444' },
-          { label: 'Cancelled',   value: rows.filter(r => View.onboardingGroup(r) === 'CANCELED').length,           color: '#991b1b' },
-        ];
-        const srcSeg = [
-          { label: 'GHR',       value: rows.filter(r => Utils.isGhrAgency(r.agency)).length,  color: '#3b82f6' },
-          { label: 'Affiliate', value: rows.filter(r => !Utils.isGhrAgency(r.agency)).length, color: '#a855f7' },
-        ];
-        const onbIntel = View.intelStrip('onboarding', [
-          View.intelPanel('Start Status',
-            View.donutSvg(statusSeg, { centerLabel: rows.length, centerSub: 'starts' }),
-            View.chartLegend(statusSeg),
-            'Start Moved is measured against the date recorded at the last review.'),
-          View.intelPanel('Vendor Split',
-            View.donutSvg(srcSeg, { centerLabel: rows.length ? Math.round((srcSeg[0].value / rows.length) * 100) + '%' : '—', centerSub: 'GHR' }),
-            View.chartLegend(srcSeg)),
-        ]);
+        // No Onboarding chart in the reference — its onboarding stage has no
+        // pie or chart at all, only the table and the overview modal.
+        const onbIntel = '';
         if (el) el.innerHTML = View.stageShell('onboarding', 'Onboarding',
           'Upcoming and recent starts, grouped by whether the date has moved since it was last reviewed',
           body, onbCols, onbIntel);
@@ -6230,18 +6202,15 @@
           { label: 'GHR',       value: rows.filter(r => Utils.isGhrAgency(r.agency)).length,  color: '#3b82f6' },
           { label: 'Affiliate', value: rows.filter(r => !Utils.isGhrAgency(r.agency)).length, color: '#a855f7' },
         ];
-        const outPalette = ['#22c55e', '#ef4444', '#991b1b', '#94a3b8', '#facc15', '#a855f7', '#0ea5e9'];
-        const outSeg = Object.entries(byGroup).map(([g, v], i) => ({
-          label: g, value: v, color: outPalette[i % outPalette.length],
-        }));
+        // Account Capture is the one chart with a basis in the reference —
+        // accountCapturePie(m.capture), "Closed Market Share / Agency starts",
+        // GHR vs Affiliates, on Closed. Kept for that reason. "Why It Ended"
+        // had no counterpart and is gone; the grouped table already says it.
         const closedIntel = View.intelStrip('closed', [
           View.intelPanel('Account Capture',
             View.donutSvg(capSeg, { centerLabel: rows.length ? Math.round((capSeg[0].value / rows.length) * 100) + '%' : '—', centerSub: 'GHR' }),
             View.chartLegend(capSeg),
             'GHR share of everything that closed in this window. NOTE: share of SEATS, not of billings — say which you want.'),
-          View.intelPanel('Why It Ended',
-            View.donutSvg(outSeg, { centerLabel: rows.length, centerSub: 'closed' }),
-            View.chartLegend(outSeg)),
         ]);
         if (el) el.innerHTML = View.stageShell('closed', 'Closed',
           'Assignments that ended, grouped by why — reasons canonicalised across VNDLY spelling variants',

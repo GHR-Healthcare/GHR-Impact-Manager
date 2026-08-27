@@ -18,7 +18,11 @@ Closed · Open Jobs · Extensions · Onboarding · Priority Jobs · Trends · Pe
 
 `viewToggle` was a hand-rolled list where every tab appeared in three places; it is now driven by a single `View.VIEWS` table, because adding three tabs to the old shape meant remembering all three spots — the same drift that kept losing the GHR/Affiliate guards.
 
-Extensions, Onboarding and Closed render in the app's own table + tile idiom, with frozen headers, per-column sort and filter, coloured legend bands, six KPI cards, and a collapsible Analysis strip. All ten tabs put their KPI cards in the shared `#kpiContainer` above the tab row, so nothing shifts between tabs. The stage tabs use Open Jobs' scroll model exactly. All three read B4 + VNDLY with no `is_non_msp` branch, so they are MSP-only and a request for one bounces to Open Jobs rather than opening a dead view.
+Extensions, Onboarding and Closed render in the app's own table + tile idiom, with frozen headers, per-column sort and filter, coloured legend bands and six KPI cards.
+
+The scaffolded donut charts are gone. Checked against the v24.6 reference, which puts its charts (6-week `lineChart`s) in the **stage overview modals**, not on the table views: Extensions' Runway and Decision Mix and Onboarding's Start Status and Vendor Split had no counterpart at all. Runway also duplicated the coloured legend bands, which show the same split and are clickable, and Decision Mix could only ever render one grey ring until decisions are recorded. Closed keeps **Account Capture**, the one chart with a basis in the reference (`accountCapturePie` — "Closed Market Share / Agency starts", GHR vs Affiliates); its "Why It Ended" companion went, since the grouped table already says that.
+
+Extension Search now has its own always-visible bar above the Extensions table rather than living inside the collapsible Analysis strip — it is a control, not analysis, and collapsing Analysis hid it. All ten tabs put their KPI cards in the shared `#kpiContainer` above the tab row, so nothing shifts between tabs. The stage tabs use Open Jobs' scroll model exactly. All three read B4 + VNDLY with no `is_non_msp` branch, so they are MSP-only and a request for one bounces to Open Jobs rather than opening a dead view.
 
 Row-detail sub-tabs on List rows: Levers (still the default) plus Rate, Pipeline and Placements. Pipeline splits GHR vs Affiliate by stage. GM% is the configured margin rate or the per-job override; the bill/pay split the new endpoints return is an MSP *fee* split and is never labelled as margin.
 
