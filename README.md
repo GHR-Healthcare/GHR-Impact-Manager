@@ -2,263 +2,38 @@
 
 ## Version History
 
-**2.4.20** - IMPACT meeting: persistence and recall pass
+**3.0.0** - IMPACT Meeting Workflow
 
-Traced the meeting loop end to end — dispatch → `/api/meetings` → `impactmgr.meetings` → history/detail. Five defects, all in the save-and-recall path.
+The facilitated IMPACT meeting, merged into the app we already ship rather than replacing it with the marketing prototype's shell. PR #58 carries additive backend work plus native views; the prototype's own UI is dropped.
 
-| Defect | Effect |
-| --- | --- |
-| The picked stage list was never persisted | Recall rendered all four `MEETING_STAGES` chips, so a meeting scoped to two stages was indistinguishable from a four-stage meeting abandoned halfway. `stages` is now a column (additive migration), sent on save, and drives the recall chips |
-| `END_MEETING` cleared `s.meeting` even when the save failed | The final save is the only copy — the meeting lives in memory and nothing else holds the recap. A failed save silently destroyed it. The meeting now stays open so End can be pressed again |
-| No resume, despite the endpoint comment promising one | `s.meeting` is in-memory, so a refresh mid-meeting stranded the row as history with no way back in. Setup now offers to resume an unfinished meeting, reusing its id so the MERGE keeps updating one row |
-| `meetingStageList()` guarded on `!m.stages` | `[]` is truthy, so an empty stage array filtered out every stage instead of falling back to all four |
-| Meeting fields interpolated into `innerHTML` raw | `recipients` is user-typed and was rendered unescaped in both the history list and the detail modal, `recap_html` inside a `<pre>`. Added `View.esc()` and applied it to every interpolated meeting field |
+### The meeting layer
 
-Also confirmed sound: the `workspace-state` write path matches the API contract on all four scopes it uses (`extension`, `onboarding`, `interview`, `margin` — `lever` is in `VALID_SCOPES` but goes through `changes` instead), the MERGE's 25 placeholders line up with its 25 arguments, and every Meetings statement compiles against `ghrappdb` once `stages` exists — verified inside a transaction that was rolled back.
+Start IMPACT Meeting scopes a session to a health system, walks the chosen stages in order, records every mutation made along the way, and saves to `impactmgr.meetings` so a meeting can be reopened later. Past meetings list from the same table, with the recap stored exactly as it was sent.
 
-**2.4.19** - Stage tabs scroll like Open Jobs; Extension Search moved into the tab
+Meeting state lives in memory during the session, so the persistence path matters more than it looks: the stage scope is saved (not just progress), a failed final save keeps the meeting open rather than discarding the only copy, and an unfinished meeting can be resumed from setup — reusing its id so the MERGE keeps updating one row.
 
-**Scrolling.** Closed / Extensions / Onboarding trapped their tables in a nested `overflow-auto` box, so with the KPI row, Analysis strip and heading above them the table was left scrolling inside a sliver. They now use Open Jobs' model exactly: one container holding header and body, scrolling horizontally always and vertically only on desktop, so on mobile the page scrolls instead of the box. The eight non-list wrappers were also aligned to Open Jobs' `md:h-full overflow-visible md:overflow-hidden min-h-0`, and the stage tables picked up the `min-w-[900px]` and the mobile swipe hint Open Jobs already had.
+### Ten tabs, one layout
 
-**Extension Search** moved out of the global header and into the Extensions Analysis strip beside the donuts, since it only ever applied to that tab — it was floating in the header with its label stranded on the far left. The strip re-renders on every `View.main()`, so the controls are bound from state each pass rather than left in the DOM; `SET_EXT_FILTER` fires on change, not input, so a re-render can't land mid-keystroke. Status labels come from an explicit map — naive title-casing rendered `RTO` as "Rto".
+Closed · Open Jobs · Extensions · Onboarding · Priority Jobs · Trends · Per Diem · Revenue · Contracts · Pending.
 
-**2.4.18** - Extension Search bar
+`viewToggle` was a hand-rolled list where every tab appeared in three places; it is now driven by a single `View.VIEWS` table, because adding three tabs to the old shape meant remembering all three spots — the same drift that kept losing the GHR/Affiliate guards.
 
-Carried the v24.6 prototype's `#extensionFilterBar` across, which turns out to be both of Cyndi's outstanding Extensions notes in one component: it is literally titled *Extension Search* and its fields are the end-date search she asked for.
+Extensions, Onboarding and Closed render in the app's own table + tile idiom, with frozen headers, per-column sort and filter, coloured legend bands, six KPI cards, and a collapsible Analysis strip. All ten tabs put their KPI cards in the shared `#kpiContainer` above the tab row, so nothing shifts between tabs. The stage tabs use Open Jobs' scroll model exactly. All three read B4 + VNDLY with no `is_non_msp` branch, so they are MSP-only and a request for one bounces to Open Jobs rather than opening a dead view.
 
-Placed under the shared filter row rather than inside it — left-aligned so it starts under **System**, with a rule beneath it, and shown only on the Extensions tab.
+Row-detail sub-tabs on List rows: Levers (still the default) plus Rate, Pipeline and Placements. Pipeline splits GHR vs Affiliate by stage. GM% is the configured margin rate or the per-job override; the bill/pay split the new endpoints return is an MSP *fee* split and is never labelled as margin.
 
-| Field | Behaviour |
-| --- | --- |
-| End Date From / To | Compared as `YYYY-MM-DD` strings, so a timestamped `end_date` can't drift a day through a `Date` round-trip |
-| Extension Status | Options come from `EXT_GROUP_ORDER` — the app's real workflow states (No decision, RTO, Offered, Pending acceptance, Approved, Backfill, Exception) — not the prototype's invented vocabulary |
-| Count / Clear | Shows `N of M match` while filtering, `M in window` otherwise |
+### Data corrections found on the way
 
-The bar filters ahead of `stageApply`, so column sorts, column filters and the coloured legend bands all still compose with it.
+Most of these came from checking the queries against live data rather than reading them.
 
-**2.4.17** - Per Diem: open orders were filtered to the past
+- **Onboarding start slip is now real.** `STAGING_VNDLY_JOBS` holds the start as of the application and keeps it when the work order's start moves, so it serves as a planned start (96.6% control match). Getting its grain right exposed three defects in one CTE: the join fanned out across every seat on a requisition, `hours_per_week` was therefore the largest value on the whole req rather than this seat's (177 reqs differ across seats), and `days_delayed` was hardcoded null on VNDLY while referencing a dropped alias on B4 — which made the entire B4 branch invalid and silently swallowed.
+- **Per Diem open orders were filtered to the past.** Unfilled requisitions start in the future; the drill-down applied the worked-shift date cap, hiding 91 of 104 live open orders and all three Per Diem ones.
+- **The Pipeline interview stage read a field that is almost never populated.** B4 carries no interview date at all and VNDLY fills one on 1.3% of submissions, so interview is a stage users record in the app — and reading the raw date discarded all of them.
+- **Placements read fields that don't exist** on the stats payload, and compared job title against care type, so the pane was usually empty.
+- Margin now has one read path over two stores, with the configured default marked as an assumption rather than presented as a decision.
+- Date-only values stop shifting a day, and "not tracked" is shown wherever a source genuinely cannot answer — never a confident zero.
 
-Every read-only statement in every endpoint was executed against the live databases to confirm the tabs actually return rows, not just that the SQL compiles. MSP came back clean on all 20 endpoints. One real bug surfaced.
-
-`dhc.B4HEALTHOPENORDER` holds **open (unfilled)** requisitions, which by nature start in the future. The Per Diem drill-down applied the same `[Start Date] < today` cap used for *worked shifts*, where a backward window is correct. That hid **91 of 104 live open orders**, including all three Per Diem ones — so the panel was permanently empty. Open orders now use their own forward-looking bound (`+3 months` by default); an explicit `to_month` from the UI is still honoured.
-
-Also confirmed, so it isn't re-investigated: `impactmgr.workspace_state` and `impactmgr.meetings` are empty because this branch created them (Aug 19 and Aug 21) and it isn't deployed yet — not a broken write path.
-
-**2.4.16** - Pipeline pane: GHR vs Affiliate (Fig 2), brand mark, IMPACT meeting label
-
-Pipeline sub-tab rebuilt to the Fig 2 shape: a Stage Summary table (GHR / Affiliate / Total / GHR Share), stacked share bars per stage, four totals, and a Current Clinician Activity list with per-candidate stage and age.
-
-The fix underneath it: the pane staged candidates off the raw `interviewDate`, but **B4 submissions carry no interview date column at all**, and VNDLY populates `[Client Interview Date]` on 20 of 1576 rows (1.3%). Interview is effectively a stage users record in the app, and reading the raw date discarded every recorded stage. Now staged through `Utils.interviewStage()`, which prefers the saved workspace stage. Where a job genuinely has none, the pane says why instead of showing a bare zero.
-
-Bucketing also missed two of the eight `INTERVIEW_STAGES`: `Interview Requested` and `Post-Offer Decline` both fell through to *Submitted*, so post-offer declines were counted as open submissions.
-
-Header: GHR brand mark replaces the generic glyph (also a PNG favicon), tagline is now *Account Performance Workspace* (in both the markup and the runtime branch that overwrites it), and Start Meeting reads **Start IMPACT Meeting**.
-
-**2.4.15** - Onboarding: real start-slip against a planned start
-
-`STAGING_VNDLY_JOBS` carries the start **as of the application**, and keeps it when the work order's own start later moves — so it serves as a planned start. Verified against live data on Active/Ended single-seat reqs: 453 of 469 with no delay logged match exactly (96.6%), and 6 of 8 with a delay logged show a later start. Differences are almost all whole shift-weeks (7/14/21/28/35 days), i.e. real movement rather than drift. It is *not* called "original" — it's the start at application time, not necessarily the first ever scheduled.
-
-Getting the grain right surfaced three defects in the same CTE:
-
-| Was | Now |
-| --- | --- |
-| Joined `jobs` on `[Job Id]` alone, fanning out across every seat on a requisition | Keyed on `(Health System, Work Order Id)` — verified unique, 748 of 748 |
-| `hours_per_week` was `MAX()` over the whole req, so the largest value on any seat; **177 reqs carry differing hours across seats** | Taken from the work order's own `[Work Week]` — seat grain, present on 1532 of 1571 work orders vs 732 for the jobs feed, agreeing on 717 of the 732 where both exist |
-| `days_delayed` hardcoded null on VNDLY, and referencing a dropped alias on B4 | Measured where the jobs feed covers the seat, null where it doesn't |
-
-`delay_measure` / `movement_tracked` are now derived from whether a day count is actually present, rather than from which source system the row came from. Null slip renders as **"not tracked"** rather than a confident zero, and negative slip renders as *pulled earlier* — 17 of 256 rows in the current window started earlier than planned, against 12 that slipped later. `move_count` is documented as a floor: 8 work orders moved to a later start with no `Delayed Start` reason logged at all.
-
-**2.4.14** - Fix: chart helpers were defined on Utils but called as View
-
-`View.donutSvg is not a function` — the 2.4.13 helpers (`donutSvg`, `chartLegend`, `rankStripSvg`, `intelStrip`, `intelPanel`) were inserted next to `Utils.isGhrAgency`, so they landed on **`Utils`** while every caller says `View.`. That threw on Extensions, Onboarding and Closed, which meant those three tabs failed to render at all. Moved to `View`, beside `stageShell` where the other render helpers live.
-
-The reference-check that was supposed to catch this collected method names without tracking which object owned them, so a method on the wrong object looked defined. It's now object-aware: it finds each literal's extent by brace depth and validates `Utils.x` / `View.x` against that object's own members. Re-run across the file, the only unresolved name is `View.stats` in a comment.
-
-**2.4.13** - Chart / intel bones on the stage tabs, for review
-
-Scaffolding for the prototype's charts and intel panes — real shapes driven by real fields, so there's something concrete to react to before deciding what these should actually answer.
-
-New inline-SVG helpers (no library, as the reference did it): `donutSvg`, `chartLegend`, `rankStripSvg`, plus `intelStrip` / `intelPanel` for a collapsible Analysis strip above each stage table.
-
-| Tab | Panels |
-|---|---|
-| Extensions | **Runway** (days-left bands) · **Decision Mix** (six client-decision values) |
-| Onboarding | **Start Status** (on track / moved / delayed / cancelled) · **Vendor Split** (GHR vs affiliate) |
-| Closed | **Account Capture** (GHR share of closed seats) · **Why It Ended** (outcome groups) |
-| Open Jobs → Rate sub-tab | **Rate Rank** — this job's bill rate against peers, with position and `#n of m` |
-
-Two honesty constraints held throughout: a segment with no value is **omitted** rather than drawn as zero, and an empty set renders an explicit "no data" rather than an empty circle that reads as a real distribution.
-
-**Two open questions marked in the UI rather than guessed:**
-- **Account Capture is share of *seats*, not billings.** The note on the panel says so. Which one you want changes the query, not just the chart.
-- **Rate Rank ranks demand, not placements.** `statsData.onAssignment` carries no rate field, so the peer set is other *open jobs* at the same facility. The note says so. Ranking against placed rates needs a rate added to the stats feed.
-
-Not built, and still needing a decision: `demandIntel` — the prototype's own comment records that it generated candidate names from a seeded list where it had no fixture, so a meeting could be shown invented people beside real counts. That one needs its data source settled before it's worth porting.
-
-22 assertions on the helpers: arc counts, zero-omission, all-zero and null cases, legend filtering, rank position at both extremes, single-peer and no-peer cases, junk filtering, and the collapse state.
-
-**2.4.11** - Coloured legend filters on all four main tabs, banded per tab
-
-The legend chips existed only on Open Jobs. They now appear on Extensions, Onboarding and Closed too — with **bands that mean something on each tab**, following the reference's `LEGEND_PREDICATES` rather than copying one list everywhere.
-
-| Tab | Bands |
-|---|---|
-| Open Jobs / Priority Jobs | `1-5` · `6-10` · `11-15` · `16+ Days` · `Perm` (aging — high is bad) |
-| Extensions | `≤7` · `8-14` · `15-21` · `22+ Days Left` (runway — **low** is bad) |
-| Onboarding | `On Track` · `Start Moved` · `Delayed` · `Cancelled` |
-| Closed | `Ran To Term` · `Ended Early` · `Cancelled` · `Administrative` |
-
-Reusing Open Jobs' five day-bands everywhere would have been wrong on three of the four tabs: on Extensions a *low* number is the urgent one, and Onboarding and Closed don't band by days at all.
-
-- **Chips OR together**, as in the reference — picking two bands widens the view. Intersecting disjoint day-bands would always be empty.
-- Open Jobs' chips still drive the same `ageMin`/`ageMax` the Days Age inputs write, so those two controls stay in sync; the other tabs carry a predicate, since their bands aren't a numeric range over one field.
-- **Selections clear on tab change.** Band keys are per-view, so a selection carried across tabs would filter everything out with no visible chip explaining why.
-- Trend, Per Diem, Revenue, Contracts and Pending have no bands defined, so the legend hides rather than showing chips that do nothing.
-
-19 assertions across per-view band sets, OR semantics, null handling, outcome predicates, chip rendering and highlight state, and the empty case.
-
-**2.4.10** - One layout across all ten tabs: KPI cards stop moving
-
-The tabs had drifted into three different layouts. KPI cards sat **above** the tab row on List / Per Diem / Revenue (the shared `#kpiContainer`), **inside the panel below the tab row** on Trend / Closed / Extensions / Onboarding / Priority Jobs / Pending, and **inline at the top of the content** on Contracts — with two different card designs between them. Switching tabs moved the cards.
-
-Now every view renders through `View.renderKpiCards()` into the shared container above the tab row. One card design, one position, no shift on tab change.
-
-- The five per-wrapper tile containers are gone, along with the now-dead `stageTile()` helper and Contracts' local `kpiCard()`.
-- Stage cards gained icons to match the existing card design instead of the plainer tile look.
-- Trend's cards are next-7-day *deltas* rather than totals, and the shared card has no subtitle line — so the comparison week moved into the label (`Total Headcount vs Aug 20`) rather than being dropped.
-- Stage panels reclaim the freed vertical space for their tables.
-
-Card counts still vary by tab (4-6) because the metrics do, but card size and position are now identical everywhere.
-
-**2.4.9** - Row-expansion audit: Placements pane was reading fields that don't exist
-
-Audit of the drop-down detail panes across the list views — whether the data each needs actually resolves, and whether every edit reaches the database.
-
-**Bug found and fixed.** The Placements pane read `r.worker_name` and `r.is_ghr` off `statsData.onAssignment`. Neither exists: `GetStatsData` returns `candidate_name` and an agency *string*, on both the MSP and non-MSP paths. So every placement rendered as "Unknown", every row was badged Affiliate, and GHR share was permanently 0%. Its match condition was wrong too — it compared the job **title** against an assignment's care type, which almost never matches, so the pane was usually empty even when comparable placements existed. It now matches on facility plus the job's *structured* specialty where one exists, falls back to facility only where it doesn't, and says which basis it used.
-
-Also added `Utils.isGhrAgency()` rather than a fifth inline copy of the same `includes('ghr') || includes('planet healthcare')` test, and vendor names in that pane now honour `redactMode` like the Submission Log does.
-
-**Mutations verified as persisting.** Levers, job margin, next step and AV-open-date go through `recordChange` → `/changes` (and are replayed on load). Extension decisions, revised starts, interview stages and contract GM overrides go to `workspace_state`. All eight write paths confirmed, all feeding the meeting recap.
-
-**Header alignment.** Stage table headers now use the List tab's treatment (bold / slate-600 / wider tracking / matching padding), so the four tabs read as one table style. Deliberately *not* converted to a `<table>`: the List header, its job rows and its detail wrapper are all `grid grid-cols-12` with 23 `col-span` declarations, so converting the header alone would misalign it from its own rows, and converting all three risks visual regressions in the most-used view — against the "UI shouldn't change much" constraint. The four are already aligned on what matters: frozen header and sortable columns. Per-column filters exist only on the stage tabs because the shared filter bar applies just System and Facility there, whereas on Open Jobs it already applies eight dimensions plus ID search and a day range — strictly richer than a column filter would be.
-
-11 assertions on the Placements pane: correct field reads, GHR/affiliate counting from the agency string (including Planet Healthcare), share maths, both match bases and the disclosure of which was used, redaction, and the empty state.
-
-**2.4.8** - Frozen table headers with per-column sort and filter on the stage tabs; Start Meeting centred
-
-- **Header row freezes.** Closed / Extensions / Onboarding now scroll their rows under a sticky header. Their wrappers were reworked so the KPI tiles stay fixed and the table area is the scroll container — a sticky `thead` sticks to its scrolling ancestor, and the old `overflow-x-auto` wrapper was quietly becoming that ancestor. Open Jobs already had a sticky header, so all four now behave the same.
-- **Sort on every column**, with an indicator. Third click clears rather than cycling, so each view's own default ordering stays reachable. Nulls sort last in *both* directions — a missing value isn't "smallest", it's unknown, and burying it beats ranking it.
-- **Per-column filters** in a second header row, case-insensitive substring. An empty result says "Nothing matches these column filters" rather than the generic empty state, so a filtered-to-nothing table doesn't read as a quiet week. A Reset link appears only once a sort or filter is active.
-- **Grouping survives sorting.** Extensions and Onboarding keep their workflow-state groups and sort *within* them; the default days-left / move-count ordering applies only when no column sort is active.
-- All of it lives in `stageShell`, so the three stage tabs share one implementation rather than three that drift apart.
-- **Start Meeting moved to the centre** of the header, as the reference had it — it's the primary action, so it sits apart from the utility cluster. Past Meetings stays with the other utilities on the right.
-
-17 assertions across sticky markup, sort direction and arrows, numeric vs text sorting, nulls-last in both directions, filter narrowing and its empty state, the reset affordance, and grouping being preserved under sort.
-
-Known inconsistency: Open Jobs has sticky + sort but no per-column filters — its header is a CSS grid rather than a table, so the filter row doesn't transplant directly.
-
-**2.4.7** - Interview stage overrides — the last WorkspaceState scope is wired
-
-All five scopes (`lever`, `extension`, `onboarding`, `interview`, `margin`) now have a UI.
-
-- Submissions in the List row's Submission Log get a stage select: `Submitted · Interview Requested · Interview Scheduled · Interview Complete · Offer Pending · Offer Accepted · Post-Offer Decline · Declined`, taking the reference's vocabulary.
-- **Derived by default, overridable on top.** The source systems supply dates, from which a stage is inferable — but a recruiter often knows more than the dates do, and `Interview Requested` has no date field at all. So the derived value is the default, an override sits over it, and the row is tagged `auto` or `manual` so the two are never confused.
-- **Editable for internal submissions only**, as in the reference. An affiliate's pipeline is theirs to report, not ours to overwrite — affiliate rows keep the read-only derived status.
-- The select stops event propagation: the row itself opens the candidate-action modal, so without that, picking a stage would also open a modal.
-- Saves feed the meeting recap like every other mutation.
-
-12 assertions on the derivation precedence (declined beats offer beats interview), override behaviour, key format, and a nameless candidate.
-
-**2.4.6** - Per-view KPI tiles on every tab, and date-only values stop shifting a day
-
-- **Priority Jobs** and **Pending** were the last two tabs with no tiles. Priority Jobs shows jobs / openings / avg days open (flagging how many are 16+) / active submissions; Pending shows pipeline / submitted / offers out / ready-to-onboard with GHR share. Both render into their own wrapper, the pattern Trend and the stage views use, rather than the shared `#kpiContainer` which belongs to List / Per Diem / Revenue. Contracts already rendered its own cards inline. That completes per-view metrics across all ten tabs.
-- Pending's buckets come from `statusBucket`, the same classifier the view itself uses, so the tiles can't disagree with the rows beneath them.
-
-**Date fix.** `toDateOrNull` turns a date-only string like `"2026-08-20"` into UTC midnight, which local formatting renders as Aug 19 anywhere west of UTC. New `Utils.fmtDate()` takes the zone *from the value*: exactly-midnight-UTC is a date-only value and formats in UTC, anything carrying a real time component formats locally — because blanket-UTC would shift genuine timestamps the other way. Applied to the candidate submission and decline dates, and the Placements pane now shares the helper instead of hardcoding UTC.
-
-Worth noting the sweep found fewer real problems than expected: of nine unguarded `toLocaleDateString()` calls, six were `new Date()` — a real instant with real local time, never at risk. Only the three formatting *source* dates needed changing.
-
-6 assertions on the formatter across date-only strings, local datetimes, late-evening values that would cross midnight, Date objects and null.
-
-**2.4.5** - Margin: one read path over two stores, and the default is marked as an assumption
-
-Reconciles the two margin mechanisms. They turned out not to be duplicates — they cover different entity spaces, and one of them was silently lossy.
-
-- An open **job's** margin already worked: `recordChange` writes `margin_update` and the loader replays it back onto `job.margin`. Kept as-is.
-- A **contract** (an Extensions / Onboarding / Closed row) has no job behind it, and the replay does `if (!job) return` for ids missing from `jobMap` — so a contract-level override written to `/changes` would have been accepted and then dropped on reload. Those go to `workspace_state` scope `margin` instead.
-- **`Utils.marginFor(id, job)`** unifies reading: job override → contract override → configured default → none, returning the source alongside the value so no caller needs to know which store applied.
-- **`Utils.marginLabel()`** renders `31%` for a deliberate override and `~25%` for the configured default, taking the prototype's convention — an assumption applied tenant-wide shouldn't look like a decision made about this seat.
-- Extensions and Onboarding details gain a Rate & GM block: bill rate and GM/hour read-only, GM% overridable, blank clears back to the default. Changes feed the meeting recap.
-- Bill rate stays read-only throughout: it is source-owned. GM% is a rate we apply, which is why it is the only editable half — MSP carries no clinician pay rate, so there is no bill-minus-pay margin to read.
-
-A junk `job.margin` now falls back to the tenant default rather than rendering nothing — caught by test, not by reading.
-
-16 assertions across both stores, override vs default sourcing, numeric-id coercion, and unparseable values on either side.
-
-**2.4.4** - Onboarding becomes actionable: revised start, delay category, context
-
-Same split as Extensions — status badge in the row, editing in the expanded detail — following the reference.
-
-- **Rows group as the reference does**: `CANCELED · DELAYED START · START DATE CHANGED · ON TRACK`, each header carrying its count and total start-date moves, sorted by move count.
-- **`START DATE CHANGED` is derivable, not invented.** The reference compares each start against the one recorded at the previous meeting, and no source field carries that — but `workspace_state` already stores a revised start per seat, so the last *saved* start **is** the previously-recorded start. Movement is measured against it.
-- **Detail** shows source-owned facts (current start, last recorded start, times moved, source status) beside the editable box: revised start, six delay categories, meeting context.
-- **Context is required when the date moved.** Saving a moved start without a reason is refused rather than silently recorded — that's the reference's "Context required" prompt, enforced.
-- **Feeds the meeting recap**: "Start for C RN · Cooper recorded as 2026-09-15 (Compliance) — moved +14d".
-
-Three data limits stated in the app:
-- **Original Start** reads `not in data` — neither feed carries one, which is why total slip from the first scheduled date isn't shown. The panel says so.
-- **Times Moved** is B4-blind: only VNDLY reports start-change events, so B4 rows show `—` with a tooltip rather than `0`.
-- A never-reviewed seat says `never reviewed` instead of implying it hasn't moved.
-
-20 assertions across group derivation, slip maths and its red threshold, the context-required refusal, the never-reviewed path, and both data-gap notices.
-
-**2.4.3** - Extensions become actionable: client decision, workflow checkpoints, persisted
-
-Wires `WorkspaceState` to the Extensions tab, following the reference's shape: a read-only decision badge in the row, editing in the expanded detail.
-
-- **Rows group by workflow state** — `NO DECISION · RTO · OFFERED · PENDING ACCEPTANCE · APPROVED · BACKFILL · EXCEPTION` — each header carrying its count and total contract value, sorted by days left within a group.
-- **Detail owns the editing**: the three team checkpoints (Confirm Client / Gather RTO / Send Extension), a six-value Client Decision, and shared notes. `Extension Accepted` is deliberately **read-only** — the source systems own it. Team-owned checkpoints are editable, system-confirmed facts are not, the same discipline that keeps the MSP fee split from being labelled margin.
-- **Persists to `impactmgr.workspace_state`** and reflects locally, so the badge and the row's group update without a reload. Last-saved-by and timestamp are shown.
-- **Decisions land in the meeting recap** through the same log the job mutations use, so a recap reads "Extension decision “Approved” for A Nurse · Inspira" alongside lever and margin changes.
-
-Two data gaps are **stated in the app** rather than quietly omitted, so they can be explained in a demo instead of looking like bugs:
-- The Gather RTO step shows its owner as `Recruiter · not in data` — B4 and VNDLY carry an account manager and the client's hiring manager; neither is a GHR recruiter. The step is still real and checkable, only the attribution is missing.
-- The linked-backfill panel from the reference is absent, with a line saying nothing in B4 or VNDLY ties an ending seat to its replacement job.
-
-20 assertions across grouping (every decision and step path), badge tones, the two gap notices, group ordering, and tile counts reacting to saved state.
-
-**2.4.2** - Meetings record what changed, not just which stages were walked
-
-`LOG_MEETING_ACTION` existed but nothing called it, so a saved meeting listed the stages you visited and nothing about what you decided in them. Mutations now feed the meeting log through the one function they already all pass through.
-
-- **`recordChange()` is the single funnel.** All six mutation sites already called it to persist; it now also feeds an in-progress meeting. No meeting running means nothing is recorded, so ordinary use is unaffected.
-- **New `describeChange()`** turns a change type + payload into one readable line ("Pulled lever “Hot Job Promotion” on Registered Nurse #371922 · Inspira Medical (owner A Smith)"). One place knows how to word each type, so the recap and any future audit surface read the same way. Unknown types degrade to a sensible sentence rather than throwing.
-- **Recap bookkeeping can't break a save** — the feed is wrapped, so a logging failure never surfaces as a failed mutation.
-- **Retired `sessionLog`.** Its only reader was the AI Call Summary removed in 2.4.1, and it duplicated `job.history`, which is what the per-job history modal actually renders. The parallel array is gone; `job.history` stays.
-
-11 assertions across all four change types, unknown-type fallback, truncation, and the meeting-running / not-running branches.
-
-**2.4.1** - IMPACT meetings: Start Meeting, guided stages, past-meeting history
-
-Ports the prototype's meeting layer into the existing app, and retires the two buttons it replaced.
-
-- **Start Meeting** opens a scope picker (health system, recap recipients, which of the four stages to walk). Choosing a system sets the real System filter, so every tab is genuinely narrowed rather than the banner claiming a scope the data ignores.
-- **A meeting drives the nav.** Stage order matches tab order, so "next stage" and "next tab" are one motion. The banner shows progress, lets you jump between stages, and follows the nav in reverse too — clicking a tab that is one of the meeting's stages moves the meeting's pointer, so the two can't disagree about what's on screen.
-- **Saves continuously.** `POST /api/meetings` MERGEs on a timestamp id, so starting, each stage completion and finishing all update one row — a meeting interrupted halfway is still there, and shows as `in progress` in history.
-- **Past meetings** are browsable via the history button: list, then detail with the stages completed, every action recorded, and the recap exactly as it was sent. Finishing copies the recap to the clipboard.
-- **Removed**: the AI Impact Call Summary button (`GENERATE_SUMMARY`) and the Change History viewer (button, modal, `openHistoryModal`/`closeHistoryModal`/`compareVersions`/`restoreVersion` — 245 lines). Snapshot *saving* on the `/history` endpoint is untouched; only its viewer is gone. The AI Hot Job Summary button stays, and keeps the shared `#summaryText` container it depends on.
-
-22 assertions across setup, stage walking, recap grouping, the POST envelope, and the history/detail round trip.
-
-**2.4.0** - IMPACT stages merged into the existing app UI
-
-Brings the new functionality from the marketing prototype into the app we already ship, rather than replacing the UI with it. The prototype's own shell is dropped; PR #58 carries only additive backend work plus these native views.
-
-- **Tab bar is now ten tabs**: Closed · Open Jobs · Extensions · Onboarding · Priority Jobs · Trends · Per Diem · Revenue · Contracts · Pending. Hot Jobs → Priority Jobs, Financials → Revenue, Trend → Trends. `viewToggle` was a hand-rolled list where every tab appeared in three places (wrapper toggle, button class, non-MSP hide); it is now driven by a single `View.VIEWS` table, because adding three tabs to the old shape meant remembering all three spots — the same drift that kept losing the GHR/Affiliate guards.
-- **Extensions / Onboarding / Closed** render natively in the app's table + tile idiom, each owning its KPI tiles inside its own wrapper (the pattern Trend already used) rather than competing for the shared `#kpiContainer`. Each loads independently, records its own error, and shows a banner instead of an empty table that reads like a quiet week.
-- **Hidden on non-MSP.** All three read B4 + VNDLY directly with no `is_non_msp` branch, so they join Per Diem and Pending as MSP-only, and a request for one bounces to Open Jobs rather than opening a dead view.
-- **Onboarding shows "not tracked", not zero**, where a source can't say how far a start slipped — B4 has no such field, and a confident `0d` would be a lie.
-- **Row-detail sub-tabs** on the List rows: Levers (the existing panel, still the default) plus Rate, Pipeline and Placements. GM% is the configured margin rate or the per-job override; the bill/pay split the new endpoints return is an MSP *fee* split and is deliberately never labelled as margin.
+Where a source can't support something the prototype showed, the app says so instead of inventing it.
 
 **2.2.10** - Non-MSP: division rollups (Travel/Planet→Nursing, Human Services→Education, LTC→Non-Acute)
 
