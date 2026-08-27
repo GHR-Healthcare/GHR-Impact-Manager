@@ -54,6 +54,14 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
         else:
             date_to = "DATEADD(DAY, 1, GETDATE())"
 
+        # Open (unfilled) orders are forward-looking demand: a requisition that
+        # has not been filled yet normally starts in the future. Capping them at
+        # today, the way worked shifts are capped, hid 91 of 104 live open
+        # orders — and all three Per Diem ones, so that drill-down was always
+        # empty. An explicit to_month is still honoured; only the default
+        # upper bound looks ahead.
+        open_date_to = date_to if to_month else "DATEADD(MONTH, 3, GETDATE())"
+
         conn = pyodbc.connect(
             f"DRIVER={{ODBC Driver 17 for SQL Server}};"
             f"SERVER={os.environ['DB_HOST']};"
@@ -284,7 +292,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                 FROM dhc.B4HEALTHOPENORDER
                 WHERE Program LIKE '%Per Diem%'
                     AND [Start Date] >= {date_from}
-                    AND [Start Date] < {date_to}
+                    AND [Start Date] < {open_date_to}
             ''')
             columns = [column[0] for column in cursor.description]
             for row in cursor.fetchall():

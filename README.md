@@ -2,6 +2,14 @@
 
 ## Version History
 
+**2.4.17** - Per Diem: open orders were filtered to the past
+
+Every read-only statement in every endpoint was executed against the live databases to confirm the tabs actually return rows, not just that the SQL compiles. MSP came back clean on all 20 endpoints. One real bug surfaced.
+
+`dhc.B4HEALTHOPENORDER` holds **open (unfilled)** requisitions, which by nature start in the future. The Per Diem drill-down applied the same `[Start Date] < today` cap used for *worked shifts*, where a backward window is correct. That hid **91 of 104 live open orders**, including all three Per Diem ones — so the panel was permanently empty. Open orders now use their own forward-looking bound (`+3 months` by default); an explicit `to_month` from the UI is still honoured.
+
+Also confirmed, so it isn't re-investigated: `impactmgr.workspace_state` and `impactmgr.meetings` are empty because this branch created them (Aug 19 and Aug 21) and it isn't deployed yet — not a broken write path.
+
 **2.4.16** - Pipeline pane: GHR vs Affiliate (Fig 2), brand mark, IMPACT meeting label
 
 Pipeline sub-tab rebuilt to the Fig 2 shape: a Stage Summary table (GHR / Affiliate / Total / GHR Share), stacked share bars per stage, four totals, and a Current Clinician Activity list with per-candidate stage and age.
