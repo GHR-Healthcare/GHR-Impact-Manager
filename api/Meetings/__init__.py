@@ -24,7 +24,8 @@ def _ensure_schema(cursor):
             facilities  NVARCHAR(MAX) NULL,   -- JSON array
             recipients  NVARCHAR(MAX) NULL,
             stage       INT           NULL,
-            completed   NVARCHAR(400) NULL,   -- JSON array of stage indexes
+            stages      NVARCHAR(400) NULL,   -- JSON array of stage view keys the meeting covers
+            completed   NVARCHAR(400) NULL,   -- JSON array of stage view keys completed
             actions     NVARCHAR(MAX) NULL,   -- JSON array of captured actions
             recap_html  NVARCHAR(MAX) NULL,   -- recap exactly as it was sent
             started_at  DATETIME2     NULL,
@@ -32,6 +33,16 @@ def _ensure_schema(cursor):
             updated_at  DATETIME2     NOT NULL,
             created_by  NVARCHAR(200) NULL
         )
+    """)
+    # Additive migration: tables created before stages existed. Without it,
+    # recall can't tell a meeting scoped to two stages from a four-stage
+    # meeting abandoned halfway — both look like two chips lit.
+    cursor.execute("""
+        IF NOT EXISTS (
+            SELECT 1 FROM sys.columns
+            WHERE object_id = OBJECT_ID('impactmgr.meetings') AND name = 'stages'
+        )
+        ALTER TABLE impactmgr.meetings ADD stages NVARCHAR(400) NULL
     """)
     # Additive migration: tables created before recap_html existed.
     cursor.execute("""
@@ -45,7 +56,7 @@ def _ensure_schema(cursor):
 
 def _row_to_meeting(row, cols):
     r = dict(zip(cols, row))
-    for k in ('facilities', 'completed', 'actions'):
+    for k in ('facilities', 'stages', 'completed', 'actions'):
         if r.get(k):
             try:
                 r[k] = json.loads(r[k])
@@ -81,8 +92,8 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             if meeting_id:
                 cursor.execute("""
                     SELECT meeting_id, health_system, facilities, recipients, stage,
-                           completed, actions, started_at, ended_at, updated_at, created_by,
-                           recap_html
+                           stages, completed, actions, started_at, ended_at, updated_at,
+                           created_by, recap_html
                     FROM impactmgr.meetings WHERE meeting_id = ?
                 """, meeting_id)
                 row = cursor.fetchone()
@@ -103,7 +114,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                 limit = 20
             cursor.execute(f"""
                 SELECT TOP {limit} meeting_id, health_system, facilities, recipients, stage,
-                       completed, actions, started_at, ended_at, updated_at, created_by
+                       stages, completed, actions, started_at, ended_at, updated_at, created_by
                 FROM impactmgr.meetings ORDER BY started_at DESC, updated_at DESC
             """)
             cols = [c[0] for c in cursor.description]
@@ -143,22 +154,24 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             USING (SELECT ? AS meeting_id) AS src ON t.meeting_id = src.meeting_id
             WHEN MATCHED THEN UPDATE SET
                 health_system = ?, facilities = ?, recipients = ?, stage = ?,
-                completed = ?, actions = ?, started_at = ?, ended_at = ?, updated_at = ?,
-                recap_html = COALESCE(?, recap_html)
+                stages = ?, completed = ?, actions = ?, started_at = ?, ended_at = ?,
+                updated_at = ?, recap_html = COALESCE(?, recap_html)
             WHEN NOT MATCHED THEN
                 INSERT (meeting_id, health_system, facilities, recipients, stage,
-                        completed, actions, started_at, ended_at, updated_at, created_by,
-                        recap_html)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+                        stages, completed, actions, started_at, ended_at, updated_at,
+                        created_by, recap_html)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
         """,
             meeting_id,
             body.get('healthSystem'), json.dumps(body.get('facilities') or []),
             body.get('recipients'), body.get('stage'),
+            json.dumps(body.get('stages') or []),
             json.dumps(body.get('completed') or []), actions,
             _dt(body.get('startedAt')), _dt(body.get('endedAt')), now, recap_html,
             meeting_id,
             body.get('healthSystem'), json.dumps(body.get('facilities') or []),
             body.get('recipients'), body.get('stage'),
+            json.dumps(body.get('stages') or []),
             json.dumps(body.get('completed') or []), actions,
             _dt(body.get('startedAt')), _dt(body.get('endedAt')), now, user, recap_html)
         conn.commit()

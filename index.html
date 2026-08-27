@@ -316,6 +316,10 @@
         </button>
       </div>
       <div class="p-5 space-y-4">
+        <!-- Offer to resume an unfinished meeting rather than silently starting
+             a second. s.meeting lives in memory, so a refresh mid-meeting used
+             to strand the DB row as history with no way back into it. -->
+        <div id="meetingResumeSlot" class="hidden"></div>
         <div>
           <label class="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">Health System</label>
           <select id="meetingSystemSelect" class="w-full bg-white border border-slate-300 rounded-md px-3 py-2 text-sm"></select>
@@ -6257,9 +6261,21 @@
         { view: 'onboarding', label: 'Onboarding', blurb: 'Who is starting' },
       ],
 
+      // Meeting fields are user-entered (recipients) or app-composed action
+      // text, and were being interpolated into innerHTML raw.
+      esc(v) {
+        return String(v == null ? '' : v)
+          .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+          .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+      },
+
       meetingStageList() {
         const m = window.store.state.meeting;
-        return View.MEETING_STAGES.filter(st => !m || !m.stages || m.stages.includes(st.view));
+        // An empty stages array must fall back to all four, the same way the
+        // recall chips do — `!m.stages` missed that, since [] is truthy, and
+        // would have left the banner with no stages at all.
+        const picked = (m && m.stages) || [];
+        return View.MEETING_STAGES.filter(st => !picked.length || picked.includes(st.view));
       },
 
       renderMeetingSetup() {
@@ -6280,6 +6296,43 @@
             </label>`).join('');
         }
         lucide.createIcons();
+        View.offerMeetingResume();
+      },
+
+      /* Looks for an unfinished meeting (no ended_at) started by this user and
+       * offers to pick it back up. Non-fatal: if the lookup fails the setup
+       * modal still works, it just doesn't offer a resume. */
+      async offerMeetingResume() {
+        const slot = $('meetingResumeSlot');
+        if (!slot) return;
+        slot.classList.add('hidden');
+        slot.innerHTML = '';
+        try {
+          const resp = await fetch(`${API_BASE_URL}/meetings?limit=20`);
+          if (!resp.ok) return;
+          const rows = await resp.json();
+          if (!Array.isArray(rows)) return;
+          const me = (typeof getCurrentUser === 'function' ? getCurrentUser() : null) || '';
+          const open = rows.find(r => !r.ended_at &&
+            (!me || !r.created_by || String(r.created_by).toLowerCase() === String(me).toLowerCase()));
+          if (!open) return;
+          slot.innerHTML = `
+            <div class="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2.5 flex items-center justify-between gap-3">
+              <div class="text-xs text-amber-900 min-w-0">
+                <div class="font-semibold">Unfinished meeting</div>
+                <div class="text-[11px] truncate">${View.esc(open.health_system || 'All systems')}
+                  · started ${open.started_at ? new Date(open.started_at).toLocaleString() : '—'}
+                  · ${(open.actions || []).length} action(s)</div>
+              </div>
+              <button onclick="store.dispatch('RESUME_MEETING','${View.esc(open.meeting_id)}')"
+                      class="shrink-0 px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white rounded-md text-xs font-semibold">
+                Resume
+              </button>
+            </div>`;
+          slot.classList.remove('hidden');
+        } catch (e) {
+          console.warn('Resume lookup failed:', e);
+        }
       },
 
       renderMeetingBanner() {
@@ -6362,6 +6415,7 @@
               facilities: [...(window.store.state.filterSelection.facilities || [])],
               recipients: m.recipients || null,
               stage: m.stageIdx,
+              stages: m.stages || [],
               completed: m.completed,
               actions: m.actions,
               recapHtml: ended ? View.meetingRecapText(m) : null,
@@ -6397,13 +6451,13 @@
                         class="w-full text-left px-4 py-3 hover:bg-slate-50 flex items-center justify-between gap-4">
                   <div>
                     <div class="text-sm font-semibold text-slate-700">
-                      ${r.health_system || 'All systems'}
+                      ${View.esc(r.health_system || 'All systems')}
                       ${r.ended_at ? '' : '<span class="ml-2 text-[10px] font-bold text-amber-600 uppercase">in progress</span>'}
                     </div>
                     <div class="text-[11px] text-slate-400">
                       ${r.started_at ? new Date(r.started_at).toLocaleString() : '—'}
                       · ${(r.completed || []).length} stages · ${(r.actions || []).length} actions
-                      ${r.created_by ? ' · ' + r.created_by : ''}
+                      ${r.created_by ? ' · ' + View.esc(r.created_by) : ''}
                     </div>
                   </div>
                   <i data-lucide="chevron-right" class="w-4 h-4 text-slate-400"></i>
@@ -6433,31 +6487,40 @@
               <i data-lucide="chevron-left" class="w-3 h-3"></i> All meetings
             </button>
             <div class="mb-4">
-              <div class="text-base font-bold text-slate-800">${m.health_system || 'All systems'}</div>
+              <div class="text-base font-bold text-slate-800">${View.esc(m.health_system || 'All systems')}</div>
               <div class="text-[11px] text-slate-400">
                 ${m.started_at ? new Date(m.started_at).toLocaleString() : '—'}
                 ${m.ended_at ? ' → ' + new Date(m.ended_at).toLocaleString() : ' · not finished'}
-                ${m.created_by ? ' · ' + m.created_by : ''}
+                ${m.created_by ? ' · ' + View.esc(m.created_by) : ''}
               </div>
-              ${m.recipients ? `<div class="text-[11px] text-slate-500 mt-1">Recap to: ${m.recipients}</div>` : ''}
+              ${m.recipients ? `<div class="text-[11px] text-slate-500 mt-1">Recap to: ${View.esc(m.recipients)}</div>` : ''}
             </div>
+            <!-- Chips are the stages this meeting was scoped to. Older rows
+                 saved before the stages column existed fall back to all four,
+                 which is what they effectively meant. -->
             <div class="flex flex-wrap gap-1.5 mb-4">
-              ${View.MEETING_STAGES.map(st => `
+              ${View.MEETING_STAGES
+                .filter(st => !(m.stages || []).length || m.stages.includes(st.view))
+                .map(st => `
                 <span class="px-2 py-1 rounded text-[10px] font-bold ${
                   (m.completed || []).includes(st.view)
                     ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-400'}">${st.label}</span>`).join('')}
+              ${(m.stages || []).length && m.stages.length < View.MEETING_STAGES.length
+                ? `<span class="px-2 py-1 rounded text-[10px] text-slate-400">${
+                    View.MEETING_STAGES.length - m.stages.length} stage(s) not in scope</span>` : ''}
             </div>
             <h4 class="text-xs font-bold uppercase tracking-wide text-slate-500 mb-2">Actions Recorded</h4>
             ${(m.actions || []).length
               ? `<div class="rounded-lg border border-slate-200 divide-y divide-slate-100">
                   ${m.actions.map(a => `<div class="px-3 py-2 text-xs">
-                      <span class="font-semibold text-slate-500 mr-2">${a.stage || '—'}</span>
-                      <span class="text-slate-700">${a.text || ''}</span>
+                      <span class="font-semibold text-slate-500 mr-2">${View.esc(a.stage || '—')}</span>
+                      <span class="text-slate-700">${View.esc(a.text || '')}</span>
+                      ${a.at ? `<span class="text-slate-300 ml-2">${new Date(a.at).toLocaleString()}</span>` : ''}
                     </div>`).join('')}
                 </div>`
               : `<div class="text-slate-400 text-xs">Nothing was recorded.</div>`}
             ${m.recap_html ? `<h4 class="text-xs font-bold uppercase tracking-wide text-slate-500 mt-4 mb-2">Recap As Sent</h4>
-              <pre class="bg-slate-50 border border-slate-200 rounded p-3 text-[11px] whitespace-pre-wrap">${m.recap_html}</pre>` : ''}`;
+              <pre class="bg-slate-50 border border-slate-200 rounded p-3 text-[11px] whitespace-pre-wrap">${View.esc(m.recap_html)}</pre>` : ''}`;
           lucide.createIcons();
         } catch (e) {
           body.innerHTML = `<div class="rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-xs text-amber-900">
@@ -11815,6 +11878,49 @@
               break;
             }
 
+            case 'RESUME_MEETING': {
+              // Rebuild the in-memory meeting from its saved row. The id is
+              // reused, so the MERGE keeps updating the same record rather than
+              // forking a second one.
+              (async () => {
+                try {
+                  const resp = await fetch(`${API_BASE_URL}/meetings?id=${encodeURIComponent(payload)}`);
+                  if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                  const r = await resp.json();
+                  if (r.error) throw new Error(r.error);
+                  const stages = (r.stages || []).length
+                    ? r.stages
+                    : View.MEETING_STAGES.map(st => st.view);
+                  s.meeting = {
+                    id: r.meeting_id,
+                    healthSystem: r.health_system || null,
+                    recipients: r.recipients || null,
+                    stages,
+                    stageIdx: Number.isInteger(r.stage) ? r.stage : 0,
+                    completed: r.completed || [],
+                    actions: r.actions || [],
+                    startedAt: r.started_at || new Date().toISOString(),
+                  };
+                  if (r.health_system) {
+                    s.filterSelection.systems = new Set([r.health_system]);
+                    View.updateAllFilterOptions('systems');
+                  }
+                  const list = View.meetingStageList();
+                  const at = list[s.meeting.stageIdx] || list[0];
+                  if (at) s.view = at.view;
+                  $('meetingSetupModal')?.classList.add('hidden');
+                  View.viewToggle();
+                  View.renderMeetingBanner();
+                  View.main();
+                  window.showToast?.('Meeting resumed.', 'success');
+                } catch (e) {
+                  console.warn('Resume failed:', e);
+                  window.showToast?.('Could not resume: ' + (e.message || e), 'error');
+                }
+              })();
+              break;
+            }
+
             case 'GOTO_MEETING_STAGE': {
               const m = s.meeting;
               if (!m) break;
@@ -11869,11 +11975,17 @@
               if (!m) break;
               (async () => {
                 const ok = await View.saveMeeting(m, true);
-                if (ok) {
-                  const recap = View.meetingRecapText(m);
-                  try { await navigator.clipboard.writeText(recap); } catch {}
-                  window.showToast?.('Meeting saved. Recap copied to clipboard.', 'success');
+                if (!ok) {
+                  // The final save is the only copy — s.meeting lives in memory
+                  // and nothing else holds the recap. Keep the meeting open so
+                  // End can be pressed again rather than losing it.
+                  window.showToast?.('Meeting NOT saved — still open, try End again.', 'error');
+                  View.renderMeetingBanner();
+                  return;
                 }
+                const recap = View.meetingRecapText(m);
+                try { await navigator.clipboard.writeText(recap); } catch {}
+                window.showToast?.('Meeting saved. Recap copied to clipboard.', 'success');
                 s.meeting = null;
                 View.renderMeetingBanner();
               })();

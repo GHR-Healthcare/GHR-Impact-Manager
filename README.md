@@ -2,6 +2,20 @@
 
 ## Version History
 
+**2.4.20** - IMPACT meeting: persistence and recall pass
+
+Traced the meeting loop end to end — dispatch → `/api/meetings` → `impactmgr.meetings` → history/detail. Five defects, all in the save-and-recall path.
+
+| Defect | Effect |
+| --- | --- |
+| The picked stage list was never persisted | Recall rendered all four `MEETING_STAGES` chips, so a meeting scoped to two stages was indistinguishable from a four-stage meeting abandoned halfway. `stages` is now a column (additive migration), sent on save, and drives the recall chips |
+| `END_MEETING` cleared `s.meeting` even when the save failed | The final save is the only copy — the meeting lives in memory and nothing else holds the recap. A failed save silently destroyed it. The meeting now stays open so End can be pressed again |
+| No resume, despite the endpoint comment promising one | `s.meeting` is in-memory, so a refresh mid-meeting stranded the row as history with no way back in. Setup now offers to resume an unfinished meeting, reusing its id so the MERGE keeps updating one row |
+| `meetingStageList()` guarded on `!m.stages` | `[]` is truthy, so an empty stage array filtered out every stage instead of falling back to all four |
+| Meeting fields interpolated into `innerHTML` raw | `recipients` is user-typed and was rendered unescaped in both the history list and the detail modal, `recap_html` inside a `<pre>`. Added `View.esc()` and applied it to every interpolated meeting field |
+
+Also confirmed sound: the `workspace-state` write path matches the API contract on all four scopes it uses (`extension`, `onboarding`, `interview`, `margin` — `lever` is in `VALID_SCOPES` but goes through `changes` instead), the MERGE's 25 placeholders line up with its 25 arguments, and every Meetings statement compiles against `ghrappdb` once `stages` exists — verified inside a transaction that was rolled back.
+
 **2.4.19** - Stage tabs scroll like Open Jobs; Extension Search moved into the tab
 
 **Scrolling.** Closed / Extensions / Onboarding trapped their tables in a nested `overflow-auto` box, so with the KPI row, Analysis strip and heading above them the table was left scrolling inside a sliver. They now use Open Jobs' model exactly: one container holding header and body, scrolling horizontally always and vertically only on desktop, so on mobile the page scrolls instead of the box. The eight non-list wrappers were also aligned to Open Jobs' `md:h-full overflow-visible md:overflow-hidden min-h-0`, and the stage tables picked up the `min-w-[900px]` and the mobile swipe hint Open Jobs already had.
