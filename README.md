@@ -2,6 +2,12 @@
 
 ## Version History
 
+**2.4.19** - Stage tabs scroll like Open Jobs; Extension Search moved into the tab
+
+**Scrolling.** Closed / Extensions / Onboarding trapped their tables in a nested `overflow-auto` box, so with the KPI row, Analysis strip and heading above them the table was left scrolling inside a sliver. They now use Open Jobs' model exactly: one container holding header and body, scrolling horizontally always and vertically only on desktop, so on mobile the page scrolls instead of the box. The eight non-list wrappers were also aligned to Open Jobs' `md:h-full overflow-visible md:overflow-hidden min-h-0`, and the stage tables picked up the `min-w-[900px]` and the mobile swipe hint Open Jobs already had.
+
+**Extension Search** moved out of the global header and into the Extensions Analysis strip beside the donuts, since it only ever applied to that tab — it was floating in the header with its label stranded on the far left. The strip re-renders on every `View.main()`, so the controls are bound from state each pass rather than left in the DOM; `SET_EXT_FILTER` fires on change, not input, so a re-render can't land mid-keystroke. Status labels come from an explicit map — naive title-casing rendered `RTO` as "Rto".
+
 **2.4.18** - Extension Search bar
 
 Carried the v24.6 prototype's `#extensionFilterBar` across, which turns out to be both of Cyndi's outstanding Extensions notes in one component: it is literally titled *Extension Search* and its fields are the end-date search she asked for.
