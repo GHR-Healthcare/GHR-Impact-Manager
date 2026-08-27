@@ -5814,11 +5814,26 @@
         return 'ON TRACK';
       },
 
+      // Movement against the planned start (the start as of the application),
+      // as opposed to onboardingSlip() which measures against the start recorded
+      // at the last review. Null days_delayed means the jobs feed doesn't cover
+      // this seat — say so rather than rendering a confident zero. Negative is
+      // real and common: the start was pulled EARLIER than planned.
+      onboardingPlannedSlip(r) {
+        const d = r.days_delayed;
+        if (d == null) return '<span class="italic text-slate-300">not tracked</span>';
+        if (d === 0) return '<span class="text-emerald-600">on plan</span>';
+        return d > 0
+          ? `<span class="text-amber-600">+${d}d later</span>`
+          : `<span class="text-sky-600">${Math.abs(d)}d earlier</span>`;
+      },
+
       onboardingDetail(r) {
         const e = View.onboardingEdit(r);
         const slip = View.onboardingSlip(r);
         const meta = window.store.state.workspaceState?.onboarding?.[r.id];
         const notInData = '<span class="italic text-slate-300" title="Not recorded in B4 or VNDLY">not in data</span>';
+        const notTracked = '<span class="italic text-slate-300" title="No planned start on file for this seat">not tracked</span>';
         const metric = (label, value) => `<div class="bg-white border border-slate-200 rounded-lg px-3 py-2">
             <div class="text-[9px] uppercase tracking-wide text-slate-400 font-semibold">${label}</div>
             <div class="text-sm font-bold text-slate-800 mt-0.5">${value}</div>
@@ -5833,16 +5848,22 @@
                   <div class="grid grid-cols-2 gap-2">
                     ${metric('Current Start (source)', r.current_start || '—')}
                     ${metric('Last Recorded Start', e.recordedStart || '<span class="text-slate-300">never reviewed</span>')}
-                    ${metric('Original Start', notInData)}
+                    ${metric('Planned Start (at application)', r.planned_start || notTracked)}
+                    ${metric('Moved vs Planned', View.onboardingPlannedSlip(r))}
                     ${metric('Times Moved', r.move_count == null ? notInData : r.move_count)}
                     ${metric('Moved Since Recorded', slip == null ? '—' : (slip > 0 ? '+' : '') + slip + 'd')}
-                    ${metric('Source Status', r.group || '—')}
                   </div>
                   <p class="text-[10px] text-slate-400 mt-3 leading-snug">
-                    Neither feed carries an original start date, so total slip from
-                    the first scheduled date can&rsquo;t be shown &mdash; movement is
-                    measured against the start recorded at the last review.
-                    ${r.move_count == null ? 'Move count is B4-blind: only VNDLY reports start-change events.' : ''}
+                    ${r.delay_measure === 'days'
+                      ? `Planned start is the start as of the application, kept when the
+                         work order&rsquo;s own start later moves. It is not necessarily
+                         the first date ever scheduled.`
+                      : `No planned start on file for this seat, so total movement
+                         can&rsquo;t be measured &mdash; only slip against the start
+                         recorded at the last review.`}
+                    ${r.move_count == null
+                      ? ' Move count is B4-blind: only VNDLY reports start-change events.'
+                      : ' Move count is a floor &mdash; a start can move without a delay reason being logged.'}
                   </p>
                 </div>
                 <div>

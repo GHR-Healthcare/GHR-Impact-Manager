@@ -49,7 +49,8 @@ def _b4_rows(cursor, lookback, lookahead, include_affiliate):
             o.Agency                                    AS agency,
             o.Contract_Status                           AS contract_status,
             CAST(o.Start_Date AS DATE)                  AS current_start,
-            NULL                                        AS original_start,
+            -- B4 has no application feed, so no planned start either.
+            NULL                                        AS planned_start,
             CAST(o.End_Date AS DATE)                    AS end_date,
             NULL                                        AS onboarded_date,
             -- How far a start slipped, and how many times, are NOT derivable
@@ -84,12 +85,18 @@ def _vndly_rows(cursor, lookback, lookahead, include_affiliate):
     than requiring snapshot inference — and unlike the B4 history it covers
     affiliate vendors too.
 
-    The tradeoff: the work order carries [Original End Date] but there is no
-    Original Start Date anywhere in the VNDLY staging tables, so how far a
-    start slipped is NOT computable here. What is knowable is that a delayed
-    start was flagged and why. days_delayed is therefore null on this side and
-    move_count counts flagged delay events — a floor on real movement, not a
-    measured count. The UI must not present the two sides as the same measure.
+    There is still no Original Start Date on the work order itself — it carries
+    [Original End Date] but no start equivalent. What we do have is
+    STAGING_VNDLY_JOBS, which holds the start as of the APPLICATION and keeps
+    it when the work order's start later moves. That gives a planned start for
+    the seats the jobs feed covers (~82% of Active/Ended, far less of
+    'Ended by Job Close'), and days_delayed is measured against it.
+
+    move_count still counts flagged delay events, and is a FLOOR rather than a
+    true count: measured against live data, 8 work orders moved to a later
+    start with no 'Delayed Start' reason recorded at all. So a start can move
+    without the modifications feed saying so, and the UI should not present
+    move_count as authoritative.
     """
     vendor_filter = '' if include_affiliate else f'AND {VNDLY_GHR_PREDICATE}'
     cursor.execute(f'''
@@ -105,14 +112,31 @@ def _vndly_rows(cursor, lookback, lookahead, include_affiliate):
             GROUP BY WOSystemKey
         ),
         jobs AS (
-            -- STAGING_VNDLY_JOBS holds ~664 rows over ~387 distinct [Job Id];
-            -- joining it raw fans work orders out, so collapse it first. The
-            -- key is the int [Job Id]; [JobSystemKey] is an nvarchar business
-            -- key ('CUH-3-294') and will not join.
-            SELECT [Job Id] AS job_id,
-                   MAX(TRY_CAST([Standard Hours Per Week] AS DECIMAL(10,2))) AS hours_per_week
+            -- STAGING_VNDLY_JOBS is one row per (Health System, Work Order Id)
+            -- — verified unique against live data, 748 of 748. It was being
+            -- joined on [Job Id] alone, which fans out across every seat on a
+            -- requisition; the MAX() that hid the fan-out also meant
+            -- hours_per_week was the largest value on the whole req rather than
+            -- this seat's. 177 reqs carry differing hours across their seats,
+            -- so that was wrong, not merely imprecise.
+            --
+            -- [Start Date] here is the start as of the application, and it is
+            -- retained when the work order's own start later moves — so it
+            -- serves as a PLANNED start. Measured against live data on
+            -- Active/Ended single-seat reqs: 453 of 469 with no delay logged
+            -- match exactly (96.6%), while 6 of 8 with a delay logged show a
+            -- later start. Differences are almost all whole shift-weeks
+            -- (7/14/21/28/35 days), i.e. real movement rather than drift.
+            --
+            -- Not called "original": it is the start at application time, not
+            -- necessarily the first ever scheduled.
+            SELECT [Health System] AS hs,
+                   [Work Order Id]  AS wo_id,
+                   MAX(TRY_CAST([Standard Hours Per Week] AS DECIMAL(10,2))) AS hours_per_week,
+                   MAX(TRY_CAST([Start Date] AS DATE))                       AS planned_start
             FROM dbo.STAGING_VNDLY_JOBS WITH (NOLOCK)
-            GROUP BY [Job Id]
+            WHERE [Work Order Id] IS NOT NULL
+            GROUP BY [Health System], [Work Order Id]
         )
         SELECT
             'VNDLY'                                     AS source_system,
@@ -127,15 +151,18 @@ def _vndly_rows(cursor, lookback, lookahead, include_affiliate):
             w.[Vendor Name]                              AS agency,
             w.[Current Status]                           AS contract_status,
             TRY_CAST(w.[Start Date] AS DATE)             AS current_start,
-            NULL                                         AS original_start,
+            j.planned_start                              AS planned_start,
             TRY_CAST(w.[End Date] AS DATE)               AS end_date,
             TRY_CAST(w.[Onboarded Date] AS DATE)         AS onboarded_date,
             ISNULL(m.delay_events, 0)                    AS move_count,
             -- The modifications feed exists for every work order, so no row
             -- genuinely means no flagged delay (unlike B4, where a missing
             -- history row means unmatched).
-            1                                            AS movement_tracked,
-            NULL                                         AS days_delayed,
+            -- Slip against the planned start, where the jobs feed covers this
+            -- seat. Null where it does not (~18% of Active/Ended work orders,
+            -- and most 'Ended by Job Close'), so the UI can say "not tracked"
+            -- rather than imply zero movement.
+            DATEDIFF(DAY, j.planned_start, TRY_CAST(w.[Start Date] AS DATE)) AS days_delayed,
             DATEDIFF(DAY, CAST(GETDATE() AS DATE), TRY_CAST(w.[Start Date] AS DATE)) AS days_until_start,
             CASE WHEN ISNULL(m.delay_events, 0) > 0 THEN 'Yes' ELSE 'No' END AS delayed_flag,
             CASE WHEN ISNULL(m.delay_events, 0) > 0 THEN 1 ELSE 0 END AS delay_flagged,
@@ -143,10 +170,16 @@ def _vndly_rows(cursor, lookback, lookahead, include_affiliate):
             w.[Resource Manager]                         AS account_manager,
             TRY_CAST(w.[Bill Rate] AS DECIMAL(10,2))     AS bill_rate,
             TRY_CAST(w.[Pay Rate] AS DECIMAL(10,2))      AS pay_rate,
-            j.hours_per_week                             AS hours_per_week
+            -- Hours come off the work order's own [Work Week], not the jobs
+            -- feed: it is at the seat grain and present on 1532 of 1571 work
+            -- orders (97.5%) versus 732 (47%) for the jobs feed, and the two
+            -- agree on 717 of the 732 where both exist. The jobs value is only
+            -- a fallback for the handful with no [Work Week].
+            COALESCE(TRY_CAST(w.[Work Week] AS DECIMAL(10,2)),
+                     j.hours_per_week)                   AS hours_per_week
         FROM dbo.STAGING_VNDLY_WORKORDERS w WITH (NOLOCK)
         LEFT JOIN mods m ON m.wo = w.WOSystemKey
-        LEFT JOIN jobs j ON j.job_id = w.[Job Id]
+        LEFT JOIN jobs j ON j.wo_id = w.[Work Order Id] AND j.hs = w.[Health System]
         WHERE TRY_CAST(w.[Start Date] AS DATE)
                 BETWEEN DATEADD(DAY, ?, CAST(GETDATE() AS DATE))
                     AND DATEADD(DAY, ?, CAST(GETDATE() AS DATE))
@@ -158,7 +191,7 @@ def _vndly_rows(cursor, lookback, lookahead, include_affiliate):
 def _finalize(rows):
     out = []
     for r in rows:
-        for k in ('current_start', 'original_start', 'end_date', 'onboarded_date'):
+        for k in ('current_start', 'planned_start', 'end_date', 'onboarded_date'):
             if r.get(k) is not None:
                 r[k] = r[k].isoformat() if hasattr(r[k], 'isoformat') else str(r[k])
         for k in ('bill_rate', 'pay_rate', 'hours_per_week'):
@@ -180,8 +213,9 @@ def _finalize(rows):
         else:
             r['delay_category'] = 'Delayed Start' if (r.get('delayed_flag') == 'Yes') else None
 
-        # Both VMSs say whether a start slipped and why; neither says by how
-        # much or how many times. Grouping keys off the flag they do record.
+        # Both VMSs say whether a start slipped and why. Only VNDLY says by how
+        # much, and only for the seats its jobs feed covers. Grouping keys off
+        # the flag both sides record, so it stays consistent across sources.
         flagged = bool(r.get('delay_flagged'))
         moves = r.get('move_count')
         delayed = r.get('days_delayed')
@@ -200,12 +234,21 @@ def _finalize(rows):
             group = 'ON TRACK'
 
         r['group'] = group
-        r['moved_multiple'] = False
-        r['movement_tracked'] = False
+        # More than one logged delay event. A floor, not a true count — a start
+        # can move with no 'Delayed Start' reason recorded.
+        r['moved_multiple'] = bool(moves and moves > 1)
         r['delay_flagged'] = flagged
-        # VNDLY knows a delay was flagged but not how far it slipped, so the
-        # two sides are not the same measure and the UI is told which it has.
-        r['delay_measure'] = 'days' if r.get('source_system') == 'B4' else 'flagged'
+
+        # Which measure this row actually carries. VNDLY seats covered by the
+        # jobs feed have a real day count against the planned start; B4 seats
+        # and uncovered VNDLY seats have only the flag. The UI must render
+        # 'flagged' rows as "not tracked" rather than as zero days.
+        if delayed is not None:
+            r['delay_measure'] = 'days'
+            r['movement_tracked'] = True
+        else:
+            r['delay_measure'] = 'flagged'
+            r['movement_tracked'] = False
         rate, hrs = r.get('bill_rate'), r.get('hours_per_week')
         r['value_13wk'] = round(rate * hrs * 13, 2) if rate and hrs else None
         out.append(r)
