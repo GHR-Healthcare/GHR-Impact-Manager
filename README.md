@@ -2,6 +2,20 @@
 
 ## Version History
 
+**2.4.15** - Onboarding: real start-slip against a planned start
+
+`STAGING_VNDLY_JOBS` carries the start **as of the application**, and keeps it when the work order's own start later moves — so it serves as a planned start. Verified against live data on Active/Ended single-seat reqs: 453 of 469 with no delay logged match exactly (96.6%), and 6 of 8 with a delay logged show a later start. Differences are almost all whole shift-weeks (7/14/21/28/35 days), i.e. real movement rather than drift. It is *not* called "original" — it's the start at application time, not necessarily the first ever scheduled.
+
+Getting the grain right surfaced three defects in the same CTE:
+
+| Was | Now |
+| --- | --- |
+| Joined `jobs` on `[Job Id]` alone, fanning out across every seat on a requisition | Keyed on `(Health System, Work Order Id)` — verified unique, 748 of 748 |
+| `hours_per_week` was `MAX()` over the whole req, so the largest value on any seat; **177 reqs carry differing hours across seats** | Taken from the work order's own `[Work Week]` — seat grain, present on 1532 of 1571 work orders vs 732 for the jobs feed, agreeing on 717 of the 732 where both exist |
+| `days_delayed` hardcoded null on VNDLY, and referencing a dropped alias on B4 | Measured where the jobs feed covers the seat, null where it doesn't |
+
+`delay_measure` / `movement_tracked` are now derived from whether a day count is actually present, rather than from which source system the row came from. Null slip renders as **"not tracked"** rather than a confident zero, and negative slip renders as *pulled earlier* — 17 of 256 rows in the current window started earlier than planned, against 12 that slipped later. `move_count` is documented as a floor: 8 work orders moved to a later start with no `Delayed Start` reason logged at all.
+
 **2.4.14** - Fix: chart helpers were defined on Utils but called as View
 
 `View.donutSvg is not a function` — the 2.4.13 helpers (`donutSvg`, `chartLegend`, `rankStripSvg`, `intelStrip`, `intelPanel`) were inserted next to `Utils.isGhrAgency`, so they landed on **`Utils`** while every caller says `View.`. That threw on Extensions, Onboarding and Closed, which meant those three tabs failed to render at all. Moved to `View`, beside `stageShell` where the other render helpers live.
