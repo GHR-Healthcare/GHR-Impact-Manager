@@ -2,6 +2,20 @@
 
 ## Version History
 
+**2.4.18** - Extension Search bar
+
+Carried the v24.6 prototype's `#extensionFilterBar` across, which turns out to be both of Cyndi's outstanding Extensions notes in one component: it is literally titled *Extension Search* and its fields are the end-date search she asked for.
+
+Placed under the shared filter row rather than inside it — left-aligned so it starts under **System**, with a rule beneath it, and shown only on the Extensions tab.
+
+| Field | Behaviour |
+| --- | --- |
+| End Date From / To | Compared as `YYYY-MM-DD` strings, so a timestamped `end_date` can't drift a day through a `Date` round-trip |
+| Extension Status | Options come from `EXT_GROUP_ORDER` — the app's real workflow states (No decision, RTO, Offered, Pending acceptance, Approved, Backfill, Exception) — not the prototype's invented vocabulary |
+| Count / Clear | Shows `N of M match` while filtering, `M in window` otherwise |
+
+The bar filters ahead of `stageApply`, so column sorts, column filters and the coloured legend bands all still compose with it.
+
 **2.4.17** - Per Diem: open orders were filtered to the past
 
 Every read-only statement in every endpoint was executed against the live databases to confirm the tabs actually return rows, not just that the SQL compiles. MSP came back clean on all 20 endpoints. One real bug surfaced.
