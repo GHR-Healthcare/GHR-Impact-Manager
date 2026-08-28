@@ -140,7 +140,12 @@ def _bullhorn_positions_data():
             -- "Allied,Nursing,RevCycle Workforce,United" across 4,400 RN
             -- placements. Fall back to the client tag list only when the job
             -- has no division, so legacy rows don't vanish from the filter.
-            COALESCE(NULLIF(jo.correlatedCustomText1, ''), cc.customTextBlock1) AS division,
+            -- 599 of 4,379 open reqs carry no division on either the job or
+            -- the client. Left null they vanish from the Division filter
+            -- entirely — the same silent-drop the Category split fixed — so
+            -- they group under Other and stay reachable.
+            COALESCE(NULLIF(jo.correlatedCustomText1, ''),
+                     NULLIF(cc.customTextBlock1, ''), 'Other') AS division,
             jo.correlatedCustomText5 AS team,
             jo.state AS region
         FROM dbo.View_JobOrder jo
@@ -327,7 +332,10 @@ def _symplr_positions_data():
                 LTRIM(RTRIM(ISNULL(lt.nursetype, '') + ' — ' + ISNULL(lt.specialty, ''))) AS specialty,
                 CAST(lt.date_entered AS DATE) AS date_added,
                 NULL AS unit,
-                ISNULL(lt.costCenterNumber, '') AS cost_center,
+                -- Symplr has no cost-centre concept; lt.costCenterNumber is
+                -- empty on all 6,226 open orders. The region is the
+                -- equivalent grouping, and regions.regionname covers 99.9%.
+                ISNULL(r.regionname, '') AS cost_center,
                 NULL AS bill_rate,
                 1 AS bill_rate_estimated,
                 TRY_CAST(lt.HoursPerWeek AS DECIMAL(10,2)) AS shift_hours,
@@ -384,7 +392,10 @@ def _symplr_positions_data():
                 LTRIM(RTRIM(ISNULL(MAX(o.nursetype), '') + ' — ' + ISNULL(MAX(o.specialty), ''))) AS specialty,
                 CAST(MIN(o.datetimecreated) AS DATE) AS date_added,
                 NULL AS unit,
-                ISNULL(MAX(o.costCenterNumber), '') AS cost_center,
+                -- Symplr has no cost-centre concept; lt.costCenterNumber is
+                -- empty on all 6,226 open orders. The region is the
+                -- equivalent grouping, and regions.regionname covers 99.9%.
+                ISNULL(MAX(r.regionname), '') AS cost_center,
                 NULL AS bill_rate,
                 1 AS bill_rate_estimated,
                 NULL AS shift_hours,
@@ -449,7 +460,10 @@ def _symplr_positions_data():
                 )) AS specialty,
                 CAST(MIN(o.datetimecreated) AS DATE) AS date_added,
                 NULL AS unit,
-                ISNULL(MAX(lt.costCenterNumber), MAX(o.costCenterNumber)) AS cost_center,
+                -- Symplr has no cost-centre concept; lt.costCenterNumber is
+                -- empty on all 6,226 open orders. The region is the
+                -- equivalent grouping, and regions.regionname covers 99.9%.
+                ISNULL(MAX(r.regionname), '') AS cost_center,
                 NULL AS bill_rate,
                 1 AS bill_rate_estimated,
                 NULL AS shift_hours,
