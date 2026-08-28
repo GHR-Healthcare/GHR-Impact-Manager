@@ -45,6 +45,22 @@ The more useful discovery is adjacent: `View_Placement.terminationReason` is pop
 
 Mean days-to-fill is 6.6 against a **median of 0** — most shifts book same-day and a long tail drags the average. Both are returned; the mean alone would describe a book that doesn't exist.
 
+## Extensions on non-MSP
+
+133 seats ending inside the 45-day horizon (34 Bullhorn, 99 Symplr), banded by urgency on the same legend MSP uses.
+
+Bullhorn does something neither MSP source can: it shows the seat's real extension history. `EditHistoryPlacement` records every change to `dateEnd` with old and new values, so an extension is an edit where the end date moved *later* — not an inference from a parent-contract chain (B4) or a reason-text match (VNDLY). Count, date and the user who made it come straight from the audit trail, and the note writes itself: *"End date moved 2026-08-22 to 2026-08-29"*, by Joe Andrews.
+
+Symplr has no such trail. `original_lt_orderid` looks like B4's parent chain but is populated on 2 rows out of 4,735 in a year, so it is read and flagged where present and relied on nowhere. Its 99 seats are genuine long-term assignments rather than per-diem shifts — the average span in the window is 139 days.
+
+Neither book has a VMS decision feed, so `decision_state` is `Not tracked in Bullhorn` / `Not tracked in Symplr` on every row and the decision is whatever the meeting records. Unlike MSP, that means the stage starts empty and earns its value after a few meetings.
+
+### Fields that were blank and now aren't
+
+`lt_order.tempid` and `BookedByUserID` resolve to the assigned clinician and the internal booker on 100% of filled orders; both were coming back empty. An extension conversation without the clinician's name is most of the way to useless. The same join was missing on Closed. On Bullhorn, `hiring_manager` comes from the placement's client contact, which resolves on 100% of live seats — `jo.reportToClientContactID` is never populated and would have looked like the obvious choice.
+
+What stays blank is blank at the source: Bullhorn has no department, unit or cost-centre column on either the job order or the placement, and Symplr `lt_order` carries no rate, so 13-week extension value is Bullhorn-only.
+
 **3.0.0** - IMPACT Meeting Workflow
 
 The facilitated IMPACT meeting, merged into the app we already ship rather than replacing it with the marketing prototype's shell. PR #58 carries additive backend work plus native views; the prototype's own UI is dropped.

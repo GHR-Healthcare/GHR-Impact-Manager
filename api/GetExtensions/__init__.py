@@ -3,6 +3,21 @@ import pyodbc
 import os
 import json
 from shared_code.auth import require_allowed_domain
+from shared_code.data_source import (
+    is_non_msp, get_bullhorn_conn, get_symplr_conn, get_appdb_conn,
+)
+from shared_code.bullhorn_systems import (
+    build_system_case_expr, build_scope_filter, resolve_scope_client_ids,
+)
+from shared_code.symplr_systems import (
+    build_system_case_expr as symplr_system_case_expr,
+    build_scope_filter as symplr_scope_filter,
+    resolve_scope_master_ids as symplr_resolve_scope,
+)
+from shared_code.credentials import (
+    normalize as normalize_credential,
+    service_line as credential_service_line,
+)
 
 
 # GHR-owned vendors differ by VMS. B4Health writes 'GHR Allied' / 'GHR Acute'
@@ -22,6 +37,13 @@ B4_EXCLUDED_STATUSES = ('Closed And Cancelled', 'Closed Not Awarded')
 VNDLY_ACTIVE_STATUSES = ('Active',)
 
 EXTENSION_HORIZON_DAYS = 45
+
+# Non-MSP placement statuses that represent a seat still running, and so
+# capable of being extended. Everything else in the window is terminal
+# (Cancellation, Termination, Completed) or never started.
+BULLHORN_LIVE_PLACEMENT_STATUSES = (
+    'Approved', 'Started', 'Cleared', 'Onboarding', 'Pending Start',
+)
 
 
 def _urgency(days):
@@ -195,6 +217,251 @@ def _vndly_rows(cursor, horizon, include_affiliate):
     return [dict(zip([c[0] for c in cursor.description], r)) for r in cursor.fetchall()]
 
 
+def _bullhorn_ext_rows(cursor, app_conn, horizon):
+    """Extension candidates on Bullhorn.
+
+    This book can do something neither MSP source can: show the seat's actual
+    extension history. `EditHistoryPlacement` records every change to
+    `dateEnd` with its old and new value, so an extension is an edit where the
+    end date moved *later* — not an inference from a parent-contract chain
+    (B4) or a reason-text match (VNDLY). Count, latest date and the user who
+    made it all come straight from the audit trail.
+
+    Hours come from the job order. `View_Placement` carries `hoursPerDay` but
+    no weekly figure, and multiplying by an assumed five-day week would invent
+    precision the source does not have.
+    """
+    scope_ids = resolve_scope_client_ids(cursor, app_conn)
+    system_case = build_system_case_expr('p.clientCorporationID')
+    scope_filter = build_scope_filter('p.clientCorporationID', client_ids=scope_ids)
+    status_list = ', '.join("'" + x + "'" for x in BULLHORN_LIVE_PLACEMENT_STATUSES)
+
+    cursor.execute(f'''
+        SELECT
+            'Bullhorn'                                    AS source_system,
+            CAST(p.placementID AS NVARCHAR(50))           AS id,
+            LTRIM(RTRIM(ISNULL(cnd.firstName, '') + ' ' + ISNULL(cnd.lastName, ''))) AS clinician,
+            ({system_case})                               AS health_system,
+            ISNULL(cc.name, '')                           AS facility,
+            NULL                                          AS unit,
+            jo.title                                      AS role,
+            NULL                                          AS care_type,
+            cat.cred                                      AS credential_raw,
+            spec.name                                     AS specialty_raw,
+            p.employmentType                              AS time_type,
+            CAST(p.dateBegin AS DATE)                     AS start_date,
+            CAST(p.dateEnd AS DATE)                       AS end_date,
+            DATEDIFF(DAY, CAST(GETDATE() AS DATE), p.dateEnd) AS days_left,
+            'GHR'                                         AS source,
+            'GHR'                                         AS agency,
+            p.status                                      AS contract_status,
+            LTRIM(RTRIM(ISNULL(u.firstName, '') + ' ' + ISNULL(u.lastName, ''))) AS account_manager,
+            -- The placement's client contact resolves to a name on 100% of
+            -- live seats in the window. jo.reportToClientContactID is never
+            -- populated, so this is the only working source.
+            NULLIF(LTRIM(RTRIM(ISNULL(cn.firstName, '') + ' ' + ISNULL(cn.lastName, ''))), '') AS hiring_manager,
+            -- Bullhorn has no cost-centre or unit concept: View_JobOrder and
+            -- View_Placement carry no department, unit or cost-centre column
+            -- at all. Left null rather than filled with a stand-in.
+            NULL                                          AS cost_center,
+            TRY_CAST(p.clientBillRate AS DECIMAL(10,2))   AS bill_rate,
+            TRY_CAST(p.payRate AS DECIMAL(10,2))          AS pay_rate,
+            TRY_CAST(jo.hoursPerWeek AS DECIMAL(10,2))    AS hours_per_week,
+            CASE WHEN ISNULL(ext.extended, 0) > 0 THEN 1 ELSE 0 END AS is_extension,
+            NULL                                          AS parent_ref,
+            ISNULL(ext.extended, 0)                       AS extension_events,
+            CAST(ext.last_at AS DATE)                     AS last_extension_at,
+            -- The audit trail records the dates, so the note is the move
+            -- itself rather than free text nobody wrote.
+            CASE WHEN ext.last_old IS NOT NULL AND ext.last_new IS NOT NULL
+                 THEN 'End date moved ' + CONVERT(NVARCHAR(10), ext.last_old, 23)
+                      + ' to ' + CONVERT(NVARCHAR(10), ext.last_new, 23)
+            END                                           AS extension_note,
+            ext.last_by                                   AS extension_by,
+            -- Bullhorn has no VMS decision feed. Unlike VNDLY there is no
+            -- modifications stream to derive intent from, so the decision is
+            -- whatever the meeting records in the app.
+            'Not tracked in Bullhorn'                     AS decision_state,
+            jo.state                                      AS region
+        FROM dbo.View_Placement p WITH (NOLOCK)
+        LEFT JOIN dbo.View_Candidate cnd WITH (NOLOCK) ON cnd.candidateID = p.candidateID
+        LEFT JOIN dbo.View_JobOrder jo WITH (NOLOCK)   ON jo.jobOrderID = p.jobOrderID
+        LEFT JOIN dbo.View_ClientCorporation cc WITH (NOLOCK)
+               ON cc.clientCorporationID = p.clientCorporationID
+        LEFT JOIN dbo.View_ClientCorporation pcc WITH (NOLOCK)
+               ON pcc.clientCorporationID = cc.parentClientCorporationID
+        LEFT JOIN dbo.View_CorporateUser u WITH (NOLOCK) ON u.corporateUserID = p.ownerID
+        LEFT JOIN dbo.View_ClientContact cn WITH (NOLOCK)
+               ON cn.clientContactID = p.clientContactID
+        OUTER APPLY (
+            SELECT
+                SUM(CASE WHEN TRY_CAST(e.newValue AS date) > TRY_CAST(e.oldValue AS date)
+                         THEN 1 ELSE 0 END) AS extended,
+                MAX(CASE WHEN TRY_CAST(e.newValue AS date) > TRY_CAST(e.oldValue AS date)
+                         THEN e.dateAdded END) AS last_at
+            FROM dbo.EditHistoryPlacement e WITH (NOLOCK)
+            WHERE e.placementID = p.placementID AND e.columnName = 'dateEnd' AND e.isDeleted = 0
+        ) ext_agg
+        OUTER APPLY (
+            SELECT TOP 1
+                e.dateAdded AS last_at,
+                TRY_CAST(e.oldValue AS date) AS last_old,
+                TRY_CAST(e.newValue AS date) AS last_new,
+                LTRIM(RTRIM(ISNULL(eu.firstName, '') + ' ' + ISNULL(eu.lastName, ''))) AS last_by,
+                ext_agg.extended AS extended
+            FROM dbo.EditHistoryPlacement e WITH (NOLOCK)
+            LEFT JOIN dbo.View_CorporateUser eu WITH (NOLOCK) ON eu.corporateUserID = e.updatingUserID
+            WHERE e.placementID = p.placementID AND e.columnName = 'dateEnd' AND e.isDeleted = 0
+              AND TRY_CAST(e.newValue AS date) > TRY_CAST(e.oldValue AS date)
+            ORDER BY e.dateAdded DESC
+        ) ext
+        OUTER APPLY (
+            SELECT TOP 1 COALESCE(NULLIF(cty.name, ''), cty.occupation) AS cred
+            FROM dbo.JobOrderCategories jc WITH (NOLOCK)
+            INNER JOIN dbo.Category cty WITH (NOLOCK) ON jc.categoryID = cty.categoryID
+            WHERE jc.jobOrderID = p.jobOrderID AND jc.isDeleted = 0 AND cty.isDeleted = 0
+        ) cat
+        OUTER APPLY (
+            SELECT TOP 1 sp.name
+            FROM dbo.JobOrderSpecialties js WITH (NOLOCK)
+            INNER JOIN dbo.Specialty sp WITH (NOLOCK) ON js.specialtyID = sp.specialtyID
+            WHERE js.jobOrderID = p.jobOrderID AND js.isDeleted = 0 AND sp.isDeleted = 0
+        ) spec
+        WHERE p.dateEnd BETWEEN CAST(GETDATE() AS DATE)
+                            AND DATEADD(DAY, {int(abs(horizon))}, CAST(GETDATE() AS DATE))
+          AND p.status IN ({status_list})
+          AND {scope_filter}
+    ''')
+    return [dict(zip([c[0] for c in cursor.description], r)) for r in cursor.fetchall()]
+
+
+def _symplr_ext_rows(cursor, app_conn, horizon):
+    """Extension candidates on Symplr.
+
+    Only filled orders qualify: an open or void order has no seat to extend.
+    These are genuine long-term assignments rather than per-diem shifts —
+    the average span in the window is about 139 days.
+
+    `original_lt_orderid` exists and looks like the parent-contract chain B4
+    uses, but it is not populated in practice: 2 rows out of 4,735 in a year.
+    It is read anyway, so a seat that *does* carry one is flagged, but it
+    cannot be relied on to find prior extensions, and there is no audit trail
+    on this source to fall back to. Extension history on Symplr is therefore
+    whatever the app has recorded.
+    """
+    symplr_master_ids = symplr_resolve_scope(app_conn, symplr_cursor=cursor)
+    sys_case = symplr_system_case_expr('lt.clientid')
+    scope = symplr_scope_filter('lt.clientid', master_ids=symplr_master_ids)
+
+    cursor.execute(f'''
+        SELECT
+            'Symplr'                                      AS source_system,
+            CAST(lt.lt_orderid AS NVARCHAR(50))           AS id,
+            -- lt_order.tempid is the assigned worker and BookedByUserID the
+            -- internal booker; both resolve on 100% of filled orders in the
+            -- window. An extension conversation without the clinician's name
+            -- is most of the way to useless.
+            NULLIF(LTRIM(RTRIM(ISNULL(t.firstname, '') + ' ' + ISNULL(t.lastname, ''))), '') AS clinician,
+            ({sys_case})                                  AS health_system,
+            pc.clientname                                 AS facility,
+            NULL                                          AS unit,
+            LTRIM(RTRIM(ISNULL(lt.nursetype, '') + ' — ' + ISNULL(lt.specialty, ''))) AS role,
+            NULL                                          AS care_type,
+            lt.nursetype                                  AS credential_raw,
+            lt.specialty                                  AS specialty_raw,
+            'Long-Term'                                   AS time_type,
+            CAST(lt.date_start AS DATE)                   AS start_date,
+            CAST(lt.date_end AS DATE)                     AS end_date,
+            DATEDIFF(DAY, CAST(GETDATE() AS DATE), lt.date_end) AS days_left,
+            'GHR'                                         AS source,
+            'GHR'                                         AS agency,
+            lt.status                                     AS contract_status,
+            NULLIF(LTRIM(RTRIM(ISNULL(bu.firstname, '') + ' ' + ISNULL(bu.lastname, ''))), '') AS account_manager,
+            NULL                                          AS hiring_manager,
+            ISNULL(r.regionname, '')                      AS cost_center,
+            NULL                                          AS bill_rate,
+            NULL                                          AS pay_rate,
+            COALESCE(
+                NULLIF(TRY_CAST(lt.HoursPerWeek AS DECIMAL(10,2)), 0),
+                CAST((DATEDIFF(MINUTE, TRY_CAST(lt.shiftstarttime AS time),
+                                       TRY_CAST(lt.shiftendtime AS time))
+                      + CASE WHEN TRY_CAST(lt.shiftendtime AS time)
+                                  <= TRY_CAST(lt.shiftstarttime AS time)
+                             THEN 1440 ELSE 0 END) / 60.0
+                     * TRY_CAST(lt.DaysPerWeek AS FLOAT) AS DECIMAL(10,2))
+            )                                             AS hours_per_week,
+            CASE WHEN lt.original_lt_orderid IS NOT NULL
+                  AND lt.original_lt_orderid <> 0
+                  AND lt.original_lt_orderid <> lt.lt_orderid
+                 THEN 1 ELSE 0 END                        AS is_extension,
+            CASE WHEN lt.original_lt_orderid IS NOT NULL
+                  AND lt.original_lt_orderid <> 0
+                  AND lt.original_lt_orderid <> lt.lt_orderid
+                 THEN CAST(lt.original_lt_orderid AS NVARCHAR(50)) END AS parent_ref,
+            0                                             AS extension_events,
+            NULL                                          AS last_extension_at,
+            NULL                                          AS extension_note,
+            NULL                                          AS extension_by,
+            'Not tracked in Symplr'                       AS decision_state,
+            pc.state                                      AS region
+        FROM dbo.lt_order lt WITH (NOLOCK)
+        LEFT JOIN dbo.profile_client pc ON lt.clientid = pc.recordid
+        LEFT JOIN dbo.profile_client m  ON pc.MasterClientID = m.recordid
+        LEFT JOIN dbo.regions r ON r.regionid = TRY_CAST(pc.region AS INT)
+        LEFT JOIN dbo.profile_temp t WITH (NOLOCK) ON t.recordid = lt.tempid
+        LEFT JOIN dbo.users bu WITH (NOLOCK) ON bu.userid = lt.BookedByUserID
+        WHERE lt.status = 'filled'
+          AND lt.date_end BETWEEN CAST(GETDATE() AS DATE)
+                              AND DATEADD(DAY, {int(abs(horizon))}, CAST(GETDATE() AS DATE))
+          AND {scope}
+    ''')
+    return [dict(zip([c[0] for c in cursor.description], r)) for r in cursor.fetchall()]
+
+
+def _non_msp_rows(horizon):
+    """Extension candidates across Bullhorn and Symplr."""
+    rows, errors = [], []
+    for label, getter, fn in (
+        ('Bullhorn', get_bullhorn_conn, _bullhorn_ext_rows),
+        ('Symplr', get_symplr_conn, _symplr_ext_rows),
+    ):
+        conn = None
+        app_conn = None
+        try:
+            conn = getter()
+            if conn is None:
+                errors.append(f'{label}: not configured')
+                continue
+            cursor = conn.cursor()
+            cursor.execute('SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED')
+            app_conn = get_appdb_conn()
+            rows.extend(fn(cursor, app_conn, horizon))
+        except Exception as e:
+            print(f'Extensions(non_msp): {label} branch failed: {e}')
+            import traceback
+            traceback.print_exc()
+            errors.append(f'{label}: {e}')
+        finally:
+            if app_conn is not None:
+                app_conn.close()
+            if conn is not None:
+                conn.close()
+    return rows, errors
+
+
+def _apply_credentials(rows):
+    """Same credential vocabulary the rest of non-MSP uses, so an RN filter
+    matches RNs from both books."""
+    for r in rows:
+        raw = r.pop('credential_raw', None)
+        r['profession'] = normalize_credential(raw)
+        r['service_line'] = credential_service_line(raw)
+        r['specialty'] = (r.pop('specialty_raw', None) or '')
+        if r.get('last_extension_at') is not None and hasattr(r['last_extension_at'], 'isoformat'):
+            r['last_extension_at'] = r['last_extension_at'].isoformat()
+    return rows
+
+
 def _serialize(rows):
     out = []
     for r in rows:
@@ -229,6 +496,29 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
     except (TypeError, ValueError):
         horizon = EXTENSION_HORIZON_DAYS
     include_affiliate = str(req.params.get('includeAffiliate', '')).lower() in ('1', 'true', 'yes')
+
+    if is_non_msp():
+        # No affiliate concept on this side: non-MSP is GHR's direct book, so
+        # includeAffiliate is meaningless rather than merely unset.
+        try:
+            rows, errors = _non_msp_rows(horizon)
+            rows = _serialize(_apply_credentials(rows))
+            rows.sort(key=lambda r: (r.get('days_left') if r.get('days_left') is not None else 9999))
+            bhn = sum(1 for r in rows if r['source_system'] == 'Bullhorn')
+            syn = sum(1 for r in rows if r['source_system'] == 'Symplr')
+            ext = sum(1 for r in rows if r.get('extension_events'))
+            print(f"Extensions(non_msp): {len(rows)} rows (Bullhorn {bhn}, Symplr {syn}; "
+                  f"{ext} previously extended; horizon {horizon}d; errors: {errors or 'none'})")
+            return func.HttpResponse(
+                json.dumps(rows, default=str),
+                mimetype='application/json', status_code=200)
+        except Exception as e:
+            print(f'Extensions(non_msp) error: {e}')
+            import traceback
+            traceback.print_exc()
+            return func.HttpResponse(
+                json.dumps({'error': str(e)}),
+                mimetype='application/json', status_code=500)
 
     conn = None
     rows, errors = [], []

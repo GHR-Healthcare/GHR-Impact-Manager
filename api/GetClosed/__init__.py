@@ -368,7 +368,9 @@ def _symplr_closed_rows(cursor, app_conn, lookback):
         SELECT
             'Symplr'                                      AS source_system,
             CAST(lt.lt_orderid AS NVARCHAR(50))           AS id,
-            ''                                            AS clinician,
+            -- Resolves on 100% of filled orders; blank on voids, which never
+            -- had a worker assigned.
+            NULLIF(LTRIM(RTRIM(ISNULL(t.firstname, '') + ' ' + ISNULL(t.lastname, ''))), '') AS clinician,
             ({sys_case})                                  AS health_system,
             pc.clientname                                 AS facility,
             NULL                                          AS unit,
@@ -382,7 +384,7 @@ def _symplr_closed_rows(cursor, app_conn, lookback):
                  WHEN lt.voiddt     IS NOT NULL THEN 'voided'
                  ELSE 'modified' END                      AS close_date_source,
             NULLIF(LTRIM(RTRIM(lt.voidreason)), '')       AS outcome_reason,
-            NULL                                          AS account_manager,
+            NULLIF(LTRIM(RTRIM(ISNULL(bu.firstname, '') + ' ' + ISNULL(bu.lastname, ''))), '') AS account_manager,
             CAST(lt.date_start AS DATE)                   AS start_date,
             -- lt_order carries no rate: only ratecode / rateSheetID, which are
             -- keys into a rate sheet this app does not read. Left null rather
@@ -406,6 +408,8 @@ def _symplr_closed_rows(cursor, app_conn, lookback):
         FROM dbo.lt_order lt WITH (NOLOCK)
         LEFT JOIN dbo.profile_client pc ON lt.clientid = pc.recordid
         LEFT JOIN dbo.profile_client m  ON pc.MasterClientID = m.recordid
+        LEFT JOIN dbo.profile_temp t WITH (NOLOCK) ON t.recordid = lt.tempid
+        LEFT JOIN dbo.users bu WITH (NOLOCK) ON bu.userid = lt.BookedByUserID
         WHERE lt.status IN ('filled', 'void')
           AND {scope}
           AND COALESCE(lt.BookedByDT, lt.voiddt, lt.datetimemodified)
