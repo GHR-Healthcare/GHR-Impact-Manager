@@ -12,16 +12,14 @@ from shared_code.bullhorn_systems import (
 )
 # Same rollup GetTrendData applies to placements, keyed on jo.customText1
 # because Positions reads JobOrder rather than Placement.
-# Bullhorn job-order titles are "Specialty | Credential" — 4,125 of 4,382
-# open reqs follow it, against 78 that carry customText2. customText1 holds
-# shift times, not a credential. Both halves are emitted raw and normalised in
-# Python, so one vocabulary covers Bullhorn and Symplr.
-BULLHORN_JO_CREDENTIAL = '''CASE WHEN CHARINDEX('|', jo.title) > 0
-        THEN LTRIM(RTRIM(SUBSTRING(jo.title, CHARINDEX('|', jo.title) + 1, 200)))
-        ELSE NULLIF(jo.customText2, '') END'''
-BULLHORN_JO_SPECIALTY = '''CASE WHEN CHARINDEX('|', jo.title) > 0
-        THEN LTRIM(RTRIM(LEFT(jo.title, CHARINDEX('|', jo.title) - 1)))
-        ELSE NULL END'''
+# Credential and specialty both come from Bullhorn's own junction tables
+# (JobOrderCategories -> Category, JobOrderSpecialties -> Specialty), joined
+# below as `cat` and `spec`. Both cover 4,377 of 4,382 open reqs against 4,125
+# for parsing the title, and Category already stores the short form — a job
+# titled "ICU | Registered Nurse" carries Category 'RN'. Titles are not parsed.
+#
+# JobOrderCertifications exists but is empty (0 rows against open reqs), so
+# required certifications are not available from this source.
 
 from shared_code.symplr_systems import (
     build_system_case_expr as symplr_system_case_expr,
@@ -98,8 +96,8 @@ def _bullhorn_positions_data():
             'Bullhorn' AS source_system,
             CAST(jo.jobOrderID AS NVARCHAR(50)) AS position_id,
             ISNULL(jo.employmentType, 'Unknown') AS program,
-            ({BULLHORN_JO_CREDENTIAL}) AS credential_raw,
-            ({BULLHORN_JO_SPECIALTY})  AS specialty_raw,
+            COALESCE(NULLIF(cat.name, ''), cat.occupation) AS credential_raw,
+            spec.name                                      AS specialty_raw,
             cc.name AS facility,
             jo.title AS specialty,
             CAST(jo.dateAdded AS DATE) AS date_added,

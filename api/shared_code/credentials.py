@@ -1,28 +1,23 @@
 """
 One credential vocabulary across Bullhorn and Symplr.
 
-The two systems name the same credential differently, and neither is wrong —
-they are just different books:
+Both books already write short forms and largely agree — RN, PT and
+Cath Lab Tech appear identically in each:
 
-    Bullhorn   View_JobOrder.customText2   "Registered Nurse - ER"
-                                           "Physical Therapist"
-                                           "Certified Medical Assistant"
-    Symplr     lt_order.nursetype          "RN"
-                                           "PT"
-                                           "CNA"
+    Bullhorn   JobOrderCategories -> Category.name   "RN", "Rad Tech", "OR Tech"
+    Symplr     lt_order.nursetype                    "RN", "PT", "Surgical Tech"
 
-Bullhorn also folds the specialty into the same field after a " - ", so the
-credential has to be split off before it can be compared.
+So this is deliberately light. It folds genuine synonyms together — Bullhorn's
+"OR Tech" and Symplr's "Surgical Tech" are the same role — and otherwise keeps
+the label the source used. A canonical form is only chosen over a source label
+where the other book actually uses it; renaming "Rad Tech" to "X-Ray Tech" when
+neither book says "X-Ray Tech" would help nobody.
 
-Without this, filtering to RN returns Symplr rows only and filtering to
-"Registered Nurse" returns Bullhorn rows only — the filter looks like it works
-while silently dropping an entire source. Both sides normalise to the short
-form, which is what people actually say.
+It also absorbs the long forms that appear elsewhere in Bullhorn
+("Registered Nurse" on placements and job titles) so those land on RN too.
 
-Bullhorn carries ~200 distinct credential strings, so this covers the ones
-that appear in volume and passes anything else through cleaned-up rather than
-forcing it into a bucket. An unmapped credential is still filterable, it just
-appears under its own name.
+Unmapped credentials pass through under their own name rather than being
+bucketed, so a credential nobody has mapped is still filterable.
 """
 
 import re
@@ -38,7 +33,9 @@ _ALIASES = {
     'NP':   ['nurse practitioner', 'np'],
     'CRNA': ['certified registered nurse anesthetist', 'crna'],
     'PA':   ['physician assistant', 'pa'],
-    'MD':   ['physician', 'md', 'do'],
+    # 'Physician' is what Bullhorn writes and Symplr has no equivalent, so
+    # that is the canonical label — renaming it to MD would help nobody.
+    'Physician': ['physician', 'md', 'do'],
     'PT':   ['physical therapist', 'pt'],
     'PTA':  ['physical therapist assistant', 'pta'],
     'OT':   ['occupational therapist', 'ot'],
@@ -52,14 +49,17 @@ _ALIASES = {
     'MA':   ['medical assistant', 'ma'],
     'PCT':  ['patient care technician', 'patient care tech', 'pct'],
     'PCA':  ['patient care assistant', 'pca'],
+    # The one rename worth making: Bullhorn 'OR Tech' and Symplr 'Surgical Tech'
+    # are the same role, so they fold together.
     'Surgical Tech':   ['surgical technologist', 'surgical tech', 'or tech', 'scrub tech'],
     'Sterile Proc':    ['sterile processing technician', 'sterile processing tech', 'spd tech'],
     'Pharmacy Tech':   ['pharmacy technician', 'pharmacy tech'],
     'Phlebotomist':    ['phlebotomist', 'phlebotomy tech'],
     'CT Tech':         ['ct technologist', 'ct tech'],
     'MRI Tech':        ['mri technologist', 'mri tech'],
-    'X-Ray Tech':      ['x-ray technologist', 'x-ray tech', 'xray tech', 'radiologic tech',
-                        'rad tech'],
+    # Bullhorn writes 'Rad Tech' (165 open reqs); Symplr has neither spelling.
+    'Rad Tech':        ['radiologic technologist', 'radiologic tech', 'x-ray technologist',
+                        'x-ray tech', 'xray tech', 'rad tech'],
     'Ultrasound Tech': ['ultrasound technologist', 'ultrasound tech', 'sonographer'],
     'Echo Tech':       ['echo technologist', 'echo tech'],
     'Cath Lab Tech':   ['cath lab technologist', 'cath lab tech'],
@@ -74,7 +74,8 @@ _ALIASES = {
     'Dietitian':       ['registered dietitian', 'dietitian'],
     'Coder':           ['medical coder', 'coding auditor', 'coder'],
     'CDI':             ['cdi specialist', 'clinical documentation specialist'],
-    'Paraprofessional': ['paraprofessional', 'para'],
+    # Symplr writes 'Para'; Bullhorn has neither.
+    'Para':            ['paraprofessional', 'para'],
     'DSP':             ['direct support professional', 'dsp'],
     'Teacher':         ['special ed teacher', 'special ed instructor', 'sub teacher', 'teacher'],
     'Patient Svc Rep': ['patient service representative', 'patient service rep', 'psr'],
@@ -89,16 +90,16 @@ _LOOKUP = sorted(
 # Which service line a canonical credential belongs to.
 _SERVICE_LINE = {
     'Nursing':            {'RN', 'LPN', 'CNA'},
-    'Advanced Practices': {'NP', 'CRNA', 'PA', 'MD'},
+    'Advanced Practices': {'NP', 'CRNA', 'PA', 'Physician'},
     'Allied': {
         'PT', 'PTA', 'OT', 'COTA', 'SLP', 'SLPA', 'RRT', 'RT', 'CMA', 'MA',
         'Surgical Tech', 'Sterile Proc', 'Pharmacy Tech', 'Phlebotomist',
-        'CT Tech', 'MRI Tech', 'X-Ray Tech', 'Ultrasound Tech', 'Echo Tech',
+        'CT Tech', 'MRI Tech', 'Rad Tech', 'Ultrasound Tech', 'Echo Tech',
         'Cath Lab Tech', 'Lab Tech', 'Histology Tech', 'Dietitian',
         'Social Worker', 'Psychologist', 'BCBA', 'RBT', 'Mental Health Tech',
     },
     'Non-Clinical': {
-        'PCT', 'PCA', 'Coder', 'CDI', 'Paraprofessional', 'DSP', 'Teacher',
+        'PCT', 'PCA', 'Coder', 'CDI', 'Para', 'DSP', 'Teacher',
         'Patient Svc Rep',
     },
 }
