@@ -2,6 +2,27 @@
 
 ## Version History
 
+**3.1.0** - Closed stage on non-MSP
+
+The Closed stage now runs on the non-MSP side, re-anchored on fill outcome instead of vendor capture. MSP asks who won a seat against affiliate agencies; non-MSP is GHR's direct book with no panel to compete against, so the stage answers what the meeting actually needs there — fill rate and velocity over historical orders.
+
+Orders resolve into FILLED / UNFILLED / CANCELED across Bullhorn and Symplr. Fill rate is `FILLED / (FILLED + UNFILLED)`; cancellations are excluded from the denominator because those orders stopped existing rather than going unfilled. Velocity is measured per order and reported as mean and median.
+
+### Four measurement traps found on the way
+
+Each of these produces a plausible wrong number rather than an error, which is how the earlier filter defects behaved too.
+
+- **Bullhorn's `Archive` status is not an outcome.** It is the largest status on the book — 38,062 orders in 180 days — and not one has ever carried a placement. They spread evenly across major systems, the signature of an inbound feed that is ingested and auto-archived rather than worked. Counted as unfilled they report a 5% fill rate against a real 52%. Excluded.
+- **Bullhorn's `Filled` status lies.** Of 269 orders marked Filled, 12 have a placement; `Placed` carries 2,204 of 2,279. Fill is derived from placement existence, never from the status label.
+- **`dateClosed` is populated on zero resolved orders** despite existing in the schema. `dateLastModified` covers 100% and anchors unfilled orders; filled orders anchor on their placement date.
+- **Symplr velocity cannot use `date_start`.** Orders are routinely logged after the shift begins, so `date_entered → date_start` averages *negative four days*. `BookedByDT` is populated on 100% of fills and never precedes entry.
+
+### Fill rate has an honest denominator
+
+Symplr's `voidreason` separates orders GHR lost (Filled by Competition, Unable to Fill, Filled by Internal Staff) from orders that stopped existing (Scheduling Error, Census Dropped). Leaving the latter in understates the rate by about seven points — 63.9% raw against 70.9% on true opportunities. Voids with no recorded reason, 40% of them, fall through to unfilled and count against the rate; that count is reported in `coverage.unfilledWithoutReason` so the figure is quoted as a floor rather than a point estimate.
+
+Symplr `lt_order` carries no bill or pay rate, only `ratecode` and `rateSheetID`. Those fields stay null and 13-week value is Bullhorn-only, rather than being filled with a guess.
+
 **3.0.0** - IMPACT Meeting Workflow
 
 The facilitated IMPACT meeting, merged into the app we already ship rather than replacing it with the marketing prototype's shell. PR #58 carries additive backend work plus native views; the prototype's own UI is dropped.
