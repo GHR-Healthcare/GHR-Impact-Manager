@@ -1770,8 +1770,10 @@
                 window.store.state.trendLoadError = trendError.message || String(trendError);
             }
 
-            // Closed / Extensions / Onboarding — MSP-only stages (these endpoints
-            // read B4 + VNDLY directly). Each is independent: one failing must not
+            // Closed / Extensions / Onboarding. These run on both sides now —
+            // B4 + VNDLY under DATA_SOURCE=msp, Bullhorn + Symplr under
+            // non_msp — and the endpoints dispatch, so the fetch is the same
+            // either way. Each is independent: one failing must not
             // take the others or the rest of the page with it, and each records its
             // own error so the view can say so instead of rendering an empty table
             // that looks like a quiet week.
@@ -4457,16 +4459,21 @@
        * that meant remembering all three, which is how the GHR/Affiliate
        * guards kept getting missed in some paths and not others.
        *
-       * mspOnly: Extensions / Onboarding / Closed read B4 + VNDLY directly
-       * (no is_non_msp branch), and Per Diem / Pending have no non-MSP
-       * equivalent per BULLHORN_PORT_SPEC.md §5 + §8 — so all five are hidden
-       * there rather than opening onto a dead view.
+       * mspOnly: Per Diem / Pending have no non-MSP equivalent, so they stay
+       * hidden there rather than opening onto a dead view.
+       *
+       * Closed / Extensions / Onboarding used to be mspOnly too, because they
+       * read B4 + VNDLY directly. They now have is_non_msp branches over
+       * Bullhorn + Symplr, so they show on both sides. Closed answers a
+       * different question there — fill rate and velocity over historical
+       * orders, rather than GHR's share against affiliate agencies, which is
+       * meaningless on a direct book with no vendor panel.
        */
       VIEWS: [
-        { key: 'closed',     btn: 'btnViewClosed',     wrap: 'closedViewWrapper',     mspOnly: true },
+        { key: 'closed',     btn: 'btnViewClosed',     wrap: 'closedViewWrapper' },
         { key: 'list',       btn: 'btnViewList',       wrap: 'listViewWrapper' },
-        { key: 'extensions', btn: 'btnViewExtensions', wrap: 'extensionsViewWrapper', mspOnly: true },
-        { key: 'onboarding', btn: 'btnViewOnboarding', wrap: 'onboardingViewWrapper', mspOnly: true },
+        { key: 'extensions', btn: 'btnViewExtensions', wrap: 'extensionsViewWrapper' },
+        { key: 'onboarding', btn: 'btnViewOnboarding', wrap: 'onboardingViewWrapper' },
         { key: 'hotjobs',    btn: 'btnViewHot',        wrap: 'hotJobsViewWrapper' },
         { key: 'trend',      btn: 'btnViewTrend',      wrap: 'trendViewWrapper' },
         { key: 'perdiem',    btn: 'btnViewPerDiem',    wrap: 'perDiemViewWrapper',    mspOnly: true },
@@ -6214,10 +6221,23 @@
         const top = Object.entries(byGroup).sort((a, b) => b[1] - a[1])[0];
         const windowDays = s.closedMeta?.coverage?.windowDays;
         const value = rows.reduce((a, r) => a + (Number(r.value_13wk) || 0), 0);
+        const nonMspKpi = s.dataSource === 'non_msp';
+        const covKpi = s.closedMeta?.coverage || {};
         View.renderKpiCards([
           { label: windowDays ? `Closed (${windowDays}d)` : 'Closed In Window', val: rows.length, icon: 'check-circle', color: 'blue' },
-          { label: 'Top Outcome', val: top ? top[0] : '—', icon: 'pie-chart', color: 'indigo' },
-          { label: 'Outcome Types', val: Object.keys(byGroup).length, icon: 'layers', color: 'purple' },
+          // Fill rate and velocity are what the non-MSP meeting acts on;
+          // "top outcome" is a label, not a number anyone can move.
+          nonMspKpi
+            ? { label: 'Fill Rate', val: covKpi.fillRatePct != null ? covKpi.fillRatePct + '%' : '—',
+                icon: 'target', color: 'indigo' }
+            : { label: 'Top Outcome', val: top ? top[0] : '—', icon: 'pie-chart', color: 'indigo' },
+          // Median, not mean: same-day bookings dominate and a long tail drags
+          // the average well above where most fills actually land.
+          nonMspKpi
+            ? { label: 'Median Days To Fill',
+                val: covKpi.medianDaysToFill != null ? covKpi.medianDaysToFill + 'd' : '—',
+                icon: 'clock', color: 'purple' }
+            : { label: 'Outcome Types', val: Object.keys(byGroup).length, icon: 'layers', color: 'purple' },
           { label: 'Ended Early', val: rows.filter(r => /terminat|resign|cancel/i.test(r.group || '')).length,
             icon: 'alert-triangle', color: 'red' },
           { label: 'Avg Tenure', val: (() => {
@@ -6245,22 +6265,72 @@
           </tr>`).join('');
 
         const el = $('closedContent');
-        const capSeg = [
-          { label: 'GHR',       value: rows.filter(r => Utils.isGhrAgency(r.agency)).length,  color: '#3b82f6' },
-          { label: 'Affiliate', value: rows.filter(r => !Utils.isGhrAgency(r.agency)).length, color: '#a855f7' },
-        ];
-        // Account Capture is the one chart with a basis in the reference —
-        // accountCapturePie(m.capture), "Closed Market Share / Agency starts",
-        // GHR vs Affiliates, on Closed. Kept for that reason. "Why It Ended"
-        // had no counterpart and is gone; the grouped table already says it.
-        const closedIntel = View.intelStrip('closed', [
-          View.intelPanel('Account Capture',
-            View.donutSvg(capSeg, { centerLabel: rows.length ? Math.round((capSeg[0].value / rows.length) * 100) + '%' : '—', centerSub: 'GHR' }),
-            View.chartLegend(capSeg),
-            'GHR share of everything that closed in this window. NOTE: share of SEATS, not of billings — say which you want.'),
-        ]);
+        const isNonMspClosed = s.dataSource === 'non_msp';
+        const cov = s.closedMeta?.coverage || {};
+
+        // The two sides ask different questions of the same stage. MSP asks
+        // who won the seat against affiliate agencies; non-MSP is GHR's direct
+        // book with no vendor panel, so capture has no meaning there and the
+        // question is how much we fill and where we lose it.
+        let closedIntel;
+        if (isNonMspClosed) {
+          const fillSeg = [
+            { label: 'Filled',   value: rows.filter(r => r.group === 'FILLED').length,   color: '#22C55E' },
+            { label: 'Unfilled', value: rows.filter(r => r.group === 'UNFILLED').length, color: '#EF4444' },
+          ];
+          const denom = fillSeg[0].value + fillSeg[1].value;
+          const comp = cov.competitive || {};
+          const lossRows = Object.entries(cov.lossBreakdown || {})
+            .sort((a, b) => b[1] - a[1]).slice(0, 5);
+          const lossList = lossRows.length ? `
+            <div class="flex flex-col gap-1 min-w-[13rem]">
+              ${lossRows.map(([k, v]) => `
+                <div class="flex items-center justify-between gap-3 text-[10px] text-slate-600">
+                  <span class="font-medium truncate">${k}</span>
+                  <span class="text-slate-400 tabular-nums">${v}</span>
+                </div>`).join('')}
+            </div>` : '<div class="text-[10px] text-slate-400">no reasons recorded</div>';
+
+          // Reason coverage differs sharply between the books (Symplr ~60%,
+          // Bullhorn ~15%), so the competitive count is a floor. Saying so on
+          // the panel keeps it from being read as a measurement.
+          const covNote = Object.entries(comp.reasonCoverage || {})
+            .map(([src, st]) => `${src} ${st.pct == null ? '—' : st.pct + '%'}`).join(' · ');
+
+          closedIntel = View.intelStrip('closed', [
+            View.intelPanel('Fill Rate',
+              View.donutSvg(fillSeg, {
+                centerLabel: denom ? Math.round((fillSeg[0].value / denom) * 100) + '%' : '—',
+                centerSub: 'filled' }),
+              View.chartLegend(fillSeg),
+              `Of ${denom} real opportunities. Cancelled orders are excluded — they stopped existing rather than going unfilled` +
+              (cov.unfilledWithoutReason ? `. ${cov.unfilledWithoutReason} unfilled carry no reason and count against the rate, so this is a floor` : '') + '.'),
+            View.intelPanel('Why We Lost',
+              lossList, '',
+              comp.total
+                ? `${comp.total} lost to a competitor${comp.pctOfOpportunities != null ? ` (${comp.pctOfOpportunities}% of opportunities)` : ''}. Reason coverage: ${covNote || 'n/a'}.`
+                : 'No competitive losses recorded in this window.'),
+          ]);
+        } else {
+          const capSeg = [
+            { label: 'GHR',       value: rows.filter(r => Utils.isGhrAgency(r.agency)).length,  color: '#3b82f6' },
+            { label: 'Affiliate', value: rows.filter(r => !Utils.isGhrAgency(r.agency)).length, color: '#a855f7' },
+          ];
+          // Account Capture is the one chart with a basis in the reference —
+          // accountCapturePie(m.capture), "Closed Market Share / Agency starts",
+          // GHR vs Affiliates, on Closed. Kept for that reason. "Why It Ended"
+          // had no counterpart and is gone; the grouped table already says it.
+          closedIntel = View.intelStrip('closed', [
+            View.intelPanel('Account Capture',
+              View.donutSvg(capSeg, { centerLabel: rows.length ? Math.round((capSeg[0].value / rows.length) * 100) + '%' : '—', centerSub: 'GHR' }),
+              View.chartLegend(capSeg),
+              'GHR share of everything that closed in this window. NOTE: share of SEATS, not of billings — say which you want.'),
+          ]);
+        }
         if (el) el.innerHTML = View.stageShell('closed', 'Closed',
-          'Assignments that ended, grouped by why — reasons canonicalised across VNDLY spelling variants',
+          isNonMspClosed
+            ? 'Historical orders and how they resolved — fill rate and time to fill across Bullhorn and Symplr'
+            : 'Assignments that ended, grouped by why — reasons canonicalised across VNDLY spelling variants',
           body, closedCols, closedIntel);
         lucide.createIcons();
       },
