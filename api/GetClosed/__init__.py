@@ -83,6 +83,36 @@ SYMPLR_REASON_CATEGORY = {
     'other':                    'Other (recorded)',
 }
 
+# Bullhorn's own close-reason vocabulary (View_JobOrder.reasonClosed).
+#
+# Coverage is the caveat that matters: this field has been populated on
+# 1.3%-3.8% of closed orders every year for six years. It is not an abandoned
+# field, it is one almost nobody fills in — 23 'Lost to Competition' in 2026
+# against 6,941 closed orders. So it labels individual rows and must never be
+# used to compute a competitive *rate* on this book.
+#
+# 'Duplicate', 'Data Cleanup - Admin' and 'System Error' are data artifacts
+# rather than lost work, and join Symplr's Scheduling Error as orders that
+# never belonged in a fill-rate denominator.
+BULLHORN_REASON_CATEGORY = {
+    'lost to competition':      'Lost to competitor',
+    'filled by hctec partners': 'Lost to competitor',
+    'wash - filled internally': 'Client filled internally',
+    'no interest':              'No qualified candidate',
+    'cancelled by client':      'Demand withdrawn',
+    'canceled by client':       'Demand withdrawn',
+    'wash - lost funding':      'Demand withdrawn',
+    'duplicate':                'Data artifact',
+    'data cleanup - admin':     'Data artifact',
+    'system error':             'Data artifact',
+    'filled':                   None,   # not a loss; the order was filled
+    'won:contract':             None,
+    'other':                    'Other (recorded)',
+}
+
+# Reasons on either book meaning the order was never a real opportunity.
+NON_OPPORTUNITY_CATEGORIES = {'Demand withdrawn', 'Data artifact'}
+
 COMPETITIVE_LOSS_CATEGORY = 'Lost to competitor'
 
 # How many entries each competitive-loss rollup returns. Anything dropped is
@@ -244,7 +274,7 @@ def _bullhorn_closed_rows(cursor, app_conn, lookback):
             CAST(jo.dateAdded AS DATE)                    AS opened_on,
             CAST(COALESCE(pl.first_placed, jo.dateLastModified) AS DATE) AS closed_on,
             CASE WHEN pl.n > 0 THEN 'placement' ELSE 'last_modified' END AS close_date_source,
-            NULL                                          AS outcome_reason,
+            NULLIF(LTRIM(RTRIM(jo.reasonClosed)), '')     AS outcome_reason,
             LTRIM(RTRIM(ISNULL(u.firstName, '') + ' ' + ISNULL(u.lastName, ''))) AS account_manager,
             CAST(jo.startDate AS DATE)                    AS start_date,
             TRY_CAST(jo.clientBillRate AS DECIMAL(10,2))  AS bill_rate,
@@ -294,18 +324,25 @@ def _bullhorn_closed_rows(cursor, app_conn, lookback):
     cols = [c[0] for c in cursor.description]
     rows = [dict(zip(cols, r)) for r in cursor.fetchall()]
     for r in rows:
+        reason = (r.get('outcome_reason') or '').strip().lower()
+        # An unmapped reason keeps its own label rather than being bucketed,
+        # so a value someone starts writing tomorrow stays visible.
+        category = (BULLHORN_REASON_CATEGORY.get(reason, (r.get('outcome_reason') or '').strip())
+                    if reason else None)
+
         if (r.get('placement_count') or 0) > 0:
             r['group'] = 'FILLED'
-        elif (r.get('status') or '') == 'Cancelled':
+        elif category in NON_OPPORTUNITY_CATEGORIES or (r.get('status') or '') == 'Cancelled':
+            # Cancelled orders are non-opportunities by default. Where a
+            # reason exists it can also promote an order *out* of the
+            # denominator — a 'Duplicate' closed order was never real work —
+            # but with the field populated ~2% of the time, status remains
+            # the primary signal.
             r['group'] = 'CANCELED'
         else:
             r['group'] = 'UNFILLED'
-        # Bullhorn job orders carry no cancellation-reason field, so unlike
-        # Symplr there is no way to tell a cancelled order that was never
-        # fillable from one GHR simply lost. All cancellations are treated as
-        # non-opportunities, matching how Symplr's 'Census Dropped' is handled.
         r['opportunity'] = r['group'] != 'CANCELED'
-        r['outcome_category'] = None
+        r['outcome_category'] = category if r['group'] != 'FILLED' else None
     return rows
 
 
@@ -406,12 +443,15 @@ def _symplr_closed_rows(cursor, app_conn, lookback):
 
 
 def _competitive_rollups(rows):
-    """Where GHR is losing shifts to competing agencies.
+    """Where GHR is losing work to competing agencies.
 
-    Symplr-only. Bullhorn job orders carry no cancellation-reason field at
-    all, so a competitive loss on that book is indistinguishable from any
-    other unfilled order — the totals here are not book-wide and the payload
-    says so.
+    Both books contribute, but not equally, and the difference is not a
+    detail. Symplr records a void reason on ~60% of voids; Bullhorn's
+    `reasonClosed` has run at 1.3%-3.8% for six years. So a Bullhorn
+    competitive loss is real when present and close to meaningless when
+    absent, and the counts here are a floor on that book rather than a
+    measurement. `reasonCoverage` carries the per-source rate so the number
+    is never read as complete.
     """
     losses = [r for r in rows if r.get('outcome_category') == COMPETITIVE_LOSS_CATEGORY]
 
@@ -434,9 +474,26 @@ def _competitive_rollups(rows):
     # candidates. Denominator matches the fill-rate denominator.
     opportunities = sum(1 for r in rows if r.get('opportunity'))
 
+    # What share of non-filled orders carry any reason at all, per source.
+    # Without this the competitive counts look like a measurement of the whole
+    # book instead of a floor drawn from whatever was recorded.
+    reason_coverage = {}
+    for r in rows:
+        if r.get('group') == 'FILLED':
+            continue
+        src = r.get('source_system') or '?'
+        stat = reason_coverage.setdefault(src, {'unfilled': 0, 'withReason': 0})
+        stat['unfilled'] += 1
+        if (r.get('outcome_reason') or '').strip():
+            stat['withReason'] += 1
+    for stat in reason_coverage.values():
+        stat['pct'] = (round(100.0 * stat['withReason'] / stat['unfilled'], 1)
+                       if stat['unfilled'] else None)
+
     return {
         'total': len(losses),
-        'sources': ['Symplr'],
+        'sources': sorted({r.get('source_system') for r in losses if r.get('source_system')}),
+        'reasonCoverage': reason_coverage,
         'pctOfOpportunities': (
             round(100.0 * len(losses) / opportunities, 1) if opportunities else None
         ),

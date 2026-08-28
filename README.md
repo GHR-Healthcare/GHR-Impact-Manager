@@ -31,6 +31,16 @@ Two things the breakdown makes obvious. **Competitors are not the main threat: c
 
 This is Symplr-only. Bullhorn job orders carry no cancellation-reason field, so a competitive loss there is indistinguishable from any other unfilled order; the payload names its sources rather than implying book-wide coverage.
 
+### Bullhorn's own close reasons
+
+`View_JobOrder.reasonClosed` exists and carries a real vocabulary, including an explicit `Lost to Competition` and a named competitor (`Filled by HCTec Partners`). It is wired in, with a hard limit on what it may be used for.
+
+Book-wide the field has run at 1.3%-3.8% for six years — not abandoned, just rarely filled in. Within the thirteen accounts this app actually scopes to it is better, 35.7% all-time, but carries only **8** `Lost to Competition` rows ever, against 2,585 outside that scope. So Bullhorn close reasons label individual orders and must never drive a competitive *rate*; `coverage.competitive.reasonCoverage` reports the populated share per source so the counts read as a floor.
+
+Three of its values — `Duplicate`, `Data Cleanup - Admin`, `System Error` — are data artifacts rather than lost work, and now leave the fill-rate denominator alongside Symplr's `Scheduling Error`.
+
+The more useful discovery is adjacent: `View_Placement.terminationReason` is populated on 21.9% of placements with an operational vocabulary (Candidate Cancellation 2,852, Company Cancellation 1,513, GHR Cancellation 1,074). That is fallout data, and it belongs to the Onboarding and Extensions stages rather than to Closed.
+
 ### Velocity is reported as median, not just mean
 
 Mean days-to-fill is 6.6 against a **median of 0** — most shifts book same-day and a long tail drags the average. Both are returned; the mean alone would describe a book that doesn't exist.
