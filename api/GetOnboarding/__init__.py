@@ -36,6 +36,15 @@ def _b4_rows(cursor, lookback, lookahead, include_affiliate):
     """
     agency_filter = '' if include_affiliate else f'AND {B4_GHR_PREDICATE}'
     cursor.execute(f'''
+        WITH hist AS (
+            SELECT LTRIM(RTRIM(Contract_ID))  AS cid,
+                   COUNT(DISTINCT Start_Date) AS distinct_starts,
+                   MIN(Start_Date)            AS first_start,
+                   MAX(Start_Date)            AS last_start
+            FROM dbo.HIST_B4HealthOrder WITH (NOLOCK)
+            WHERE Start_Date IS NOT NULL
+            GROUP BY LTRIM(RTRIM(Contract_ID))
+        )
         SELECT
             'B4'                                        AS source_system,
             LTRIM(RTRIM(o.Contract_ID))                 AS id,
@@ -49,20 +58,30 @@ def _b4_rows(cursor, lookback, lookahead, include_affiliate):
             o.Agency                                    AS agency,
             o.Contract_Status                           AS contract_status,
             CAST(o.Start_Date AS DATE)                  AS current_start,
-            -- B4 has no application feed, so no planned start either.
-            NULL                                        AS planned_start,
+            -- The earliest start ever recorded for this contract, from B4's
+            -- own history table.
+            CAST(h.first_start AS DATE)                 AS planned_start,
             CAST(o.End_Date AS DATE)                    AS end_date,
             NULL                                        AS onboarded_date,
-            -- How far a start slipped, and how many times, are NOT derivable
-            -- here. Both came from HIST_B4HealthOrder, which is populated by
-            -- Bullhorn placement matching, and MSP reads B4 + VNDLY only.
-            -- NULL rather than 0 so _finalize flags movement_tracked=false and
-            -- the UI shows "not tracked" instead of a confident zero. (The
-            -- join to that history table was removed; these two columns still
-            -- referenced its alias, which made the whole B4 query invalid.)
-            CAST(NULL AS INT)                           AS move_count,
+            -- HIST_B4HealthOrder is a history OF dhc.B4HealthOrder — all
+            -- 6,440 of its contracts exist there, and it carries affiliate
+            -- rows (267 contracts) as well as GHR. It was dropped on the
+            -- reading that it was Bullhorn-derived. It is not: the BH-to-B4
+            -- matching process also writes this history and tags rows with
+            -- match metadata, but the rows are B4's own.
+            --
+            -- Only the history itself is needed here. Turning RUN_ID into a
+            -- date requires the BH-named RUN_DIM; counting distinct
+            -- Start_Date does not, so this stays inside B4.
+            CASE WHEN h.cid IS NULL THEN NULL ELSE
+                (h.distinct_starts - 1)
+                -- A start changed since the last load shows as one distinct
+                -- value that no longer matches the live row.
+                + CASE WHEN o.Start_Date <> h.last_start THEN 1 ELSE 0 END
+            END                                         AS move_count,
             CASE WHEN o.Delayed_Starts = 'Yes' THEN 1 ELSE 0 END AS delay_flagged,
-            CAST(NULL AS INT)                           AS days_delayed,
+            CASE WHEN h.cid IS NULL THEN NULL
+                 ELSE DATEDIFF(DAY, h.first_start, o.Start_Date) END AS days_delayed,
             DATEDIFF(DAY, CAST(GETDATE() AS DATE), o.Start_Date) AS days_until_start,
             o.Delayed_Starts                            AS delayed_flag,
             o.Delayed_Starts_Reasons                    AS delay_reason,
@@ -71,6 +90,7 @@ def _b4_rows(cursor, lookback, lookahead, include_affiliate):
             TRY_CAST(o.Pay_Rate AS DECIMAL(10,2))       AS pay_rate,
             TRY_CAST(o.Hours_per_Peek AS DECIMAL(10,2)) AS hours_per_week
         FROM dhc.B4HealthOrder o WITH (NOLOCK)
+        LEFT JOIN hist h ON h.cid = LTRIM(RTRIM(o.Contract_ID))
         WHERE o.Start_Date BETWEEN DATEADD(DAY, ?, CAST(GETDATE() AS DATE))
                                AND DATEADD(DAY, ?, CAST(GETDATE() AS DATE))
             {agency_filter}
