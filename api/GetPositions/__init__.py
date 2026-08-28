@@ -338,7 +338,22 @@ def _symplr_positions_data():
                 ISNULL(r.regionname, '') AS cost_center,
                 NULL AS bill_rate,
                 1 AS bill_rate_estimated,
-                TRY_CAST(lt.HoursPerWeek AS DECIMAL(10,2)) AS shift_hours,
+                -- Of 6,226 open orders, 3,872 carry hours, 827 hold a zero, and
+                -- 1,527 are null with no shift times to work from. The 827 all
+                -- carry shift times and DaysPerWeek, so the week is derivable
+                -- for them, taking coverage to 4,699. Overnight shifts cross
+                -- midnight, hence the +1440.
+                COALESCE(
+                    -- NULLIF, not a bare cast: the 827 gap rows hold 0 rather
+                    -- than NULL, and COALESCE would accept the zero.
+                    NULLIF(TRY_CAST(lt.HoursPerWeek AS DECIMAL(10,2)), 0),
+                    CAST((DATEDIFF(MINUTE, TRY_CAST(lt.shiftstarttime AS time),
+                                           TRY_CAST(lt.shiftendtime AS time))
+                          + CASE WHEN TRY_CAST(lt.shiftendtime AS time)
+                                      <= TRY_CAST(lt.shiftstarttime AS time)
+                                 THEN 1440 ELSE 0 END) / 60.0
+                         * TRY_CAST(lt.DaysPerWeek AS FLOAT) AS DECIMAL(10,2))
+                ) AS shift_hours,
                 NULL AS shift_time,
                 NULL AS hiring_manager,
                 0 AS num_submissions,
