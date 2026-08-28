@@ -63,11 +63,11 @@ def _apply_credential(row_dict):
     spec = row_dict.pop('specialty_raw', None)
     row_dict['credential'] = normalize_credential(raw)
     row_dict['service_line'] = credential_service_line(raw)
-    # Only fill specialty when the source gave one; the Bullhorn job title
-    # carries it before the pipe, Symplr has its own column.
-    if spec and not row_dict.get('specialty'):
-        row_dict['specialty'] = spec
-    row_dict['specialty_name'] = spec or ''
+    # `specialty` is left alone on purpose. It carries the job title, which is
+    # what the card shows, while the structured specialty already ships as
+    # `subspecialty` (spec.name on Bullhorn) and drives filtering. Emitting a
+    # `specialty_name` here would win over the title in the client and quietly
+    # change what every card displays.
     # The existing Profession filter becomes the credential filter. It was fed
     # by cat.occupation on Bullhorn and lt.specialty on Symplr — an occupation
     # on one side and a care setting on the other, so it never compared like
@@ -336,8 +336,13 @@ def _symplr_positions_data():
                 NULL AS end_time,
                 lt.status AS status,
                 ({sys_case}) AS health_system,
-                lt.specialty AS profession,
-                NULL AS subspecialty,
+                lt.nursetype AS profession,
+                -- Structured specialty, the counterpart to Bullhorn's
+                -- JobOrderSpecialties join. `specialty` above is a display
+                -- string (nursetype + specialty); this is the value the
+                -- Specialty filter matches on, so it has to be the bare
+                -- specialty or the filter finds nothing on this source.
+                lt.specialty AS subspecialty,
                 ({division_case}) AS division,
                 NULL AS team,
                 pc.state AS region
@@ -388,8 +393,13 @@ def _symplr_positions_data():
                 NULL AS end_time,
                 'open' AS status,
                 MAX({sys_case_orders}) AS health_system,
-                MAX(o.specialty) AS profession,
-                NULL AS subspecialty,
+                MAX(o.nursetype) AS profession,
+                -- Structured specialty, the counterpart to Bullhorn's
+                -- JobOrderSpecialties join. `specialty` above is a display
+                -- string (nursetype + specialty); this is the value the
+                -- Specialty filter matches on, so it has to be the bare
+                -- specialty or the filter finds nothing on this source.
+                MAX(o.specialty) AS subspecialty,
                 MAX({division_case_orders}) AS division,
                 NULL AS team,
                 MAX(pc.state) AS region
@@ -448,8 +458,13 @@ def _symplr_positions_data():
                 NULL AS end_time,
                 'open' AS status,
                 MAX({sys_case}) AS health_system,
-                MAX(lt.specialty) AS profession,
-                NULL AS subspecialty,
+                ISNULL(MAX(lt.nursetype), MAX(o.nursetype)) AS profession,
+                -- Structured specialty, the counterpart to Bullhorn's
+                -- JobOrderSpecialties join. `specialty` above is a display
+                -- string (nursetype + specialty); this is the value the
+                -- Specialty filter matches on, so it has to be the bare
+                -- specialty or the filter finds nothing on this source.
+                ISNULL(MAX(lt.specialty), MAX(o.specialty)) AS subspecialty,
                 MAX({division_case}) AS division,
                 NULL AS team,
                 MAX(pc.state) AS region
