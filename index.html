@@ -2745,8 +2745,27 @@
        * Match stats records against category filter using specialty field
        * Stats data doesn't have 'program', so we match specialty against category keywords
        */
-      matchesStatsCategoryFilter(specialty, selectedCategories) {
+      /* Categories on a stats row.
+       *
+       * Stats rows carried no category, so this keyword-matched the specialty
+       * text against the selected category — "is the category nursing-ish and
+       * does the specialty look nursing-ish too". That was always loose, and
+       * on non-MSP it degraded further once Category became engagement mode
+       * (Travel / Per Diem): no engagement value carries a nursing or allied
+       * keyword, so the buckets never fire and only the substring test is
+       * left, matching any specialty containing the word "travel".
+       *
+       * Rows now carry a real service_line derived from the credential, so
+       * when one is present it is compared directly and the guessing stops.
+       * The keyword path stays for MSP rows, which have no service_line.
+       */
+      matchesStatsCategoryFilter(specialty, selectedCategories, serviceLine) {
         if (!selectedCategories || selectedCategories.size === 0) return true;
+        if (serviceLine) {
+          for (const cat of selectedCategories) {
+            if (String(cat).toLowerCase() === String(serviceLine).toLowerCase()) return true;
+          }
+        }
         if (!specialty) return false;
 
         const specLower = String(specialty).toLowerCase();
@@ -4234,7 +4253,7 @@
           assignmentSources.forEach(r => {
             if (!r.healthSystem) return;
             const catOk = s.filterSelection.categories.size === 0 ||
-              Utils.matchesStatsCategoryFilter(r.specialty, s.filterSelection.categories);
+              Utils.matchesStatsCategoryFilter(r.specialty, s.filterSelection.categories, r.service_line);
             const facOk = s.filterSelection.facilities.size === 0 || s.filterSelection.facilities.has(r.facility);
             if (catOk && facOk) validSystems.add(r.healthSystem);
           });
@@ -6540,7 +6559,7 @@
           const sysMatch = Utils.matchesSelectedSystems(r, s.filterSelection.systems);
           const facMatch = s.filterSelection.facilities.size === 0 || (r.facility && s.filterSelection.facilities.has(r.facility));
           const specMatch = s.filterSelection.specialties.size === 0 || (r.specialty && s.filterSelection.specialties.has(Utils.cleanFilterText(r.specialty)));
-          const catMatch = Utils.matchesStatsCategoryFilter(r.specialty, s.filterSelection.categories);
+          const catMatch = Utils.matchesStatsCategoryFilter(r.specialty, s.filterSelection.categories, r.service_line);
           const divMatch = Utils.matchesSelectedDivisions(r.division, s.filterSelection.divisions)
             && Utils.matchesSelectedTeams(r.team, s.filterSelection.teams);
           const profMatch = s.filterSelection.professions.size === 0 || (r.profession && s.filterSelection.professions.has(r.profession));

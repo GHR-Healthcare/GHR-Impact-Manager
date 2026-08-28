@@ -4,6 +4,10 @@ import os
 import json
 from datetime import datetime, timedelta
 from shared_code.auth import require_allowed_domain
+from shared_code.credentials import (
+    normalize as normalize_credential,
+    service_line as credential_service_line,
+)
 from shared_code.data_source import is_non_msp, get_bullhorn_conn, get_symplr_conn, get_appdb_conn
 from shared_code.bullhorn_systems import (
     build_system_case_expr,
@@ -25,6 +29,21 @@ from shared_code.symplr_systems import (
 BULLHORN_ACTIVE_SNAPSHOT_STATUSES = (
     'Approved', 'Pending Start', 'Cleared', 'Onboarding', 'Started',
 )
+
+
+
+def _apply_service_line(row_dict):
+    """Attach the normalised credential and its service line.
+
+    Stats rows carried no category at all, which is why the client fell back to
+    keyword-matching the specialty text. With a real service line on the row
+    that guesswork can stop.
+    """
+    raw = row_dict.pop('credential_raw', None)
+    if raw:
+        row_dict['profession'] = normalize_credential(raw)
+        row_dict['service_line'] = credential_service_line(raw)
+    return row_dict
 
 
 def _bullhorn_stats_data():
@@ -50,7 +69,12 @@ def _bullhorn_stats_data():
                 'GHR' AS agency,
                 cc.name AS facility,
                 ({system_case}) AS system,
+                -- customText1 on a placement is the credential (RN, Coder,
+                -- CRNA), not a specialty. It is emitted as such so the two
+                -- books can be compared; Symplr sends its real specialty in
+                -- the same field position.
                 p.customText1 AS specialty,
+                p.customText1 AS credential_raw,
                 -- Division lives on the client (see GetTrendData note).
                 cc.customTextBlock1 AS division,
                 NULL AS region,
@@ -70,7 +94,7 @@ def _bullhorn_stats_data():
         columns = [column[0] for column in cursor.description]
         out = []
         for row in cursor.fetchall():
-            row_dict = dict(zip(columns, row))
+            row_dict = _apply_service_line(dict(zip(columns, row)))
             if row_dict.get('startDate'):
                 row_dict['startDate'] = row_dict['startDate'].isoformat() if hasattr(row_dict['startDate'], 'isoformat') else str(row_dict['startDate'])
             if row_dict.get('endDate'):
@@ -126,6 +150,7 @@ def _symplr_stats_data():
                 pc.clientname AS facility,
                 ({sys_case}) AS system,
                 lt.specialty AS specialty,
+                lt.nursetype AS credential_raw,
                 ({division_case}) AS division,
                 pc.state AS region,
                 CAST(lt.date_start AS DATE) AS startDate,
@@ -142,7 +167,7 @@ def _symplr_stats_data():
                 AND {scope}
         ''')
         columns = [column[0] for column in cursor.description]
-        return [_serialize(dict(zip(columns, row))) for row in cursor.fetchall()]
+        return [_serialize(_apply_service_line(dict(zip(columns, row)))) for row in cursor.fetchall()]
 
     def _fetch_order_rows(date_clause):
         """Orderless filled orders aggregated by worker+client.
@@ -158,6 +183,7 @@ def _symplr_stats_data():
                 MAX(pc.clientname) AS facility,
                 MAX({sys_case_orders}) AS system,
                 MAX(o.specialty) AS specialty,
+                MAX(o.nursetype) AS credential_raw,
                 MAX({division_case_orders}) AS division,
                 MAX(pc.state) AS region,
                 CAST(MIN(o.jobdatestart) AS DATE) AS startDate,
@@ -177,7 +203,7 @@ def _symplr_stats_data():
             GROUP BY o.customerid, o.filledby
         ''')
         columns = [column[0] for column in cursor.description]
-        return [_serialize(dict(zip(columns, row))) for row in cursor.fetchall()]
+        return [_serialize(_apply_service_line(dict(zip(columns, row)))) for row in cursor.fetchall()]
 
     on_assignment = (
         _fetch_lt_rows("lt.date_start <= GETDATE() AND (lt.date_end IS NULL OR lt.date_end >= GETDATE())")
@@ -275,7 +301,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
 
             columns = [column[0] for column in cursor.description]
             for row in cursor.fetchall():
-                row_dict = dict(zip(columns, row))
+                row_dict = _apply_service_line(dict(zip(columns, row)))
                 # Convert dates to ISO format
                 if row_dict.get('startDate'):
                     row_dict['startDate'] = row_dict['startDate'].isoformat() if hasattr(row_dict['startDate'], 'isoformat') else str(row_dict['startDate'])
@@ -313,7 +339,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             
             columns = [column[0] for column in cursor.description]
             for row in cursor.fetchall():
-                row_dict = dict(zip(columns, row))
+                row_dict = _apply_service_line(dict(zip(columns, row)))
                 if row_dict.get('startDate'):
                     row_dict['startDate'] = row_dict['startDate'].isoformat() if hasattr(row_dict['startDate'], 'isoformat') else str(row_dict['startDate'])
                 if row_dict.get('endDate'):
@@ -347,7 +373,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             
             columns = [column[0] for column in cursor.description]
             for row in cursor.fetchall():
-                row_dict = dict(zip(columns, row))
+                row_dict = _apply_service_line(dict(zip(columns, row)))
                 if row_dict.get('startDate'):
                     row_dict['startDate'] = row_dict['startDate'].isoformat() if hasattr(row_dict['startDate'], 'isoformat') else str(row_dict['startDate'])
                 if row_dict.get('endDate'):
@@ -381,7 +407,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             
             columns = [column[0] for column in cursor.description]
             for row in cursor.fetchall():
-                row_dict = dict(zip(columns, row))
+                row_dict = _apply_service_line(dict(zip(columns, row)))
                 if row_dict.get('startDate'):
                     row_dict['startDate'] = row_dict['startDate'].isoformat() if hasattr(row_dict['startDate'], 'isoformat') else str(row_dict['startDate'])
                 if row_dict.get('endDate'):
