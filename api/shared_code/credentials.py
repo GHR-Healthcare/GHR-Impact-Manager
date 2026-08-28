@@ -143,3 +143,37 @@ def service_line(raw):
     """Service line for a credential: Nursing / Advanced Practices / Allied /
     Non-Clinical, or 'Other' when the credential is unmapped."""
     return _LINE_OF.get(normalize(raw), 'Other')
+
+
+# ── US states ────────────────────────────────────────────────────────────────
+# Bullhorn writes full names ("Ohio", "Texas"), Symplr two-letter codes
+# ("PA", "NJ"). Same problem as credentials: a State filter built from both
+# lists shows Ohio and OH as separate entries and neither matches the other
+# source. Codes win — they are what the filter should show.
+_STATES = {
+    'alabama':'AL','alaska':'AK','arizona':'AZ','arkansas':'AR','california':'CA',
+    'colorado':'CO','connecticut':'CT','delaware':'DE','district of columbia':'DC',
+    'florida':'FL','georgia':'GA','hawaii':'HI','idaho':'ID','illinois':'IL',
+    'indiana':'IN','iowa':'IA','kansas':'KS','kentucky':'KY','louisiana':'LA',
+    'maine':'ME','maryland':'MD','massachusetts':'MA','michigan':'MI','minnesota':'MN',
+    'mississippi':'MS','missouri':'MO','montana':'MT','nebraska':'NE','nevada':'NV',
+    'new hampshire':'NH','new jersey':'NJ','new mexico':'NM','new york':'NY',
+    'north carolina':'NC','north dakota':'ND','ohio':'OH','oklahoma':'OK','oregon':'OR',
+    'pennsylvania':'PA','rhode island':'RI','south carolina':'SC','south dakota':'SD',
+    'tennessee':'TN','texas':'TX','utah':'UT','vermont':'VT','virginia':'VA',
+    'washington':'WA','west virginia':'WV','wisconsin':'WI','wyoming':'WY',
+    'puerto rico':'PR',
+}
+_STATE_CODES = set(_STATES.values())
+
+
+def normalize_state(raw):
+    """Two-letter code for a US state, whichever way the source spells it.
+    Anything unrecognised passes through trimmed rather than being dropped."""
+    s = (raw or '').strip()
+    if not s:
+        return ''
+    up = s.upper()
+    if len(up) == 2 and up in _STATE_CODES:
+        return up
+    return _STATES.get(s.lower(), s)

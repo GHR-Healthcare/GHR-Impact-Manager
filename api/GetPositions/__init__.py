@@ -3,7 +3,11 @@ import pyodbc
 import os
 import json
 from shared_code.auth import require_allowed_domain
-from shared_code.credentials import normalize as normalize_credential, service_line as credential_service_line
+from shared_code.credentials import (
+    normalize as normalize_credential,
+    service_line as credential_service_line,
+    normalize_state,
+)
 from shared_code.data_source import is_non_msp, get_bullhorn_conn, get_symplr_conn, get_appdb_conn
 from shared_code.bullhorn_systems import (
     build_system_case_expr,
@@ -75,6 +79,10 @@ def _apply_credential(row_dict):
     # across both books.
     if row_dict.get('credential'):
         row_dict['profession'] = row_dict['credential']
+    # Bullhorn writes "Ohio", Symplr writes "OH". Left alone the filter lists
+    # both and neither matches the other source.
+    if row_dict.get('region'):
+        row_dict['region'] = normalize_state(row_dict['region'])
     return row_dict
 
 def _bullhorn_positions_data():
@@ -134,7 +142,7 @@ def _bullhorn_positions_data():
             -- has no division, so legacy rows don't vanish from the filter.
             COALESCE(NULLIF(jo.correlatedCustomText1, ''), cc.customTextBlock1) AS division,
             jo.correlatedCustomText5 AS team,
-            NULL AS region
+            jo.state AS region
         FROM dbo.View_JobOrder jo
         -- Profession on a job order is a to-many association
         -- (View_JobOrder has no categoryID column; the mirror splits it into
