@@ -9,11 +9,28 @@ from shared_code.bullhorn_systems import (
     build_scope_filter,
     resolve_scope_client_ids,
 )
+# Same rollup GetTrendData applies to placements, keyed on jo.customText1
+# because Positions reads JobOrder rather than Placement.
+BULLHORN_JO_SERVICE_LINE = '''CASE
+        WHEN jo.customText1 IN ('RN', 'LPN', 'CNA') THEN 'Nursing'
+        WHEN jo.customText1 IN ('CRNA', 'Anesthesiologist', 'NP', 'PA', 'Physician', 'MD', 'DO') THEN 'Advanced Practices'
+        WHEN jo.customText1 IN ('OT', 'PT', 'SLP', 'Registered Dietitian', 'Therapist',
+                                'Social Worker', 'Speech', 'RRT', 'OR Tech', 'CMA',
+                                'Sterile Processing Tech', 'Surgical Tech', 'Rad Tech',
+                                'Ultrasound Tech', 'MRI Tech', 'CT Tech', 'Echo Tech',
+                                'Pharmacy Tech', 'Lab Tech', 'Respiratory Therapist') THEN 'Allied'
+        WHEN jo.customText1 IN ('Coder', 'CDI Specialist', 'Coding Auditor', 'Medical Coder',
+                                'Customer Service Rep', 'Clerical', 'Admin', 'IT',
+                                'Director', 'HIM Specialist', 'Analyst') THEN 'Non-Clinical'
+        ELSE 'Other'
+    END'''
+
 from shared_code.symplr_systems import (
     build_system_case_expr as symplr_system_case_expr,
     build_scope_filter as symplr_scope_filter,
     build_division_case_expr as symplr_division_case_expr,
     resolve_scope_master_ids as symplr_resolve_scope,
+    service_line_case as symplr_service_line_case,
 )
 
 
@@ -54,6 +71,7 @@ def _bullhorn_positions_data():
             'Bullhorn' AS source_system,
             CAST(jo.jobOrderID AS NVARCHAR(50)) AS position_id,
             ISNULL(jo.employmentType, 'Unknown') AS program,
+            ({BULLHORN_JO_SERVICE_LINE}) AS service_line,
             cc.name AS facility,
             jo.title AS specialty,
             CAST(jo.dateAdded AS DATE) AS date_added,
@@ -268,6 +286,7 @@ def _symplr_positions_data():
                 'Symplr' AS source_system,
                 CAST(lt.lt_orderid AS NVARCHAR(50)) AS position_id,
                 ISNULL(lt.nursetype, 'Unknown') AS program,
+                ({symplr_service_line_case('lt.nursetype')}) AS service_line,
                 pc.clientname AS facility,
                 LTRIM(RTRIM(ISNULL(lt.nursetype, '') + ' — ' + ISNULL(lt.specialty, ''))) AS specialty,
                 CAST(lt.date_entered AS DATE) AS date_added,
@@ -318,6 +337,7 @@ def _symplr_positions_data():
                 'Symplr' AS source_system,
                 CAST(MAX(o.orderid) AS NVARCHAR(50)) AS position_id,
                 ISNULL(MAX(o.nursetype), 'Unknown') AS program,
+                ({symplr_service_line_case('MAX(o.nursetype)')}) AS service_line,
                 MAX(pc.clientname) AS facility,
                 LTRIM(RTRIM(ISNULL(MAX(o.nursetype), '') + ' — ' + ISNULL(MAX(o.specialty), ''))) AS specialty,
                 CAST(MIN(o.datetimecreated) AS DATE) AS date_added,
@@ -373,6 +393,7 @@ def _symplr_positions_data():
                 'Symplr' AS source_system,
                 CAST(o.lt_orderid AS NVARCHAR(50)) AS position_id,
                 ISNULL(MAX(lt.nursetype), MAX(o.nursetype)) AS program,
+                ({symplr_service_line_case('MAX(lt.nursetype)')}) AS service_line,
                 MAX(pc.clientname) AS facility,
                 LTRIM(RTRIM(
                     ISNULL(MAX(lt.nursetype), MAX(o.nursetype)) + ' — ' +

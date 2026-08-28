@@ -240,6 +240,9 @@
         <div class="multi-select-container relative w-[calc(50%-6px)] sm:flex-1 min-h-[58px]" id="categoryFilterContainer">
           <label class="block text-xs font-bold text-slate-500 mb-1 ml-1 uppercase tracking-wider">Category</label>
           <div class="w-full bg-white border border-slate-300 rounded-md px-3 py-2 text-sm text-slate-400">Loading...</div>
+        </div><div class="multi-select-container relative w-[calc(50%-6px)] sm:flex-1 min-h-[58px]" id="serviceLineFilterContainer" hidden>
+          <label class="block text-xs font-bold text-slate-500 mb-1 ml-1 uppercase tracking-wider">Service Line</label>
+          <div class="w-full bg-white border border-slate-300 rounded-md px-3 py-2 text-sm text-slate-400">Loading...</div>
         </div>
         <div class="multi-select-container relative w-[calc(50%-6px)] sm:flex-1 min-h-[58px]" id="specialtyFilterContainer">
           <label class="block text-xs font-bold text-slate-500 mb-1 ml-1 uppercase tracking-wider">Specialty</label>
@@ -1946,6 +1949,13 @@
                 sourceSystem: row.source_system || 'B4',  // B4 or VNDLY
                 system: String(row.program || row.system || ''),
                 program: String(row.program || row.system || ''),
+                // Clinical service line, kept apart from `program`. On non-MSP
+                // `program` is engagement mode from Bullhorn (Travel/PRN/Perm)
+                // but clinical role from Symplr (RN/LPN/SLP) — two vocabularies
+                // in one field. This gives the role its own filter so Category
+                // can be read as engagement. Empty on MSP, which has one
+                // coherent Category already.
+                service_line: String(row.service_line || ''),
                 healthSystem: Utils.getHealthSystem(facilityName, row.health_system),
                 facility: facilityName,
                 specialty: String(row.specialty_name || row.specialty || ''),
@@ -4022,6 +4032,14 @@
         const teamEl = $('teamFilterContainer');
         const profEl = $('professionFilterContainer');
         const regEl = $('regionFilterContainer');
+        // Category carries engagement mode on Bullhorn (Travel/PRN/Perm) and
+        // clinical role on Symplr (RN/LPN/SLP) — two vocabularies in one
+        // control. Service Line splits the role out, so Category can be read
+        // as engagement. MSP has a single coherent Category and needs neither.
+        const showSvc = isNonMsp && (s.filters.serviceLines?.size > 0);
+        const svcEl = $('serviceLineFilterContainer');
+        if (svcEl) svcEl.hidden = !showSvc;
+        View.renderDropdown('serviceLineFilterContainer', 'serviceLines', s.filters.serviceLines || new Set(), false);
         const showDiv = isNonMsp && (s.filters.divisions?.size > 0);
         // Team is a job-level Bullhorn field (correlatedCustomText5) nested under
         // Division. Symplr rows carry no team, so it only shows when Bullhorn
@@ -4041,7 +4059,7 @@
         if (!container) return;
         const sorted = Array.from(set || []).filter(x => x != null && String(x).trim() !== '').sort();
         const labelMap = {
-          systems: 'SYSTEM', facilities: 'FACILITY', categories: 'CATEGORY', specialties: 'SPECIALTY/DEPT',
+          systems: 'SYSTEM', facilities: 'FACILITY', categories: 'CATEGORY', serviceLines: 'SERVICE LINE', specialties: 'SPECIALTY/DEPT',
           divisions: 'DIVISION', teams: 'TEAM', professions: 'PROFESSION', regions: 'REGION',
         };
 
@@ -4101,7 +4119,7 @@
         const isAll = set.size === 0;
         const idMap = {
           systems: 'systemFilterContainer', facilities: 'facilityFilterContainer',
-          categories: 'categoryFilterContainer', specialties: 'specialtyFilterContainer',
+          categories: 'categoryFilterContainer', serviceLines: 'serviceLineFilterContainer', specialties: 'specialtyFilterContainer',
           divisions: 'divisionFilterContainer', teams: 'teamFilterContainer',
           professions: 'professionFilterContainer',
           regions: 'regionFilterContainer',
@@ -4170,6 +4188,12 @@
               const catMatch = Array.from(s.filterSelection.categories).some(cv => Utils.checkCategoryMatch(job.program, cv));
               if (!catMatch) return false;
             }
+          }
+          // Service Line is the clinical role, kept separate from Category so
+          // the two vocabularies stop sharing one control on non-MSP.
+          if (excludeFilter !== 'serviceLines') {
+            if (s.filterSelection.serviceLines.size > 0 &&
+                !s.filterSelection.serviceLines.has(job.service_line)) return false;
           }
           if (excludeFilter !== 'specialties') {
             if (s.filterSelection.specialties.size > 0 && !s.filterSelection.specialties.has(Utils.jobSpecialtyKey(job))) return false;
@@ -11392,9 +11416,9 @@
         perDiemGHROnly: true,
         // Extension Search bar (Extensions tab only).
         extFilter: { endFrom: '', endTo: '', status: 'All' },
-        filters: { systems: new Set(), facilities: new Set(), categories: new Set(), specialties: new Set(), ageMin: null, ageMax: null, permOnly: false, legendBands: new Set(), searchId: '' },
+        filters: { systems: new Set(), facilities: new Set(), categories: new Set(), serviceLines: new Set(), specialties: new Set(), ageMin: null, ageMax: null, permOnly: false, legendBands: new Set(), searchId: '' },
         filterSelection: {
-          systems: new Set(), facilities: new Set(), categories: new Set(), specialties: new Set(),
+          systems: new Set(), facilities: new Set(), categories: new Set(), serviceLines: new Set(), specialties: new Set(),
           // Non-MSP filter dimensions — populated from the API's division/region/customText fields.
           // On MSP these stay empty; the UI hides the controls. Once the merged dashboard ships,
           // MSP records will carry the same shape and these become live there too.
@@ -11460,6 +11484,7 @@
                 ...pdAssignments.map(a => a.facility)
               ].filter(v => v && !_isHiddenByFacility(v)));
               s.filters.categories = new Set(s.jobs.map(j => j.program).filter(Boolean));
+              s.filters.serviceLines = new Set(s.jobs.map(j => j.service_line).filter(Boolean));
               // Apply cleanFilterText to specialty values for consistent matching
               s.filters.specialties = new Set([
                 ...s.jobs.map(j => Utils.jobSpecialtyKey(j)),
@@ -11525,6 +11550,7 @@
                 ...pdAssignments.map(a => a.facility)
               ].filter(v => v && !_isHiddenByFacility(v)));
               s.filters.categories = new Set(s.jobs.map(j => j.program).filter(Boolean));
+              s.filters.serviceLines = new Set(s.jobs.map(j => j.service_line).filter(Boolean));
               // Apply cleanFilterText to specialty values for consistent matching
               s.filters.specialties = new Set([
                 ...s.jobs.map(j => Utils.jobSpecialtyKey(j)),
