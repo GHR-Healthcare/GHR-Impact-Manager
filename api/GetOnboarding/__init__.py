@@ -3,6 +3,21 @@ import pyodbc
 import os
 import json
 from shared_code.auth import require_allowed_domain
+from shared_code.data_source import (
+    is_non_msp, get_bullhorn_conn, get_symplr_conn, get_appdb_conn,
+)
+from shared_code.bullhorn_systems import (
+    build_system_case_expr, build_scope_filter, resolve_scope_client_ids,
+)
+from shared_code.symplr_systems import (
+    build_system_case_expr as symplr_system_case_expr,
+    build_scope_filter as symplr_scope_filter,
+    resolve_scope_master_ids as symplr_resolve_scope,
+)
+from shared_code.credentials import (
+    normalize as normalize_credential,
+    service_line as credential_service_line,
+)
 from shared_code.vndly_reasons import canonical_reason, reason_category
 
 
@@ -19,6 +34,10 @@ ONBOARDING_LOOKAHEAD_DAYS = 45
 B4_CANCELLED_STATUSES = ('Closed And Cancelled', 'Closed Not Awarded')
 # VNDLY terminal statuses that mean the seat never converted to a start.
 VNDLY_CANCELLED_STATUSES = ('Rejected', 'Withdrawn', 'Offer Declined', 'Ended in Error')
+
+# Non-MSP equivalents. A placement that cancelled inside the onboarding
+# window is a fallout and belongs in the stage, not filtered out of it.
+BULLHORN_CANCELLED_STATUSES = ('Cancellation', 'Termination')
 
 
 def _b4_rows(cursor, lookback, lookahead, include_affiliate):
@@ -208,6 +227,214 @@ def _vndly_rows(cursor, lookback, lookahead, include_affiliate):
     return [dict(zip([c[0] for c in cursor.description], r)) for r in cursor.fetchall()]
 
 
+def _bullhorn_onb_rows(cursor, app_conn, lookback, lookahead):
+    """Onboarding seats on Bullhorn.
+
+    This branch measures start-date slip properly, which MSP's B4 side cannot.
+    `EditHistoryPlacement` records every change to `dateBegin` with its old and
+    new value, so the planned start is the oldest recorded `oldValue` and the
+    slip is the distance from there to where the date sits now. B4 carries only
+    a 'Delayed Starts' Yes/No flag; here the day count is real.
+
+    Seats with no edit history are genuinely untracked rather than on time.
+    They report a null day count and movement_tracked false, so the UI shows
+    "not tracked" instead of a confident zero.
+
+    `onboardingStatus` is a real progress field on this book (Initiated 4,270,
+    Completed 1,506, In Progress 169, Cancelled 298; 23% blank over a year),
+    with no MSP equivalent at all.
+    """
+    scope_ids = resolve_scope_client_ids(cursor, app_conn)
+    system_case = build_system_case_expr('p.clientCorporationID')
+    scope_filter = build_scope_filter('p.clientCorporationID', client_ids=scope_ids)
+
+    cursor.execute(f"""
+        SELECT
+            'Bullhorn'                                    AS source_system,
+            CAST(p.placementID AS NVARCHAR(50))           AS id,
+            LTRIM(RTRIM(ISNULL(cnd.firstName, '') + ' ' + ISNULL(cnd.lastName, ''))) AS clinician,
+            ({system_case})                               AS health_system,
+            ISNULL(cc.name, '')                           AS facility,
+            NULL                                          AS unit,
+            jo.title                                      AS role,
+            cat.cred                                      AS credential_raw,
+            spec.name                                     AS specialty_raw,
+            'GHR'                                         AS source,
+            'GHR'                                         AS agency,
+            p.status                                      AS contract_status,
+            p.onboardingStatus                            AS onboarding_status,
+            CAST(p.dateBegin AS DATE)                     AS current_start,
+            -- The oldest recorded previous value is the start everyone first
+            -- agreed to; with no history the current date is all there is.
+            CAST(COALESCE(fp.first_planned, p.dateBegin) AS DATE) AS planned_start,
+            CAST(p.dateEnd AS DATE)                       AS end_date,
+            NULL                                          AS onboarded_date,
+            ISNULL(h.moves, 0)                            AS move_count,
+            CASE WHEN ISNULL(h.pushed, 0) > 0 THEN 1 ELSE 0 END AS delay_flagged,
+            CASE WHEN fp.first_planned IS NULL THEN NULL
+                 ELSE DATEDIFF(DAY, fp.first_planned, p.dateBegin) END AS days_delayed,
+            DATEDIFF(DAY, CAST(GETDATE() AS DATE), p.dateBegin) AS days_until_start,
+            CASE WHEN ISNULL(h.pushed, 0) > 0 THEN 'Yes' ELSE 'No' END AS delayed_flag,
+            -- Bullhorn records no delay reason. terminationReason explains a
+            -- fallout after the fact, the closest thing available, and is only
+            -- meaningful on a cancelled seat.
+            CASE WHEN p.status IN ('Cancellation', 'Termination')
+                 THEN NULLIF(LTRIM(RTRIM(p.terminationReason)), '') END AS delay_reason,
+            LTRIM(RTRIM(ISNULL(u.firstName, '') + ' ' + ISNULL(u.lastName, ''))) AS account_manager,
+            TRY_CAST(p.clientBillRate AS DECIMAL(10,2))   AS bill_rate,
+            TRY_CAST(p.payRate AS DECIMAL(10,2))          AS pay_rate,
+            TRY_CAST(jo.hoursPerWeek AS DECIMAL(10,2))    AS hours_per_week,
+            jo.state                                      AS region
+        FROM dbo.View_Placement p WITH (NOLOCK)
+        LEFT JOIN dbo.View_Candidate cnd WITH (NOLOCK) ON cnd.candidateID = p.candidateID
+        LEFT JOIN dbo.View_JobOrder jo WITH (NOLOCK)   ON jo.jobOrderID = p.jobOrderID
+        LEFT JOIN dbo.View_ClientCorporation cc WITH (NOLOCK)
+               ON cc.clientCorporationID = p.clientCorporationID
+        LEFT JOIN dbo.View_ClientCorporation pcc WITH (NOLOCK)
+               ON pcc.clientCorporationID = cc.parentClientCorporationID
+        LEFT JOIN dbo.View_CorporateUser u WITH (NOLOCK) ON u.corporateUserID = p.ownerID
+        OUTER APPLY (
+            SELECT COUNT(*) AS moves,
+                   SUM(CASE WHEN TRY_CAST(e.newValue AS date) > TRY_CAST(e.oldValue AS date)
+                            THEN 1 ELSE 0 END) AS pushed,
+                   MIN(TRY_CAST(e.oldValue AS date)) AS earliest_ever_proposed
+            FROM dbo.EditHistoryPlacement e WITH (NOLOCK)
+            WHERE e.placementID = p.placementID AND e.columnName = 'dateBegin'
+              AND e.isDeleted = 0
+        ) h
+        -- The planned start is the value the *first* edit replaced, ordered by
+        -- when the edit happened. MIN(oldValue) is a different question -- the
+        -- earliest date ever proposed -- and the two diverge whenever a start
+        -- was pulled earlier before being pushed back. Measured on the live
+        -- window that is 1 seat in 30, reporting a 392-day slip where the
+        -- truth is 364.
+        OUTER APPLY (
+            SELECT TOP 1 TRY_CAST(e.oldValue AS date) AS first_planned
+            FROM dbo.EditHistoryPlacement e WITH (NOLOCK)
+            WHERE e.placementID = p.placementID AND e.columnName = 'dateBegin'
+              AND e.isDeleted = 0
+            ORDER BY e.dateAdded ASC
+        ) fp
+        OUTER APPLY (
+            SELECT TOP 1 COALESCE(NULLIF(cty.name, ''), cty.occupation) AS cred
+            FROM dbo.JobOrderCategories jc WITH (NOLOCK)
+            INNER JOIN dbo.Category cty WITH (NOLOCK) ON jc.categoryID = cty.categoryID
+            WHERE jc.jobOrderID = p.jobOrderID AND jc.isDeleted = 0 AND cty.isDeleted = 0
+        ) cat
+        OUTER APPLY (
+            SELECT TOP 1 sp.name
+            FROM dbo.JobOrderSpecialties js WITH (NOLOCK)
+            INNER JOIN dbo.Specialty sp WITH (NOLOCK) ON js.specialtyID = sp.specialtyID
+            WHERE js.jobOrderID = p.jobOrderID AND js.isDeleted = 0 AND sp.isDeleted = 0
+        ) spec
+        WHERE p.dateBegin BETWEEN DATEADD(DAY, -{int(abs(lookback))}, CAST(GETDATE() AS DATE))
+                              AND DATEADD(DAY,  {int(abs(lookahead))}, CAST(GETDATE() AS DATE))
+          AND {scope_filter}
+    """)
+    return [dict(zip([c[0] for c in cursor.description], r)) for r in cursor.fetchall()]
+
+
+def _symplr_onb_rows(cursor, app_conn, lookback, lookahead):
+    """Onboarding seats on Symplr.
+
+    Movement cannot be measured here. There is no audit trail for lt_order,
+    `temp_confirm_date` and `client_confirm_date` are both 0% populated, and
+    `StatusChangeLog` is keyed on WorkerID rather than the order, so it tracks
+    worker state and not this seat's onboarding. Every row therefore reports a
+    null day count and movement_tracked false, rather than a zero that would
+    read as "started on time".
+    """
+    symplr_master_ids = symplr_resolve_scope(app_conn, symplr_cursor=cursor)
+    sys_case = symplr_system_case_expr('lt.clientid')
+    scope = symplr_scope_filter('lt.clientid', master_ids=symplr_master_ids)
+
+    cursor.execute(f"""
+        SELECT
+            'Symplr'                                      AS source_system,
+            CAST(lt.lt_orderid AS NVARCHAR(50))           AS id,
+            NULLIF(LTRIM(RTRIM(ISNULL(t.firstname, '') + ' ' + ISNULL(t.lastname, ''))), '') AS clinician,
+            ({sys_case})                                  AS health_system,
+            pc.clientname                                 AS facility,
+            NULL                                          AS unit,
+            LTRIM(RTRIM(ISNULL(lt.nursetype, '') + ' - ' + ISNULL(lt.specialty, ''))) AS role,
+            lt.nursetype                                  AS credential_raw,
+            lt.specialty                                  AS specialty_raw,
+            'GHR'                                         AS source,
+            'GHR'                                         AS agency,
+            lt.status                                     AS contract_status,
+            NULL                                          AS onboarding_status,
+            CAST(lt.date_start AS DATE)                   AS current_start,
+            CAST(lt.date_start AS DATE)                   AS planned_start,
+            CAST(lt.date_end AS DATE)                     AS end_date,
+            CAST(lt.BookedByDT AS DATE)                   AS onboarded_date,
+            0                                             AS move_count,
+            0                                             AS delay_flagged,
+            NULL                                          AS days_delayed,
+            DATEDIFF(DAY, CAST(GETDATE() AS DATE), lt.date_start) AS days_until_start,
+            NULL                                          AS delayed_flag,
+            NULLIF(LTRIM(RTRIM(lt.voidreason)), '')       AS delay_reason,
+            NULLIF(LTRIM(RTRIM(ISNULL(bu.firstname, '') + ' ' + ISNULL(bu.lastname, ''))), '') AS account_manager,
+            NULL                                          AS bill_rate,
+            NULL                                          AS pay_rate,
+            COALESCE(
+                NULLIF(TRY_CAST(lt.HoursPerWeek AS DECIMAL(10,2)), 0),
+                CAST((DATEDIFF(MINUTE, TRY_CAST(lt.shiftstarttime AS time),
+                                       TRY_CAST(lt.shiftendtime AS time))
+                      + CASE WHEN TRY_CAST(lt.shiftendtime AS time)
+                                  <= TRY_CAST(lt.shiftstarttime AS time)
+                             THEN 1440 ELSE 0 END) / 60.0
+                     * TRY_CAST(lt.DaysPerWeek AS FLOAT) AS DECIMAL(10,2))
+            )                                             AS hours_per_week,
+            pc.state                                      AS region
+        FROM dbo.lt_order lt WITH (NOLOCK)
+        LEFT JOIN dbo.profile_client pc ON lt.clientid = pc.recordid
+        LEFT JOIN dbo.profile_client m  ON pc.MasterClientID = m.recordid
+        LEFT JOIN dbo.profile_temp t WITH (NOLOCK) ON t.recordid = lt.tempid
+        LEFT JOIN dbo.users bu WITH (NOLOCK) ON bu.userid = lt.BookedByUserID
+        WHERE lt.status IN ('filled', 'void')
+          AND lt.date_start BETWEEN DATEADD(DAY, -{int(abs(lookback))}, CAST(GETDATE() AS DATE))
+                                AND DATEADD(DAY,  {int(abs(lookahead))}, CAST(GETDATE() AS DATE))
+          AND {scope}
+    """)
+    return [dict(zip([c[0] for c in cursor.description], r)) for r in cursor.fetchall()]
+
+
+def _non_msp_rows(lookback, lookahead):
+    """Onboarding seats across Bullhorn and Symplr."""
+    rows, errors = [], []
+    for label, getter, fn in (
+        ('Bullhorn', get_bullhorn_conn, _bullhorn_onb_rows),
+        ('Symplr', get_symplr_conn, _symplr_onb_rows),
+    ):
+        conn = None
+        app_conn = None
+        try:
+            conn = getter()
+            if conn is None:
+                errors.append(f'{label}: not configured')
+                continue
+            cursor = conn.cursor()
+            cursor.execute('SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED')
+            app_conn = get_appdb_conn()
+            rows.extend(fn(cursor, app_conn, lookback, lookahead))
+        except Exception as e:
+            print(f'Onboarding(non_msp): {label} branch failed: {e}')
+            import traceback
+            traceback.print_exc()
+            errors.append(f'{label}: {e}')
+        finally:
+            if app_conn is not None:
+                app_conn.close()
+            if conn is not None:
+                conn.close()
+    for r in rows:
+        raw = r.pop('credential_raw', None)
+        r['profession'] = normalize_credential(raw)
+        r['service_line'] = credential_service_line(raw)
+        r['specialty'] = (r.pop('specialty_raw', None) or '')
+    return rows, errors
+
+
 def _finalize(rows):
     out = []
     for r in rows:
@@ -230,6 +457,10 @@ def _finalize(rows):
             raw_reason = r.get('delay_reason')
             r['delay_reason'] = canonical_reason(raw_reason)
             r['delay_category'] = reason_category(raw_reason)
+        elif r.get('source_system') in ('Bullhorn', 'Symplr'):
+            # Non-MSP reasons are already single-vocabulary per book and are
+            # about fallout rather than delay, so they pass through as written.
+            r['delay_category'] = (r.get('delay_reason') or None)
         else:
             r['delay_category'] = 'Delayed Start' if (r.get('delayed_flag') == 'Yes') else None
 
@@ -240,7 +471,12 @@ def _finalize(rows):
         moves = r.get('move_count')
         delayed = r.get('days_delayed')
         status = (r.get('contract_status') or '')
-        cancelled = status in B4_CANCELLED_STATUSES or status in VNDLY_CANCELLED_STATUSES
+        cancelled = (status in B4_CANCELLED_STATUSES
+                     or status in VNDLY_CANCELLED_STATUSES
+                     or status in BULLHORN_CANCELLED_STATUSES
+                     # Symplr writes lowercase order states; a voided order in
+                     # the onboarding window is a fallout, not a live seat.
+                     or status == 'void')
 
         # Stage grouping, mirroring the four buckets the Onboarding view
         # renders. Untracked rows fall through to ON TRACK so they stay
@@ -289,6 +525,28 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
     lookback = _int_param('lookback', ONBOARDING_LOOKBACK_DAYS)
     lookahead = _int_param('lookahead', ONBOARDING_LOOKAHEAD_DAYS)
     include_affiliate = str(req.params.get('includeAffiliate', '')).lower() in ('1', 'true', 'yes')
+
+    if is_non_msp():
+        try:
+            rows, errors = _non_msp_rows(lookback, lookahead)
+            rows = _finalize(rows)
+            rows.sort(key=lambda r: (-(r.get('move_count') or 0), r.get('current_start') or ''))
+            bhn = sum(1 for r in rows if r['source_system'] == 'Bullhorn')
+            syn = sum(1 for r in rows if r['source_system'] == 'Symplr')
+            tracked = sum(1 for r in rows if r.get('movement_tracked'))
+            print(f"Onboarding(non_msp): {len(rows)} rows (Bullhorn {bhn}, Symplr {syn}; "
+                  f"{tracked} with measurable movement; -{lookback}/+{lookahead}d; "
+                  f"errors: {errors or 'none'})")
+            return func.HttpResponse(
+                json.dumps(rows, default=str),
+                mimetype='application/json', status_code=200)
+        except Exception as e:
+            print(f'Onboarding(non_msp) error: {e}')
+            import traceback
+            traceback.print_exc()
+            return func.HttpResponse(
+                json.dumps({'error': str(e)}),
+                mimetype='application/json', status_code=500)
 
     conn = None
     rows, errors = [], []

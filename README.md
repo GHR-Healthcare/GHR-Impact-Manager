@@ -61,6 +61,20 @@ Neither book has a VMS decision feed, so `decision_state` is `Not tracked in Bul
 
 What stays blank is blank at the source: Bullhorn has no department, unit or cost-centre column on either the job order or the placement, and Symplr `lt_order` carries no rate, so 13-week extension value is Bullhorn-only.
 
+## Onboarding on non-MSP
+
+Seats starting in the -30/+45 day window, grouped ON TRACK / DELAYED START / CANCELED on the same rules MSP uses.
+
+Bullhorn measures start-date slip properly, which B4 cannot. `EditHistoryPlacement` records every change to `dateBegin` with old and new values, so the planned start is what the first edit replaced and the slip is a real day count — B4 carries only a Yes/No `Delayed Starts` flag. On the live window: 30 of 62 seats have measurable movement, median slip 1 day, longest 364.
+
+`onboardingStatus` is a genuine progress field on this book (Initiated 4,270, Completed 1,506, In Progress 169, Cancelled 298 over a year) with no MSP equivalent.
+
+Symplr can't measure movement at all: no audit trail on `lt_order`, `temp_confirm_date` and `client_confirm_date` both 0% populated, and `StatusChangeLog` keyed on WorkerID rather than the order. Those rows carry `movement_tracked: false` and a null day count, so the UI shows "not tracked" rather than a zero that would read as *started on time*.
+
+### The planned start is the first edit, not the earliest date
+
+`MIN(oldValue)` looks like the original start and answers a different question — the earliest date ever *proposed*. The two diverge whenever a start is pulled earlier before being pushed back. One seat in thirty on the live window, but it reported a 392-day slip where the truth is 364. The planned start is now the value the chronologically first edit replaced.
+
 **3.0.0** - IMPACT Meeting Workflow
 
 The facilitated IMPACT meeting, merged into the app we already ship rather than replacing it with the marketing prototype's shell. PR #58 carries additive backend work plus native views; the prototype's own UI is dropped.
