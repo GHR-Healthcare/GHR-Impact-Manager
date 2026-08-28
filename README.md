@@ -23,6 +23,18 @@ Symplr's `voidreason` separates orders GHR lost (Filled by Competition, Unable t
 
 Symplr `lt_order` carries no bill or pay rate, only `ratecode` and `rateSheetID`. Those fields stay null and 13-week value is Bullhorn-only, rather than being filled with a guess.
 
+### Where we lose shifts
+
+`coverage.competitive` rolls competitive losses up by health system, facility, credential and service line, each reporting how many entries were omitted so a top-15 is never mistaken for the whole list. The full void vocabulary — 13 values over a year — is mapped exhaustively rather than by prefix, so a reason Symplr starts writing tomorrow surfaces under its own name instead of being folded into a neighbouring bucket.
+
+Two things the breakdown makes obvious. **Competitors are not the main threat: clients filling shifts with their own staff outnumber competitive losses roughly ten to one** (166 against 17 in a 30-day window). And `No Show` / `Call-out` / `DNR` are separated as *Clinician fell through* — those shifts were booked and then failed, which is a service problem, not a sourcing one, and lumping them under "unable to fill" would point the meeting at the wrong fix.
+
+This is Symplr-only. Bullhorn job orders carry no cancellation-reason field, so a competitive loss there is indistinguishable from any other unfilled order; the payload names its sources rather than implying book-wide coverage.
+
+### Velocity is reported as median, not just mean
+
+Mean days-to-fill is 6.6 against a **median of 0** — most shifts book same-day and a long tail drags the average. Both are returned; the mean alone would describe a book that doesn't exist.
+
 **3.0.0** - IMPACT Meeting Workflow
 
 The facilitated IMPACT meeting, merged into the app we already ship rather than replacing it with the marketing prototype's shell. PR #58 carries additive backend work plus native views; the prototype's own UI is dropped.

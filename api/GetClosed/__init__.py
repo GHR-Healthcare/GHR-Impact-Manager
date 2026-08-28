@@ -52,6 +52,43 @@ BULLHORN_RESOLVED_STATUSES = ('Placed', 'Filled', 'Closed', 'Cancelled')
 # understate fill rate by ~7 points (63.9% raw vs 70.9% on true opportunities).
 SYMPLR_NON_OPPORTUNITY_REASONS = {'scheduling error', 'census dropped'}
 
+# The full void vocabulary, measured over a year: 13 values, closed set.
+# Mapped exhaustively rather than by prefix matching so a new reason shows up
+# as unmapped instead of being silently folded into a neighbouring bucket.
+#
+#   (blank) 680 | Internal Staff 382 | Scheduling Error 316 | Competition 234
+#   Census Dropped 178 | Unable to Fill 58 | Other 19 | No Show 2 | Call-out 2
+#   Temp late and sent home 2 | DNR 1 | NSNC 1 | Picked up another shift 1
+#
+# 'Clinician fell through' is its own bucket because those orders were booked
+# and then failed — a service failure, not a sourcing failure. They still
+# count as unfilled (the shift went uncovered) but conflating them with
+# "no candidate found" would misdirect the conversation.
+SYMPLR_REASON_CATEGORY = {
+    'filled by competition':    'Lost to competitor',
+    'filled by internal staff': 'Client filled internally',
+    'unable to fill':           'No qualified candidate',
+    'scheduling error':         'Demand withdrawn',
+    'census dropped':           'Demand withdrawn',
+    'no show':                  'Clinician fell through',
+    'call-out':                 'Clinician fell through',
+    'temp late and sent home':  'Clinician fell through',
+    'picked up another shift':  'Clinician fell through',
+    'nsnc':                     'Clinician fell through',
+    'dnr':                      'Clinician fell through',
+    # Distinct from the blank case below: someone chose 'Other', which is not
+    # the same as leaving the field empty. Folding them together made
+    # lossBreakdown disagree with coverage.unfilledWithoutReason by exactly
+    # the count of explicit 'Other' rows.
+    'other':                    'Other (recorded)',
+}
+
+COMPETITIVE_LOSS_CATEGORY = 'Lost to competitor'
+
+# How many entries each competitive-loss rollup returns. Anything dropped is
+# reported alongside it rather than silently truncated.
+COMPETITIVE_ROLLUP_LIMIT = 15
+
 
 def _b4_rows(cursor, lookback):
     """Closed outcomes still recorded in B4Health.
@@ -355,14 +392,59 @@ def _symplr_closed_rows(cursor, app_conn, lookback):
         else:
             r['group'] = 'UNFILLED'
         r['opportunity'] = r['group'] != 'CANCELED'
-        r['outcome_category'] = (
-            'Lost to competitor' if reason == 'filled by competition'
-            else 'Client filled internally' if reason == 'filled by internal staff'
-            else 'Demand withdrawn' if r['group'] == 'CANCELED'
-            else 'Unfilled' if r['group'] == 'UNFILLED'
-            else None
-        )
+        if not is_void:
+            r['outcome_category'] = None
+        elif not reason:
+            r['outcome_category'] = 'Reason not recorded'
+        else:
+            # An unmapped reason keeps its own label rather than being bucketed,
+            # so a value Symplr starts writing tomorrow is visible instead of
+            # disappearing into 'Other'.
+            r['outcome_category'] = SYMPLR_REASON_CATEGORY.get(
+                reason, (r.get('outcome_reason') or '').strip())
     return rows
+
+
+def _competitive_rollups(rows):
+    """Where GHR is losing shifts to competing agencies.
+
+    Symplr-only. Bullhorn job orders carry no cancellation-reason field at
+    all, so a competitive loss on that book is indistinguishable from any
+    other unfilled order — the totals here are not book-wide and the payload
+    says so.
+    """
+    losses = [r for r in rows if r.get('outcome_category') == COMPETITIVE_LOSS_CATEGORY]
+
+    def rollup(key):
+        counts = {}
+        for r in losses:
+            name = (r.get(key) or '').strip() or '(unspecified)'
+            counts[name] = counts.get(name, 0) + 1
+        ranked = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
+        return {
+            'top': [{'name': n, 'count': c} for n, c in ranked[:COMPETITIVE_ROLLUP_LIMIT]],
+            # Never truncate silently — a top-15 that hides 40 more facilities
+            # reads as "these are the facilities" when it isn't.
+            'omitted': max(0, len(ranked) - COMPETITIVE_ROLLUP_LIMIT),
+            'distinct': len(ranked),
+        }
+
+    # Share of true opportunities lost specifically to a competitor, which is
+    # the number that says whether GHR is being outbid or simply short of
+    # candidates. Denominator matches the fill-rate denominator.
+    opportunities = sum(1 for r in rows if r.get('opportunity'))
+
+    return {
+        'total': len(losses),
+        'sources': ['Symplr'],
+        'pctOfOpportunities': (
+            round(100.0 * len(losses) / opportunities, 1) if opportunities else None
+        ),
+        'byHealthSystem': rollup('health_system'),
+        'byFacility': rollup('facility'),
+        'byCredential': rollup('profession'),
+        'byServiceLine': rollup('service_line'),
+    }
 
 
 def _non_msp_payload(lookback):
@@ -402,6 +484,16 @@ def _non_msp_payload(lookback):
             if conn is not None:
                 conn.close()
 
+    return _aggregate_non_msp(rows, lookback, errors)
+
+
+def _aggregate_non_msp(rows, lookback, errors):
+    """Normalize and roll up already-fetched rows.
+
+    Split out from the fetch so the arithmetic can be exercised against real
+    rows without a database handle — the jsdom harness on this project has a
+    long history of passing while silently skipping the whole data path.
+    """
     for r in rows:
         for k in ('closed_on', 'opened_on', 'start_date'):
             if r.get(k) is not None and hasattr(r[k], 'isoformat'):
@@ -424,6 +516,12 @@ def _non_msp_payload(lookback):
     for r in rows:
         counts[r['group']] = counts.get(r['group'], 0) + 1
 
+    loss_breakdown = {}
+    for r in rows:
+        cat = r.get('outcome_category')
+        if cat:
+            loss_breakdown[cat] = loss_breakdown.get(cat, 0) + 1
+
     filled = counts.get('FILLED', 0)
     unfilled = counts.get('UNFILLED', 0)
     denominator = filled + unfilled
@@ -445,6 +543,9 @@ def _non_msp_payload(lookback):
             # large share of the denominator the fill rate is a floor, not a
             # point estimate.
             'unfilledWithoutReason': sum(1 for r in rows if r.get('reason_missing')),
+            # Why orders went unfilled, not just how many.
+            'lossBreakdown': loss_breakdown,
+            'competitive': _competitive_rollups(rows),
             'avgDaysToFill': round(sum(fill_times) / len(fill_times), 2) if fill_times else None,
             'medianDaysToFill': (
                 round(sorted(fill_times)[len(fill_times) // 2], 2) if fill_times else None
