@@ -3,6 +3,7 @@ import pyodbc
 import os
 import json
 from shared_code.auth import require_allowed_domain
+from shared_code.credentials import normalize as normalize_credential, service_line as credential_service_line
 from shared_code.data_source import is_non_msp, get_bullhorn_conn, get_symplr_conn, get_appdb_conn
 from shared_code.bullhorn_systems import (
     build_system_case_expr,
@@ -11,19 +12,16 @@ from shared_code.bullhorn_systems import (
 )
 # Same rollup GetTrendData applies to placements, keyed on jo.customText1
 # because Positions reads JobOrder rather than Placement.
-BULLHORN_JO_SERVICE_LINE = '''CASE
-        WHEN jo.customText1 IN ('RN', 'LPN', 'CNA') THEN 'Nursing'
-        WHEN jo.customText1 IN ('CRNA', 'Anesthesiologist', 'NP', 'PA', 'Physician', 'MD', 'DO') THEN 'Advanced Practices'
-        WHEN jo.customText1 IN ('OT', 'PT', 'SLP', 'Registered Dietitian', 'Therapist',
-                                'Social Worker', 'Speech', 'RRT', 'OR Tech', 'CMA',
-                                'Sterile Processing Tech', 'Surgical Tech', 'Rad Tech',
-                                'Ultrasound Tech', 'MRI Tech', 'CT Tech', 'Echo Tech',
-                                'Pharmacy Tech', 'Lab Tech', 'Respiratory Therapist') THEN 'Allied'
-        WHEN jo.customText1 IN ('Coder', 'CDI Specialist', 'Coding Auditor', 'Medical Coder',
-                                'Customer Service Rep', 'Clerical', 'Admin', 'IT',
-                                'Director', 'HIM Specialist', 'Analyst') THEN 'Non-Clinical'
-        ELSE 'Other'
-    END'''
+# Bullhorn job-order titles are "Specialty | Credential" — 4,125 of 4,382
+# open reqs follow it, against 78 that carry customText2. customText1 holds
+# shift times, not a credential. Both halves are emitted raw and normalised in
+# Python, so one vocabulary covers Bullhorn and Symplr.
+BULLHORN_JO_CREDENTIAL = '''CASE WHEN CHARINDEX('|', jo.title) > 0
+        THEN LTRIM(RTRIM(SUBSTRING(jo.title, CHARINDEX('|', jo.title) + 1, 200)))
+        ELSE NULLIF(jo.customText2, '') END'''
+BULLHORN_JO_SPECIALTY = '''CASE WHEN CHARINDEX('|', jo.title) > 0
+        THEN LTRIM(RTRIM(LEFT(jo.title, CHARINDEX('|', jo.title) - 1)))
+        ELSE NULL END'''
 
 from shared_code.symplr_systems import (
     build_system_case_expr as symplr_system_case_expr,
@@ -52,6 +50,35 @@ BULLHORN_DECLINED_STATUSES = (
 BULLHORN_TERMINAL_STATUSES = ('Placed', 'Placement')
 
 
+
+def _apply_credential(row_dict):
+    """Fold both books into one credential vocabulary.
+
+    Bullhorn writes "Registered Nurse", Symplr writes "RN", and Bullhorn packs
+    the specialty into the same title. Normalising both means filtering to RN
+    returns rows from both systems instead of silently dropping one.
+
+    service_line is derived from the normalised credential rather than a
+    per-source CASE, so the two sources cannot drift apart.
+    """
+    raw = row_dict.pop('credential_raw', None)
+    spec = row_dict.pop('specialty_raw', None)
+    row_dict['credential'] = normalize_credential(raw)
+    row_dict['service_line'] = credential_service_line(raw)
+    # Only fill specialty when the source gave one; the Bullhorn job title
+    # carries it before the pipe, Symplr has its own column.
+    if spec and not row_dict.get('specialty'):
+        row_dict['specialty'] = spec
+    row_dict['specialty_name'] = spec or ''
+    # The existing Profession filter becomes the credential filter. It was fed
+    # by cat.occupation on Bullhorn and lt.specialty on Symplr — an occupation
+    # on one side and a care setting on the other, so it never compared like
+    # with like. Pointing it at the normalised credential makes one filter work
+    # across both books.
+    if row_dict.get('credential'):
+        row_dict['profession'] = row_dict['credential']
+    return row_dict
+
 def _bullhorn_positions_data():
     """Returns open Bullhorn job orders. Raises on error."""
     conn = get_bullhorn_conn()
@@ -71,7 +98,8 @@ def _bullhorn_positions_data():
             'Bullhorn' AS source_system,
             CAST(jo.jobOrderID AS NVARCHAR(50)) AS position_id,
             ISNULL(jo.employmentType, 'Unknown') AS program,
-            ({BULLHORN_JO_SERVICE_LINE}) AS service_line,
+            ({BULLHORN_JO_CREDENTIAL}) AS credential_raw,
+            ({BULLHORN_JO_SPECIALTY})  AS specialty_raw,
             cc.name AS facility,
             jo.title AS specialty,
             CAST(jo.dateAdded AS DATE) AS date_added,
@@ -160,7 +188,7 @@ def _bullhorn_positions_data():
         row_dict['ghrDeclines'] = 0
         row_dict['avDeclines'] = 0
         row_dict['candidates'] = []
-        rows.append(row_dict)
+        rows.append(_apply_credential(row_dict))
         # position_id is the jobOrderID as string; keep an int key for the
         # JobSubmission join below.
         try:
@@ -262,6 +290,7 @@ def _symplr_positions_data():
     division_case_orders = symplr_division_case_expr('o.customerid')
 
     def _serialize(row_dict):
+        _apply_credential(row_dict)
         if row_dict.get('date_added'):
             row_dict['date_added'] = row_dict['date_added'].isoformat() if hasattr(row_dict['date_added'], 'isoformat') else str(row_dict['date_added'])
         if row_dict.get('open_start_date'):
@@ -286,7 +315,8 @@ def _symplr_positions_data():
                 'Symplr' AS source_system,
                 CAST(lt.lt_orderid AS NVARCHAR(50)) AS position_id,
                 ISNULL(lt.nursetype, 'Unknown') AS program,
-                ({symplr_service_line_case('lt.nursetype')}) AS service_line,
+                lt.nursetype                       AS credential_raw,
+                lt.specialty                       AS specialty_raw,
                 pc.clientname AS facility,
                 LTRIM(RTRIM(ISNULL(lt.nursetype, '') + ' — ' + ISNULL(lt.specialty, ''))) AS specialty,
                 CAST(lt.date_entered AS DATE) AS date_added,
@@ -337,7 +367,8 @@ def _symplr_positions_data():
                 'Symplr' AS source_system,
                 CAST(MAX(o.orderid) AS NVARCHAR(50)) AS position_id,
                 ISNULL(MAX(o.nursetype), 'Unknown') AS program,
-                ({symplr_service_line_case('MAX(o.nursetype)')}) AS service_line,
+                MAX(o.nursetype)                   AS credential_raw,
+                MAX(o.specialty)                   AS specialty_raw,
                 MAX(pc.clientname) AS facility,
                 LTRIM(RTRIM(ISNULL(MAX(o.nursetype), '') + ' — ' + ISNULL(MAX(o.specialty), ''))) AS specialty,
                 CAST(MIN(o.datetimecreated) AS DATE) AS date_added,
@@ -393,7 +424,8 @@ def _symplr_positions_data():
                 'Symplr' AS source_system,
                 CAST(o.lt_orderid AS NVARCHAR(50)) AS position_id,
                 ISNULL(MAX(lt.nursetype), MAX(o.nursetype)) AS program,
-                ({symplr_service_line_case('MAX(lt.nursetype)')}) AS service_line,
+                ISNULL(MAX(lt.nursetype), MAX(o.nursetype)) AS credential_raw,
+                ISNULL(MAX(lt.specialty), MAX(o.specialty)) AS specialty_raw,
                 MAX(pc.clientname) AS facility,
                 LTRIM(RTRIM(
                     ISNULL(MAX(lt.nursetype), MAX(o.nursetype)) + ' — ' +
