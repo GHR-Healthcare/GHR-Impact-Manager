@@ -3,34 +3,17 @@ import pyodbc
 import os
 import json
 from shared_code.auth import require_allowed_domain
-from shared_code.credentials import (
-    normalize as normalize_credential,
-    service_line as credential_service_line,
-    normalize_state,
-)
 from shared_code.data_source import is_non_msp, get_bullhorn_conn, get_symplr_conn, get_appdb_conn
 from shared_code.bullhorn_systems import (
     build_system_case_expr,
     build_scope_filter,
     resolve_scope_client_ids,
 )
-# Same rollup GetTrendData applies to placements, keyed on jo.customText1
-# because Positions reads JobOrder rather than Placement.
-# Credential and specialty both come from Bullhorn's own junction tables
-# (JobOrderCategories -> Category, JobOrderSpecialties -> Specialty), joined
-# below as `cat` and `spec`. Both cover 4,377 of 4,382 open reqs against 4,125
-# for parsing the title, and Category already stores the short form — a job
-# titled "ICU | Registered Nurse" carries Category 'RN'. Titles are not parsed.
-#
-# JobOrderCertifications exists but is empty (0 rows against open reqs), so
-# required certifications are not available from this source.
-
 from shared_code.symplr_systems import (
     build_system_case_expr as symplr_system_case_expr,
     build_scope_filter as symplr_scope_filter,
     build_division_case_expr as symplr_division_case_expr,
     resolve_scope_master_ids as symplr_resolve_scope,
-    service_line_case as symplr_service_line_case,
 )
 
 
@@ -52,39 +35,6 @@ BULLHORN_DECLINED_STATUSES = (
 BULLHORN_TERMINAL_STATUSES = ('Placed', 'Placement')
 
 
-
-def _apply_credential(row_dict):
-    """Fold both books into one credential vocabulary.
-
-    Bullhorn writes "Registered Nurse", Symplr writes "RN", and Bullhorn packs
-    the specialty into the same title. Normalising both means filtering to RN
-    returns rows from both systems instead of silently dropping one.
-
-    service_line is derived from the normalised credential rather than a
-    per-source CASE, so the two sources cannot drift apart.
-    """
-    raw = row_dict.pop('credential_raw', None)
-    spec = row_dict.pop('specialty_raw', None)
-    row_dict['credential'] = normalize_credential(raw)
-    row_dict['service_line'] = credential_service_line(raw)
-    # `specialty` is left alone on purpose. It carries the job title, which is
-    # what the card shows, while the structured specialty already ships as
-    # `subspecialty` (spec.name on Bullhorn) and drives filtering. Emitting a
-    # `specialty_name` here would win over the title in the client and quietly
-    # change what every card displays.
-    # The existing Profession filter becomes the credential filter. It was fed
-    # by cat.occupation on Bullhorn and lt.specialty on Symplr — an occupation
-    # on one side and a care setting on the other, so it never compared like
-    # with like. Pointing it at the normalised credential makes one filter work
-    # across both books.
-    if row_dict.get('credential'):
-        row_dict['profession'] = row_dict['credential']
-    # Bullhorn writes "Ohio", Symplr writes "OH". Left alone the filter lists
-    # both and neither matches the other source.
-    if row_dict.get('region'):
-        row_dict['region'] = normalize_state(row_dict['region'])
-    return row_dict
-
 def _bullhorn_positions_data():
     """Returns open Bullhorn job orders. Raises on error."""
     conn = get_bullhorn_conn()
@@ -104,8 +54,6 @@ def _bullhorn_positions_data():
             'Bullhorn' AS source_system,
             CAST(jo.jobOrderID AS NVARCHAR(50)) AS position_id,
             ISNULL(jo.employmentType, 'Unknown') AS program,
-            COALESCE(NULLIF(cat.name, ''), cat.occupation) AS credential_raw,
-            spec.name                                      AS specialty_raw,
             cc.name AS facility,
             jo.title AS specialty,
             CAST(jo.dateAdded AS DATE) AS date_added,
@@ -140,14 +88,9 @@ def _bullhorn_positions_data():
             -- "Allied,Nursing,RevCycle Workforce,United" across 4,400 RN
             -- placements. Fall back to the client tag list only when the job
             -- has no division, so legacy rows don't vanish from the filter.
-            -- 599 of 4,379 open reqs carry no division on either the job or
-            -- the client. Left null they vanish from the Division filter
-            -- entirely — the same silent-drop the Category split fixed — so
-            -- they group under Other and stay reachable.
-            COALESCE(NULLIF(jo.correlatedCustomText1, ''),
-                     NULLIF(cc.customTextBlock1, ''), 'Other') AS division,
+            COALESCE(NULLIF(jo.correlatedCustomText1, ''), cc.customTextBlock1) AS division,
             jo.correlatedCustomText5 AS team,
-            jo.state AS region
+            NULL AS region
         FROM dbo.View_JobOrder jo
         -- Profession on a job order is a to-many association
         -- (View_JobOrder has no categoryID column; the mirror splits it into
@@ -199,7 +142,7 @@ def _bullhorn_positions_data():
         row_dict['ghrDeclines'] = 0
         row_dict['avDeclines'] = 0
         row_dict['candidates'] = []
-        rows.append(_apply_credential(row_dict))
+        rows.append(row_dict)
         # position_id is the jobOrderID as string; keep an int key for the
         # JobSubmission join below.
         try:
@@ -301,7 +244,6 @@ def _symplr_positions_data():
     division_case_orders = symplr_division_case_expr('o.customerid')
 
     def _serialize(row_dict):
-        _apply_credential(row_dict)
         if row_dict.get('date_added'):
             row_dict['date_added'] = row_dict['date_added'].isoformat() if hasattr(row_dict['date_added'], 'isoformat') else str(row_dict['date_added'])
         if row_dict.get('open_start_date'):
@@ -326,34 +268,14 @@ def _symplr_positions_data():
                 'Symplr' AS source_system,
                 CAST(lt.lt_orderid AS NVARCHAR(50)) AS position_id,
                 ISNULL(lt.nursetype, 'Unknown') AS program,
-                lt.nursetype                       AS credential_raw,
-                lt.specialty                       AS specialty_raw,
                 pc.clientname AS facility,
                 LTRIM(RTRIM(ISNULL(lt.nursetype, '') + ' — ' + ISNULL(lt.specialty, ''))) AS specialty,
                 CAST(lt.date_entered AS DATE) AS date_added,
                 NULL AS unit,
-                -- Symplr has no cost-centre concept; lt.costCenterNumber is
-                -- empty on all 6,226 open orders. The region is the
-                -- equivalent grouping, and regions.regionname covers 99.9%.
-                ISNULL(r.regionname, '') AS cost_center,
+                ISNULL(lt.costCenterNumber, '') AS cost_center,
                 NULL AS bill_rate,
                 1 AS bill_rate_estimated,
-                -- Of 6,226 open orders, 3,872 carry hours, 827 hold a zero, and
-                -- 1,527 are null with no shift times to work from. The 827 all
-                -- carry shift times and DaysPerWeek, so the week is derivable
-                -- for them, taking coverage to 4,699. Overnight shifts cross
-                -- midnight, hence the +1440.
-                COALESCE(
-                    -- NULLIF, not a bare cast: the 827 gap rows hold 0 rather
-                    -- than NULL, and COALESCE would accept the zero.
-                    NULLIF(TRY_CAST(lt.HoursPerWeek AS DECIMAL(10,2)), 0),
-                    CAST((DATEDIFF(MINUTE, TRY_CAST(lt.shiftstarttime AS time),
-                                           TRY_CAST(lt.shiftendtime AS time))
-                          + CASE WHEN TRY_CAST(lt.shiftendtime AS time)
-                                      <= TRY_CAST(lt.shiftstarttime AS time)
-                                 THEN 1440 ELSE 0 END) / 60.0
-                         * TRY_CAST(lt.DaysPerWeek AS FLOAT) AS DECIMAL(10,2))
-                ) AS shift_hours,
+                TRY_CAST(lt.HoursPerWeek AS DECIMAL(10,2)) AS shift_hours,
                 NULL AS shift_time,
                 NULL AS hiring_manager,
                 0 AS num_submissions,
@@ -367,13 +289,8 @@ def _symplr_positions_data():
                 NULL AS end_time,
                 lt.status AS status,
                 ({sys_case}) AS health_system,
-                lt.nursetype AS profession,
-                -- Structured specialty, the counterpart to Bullhorn's
-                -- JobOrderSpecialties join. `specialty` above is a display
-                -- string (nursetype + specialty); this is the value the
-                -- Specialty filter matches on, so it has to be the bare
-                -- specialty or the filter finds nothing on this source.
-                lt.specialty AS subspecialty,
+                lt.specialty AS profession,
+                NULL AS subspecialty,
                 ({division_case}) AS division,
                 NULL AS team,
                 pc.state AS region
@@ -401,16 +318,11 @@ def _symplr_positions_data():
                 'Symplr' AS source_system,
                 CAST(MAX(o.orderid) AS NVARCHAR(50)) AS position_id,
                 ISNULL(MAX(o.nursetype), 'Unknown') AS program,
-                MAX(o.nursetype)                   AS credential_raw,
-                MAX(o.specialty)                   AS specialty_raw,
                 MAX(pc.clientname) AS facility,
                 LTRIM(RTRIM(ISNULL(MAX(o.nursetype), '') + ' — ' + ISNULL(MAX(o.specialty), ''))) AS specialty,
                 CAST(MIN(o.datetimecreated) AS DATE) AS date_added,
                 NULL AS unit,
-                -- Symplr has no cost-centre concept; lt.costCenterNumber is
-                -- empty on all 6,226 open orders. The region is the
-                -- equivalent grouping, and regions.regionname covers 99.9%.
-                ISNULL(MAX(r.regionname), '') AS cost_center,
+                ISNULL(MAX(o.costCenterNumber), '') AS cost_center,
                 NULL AS bill_rate,
                 1 AS bill_rate_estimated,
                 NULL AS shift_hours,
@@ -427,13 +339,8 @@ def _symplr_positions_data():
                 NULL AS end_time,
                 'open' AS status,
                 MAX({sys_case_orders}) AS health_system,
-                MAX(o.nursetype) AS profession,
-                -- Structured specialty, the counterpart to Bullhorn's
-                -- JobOrderSpecialties join. `specialty` above is a display
-                -- string (nursetype + specialty); this is the value the
-                -- Specialty filter matches on, so it has to be the bare
-                -- specialty or the filter finds nothing on this source.
-                MAX(o.specialty) AS subspecialty,
+                MAX(o.specialty) AS profession,
+                NULL AS subspecialty,
                 MAX({division_case_orders}) AS division,
                 NULL AS team,
                 MAX(pc.state) AS region
@@ -466,8 +373,6 @@ def _symplr_positions_data():
                 'Symplr' AS source_system,
                 CAST(o.lt_orderid AS NVARCHAR(50)) AS position_id,
                 ISNULL(MAX(lt.nursetype), MAX(o.nursetype)) AS program,
-                ISNULL(MAX(lt.nursetype), MAX(o.nursetype)) AS credential_raw,
-                ISNULL(MAX(lt.specialty), MAX(o.specialty)) AS specialty_raw,
                 MAX(pc.clientname) AS facility,
                 LTRIM(RTRIM(
                     ISNULL(MAX(lt.nursetype), MAX(o.nursetype)) + ' — ' +
@@ -475,10 +380,7 @@ def _symplr_positions_data():
                 )) AS specialty,
                 CAST(MIN(o.datetimecreated) AS DATE) AS date_added,
                 NULL AS unit,
-                -- Symplr has no cost-centre concept; lt.costCenterNumber is
-                -- empty on all 6,226 open orders. The region is the
-                -- equivalent grouping, and regions.regionname covers 99.9%.
-                ISNULL(MAX(r.regionname), '') AS cost_center,
+                ISNULL(MAX(lt.costCenterNumber), MAX(o.costCenterNumber)) AS cost_center,
                 NULL AS bill_rate,
                 1 AS bill_rate_estimated,
                 NULL AS shift_hours,
@@ -495,13 +397,8 @@ def _symplr_positions_data():
                 NULL AS end_time,
                 'open' AS status,
                 MAX({sys_case}) AS health_system,
-                ISNULL(MAX(lt.nursetype), MAX(o.nursetype)) AS profession,
-                -- Structured specialty, the counterpart to Bullhorn's
-                -- JobOrderSpecialties join. `specialty` above is a display
-                -- string (nursetype + specialty); this is the value the
-                -- Specialty filter matches on, so it has to be the bare
-                -- specialty or the filter finds nothing on this source.
-                ISNULL(MAX(lt.specialty), MAX(o.specialty)) AS subspecialty,
+                MAX(lt.specialty) AS profession,
+                NULL AS subspecialty,
                 MAX({division_case}) AS division,
                 NULL AS team,
                 MAX(pc.state) AS region

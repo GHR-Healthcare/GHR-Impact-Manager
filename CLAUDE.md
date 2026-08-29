@@ -27,13 +27,11 @@ When making significant changes, bug fixes, or new features:
 ### App Version Location
 - **Environment Variable**: `APP_VERSION` (set in Azure Static Web App configuration)
 - **API Endpoint**: `/api/get-config` returns `appVersion` (see `api/GetConfig/__init__.py`)
-- **Frontend Fallback**: `index.html` — the `let APP_VERSION = '...'` declaration, used if the API is unavailable
+- **Frontend Fallback**: `index.html:618` has default value `'1.3.0'` if API unavailable
 - **Display**: Version shown in header via `#versionDisplay` element
 
 ### When Releasing a New Version
 1. Update `APP_VERSION` environment variable in Azure
-2. Update the fallback in `api/GetConfig/__init__.py` — the `os.environ.get('APP_VERSION', '...')` default
-3. Update the fallback in `index.html` — the `let APP_VERSION = '...'` declaration
-
-   (Both are referenced by symbol rather than line number, which drifts.)
+2. Update the fallback version in `api/GetConfig/__init__.py` (line 9)
+3. Update the fallback version in `index.html` (line 618)
 4. Add version entry to `README.md` version history

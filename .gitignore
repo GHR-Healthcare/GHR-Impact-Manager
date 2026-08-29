@@ -13,7 +13,3 @@ local.settings.json
 .venv/
 bin/
 obj/
-
-# Claude Code per-machine permissions (project-level .claude/settings.json
-# is shared; the .local one is personal and must not be committed)
-.claude/settings.local.json
