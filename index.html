@@ -889,7 +889,7 @@
     const $ = (id) => document.getElementById(id);
 
     // App version - loaded from environment variable via API, with fallback
-    let APP_VERSION = '2.3.2';
+    let APP_VERSION = '2.3.3';
 
     const API_BASE_URL = '/api';
     
@@ -11805,7 +11805,14 @@
                     View.updateAllFilterOptions('systems');
                   }
                   const list = View.meetingStageList();
-                  const at = list[s.meeting.stageIdx] || list[0];
+                  // stageIdx === list.length is the legitimate "all stages done,
+                  // not yet closed" state, and indexing it yields undefined.
+                  // Falling back to list[0] threw the user back to the first
+                  // stage; the last one is where they actually left off. The
+                  // banner already renders this state as Save & Close.
+                  const at = list[s.meeting.stageIdx]
+                          || list[Math.min(s.meeting.stageIdx, list.length - 1)]
+                          || list[0];
                   if (at) s.view = at.view;
                   $('meetingSetupModal')?.classList.add('hidden');
                   View.viewToggle();
@@ -11828,6 +11835,10 @@
               if (!st) break;
               m.stageIdx = payload;
               s.view = st.view;
+              // Persist the jump. Without this the saved `stage` only moved on
+              // Complete, so closing the tab mid-meeting resumed at whatever
+              // stage was last *completed* rather than where the user was.
+              View.saveMeeting(m, false);
               View.viewToggle();
               View.renderMeetingBanner();
               View.main();
@@ -12239,6 +12250,13 @@
                 const item = { jobId: job.id, type, desc, tag: tagVal || null, time: new Date().toLocaleString() };
                 s.sessionLog.push(item);
                 job.history.push(item);
+                // Everything done through this modal -- levers, margin changes,
+                // next steps -- is part of the meeting record when one is
+                // running. This is the single choke point for those actions, so
+                // logging here is what keeps the recap from omitting them.
+                // LOG_MEETING_ACTION no-ops when no meeting is open.
+                this.dispatch('LOG_MEETING_ACTION',
+                  `${type}: ${desc}${tagVal ? ` (${tagVal})` : ''} — job ${job.id}`);
               };
 
               if (s.modal.type === 'lever') {

@@ -2,6 +2,18 @@
 
 ## Version History
 
+**2.3.3** - IMPACT meeting: review pass, three fixes
+
+A pass over the meeting flow and its persistence. The shape held up — `impactmgr.meetings` has every column including the additive `stages` and `recap_html`, the MERGE upserts on `meeting_id` so repeated saves update one row rather than forking, `created_by` is set only on insert so the original owner survives, and two real meetings saved by actual users show correct rows with a stored recap. Three defects did surface.
+
+**Stage jumps were never persisted.** `GOTO_MEETING_STAGE` moved `stageIdx` in memory but never saved, so `stage` in the database only advanced on Complete. Closing the tab mid-meeting resumed at the last *completed* stage rather than where the user actually was.
+
+**Resuming a finished-but-unclosed meeting went back to the beginning.** `stageIdx === stages.length` is the legitimate "all stages done, not yet closed" state, and indexing it yields `undefined`; the fallback was `list[0]`. There is a real row in this state. It now lands on the last stage, which is where the user left off — the banner already rendered this correctly as Save & Close.
+
+**Lever, margin and next-step changes were missing from the recap.** Actions were only logged from the four stage editors (interview, margin override, onboarding, extension decision). Everything done through the job action modal — the levers especially — went to `sessionLog` and the `changes` table but never reached the meeting record. `pushLog` is the single choke point for all of it, so logging there covers every modal action at once. `LOG_MEETING_ACTION` no-ops when no meeting is running, so this changes nothing outside a meeting, MSP included.
+
+Checked and found correct: every DOM id the meeting code touches exists, no dispatch lacks a reducer case, the resume offer is scoped to the signed-in user, the meeting's health-system scope really does drive `stageFilter`, and a failed stage load renders an amber error banner rather than an empty table. `workspace_state` is empty, which is expected — those editors have only ever been reachable from a preview environment.
+
 **2.3.2** - GHR logo in the header, instant tooltips on the icon buttons
 
 The header's lucide `activity` pulse is replaced by the GHR logo, on both instances.
