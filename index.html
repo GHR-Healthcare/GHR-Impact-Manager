@@ -94,6 +94,25 @@
       opacity: 1;
       visibility: visible;
     }
+
+    /* Instant hover tooltips for icon-only controls. Native title= waits ~1.5s
+       and is easy to miss on a button whose meaning is only an icon. */
+    [data-tip] { position: relative; }
+    [data-tip]::after {
+      content: attr(data-tip);
+      position: absolute; top: calc(100% + 6px); right: 0;
+      background: #1e293b; color: #fff;
+      font-size: 11px; font-weight: 500; line-height: 1.3;
+      letter-spacing: 0; text-transform: none;
+      padding: 4px 8px; border-radius: 4px; white-space: nowrap;
+      opacity: 0; pointer-events: none; transform: translateY(-2px);
+      transition: opacity .12s ease, transform .12s ease;
+      z-index: 80;
+      box-shadow: 0 2px 8px rgba(15,23,42,.18);
+    }
+    [data-tip]:hover::after { opacity: 1; transform: translateY(0); }
+    /* Left-anchor the ones near the left edge so the bubble stays on screen. */
+    [data-tip-left]::after { right: auto; left: 0; }
   </style>
 </head>
 
@@ -164,7 +183,7 @@
     <div class="flex flex-col sm:flex-row justify-between items-start gap-2 mb-2">
       <div>
         <h1 class="text-xl sm:text-3xl font-bold text-slate-900 flex items-center gap-2 sm:gap-3">
-          <i data-lucide="activity" class="text-blue-600 w-6 h-6 sm:w-8 sm:h-8"></i>
+          <img src="ghr-logo.png" alt="GHR" class="w-7 h-7 sm:w-9 sm:h-9 object-contain shrink-0">
           GHR Impact Manager
           <!-- Instance badge — reveal + label from /api/get-config's dataSource. -->
           <span id="instanceBadge" class="hidden text-[10px] sm:text-xs font-semibold uppercase tracking-wide px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-700 border border-indigo-200"></span>
@@ -179,7 +198,7 @@
       <div id="meetingStartSlot" class="hidden justify-center order-last w-full lg:order-none lg:w-auto lg:flex-1">
         <button id="btnStartMeeting" onclick="store.dispatch('OPEN_MEETING_SETUP')"
                 class="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white px-5 rounded-md shadow-sm text-sm font-semibold transition-colors h-[38px]"
-                title="Start an IMPACT meeting">
+                data-tip-left data-tip="Start an IMPACT meeting" aria-label="Start an IMPACT meeting">
           <i data-lucide="play-circle" class="w-4 h-4"></i> Start IMPACT Meeting
         </button>
       </div>
@@ -187,19 +206,19 @@
       <!-- User Display & Logout - Top Right -->
       <div class="flex items-center gap-1 sm:gap-2 flex-wrap">
         <!-- Connection Status Indicator -->
-        <div id="connectionStatus" class="flex items-center gap-1.5 bg-white border border-slate-200 rounded-md px-2 sm:px-3 h-[32px] sm:h-[38px] shadow-sm" title="Database connection status">
+        <div id="connectionStatus" class="flex items-center gap-1.5 bg-white border border-slate-200 rounded-md px-2 sm:px-3 h-[32px] sm:h-[38px] shadow-sm" data-tip="Database connection status" aria-label="Database connection status">
           <div id="connectionDot" class="w-2 h-2 rounded-full bg-emerald-500"></div>
           <span id="connectionText" class="text-xs text-slate-500 hidden sm:inline">Connected</span>
         </div>
         <!-- MSP <-> non-MSP toggle. Wired in JS after /api/get-config lands.
              Hidden until we know the other instance URL. -->
-        <a id="instanceToggleBtn" href="#" class="hidden items-center gap-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 px-2 sm:px-3 rounded-md shadow-sm text-xs sm:text-sm font-semibold transition-colors h-[32px] sm:h-[38px]" title="Switch dashboards">
+        <a id="instanceToggleBtn" href="#" class="hidden items-center gap-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 px-2 sm:px-3 rounded-md shadow-sm text-xs sm:text-sm font-semibold transition-colors h-[32px] sm:h-[38px]" data-tip="Switch to the other dashboard" aria-label="Switch dashboards">
           <i data-lucide="arrow-left-right" class="w-4 h-4"></i>
           <span id="instanceToggleLabel" class="hidden sm:inline">Switch</span>
         </a>
         <button onclick="openSettingsModal()"
                 class="flex items-center gap-1 bg-slate-100 hover:bg-slate-200 text-slate-600 px-2 sm:px-3 rounded-md shadow-sm text-sm font-medium transition-colors h-[32px] sm:h-[38px]"
-                title="Settings">
+                data-tip="Settings" aria-label="Settings">
           <i data-lucide="settings" class="w-4 h-4"></i>
         </button>
         <div class="flex items-center gap-1 sm:gap-2 bg-white border border-slate-200 rounded-md px-2 sm:px-3 h-[32px] sm:h-[38px] shadow-sm">
@@ -208,7 +227,7 @@
         </div>
         <button onclick="logout()" 
                 class="flex items-center gap-1 bg-slate-100 hover:bg-slate-200 text-slate-600 px-2 sm:px-3 rounded-md shadow-sm text-sm font-medium transition-colors h-[32px] sm:h-[38px]"
-                title="Sign out">
+                data-tip="Sign out" aria-label="Sign out">
           <i data-lucide="log-out" class="w-4 h-4"></i>
         </button>
       </div>
@@ -275,30 +294,30 @@
         <!-- Buttons -->
         <div class="flex gap-1 sm:gap-2 items-center flex-wrap">
           <button class="flex items-center gap-1 sm:gap-2 bg-orange-600 hover:bg-orange-700 text-white px-2 sm:px-4 rounded-md shadow-sm text-xs sm:text-sm font-medium transition-colors h-[32px] sm:h-[38px]"
-                  onclick="store.dispatch('GENERATE_HOT_JOBS_EMAIL')" title="AI Hot Job Summary">
+                  onclick="store.dispatch('GENERATE_HOT_JOBS_EMAIL')" data-tip="AI hot job summary" aria-label="AI hot job summary">
               <i data-lucide="flame" class="w-4 h-4"></i>
           </button>
           <button id="btnAiSummary" class="flex items-center gap-1 sm:gap-2 bg-indigo-600 hover:bg-indigo-700 text-white px-2 sm:px-4 rounded-md shadow-sm text-xs sm:text-sm font-medium transition-colors h-[32px] sm:h-[38px]"
-                  onclick="store.dispatch('GENERATE_SUMMARY')" title="AI Impact Call Summary">
+                  onclick="store.dispatch('GENERATE_SUMMARY')" data-tip="AI impact call summary" aria-label="AI impact call summary">
               <i data-lucide="file-text" class="w-4 h-4"></i>
           </button>
 
           <button id="privacyBtn"
                   class="flex items-center gap-1 sm:gap-2 bg-slate-700 hover:bg-slate-800 text-white px-2 sm:px-4 rounded-md shadow-sm text-xs sm:text-sm font-medium transition-colors h-[32px] sm:h-[38px]"
-                  onclick="store.dispatch('TOGGLE_PRIVACY')" title="Redact Vendor Info">
+                  onclick="store.dispatch('TOGGLE_PRIVACY')" data-tip="Redact vendor info" aria-label="Redact vendor info">
             <i data-lucide="eye-off" id="privacyIcon" class="w-4 h-4 text-red-400"></i>
           </button>
           
           <button id="btnChangeHistory" onclick="openHistoryModal()" 
                   class="flex items-center gap-1 sm:gap-2 bg-purple-600 hover:bg-purple-700 text-white px-2 sm:px-4 rounded-md shadow-sm text-xs sm:text-sm font-medium transition-colors h-[32px] sm:h-[38px]"
-                  title="View change history">
+                  data-tip="Change history" aria-label="Change history">
             <i data-lucide="history" class="w-4 h-4"></i>
           </button>
           <!-- Takes the retired Change History slot on non-MSP. Snapshot saving
                on /history is untouched there; only its viewer is replaced. -->
           <button id="btnMeetingHistory" onclick="store.dispatch('OPEN_MEETING_HISTORY')"
                   class="hidden items-center gap-1 sm:gap-2 bg-purple-600 hover:bg-purple-700 text-white px-2 sm:px-4 rounded-md shadow-sm text-xs sm:text-sm font-medium transition-colors h-[32px] sm:h-[38px]"
-                  title="Past IMPACT meetings">
+                  data-tip="Past IMPACT meetings" aria-label="Past IMPACT meetings">
             <i data-lucide="history" class="w-4 h-4"></i>
           </button>
         </div>
@@ -870,7 +889,7 @@
     const $ = (id) => document.getElementById(id);
 
     // App version - loaded from environment variable via API, with fallback
-    let APP_VERSION = '2.3.1';
+    let APP_VERSION = '2.3.2';
 
     const API_BASE_URL = '/api';
     
