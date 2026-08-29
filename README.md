@@ -2,6 +2,20 @@
 
 ## Version History
 
+**2.3.0** - Non-MSP: Closed, Extensions and Onboarding stages
+
+The IMPACT stage views ship to the non-MSP instance. MSP is deliberately untouched: its versions of these stages stay on the feature branch for review before they reach main.
+
+Closed answers a different question on each side. MSP asks who won a seat against affiliate agencies; non-MSP is GHR's direct book with no vendor panel, so it reports fill rate and velocity over historical orders instead, with a Why We Lost breakdown. Extensions reads real extension history from `EditHistoryPlacement` rather than inferring it. Onboarding measures actual start-date slip, which B4 cannot do.
+
+Per Diem open orders were capped at today, which hid 91 of 104 live open orders and left the Per Diem drill-down permanently empty. That cap now looks three months ahead by default; an explicit month range is still honoured exactly as before. This is the one MSP-facing change in this release, and it is a fix rather than new behaviour — it affects only the `B4HEALTHOPENORDER` query, not billings, headcount or worked shifts.
+
+### Keeping MSP unchanged, provably
+
+The port was built up from main rather than stripped down from the feature branch, so anything untouched cannot regress. Against main, `index.html` is 15 hunks of which **13 are pure additions**. The two that modify existing lines are inert on MSP: one adds `|| STAGE_VIEWS.includes(view)` to a legend-visibility test that can never be true there (those views bounce to List), and the other adds one property to the `filters` object.
+
+The API side was checked the same way, by which function each change lands in. Every `GetPositions` and `GetStatsData` change sits inside a Bullhorn or Symplr function, except four `_apply_service_line()` calls on the MSP path — and that helper is a no-op there, acting only on rows carrying `credential_raw`, which only the non-MSP queries select.
+
 **2.2.10** - Non-MSP: division rollups (Travel/Planet→Nursing, Human Services→Education, LTC→Non-Acute)
 
 Extends the 2.2.9 alias map with the remaining org changes Bullhorn's `correlatedCustomText1` hasn't caught up with:
