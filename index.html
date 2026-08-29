@@ -173,6 +173,17 @@
         <p id="appSubtitle" class="text-slate-500 text-xs sm:text-base mt-1 hidden sm:block">High-Performance Optimization Build</p>
       </div>
       
+      <!-- Start IMPACT Meeting sits centred in the header, as the reference
+           had it, apart from the utility cluster on the right. Non-MSP only;
+           viewToggle() reveals it. -->
+      <div id="meetingStartSlot" class="hidden justify-center order-last w-full lg:order-none lg:w-auto lg:flex-1">
+        <button id="btnStartMeeting" onclick="store.dispatch('OPEN_MEETING_SETUP')"
+                class="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white px-5 rounded-md shadow-sm text-sm font-semibold transition-colors h-[38px]"
+                title="Start an IMPACT meeting">
+          <i data-lucide="play-circle" class="w-4 h-4"></i> Start IMPACT Meeting
+        </button>
+      </div>
+
       <!-- User Display & Logout - Top Right -->
       <div class="flex items-center gap-1 sm:gap-2 flex-wrap">
         <!-- Connection Status Indicator -->
@@ -267,7 +278,7 @@
                   onclick="store.dispatch('GENERATE_HOT_JOBS_EMAIL')" title="AI Hot Job Summary">
               <i data-lucide="flame" class="w-4 h-4"></i>
           </button>
-          <button class="flex items-center gap-1 sm:gap-2 bg-indigo-600 hover:bg-indigo-700 text-white px-2 sm:px-4 rounded-md shadow-sm text-xs sm:text-sm font-medium transition-colors h-[32px] sm:h-[38px]"
+          <button id="btnAiSummary" class="flex items-center gap-1 sm:gap-2 bg-indigo-600 hover:bg-indigo-700 text-white px-2 sm:px-4 rounded-md shadow-sm text-xs sm:text-sm font-medium transition-colors h-[32px] sm:h-[38px]"
                   onclick="store.dispatch('GENERATE_SUMMARY')" title="AI Impact Call Summary">
               <i data-lucide="file-text" class="w-4 h-4"></i>
           </button>
@@ -278,9 +289,16 @@
             <i data-lucide="eye-off" id="privacyIcon" class="w-4 h-4 text-red-400"></i>
           </button>
           
-          <button onclick="openHistoryModal()" 
+          <button id="btnChangeHistory" onclick="openHistoryModal()" 
                   class="flex items-center gap-1 sm:gap-2 bg-purple-600 hover:bg-purple-700 text-white px-2 sm:px-4 rounded-md shadow-sm text-xs sm:text-sm font-medium transition-colors h-[32px] sm:h-[38px]"
                   title="View change history">
+            <i data-lucide="history" class="w-4 h-4"></i>
+          </button>
+          <!-- Takes the retired Change History slot on non-MSP. Snapshot saving
+               on /history is untouched there; only its viewer is replaced. -->
+          <button id="btnMeetingHistory" onclick="store.dispatch('OPEN_MEETING_HISTORY')"
+                  class="hidden items-center gap-1 sm:gap-2 bg-purple-600 hover:bg-purple-700 text-white px-2 sm:px-4 rounded-md shadow-sm text-xs sm:text-sm font-medium transition-colors h-[32px] sm:h-[38px]"
+                  title="Past IMPACT meetings">
             <i data-lucide="history" class="w-4 h-4"></i>
           </button>
         </div>
@@ -528,22 +546,8 @@
   <div class="flex flex-col sm:flex-row justify-between items-center mb-4 gap-4 shrink-0">
     <div id="legendContainer" class="flex flex-wrap items-center gap-4 text-xs font-medium text-slate-600 bg-white p-3 rounded-md border border-slate-200 inline-flex shadow-sm min-h-[38px] flex-1"></div>
     <div class="flex items-center gap-3 shrink-0">
-      <!-- IMPACT meeting: banner while one is running, and the entry point.
-           Non-MSP only for now -- viewToggle() unhides these there and leaves
-           MSP's header exactly as it was. -->
+      <!-- Banner shown while a meeting is running. Non-MSP only. -->
       <div id="meetingBanner" class="hidden mb-4"></div>
-      <div id="meetingControls" class="hidden flex items-center gap-2 mb-3">
-        <button id="btnStartMeeting" onclick="store.dispatch('OPEN_MEETING_SETUP')"
-                class="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white px-4 rounded-md shadow-sm text-xs font-semibold transition-colors h-[34px]"
-                title="Start an IMPACT meeting">
-          <i data-lucide="play-circle" class="w-4 h-4"></i> Start IMPACT Meeting
-        </button>
-        <button id="btnMeetingHistory" onclick="store.dispatch('OPEN_MEETING_HISTORY')"
-                class="flex items-center gap-2 bg-purple-600 hover:bg-purple-700 text-white px-3 rounded-md shadow-sm text-xs font-medium transition-colors h-[34px]"
-                title="Past IMPACT meetings">
-          <i data-lucide="history" class="w-4 h-4"></i> Meeting History
-        </button>
-      </div>
       <div class="flex bg-white border border-slate-200 rounded-lg p-1 shadow-sm" id="viewToggles">
         <button onclick="store.dispatch('SET_VIEW','closed')" id="btnViewClosed"
                 class="px-4 py-1.5 text-xs font-bold rounded-md transition-colors text-slate-500 hover:text-slate-700 flex items-center gap-1.5 hidden">
@@ -866,7 +870,7 @@
     const $ = (id) => document.getElementById(id);
 
     // App version - loaded from environment variable via API, with fallback
-    let APP_VERSION = '2.3.0';
+    let APP_VERSION = '2.3.1';
 
     const API_BASE_URL = '/api';
     
@@ -4384,8 +4388,24 @@
         if (!isNonMsp && STAGE_VIEWS.includes(window.store.state.view)) {
           window.store.state.view = 'list';
         }
-        const mc = $('meetingControls');
-        if (mc) mc.classList.toggle('hidden', !isNonMsp);
+        // Header swap on non-MSP: the AI Impact Call Summary and Change History
+        // buttons retire, Meeting History takes the Change History slot, and
+        // Start IMPACT Meeting sits centred at the top. MSP keeps all four of
+        // its original buttons and never shows the meeting controls.
+        // 'hidden' has to be paired with the flex display class each element
+        // wants, or un-hiding leaves it as a block and the icon/label stack.
+        const headerSwap = [
+          ['btnAiSummary',      !isNonMsp, 'flex'],
+          ['btnChangeHistory',  !isNonMsp, 'flex'],
+          ['btnMeetingHistory',  isNonMsp, 'flex'],
+          ['meetingStartSlot',   isNonMsp, 'flex'],
+        ];
+        headerSwap.forEach(([id, show, disp]) => {
+          const el = $(id);
+          if (!el) return;
+          el.classList.toggle('hidden', !show);
+          el.classList.toggle(disp, show);
+        });
 
         const view = window.store.state.view;
         $('listViewWrapper')?.classList.toggle('hidden', view !== 'list');
