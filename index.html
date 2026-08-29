@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>GHR Impact Manager</title>
   <link rel="icon" type="image/x-icon" href="favicon.ico">
+  <link rel="icon" type="image/png" href="ghr-logo.png">
 
   <!-- Libraries -->
   <script src="https://cdn.tailwindcss.com"></script>
@@ -97,7 +98,11 @@
   </style>
 </head>
 
-<body class="bg-slate-50 text-slate-800 min-h-screen w-full p-2 sm:p-6 flex flex-col overflow-x-hidden overflow-y-auto md:h-screen md:overflow-hidden">
+<!-- The page scrolls on desktop. It used to be pinned to the viewport
+     (md:h-screen md:overflow-hidden), so the table could only ever have
+     the height left over after the header, filter bar, KPI row, heading
+     and Analysis strip — four rows on Closed. -->
+<body class="bg-slate-50 text-slate-800 min-h-screen w-full p-2 sm:p-6 flex flex-col overflow-x-hidden overflow-y-auto">
 
   <!-- TOAST CONTAINER -->
   <div id="toastContainer" class="fixed top-4 right-4 z-[60] flex flex-col gap-2"></div>
@@ -164,15 +169,25 @@
     <div class="flex flex-col sm:flex-row justify-between items-start gap-2 mb-2">
       <div>
         <h1 class="text-xl sm:text-3xl font-bold text-slate-900 flex items-center gap-2 sm:gap-3">
-          <i data-lucide="activity" class="text-blue-600 w-6 h-6 sm:w-8 sm:h-8"></i>
+          <img src="ghr-logo.png" alt="GHR" class="w-7 h-7 sm:w-9 sm:h-9 shrink-0">
           GHR Impact Manager
           <!-- Instance badge — reveal + label from /api/get-config's dataSource. -->
           <span id="instanceBadge" class="hidden text-[10px] sm:text-xs font-semibold uppercase tracking-wide px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-700 border border-indigo-200"></span>
           <span id="versionDisplay" class="text-xs font-normal text-slate-400 ml-1"></span>
         </h1>
-        <p id="appSubtitle" class="text-slate-500 text-xs sm:text-base mt-1 hidden sm:block">High-Performance Optimization Build</p>
+        <p id="appSubtitle" class="text-slate-500 text-xs sm:text-base mt-1 hidden sm:block">Account Performance Workspace</p>
       </div>
       
+      <!-- Start Meeting, centred — the primary action on this screen, so it
+           sits apart from the utility cluster on the right. -->
+      <div class="flex justify-center order-last w-full lg:order-none lg:w-auto lg:flex-1">
+        <button id="btnStartMeeting" onclick="store.dispatch('OPEN_MEETING_SETUP')"
+                class="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white px-5 rounded-md shadow-sm text-sm font-semibold transition-colors h-[38px]"
+                title="Start an IMPACT meeting">
+          <i data-lucide="play-circle" class="w-4 h-4"></i> Start IMPACT Meeting
+        </button>
+      </div>
+
       <!-- User Display & Logout - Top Right -->
       <div class="flex items-center gap-1 sm:gap-2 flex-wrap">
         <!-- Connection Status Indicator -->
@@ -225,6 +240,9 @@
         <div class="multi-select-container relative w-[calc(50%-6px)] sm:flex-1 min-h-[58px]" id="categoryFilterContainer">
           <label class="block text-xs font-bold text-slate-500 mb-1 ml-1 uppercase tracking-wider">Category</label>
           <div class="w-full bg-white border border-slate-300 rounded-md px-3 py-2 text-sm text-slate-400">Loading...</div>
+        </div><div class="multi-select-container relative w-[calc(50%-6px)] sm:flex-1 min-h-[58px]" id="serviceLineFilterContainer" hidden>
+          <label class="block text-xs font-bold text-slate-500 mb-1 ml-1 uppercase tracking-wider">Service Line</label>
+          <div class="w-full bg-white border border-slate-300 rounded-md px-3 py-2 text-sm text-slate-400">Loading...</div>
         </div>
         <div class="multi-select-container relative w-[calc(50%-6px)] sm:flex-1 min-h-[58px]" id="specialtyFilterContainer">
           <label class="block text-xs font-bold text-slate-500 mb-1 ml-1 uppercase tracking-wider">Specialty</label>
@@ -235,7 +253,7 @@
           <div class="w-full bg-white border border-slate-300 rounded-md px-3 py-2 text-sm text-slate-400">Loading...</div>
         </div>
         <div class="multi-select-container relative w-[calc(50%-6px)] sm:flex-1 min-h-[58px] hidden" id="regionFilterContainer">
-          <label class="block text-xs font-bold text-slate-500 mb-1 ml-1 uppercase tracking-wider">Region</label>
+          <label class="block text-xs font-bold text-slate-500 mb-1 ml-1 uppercase tracking-wider">State</label>
           <div class="w-full bg-white border border-slate-300 rounded-md px-3 py-2 text-sm text-slate-400">Loading...</div>
         </div>
 
@@ -267,10 +285,6 @@
                   onclick="store.dispatch('GENERATE_HOT_JOBS_EMAIL')" title="AI Hot Job Summary">
               <i data-lucide="flame" class="w-4 h-4"></i>
           </button>
-          <button class="flex items-center gap-1 sm:gap-2 bg-indigo-600 hover:bg-indigo-700 text-white px-2 sm:px-4 rounded-md shadow-sm text-xs sm:text-sm font-medium transition-colors h-[32px] sm:h-[38px]"
-                  onclick="store.dispatch('GENERATE_SUMMARY')" title="AI Impact Call Summary">
-              <i data-lucide="file-text" class="w-4 h-4"></i>
-          </button>
 
           <button id="privacyBtn"
                   class="flex items-center gap-1 sm:gap-2 bg-slate-700 hover:bg-slate-800 text-white px-2 sm:px-4 rounded-md shadow-sm text-xs sm:text-sm font-medium transition-colors h-[32px] sm:h-[38px]"
@@ -278,9 +292,14 @@
             <i data-lucide="eye-off" id="privacyIcon" class="w-4 h-4 text-red-400"></i>
           </button>
           
-          <button onclick="openHistoryModal()" 
+          <!-- Past meetings sits with the other utilities; Start Meeting is
+               centred in the header (see below), as the reference had it.
+               Both replace the retired AI Impact Call Summary and Change
+               History buttons. Snapshot saving on /history is untouched —
+               only its viewer is gone. -->
+          <button id="btnMeetingHistory" onclick="store.dispatch('OPEN_MEETING_HISTORY')"
                   class="flex items-center gap-1 sm:gap-2 bg-purple-600 hover:bg-purple-700 text-white px-2 sm:px-4 rounded-md shadow-sm text-xs sm:text-sm font-medium transition-colors h-[32px] sm:h-[38px]"
-                  title="View change history">
+                  title="Past IMPACT meetings">
             <i data-lucide="history" class="w-4 h-4"></i>
           </button>
         </div>
@@ -289,42 +308,8 @@
   </header>
 
   <!-- HISTORY MODAL -->
-  <div id="historyModal" class="hidden fixed inset-0 bg-black/50 z-[90] flex items-center justify-center backdrop-blur-sm">
-    <div class="bg-white rounded-lg shadow-2xl w-11/12 max-w-6xl border border-slate-200 overflow-hidden flex flex-col max-h-[90vh]">
-      <div class="bg-slate-100 p-4 border-b border-slate-200 flex justify-between items-center">
-        <h3 class="text-2xl font-bold text-slate-900 flex items-center gap-2">
-          <i data-lucide="history" class="w-6 h-6 text-purple-600"></i> Change History
-        </h3>
-        <button onclick="closeHistoryModal()" class="text-slate-400 hover:text-slate-700">
-          <i data-lucide="x" class="w-6 h-6"></i>
-        </button>
-      </div>
-      
-      <div class="p-6 overflow-y-auto">
-        <div class="mb-4 flex gap-3">
-          <div class="flex-1">
-            <label class="block text-sm font-medium mb-1">View State At:</label>
-            <select id="historyVersionSelect" onchange="loadHistoricalVersion()" class="w-full border rounded px-3 py-2 text-sm">
-              <option value="">Select a version...</option>
-            </select>
-          </div>
-          <div class="flex items-end gap-2">
-            <button onclick="compareVersions()" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded text-sm font-medium flex items-center gap-1">
-              <i data-lucide="git-compare" class="w-4 h-4"></i> Compare
-            </button>
-            <button onclick="restoreVersion()" class="bg-orange-600 hover:bg-orange-700 text-white px-4 py-2 rounded text-sm font-medium flex items-center gap-1">
-              <i data-lucide="rotate-ccw" class="w-4 h-4"></i> Restore
-            </button>
-          </div>
-        </div>
-        
-        <div id="historyContent" class="border rounded-lg p-4 bg-slate-50 min-h-[400px]">
-          <!-- History content loaded here -->
-        </div>
-      </div>
-    </div>
-  </div>
 
+  <!-- IMPACT MEETING: setup, banner and history. The meeting walks the four
        stage tabs in order, records what was decided, and saves to
        /api/meetings so a past meeting can be reopened. -->
   <div id="meetingSetupModal" class="hidden fixed inset-0 bg-black/50 z-[90] flex items-center justify-center backdrop-blur-sm">
@@ -523,67 +508,55 @@
     </div>
   </div>
 
+  <div id="meetingBanner" class="hidden mb-4"></div>
   <div id="kpiContainer" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-2 sm:gap-4 mb-4 sm:mb-6 shrink-0 min-h-[80px] sm:min-h-[100px]"></div>
 
   <div class="flex flex-col sm:flex-row justify-between items-center mb-4 gap-4 shrink-0">
     <div id="legendContainer" class="flex flex-wrap items-center gap-4 text-xs font-medium text-slate-600 bg-white p-3 rounded-md border border-slate-200 inline-flex shadow-sm min-h-[38px] flex-1"></div>
     <div class="flex items-center gap-3 shrink-0">
-      <!-- IMPACT meeting: banner while one is running, and the entry point.
-           Non-MSP only for now -- viewToggle() unhides these there and leaves
-           MSP's header exactly as it was. -->
-      <div id="meetingBanner" class="hidden mb-4"></div>
-      <div id="meetingControls" class="hidden flex items-center gap-2 mb-3">
-        <button id="btnStartMeeting" onclick="store.dispatch('OPEN_MEETING_SETUP')"
-                class="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white px-4 rounded-md shadow-sm text-xs font-semibold transition-colors h-[34px]"
-                title="Start an IMPACT meeting">
-          <i data-lucide="play-circle" class="w-4 h-4"></i> Start IMPACT Meeting
-        </button>
-        <button id="btnMeetingHistory" onclick="store.dispatch('OPEN_MEETING_HISTORY')"
-                class="flex items-center gap-2 bg-purple-600 hover:bg-purple-700 text-white px-3 rounded-md shadow-sm text-xs font-medium transition-colors h-[34px]"
-                title="Past IMPACT meetings">
-          <i data-lucide="history" class="w-4 h-4"></i> Meeting History
-        </button>
-      </div>
-      <div class="flex bg-white border border-slate-200 rounded-lg p-1 shadow-sm" id="viewToggles">
+      <!-- Tab bar. Order and labels are the product spec; the view/button/wrapper
+           wiring lives in View.VIEWS. overflow-x-auto so ten tabs degrade to a
+           scroll on narrow screens instead of breaking the header layout. -->
+      <div class="flex bg-white border border-slate-200 rounded-lg p-1 shadow-sm overflow-x-auto" id="viewToggles">
         <button onclick="store.dispatch('SET_VIEW','closed')" id="btnViewClosed"
-                class="px-4 py-1.5 text-xs font-bold rounded-md transition-colors text-slate-500 hover:text-slate-700 flex items-center gap-1.5 hidden">
+                class="px-3 py-1.5 text-xs font-bold rounded-md transition-colors text-slate-500 hover:text-slate-700 flex items-center gap-1.5 whitespace-nowrap">
           <i data-lucide="check-circle" class="w-3.5 h-3.5"></i> Closed
         </button>
         <button onclick="store.dispatch('SET_VIEW','list')" id="btnViewList"
-                class="px-4 py-1.5 text-xs font-bold rounded-md transition-colors bg-blue-50 text-blue-700 shadow-sm border border-blue-100 flex items-center gap-1.5">
-          <i data-lucide="list" class="w-3.5 h-3.5"></i> List
+                class="px-3 py-1.5 text-xs font-bold rounded-md transition-colors bg-blue-50 text-blue-700 shadow-sm border border-blue-100 flex items-center gap-1.5 whitespace-nowrap">
+          <i data-lucide="list" class="w-3.5 h-3.5"></i> Open Jobs
         </button>
         <button onclick="store.dispatch('SET_VIEW','extensions')" id="btnViewExtensions"
-                class="px-4 py-1.5 text-xs font-bold rounded-md transition-colors text-slate-500 hover:text-slate-700 flex items-center gap-1.5 hidden">
+                class="px-3 py-1.5 text-xs font-bold rounded-md transition-colors text-slate-500 hover:text-slate-700 flex items-center gap-1.5 whitespace-nowrap">
           <i data-lucide="repeat" class="w-3.5 h-3.5"></i> Extensions
         </button>
         <button onclick="store.dispatch('SET_VIEW','onboarding')" id="btnViewOnboarding"
-                class="px-4 py-1.5 text-xs font-bold rounded-md transition-colors text-slate-500 hover:text-slate-700 flex items-center gap-1.5 hidden">
+                class="px-3 py-1.5 text-xs font-bold rounded-md transition-colors text-slate-500 hover:text-slate-700 flex items-center gap-1.5 whitespace-nowrap">
           <i data-lucide="user-check" class="w-3.5 h-3.5"></i> Onboarding
         </button>
         <button onclick="store.dispatch('SET_VIEW','hotjobs')" id="btnViewHot"
-                class="px-4 py-1.5 text-xs font-bold rounded-md transition-colors text-slate-500 hover:text-slate-700 flex items-center gap-1.5">
-          <i data-lucide="flame" class="w-3.5 h-3.5"></i> Hot Jobs
+                class="px-3 py-1.5 text-xs font-bold rounded-md transition-colors text-slate-500 hover:text-slate-700 flex items-center gap-1.5 whitespace-nowrap">
+          <i data-lucide="flame" class="w-3.5 h-3.5"></i> Priority Jobs
         </button>
         <button onclick="store.dispatch('SET_VIEW','trend')" id="btnViewTrend"
-                class="px-4 py-1.5 text-xs font-bold rounded-md transition-colors text-slate-500 hover:text-slate-700 flex items-center gap-1.5">
-          <i data-lucide="trending-up" class="w-3.5 h-3.5"></i> Trend
+                class="px-3 py-1.5 text-xs font-bold rounded-md transition-colors text-slate-500 hover:text-slate-700 flex items-center gap-1.5 whitespace-nowrap">
+          <i data-lucide="trending-up" class="w-3.5 h-3.5"></i> Trends
         </button>
         <button onclick="store.dispatch('SET_VIEW','perdiem')" id="btnViewPerDiem"
-                class="px-4 py-1.5 text-xs font-bold rounded-md transition-colors text-slate-500 hover:text-slate-700 flex items-center gap-1.5">
+                class="px-3 py-1.5 text-xs font-bold rounded-md transition-colors text-slate-500 hover:text-slate-700 flex items-center gap-1.5 whitespace-nowrap">
           <i data-lucide="clock" class="w-3.5 h-3.5"></i> Per Diem
         </button>
-        <button onclick="store.dispatch('SET_VIEW','pending')" id="btnViewPending"
-                class="px-4 py-1.5 text-xs font-bold rounded-md transition-colors text-slate-500 hover:text-slate-700 flex items-center gap-1.5">
-          <i data-lucide="file-clock" class="w-3.5 h-3.5"></i> Pending
-        </button>
         <button onclick="store.dispatch('SET_VIEW','financials')" id="btnViewFinancials"
-                class="px-4 py-1.5 text-xs font-bold rounded-md transition-colors text-slate-500 hover:text-slate-700 flex items-center gap-1.5">
-          <i data-lucide="dollar-sign" class="w-3.5 h-3.5"></i> Financials
+                class="px-3 py-1.5 text-xs font-bold rounded-md transition-colors text-slate-500 hover:text-slate-700 flex items-center gap-1.5 whitespace-nowrap">
+          <i data-lucide="dollar-sign" class="w-3.5 h-3.5"></i> Revenue
         </button>
         <button onclick="store.dispatch('SET_VIEW','contracts')" id="btnViewContracts"
-                class="px-4 py-1.5 text-xs font-bold rounded-md transition-colors text-slate-500 hover:text-slate-700 flex items-center gap-1.5">
+                class="px-3 py-1.5 text-xs font-bold rounded-md transition-colors text-slate-500 hover:text-slate-700 flex items-center gap-1.5 whitespace-nowrap">
           <i data-lucide="file-diff" class="w-3.5 h-3.5"></i> Contracts
+        </button>
+        <button onclick="store.dispatch('SET_VIEW','pending')" id="btnViewPending"
+                class="px-3 py-1.5 text-xs font-bold rounded-md transition-colors text-slate-500 hover:text-slate-700 flex items-center gap-1.5 whitespace-nowrap">
+          <i data-lucide="file-clock" class="w-3.5 h-3.5"></i> Pending
         </button>
       </div>
       <button onclick="exportTravelAgingReport()" id="btnTravelAgingReport"
@@ -593,15 +566,15 @@
     </div>
   </div>
 
-  <div id="mainContent" class="flex-1 relative overflow-visible md:overflow-hidden flex flex-col min-h-0">
-    <div id="listViewWrapper" class="bg-white shadow-lg rounded-lg border border-slate-200 flex flex-col md:h-full overflow-visible md:overflow-hidden min-h-0">
+  <div id="mainContent" class="flex-1 relative overflow-visible flex flex-col min-h-0">
+    <div id="listViewWrapper" class="bg-white shadow-lg rounded-lg border border-slate-200 flex flex-col overflow-visible min-h-0">
       <!-- Mobile scroll hint -->
       <div class="md:hidden bg-blue-50 text-blue-700 text-xs px-3 py-2 flex items-center gap-2 border-b border-blue-100">
         <i data-lucide="move-horizontal" class="w-4 h-4"></i>
         <span>Swipe left/right to see all columns</span>
       </div>
       <!-- Single scroll container for header + body -->
-      <div class="overflow-x-auto flex-1 overflow-y-visible md:overflow-y-auto">
+      <div class="overflow-x-auto md:h-[70vh] overflow-y-visible md:overflow-y-auto">
         <div class="min-w-[900px]">
           <div class="grid grid-cols-12 bg-slate-100 p-4 font-bold text-slate-600 border-b border-slate-200 text-sm uppercase tracking-wider sticky top-0 z-20 shrink-0" id="tableHeader">
             <div class="col-span-1 cursor-pointer hover:text-blue-600 flex items-center" onclick="store.dispatch('SORT','id')">ID <i data-lucide="arrow-up-down" class="ml-1 w-3 h-3 opacity-50"></i></div>
@@ -639,48 +612,62 @@
         <h2 class="text-lg font-bold text-slate-800 flex items-center gap-2"><i data-lucide="flame" class="text-orange-500"></i> Hot Jobs List</h2>
         <!-- Old Button Removed here, handled in Header -->
       </div>
-      <div id="hotJobsContainer" class="flex-1 overflow-y-auto scroller p-6"></div>
+      <div id="hotJobsContainer" class="md:h-[70vh] overflow-y-auto scroller p-6"></div>
     </div>
 
-    <div id="financialsViewWrapper" class="hidden flex flex-col h-full overflow-hidden bg-white shadow-lg rounded-lg border border-slate-200">
-      <div class="flex-1 overflow-y-auto scroller p-6">
+    <div id="financialsViewWrapper" class="hidden flex flex-col overflow-visible min-h-0 bg-white shadow-lg rounded-lg border border-slate-200">
+      <div class="md:h-[70vh] overflow-y-auto scroller p-6">
         <div id="financialsContent" class="space-y-6"></div>
       </div>
     </div>
 
-    <div id="perDiemViewWrapper" class="hidden flex flex-col h-full overflow-hidden bg-white shadow-lg rounded-lg border border-slate-200">
-      <div class="flex-1 overflow-y-auto scroller p-6">
+    <div id="perDiemViewWrapper" class="hidden flex flex-col overflow-visible min-h-0 bg-white shadow-lg rounded-lg border border-slate-200">
+      <div class="md:h-[70vh] overflow-y-auto scroller p-6">
         <div id="perDiemContent" class="space-y-6"></div>
       </div>
     </div>
 
-    <div id="trendViewWrapper" class="hidden flex flex-col h-full overflow-hidden bg-white shadow-lg rounded-lg border border-slate-200">
-      <div class="flex-1 overflow-y-auto scroller p-6">
+    <div id="trendViewWrapper" class="hidden flex flex-col overflow-visible min-h-0 bg-white shadow-lg rounded-lg border border-slate-200">
+      <div class="md:h-[70vh] overflow-y-auto scroller p-6">
         <div id="trendContent" class="space-y-6"></div>
       </div>
     </div>
 
-    <div id="pendingViewWrapper" class="hidden flex flex-col h-full overflow-hidden bg-white shadow-lg rounded-lg border border-slate-200">
-      <div class="flex-1 overflow-y-auto scroller p-6">
+    <div id="pendingViewWrapper" class="hidden flex flex-col overflow-visible min-h-0 bg-white shadow-lg rounded-lg border border-slate-200">
+      <div class="md:h-[70vh] overflow-y-auto scroller p-6">
         <div id="pendingContent" class="space-y-6"></div>
       </div>
     </div>
 
-    <!-- Closed / Extensions / Onboarding: each owns its content area and renders
-         its own KPI tiles inside it, the way Trend does. Non-MSP only for now;
-         viewToggle() keeps the tabs hidden on MSP. -->
-    <div id="closedViewWrapper" class="hidden flex flex-col h-full overflow-hidden bg-white shadow-lg rounded-lg border border-slate-200">
+    <!-- Closed: own KPI tiles + content, same shape as trendViewWrapper. -->
+    <div id="closedViewWrapper" class="hidden flex flex-col overflow-visible min-h-0 bg-white shadow-lg rounded-lg border border-slate-200">
+      <!-- Tiles and heading stay fixed; the table area below scrolls, which is
+           what the sticky header sticks against. -->
+      <!-- KPI cards render into the shared #kpiContainer above the tab row,
+           the same place Open Jobs puts them, so they never shift between tabs. -->
       <div class="p-4 flex-1 min-h-0 flex flex-col" id="closedContent"></div>
     </div>
-    <div id="extensionsViewWrapper" class="hidden flex flex-col h-full overflow-hidden bg-white shadow-lg rounded-lg border border-slate-200">
+
+    <!-- Extensions: own KPI tiles + content, same shape as trendViewWrapper. -->
+    <div id="extensionsViewWrapper" class="hidden flex flex-col overflow-visible min-h-0 bg-white shadow-lg rounded-lg border border-slate-200">
+      <!-- Tiles and heading stay fixed; the table area below scrolls, which is
+           what the sticky header sticks against. -->
+      <!-- KPI cards render into the shared #kpiContainer above the tab row,
+           the same place Open Jobs puts them, so they never shift between tabs. -->
       <div class="p-4 flex-1 min-h-0 flex flex-col" id="extensionsContent"></div>
     </div>
-    <div id="onboardingViewWrapper" class="hidden flex flex-col h-full overflow-hidden bg-white shadow-lg rounded-lg border border-slate-200">
+
+    <!-- Onboarding: own KPI tiles + content, same shape as trendViewWrapper. -->
+    <div id="onboardingViewWrapper" class="hidden flex flex-col overflow-visible min-h-0 bg-white shadow-lg rounded-lg border border-slate-200">
+      <!-- Tiles and heading stay fixed; the table area below scrolls, which is
+           what the sticky header sticks against. -->
+      <!-- KPI cards render into the shared #kpiContainer above the tab row,
+           the same place Open Jobs puts them, so they never shift between tabs. -->
       <div class="p-4 flex-1 min-h-0 flex flex-col" id="onboardingContent"></div>
     </div>
 
-    <div id="contractsViewWrapper" class="hidden flex flex-col h-full overflow-hidden bg-white shadow-lg rounded-lg border border-slate-200">
-      <div class="flex-1 overflow-y-auto scroller p-6">
+    <div id="contractsViewWrapper" class="hidden flex flex-col overflow-visible min-h-0 bg-white shadow-lg rounded-lg border border-slate-200">
+      <div class="md:h-[70vh] overflow-y-auto scroller p-6">
         <div id="contractsContent" class="space-y-6"></div>
       </div>
     </div>
@@ -866,7 +853,7 @@
     const $ = (id) => document.getElementById(id);
 
     // App version - loaded from environment variable via API, with fallback
-    let APP_VERSION = '2.3.0';
+    let APP_VERSION = '3.1.0';
 
     const API_BASE_URL = '/api';
     
@@ -1494,7 +1481,7 @@
                     if (subtitle) {
                         subtitle.textContent = isNonMspHeader
                           ? 'Non-MSP · Bullhorn + Symplr Education book'
-                          : 'High-Performance Optimization Build';
+                          : 'Account Performance Workspace';
                     }
                     // Re-run viewToggle so Pending / Per Diem buttons hide on
                     // the non-MSP instance now that we know which flavor we are.
@@ -1783,39 +1770,49 @@
                 window.store.state.trendLoadError = trendError.message || String(trendError);
             }
 
-            // Closed / Extensions / Onboarding stage data. Fetched only on
-            // non-MSP: the endpoints dispatch on DATA_SOURCE, but MSP has no
-            // tabs for these yet, so requesting them there would be three
-            // round trips whose results nothing reads.
-            //
-            // Each stage loads independently. One failing must not take the
-            // others or the rest of the page down, and each records its own
-            // error so the view can say so rather than rendering an empty
-            // table that looks like a quiet week.
-            if (window.store.state.dataSource === 'non_msp') {
-                const stageLoads = [
-                    { key: 'extensions', route: 'extensions-data', pick: d => Array.isArray(d) ? d : (d.rows || []) },
-                    { key: 'onboarding', route: 'onboarding-data', pick: d => Array.isArray(d) ? d : (d.rows || []) },
-                    { key: 'closed',     route: 'closed-data',     pick: d => d.rows || [], meta: d => d },
-                ];
-                await Promise.all(stageLoads.map(async ({ key, route, pick, meta }) => {
-                    try {
-                        const resp = await fetch(`${API_BASE_URL}/${route}`);
-                        if (!resp.ok) throw new Error(`HTTP ${resp.status} ${resp.statusText}`);
-                        const data = await resp.json();
-                        if (data && data.error) throw new Error(data.error);
-                        window.store.state[key + 'Rows'] = pick(data);
-                        window.store.state[key + 'Meta'] = meta ? meta(data) : null;
-                        window.store.state[key + 'Error'] = null;
-                    } catch (e) {
-                        console.warn(`Error loading ${route}:`, e);
-                        window.store.state[key + 'Rows'] = [];
-                        window.store.state[key + 'Meta'] = null;
-                        window.store.state[key + 'Error'] = e.message || String(e);
-                    } finally {
-                        window.store.state[key + 'Loaded'] = true;
-                    }
-                }));
+            // Closed / Extensions / Onboarding. These run on both sides now —
+            // B4 + VNDLY under DATA_SOURCE=msp, Bullhorn + Symplr under
+            // non_msp — and the endpoints dispatch, so the fetch is the same
+            // either way. Each is independent: one failing must not
+            // take the others or the rest of the page with it, and each records its
+            // own error so the view can say so instead of rendering an empty table
+            // that looks like a quiet week.
+            const stageLoads = [
+              { key: 'extensions', route: 'extensions-data', pick: d => Array.isArray(d) ? d : (d.rows || []) },
+              { key: 'onboarding', route: 'onboarding-data', pick: d => Array.isArray(d) ? d : (d.rows || []) },
+              { key: 'closed',     route: 'closed-data',     pick: d => d.rows || [], meta: d => d },
+            ];
+            await Promise.all(stageLoads.map(async ({ key, route, pick, meta }) => {
+              try {
+                const resp = await fetch(`${API_BASE_URL}/${route}`);
+                if (!resp.ok) throw new Error(`HTTP ${resp.status} ${resp.statusText}`);
+                const data = await resp.json();
+                if (data && data.error) throw new Error(data.error);
+                window.store.state[key + 'Rows'] = pick(data);
+                window.store.state[key + 'Meta'] = meta ? meta(data) : null;
+                window.store.state[key + 'Error'] = null;
+              } catch (e) {
+                console.warn(`Error loading ${route}:`, e);
+                window.store.state[key + 'Rows'] = [];
+                window.store.state[key + 'Meta'] = null;
+                window.store.state[key + 'Error'] = e.message || String(e);
+              } finally {
+                window.store.state[key + 'Loaded'] = true;
+                if (window.store.state.view === key) window.store.dispatch('REFRESH_UI');
+              }
+            }));
+
+            // Per-record workspace state (extension decisions, revised starts,
+            // margin overrides). Non-fatal: without it the stage views still
+            // render, they just show no saved decisions.
+            try {
+              const wsResp = await fetch(`${API_BASE_URL}/workspace-state`);
+              if (wsResp.ok) {
+                const ws = await wsResp.json();
+                window.store.state.workspaceState = (ws && !ws.error) ? ws : {};
+              }
+            } catch (e) {
+              console.warn('Error loading workspace state:', e);
             }
 
             // Load pending submissions data (GHR only)
@@ -1954,6 +1951,13 @@
                 sourceSystem: row.source_system || 'B4',  // B4 or VNDLY
                 system: String(row.program || row.system || ''),
                 program: String(row.program || row.system || ''),
+                // Clinical service line, kept apart from `program`. On non-MSP
+                // `program` is engagement mode from Bullhorn (Travel/PRN/Perm)
+                // but clinical role from Symplr (RN/LPN/SLP) — two vocabularies
+                // in one field. This gives the role its own filter so Category
+                // can be read as engagement. Empty on MSP, which has one
+                // coherent Category already.
+                service_line: String(row.service_line || ''),
                 healthSystem: Utils.getHealthSystem(facilityName, row.health_system),
                 facility: facilityName,
                 specialty: String(row.specialty_name || row.specialty || ''),
@@ -2135,6 +2139,49 @@
      * Record a change and save to database
      * Integrated with ConnectionManager for connection tracking
      */
+    /*
+     * Human-readable line for a mutation. One place that knows how to describe
+     * each change type, so the meeting recap and any future audit surface read
+     * the same way instead of each inventing its own wording.
+     */
+    function describeChange(jobId, changeType, changeData) {
+        const d = changeData || {};
+        const s = window.store.state;
+        const job = s.jobs?.find(j => j.id === jobId);
+        const where = job ? `${job.specialty || 'Job'} #${jobId}${job.facility ? ' · ' + job.facility : ''}` : `Job #${jobId}`;
+        const label = k => (CONSTANTS.LEVER_LABELS && CONSTANTS.LEVER_LABELS[k]) || k;
+        switch (changeType) {
+            case 'lever_update':
+                return `${d.done ? 'Pulled' : 'Cleared'} lever “${label(d.leverKey)}” on ${where}` +
+                       (d.done && d.user ? ` (owner ${d.user})` : '');
+            case 'margin_update':
+                return `Margin set to ${d.margin}% on ${where}` + (d.user ? ` (by ${d.user})` : '');
+            case 'next_step_update':
+                return `Next step on ${where}: ${(d.nextStep?.text || '').slice(0, 200)}`;
+            case 'av_open_date_update':
+                return `Opened to affiliate vendors ${d.avOpenDate} on ${where}`;
+            default:
+                return `${changeType.replace(/_/g, ' ')} on ${where}`;
+        }
+    }
+
+    /*
+     * Every mutation the app persists goes through here, so this is also where
+     * an in-progress meeting picks up what was decided. Before this, the
+     * meeting recorded which stages were walked but nothing about what actually
+     * changed during them.
+     */
+    function feedMeetingLog(jobId, changeType, changeData) {
+        const s = window.store.state;
+        if (!s.meeting) return;   // no meeting running: nothing to record
+        try {
+            window.store.dispatch('LOG_MEETING_ACTION', describeChange(jobId, changeType, changeData));
+        } catch (e) {
+            // Never let recap bookkeeping break the save that just succeeded.
+            console.warn('Meeting log skipped:', e);
+        }
+    }
+
     async function recordChange(jobId, changeType, changeData) {
         const change = {
             id: `change-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
@@ -2169,6 +2216,7 @@
 
             // Success - record it and create snapshot
             ConnectionManager.recordSuccess();
+            feedMeetingLog(jobId, changeType, changeData);
             await createHistorySnapshot();
 
             console.log('Recorded change to database:', change);
@@ -2493,6 +2541,42 @@
       },
 
       /*
+       * Margin resolution, one read path over two stores.
+       *
+       * An open JOB's margin lives in the change log: recordChange writes
+       * margin_update and the loader replays it back onto job.margin, so that
+       * path already works and is audited. A CONTRACT (an Extensions /
+       * Onboarding / Closed row) has no job, and the replay skips ids missing
+       * from jobMap — so a contract override would be written and silently
+       * dropped. Those go to workspace_state instead.
+       *
+       * Reading is unified here so no caller has to know which store applies,
+       * and the source is returned so the UI can distinguish a deliberate
+       * number from a tenant-wide assumption.
+       */
+      /*
+       * Format a source date for display.
+       *
+       * toDateOrNull turns a date-only string like "2026-08-20" into UTC
+       * midnight, which local formatting renders as Aug 19 anywhere west of
+       * UTC. A value carrying a real time component must NOT be shifted,
+       * though — so take the zone from the value: exactly-midnight-UTC is a
+       * date-only value and formats in UTC, anything else is a real instant and
+       * formats locally. (A true timestamp landing exactly on UTC midnight is
+       * treated as date-only; the failure mode there is benign.)
+       */
+      fmtDate(v, opts) {
+        const d = Utils.toDateOrNull(v);
+        if (!d) return '';
+        const dateOnly = d.getUTCHours() === 0 && d.getUTCMinutes() === 0 &&
+                         d.getUTCSeconds() === 0 && d.getUTCMilliseconds() === 0;
+        return d.toLocaleDateString('en-US', {
+          ...(opts || { month: 'short', day: 'numeric', year: 'numeric' }),
+          ...(dateOnly ? { timeZone: 'UTC' } : {}),
+        });
+      },
+
+      /*
        * Interview stage for a submission.
        *
        * The source systems give dates (submitted / interview / offer / decline)
@@ -2555,29 +2639,6 @@
         if (m.pct == null) return '—';
         return m.source === 'override' ? `${m.pct}%` : `~${m.pct}%`;
       },
-
-      /*
-       * Format a source date for display.
-       *
-       * toDateOrNull turns a date-only string like "2026-08-20" into UTC
-       * midnight, which local formatting renders as Aug 19 anywhere west of
-       * UTC. A value carrying a real time component must NOT be shifted,
-       * though — so take the zone from the value: exactly-midnight-UTC is a
-       * date-only value and formats in UTC, anything else is a real instant and
-       * formats locally. (A true timestamp landing exactly on UTC midnight is
-       * treated as date-only; the failure mode there is benign.)
-       */
-      fmtDate(v, opts) {
-        const d = Utils.toDateOrNull(v);
-        if (!d) return '';
-        const dateOnly = d.getUTCHours() === 0 && d.getUTCMinutes() === 0 &&
-                         d.getUTCSeconds() === 0 && d.getUTCMilliseconds() === 0;
-        return d.toLocaleDateString('en-US', {
-          ...(opts || { month: 'short', day: 'numeric', year: 'numeric' }),
-          ...(dateOnly ? { timeZone: 'UTC' } : {}),
-        });
-      },
-
 
       matchesSelectedTeams(recordTeam, selectedTeams) {
         if (!selectedTeams || selectedTeams.size === 0) return true;
@@ -2686,8 +2747,27 @@
        * Match stats records against category filter using specialty field
        * Stats data doesn't have 'program', so we match specialty against category keywords
        */
-      matchesStatsCategoryFilter(specialty, selectedCategories) {
+      /* Categories on a stats row.
+       *
+       * Stats rows carried no category, so this keyword-matched the specialty
+       * text against the selected category — "is the category nursing-ish and
+       * does the specialty look nursing-ish too". That was always loose, and
+       * on non-MSP it degraded further once Category became engagement mode
+       * (Travel / Per Diem): no engagement value carries a nursing or allied
+       * keyword, so the buckets never fire and only the substring test is
+       * left, matching any specialty containing the word "travel".
+       *
+       * Rows now carry a real service_line derived from the credential, so
+       * when one is present it is compared directly and the guessing stops.
+       * The keyword path stays for MSP rows, which have no service_line.
+       */
+      matchesStatsCategoryFilter(specialty, selectedCategories, serviceLine) {
         if (!selectedCategories || selectedCategories.size === 0) return true;
+        if (serviceLine) {
+          for (const cat of selectedCategories) {
+            if (String(cat).toLowerCase() === String(serviceLine).toLowerCase()) return true;
+          }
+        }
         if (!specialty) return false;
 
         const specLower = String(specialty).toLowerCase();
@@ -3973,6 +4053,14 @@
         const teamEl = $('teamFilterContainer');
         const profEl = $('professionFilterContainer');
         const regEl = $('regionFilterContainer');
+        // Category carries engagement mode on Bullhorn (Travel/PRN/Perm) and
+        // clinical role on Symplr (RN/LPN/SLP) — two vocabularies in one
+        // control. Service Line splits the role out, so Category can be read
+        // as engagement. MSP has a single coherent Category and needs neither.
+        const showSvc = isNonMsp && (s.filters.serviceLines?.size > 0);
+        const svcEl = $('serviceLineFilterContainer');
+        if (svcEl) svcEl.hidden = !showSvc;
+        View.renderDropdown('serviceLineFilterContainer', 'serviceLines', s.filters.serviceLines || new Set(), false);
         const showDiv = isNonMsp && (s.filters.divisions?.size > 0);
         // Team is a job-level Bullhorn field (correlatedCustomText5) nested under
         // Division. Symplr rows carry no team, so it only shows when Bullhorn
@@ -3992,8 +4080,8 @@
         if (!container) return;
         const sorted = Array.from(set || []).filter(x => x != null && String(x).trim() !== '').sort();
         const labelMap = {
-          systems: 'SYSTEM', facilities: 'FACILITY', categories: 'CATEGORY', specialties: 'SPECIALTY/DEPT',
-          divisions: 'DIVISION', teams: 'TEAM', professions: 'PROFESSION', regions: 'REGION',
+          systems: 'SYSTEM', facilities: 'FACILITY', categories: 'CATEGORY', serviceLines: 'SERVICE LINE', specialties: 'SPECIALTY/DEPT',
+          divisions: 'DIVISION', teams: 'TEAM', professions: 'PROFESSION', regions: 'STATE',
         };
 
         let optionsHtml = '';
@@ -4052,7 +4140,7 @@
         const isAll = set.size === 0;
         const idMap = {
           systems: 'systemFilterContainer', facilities: 'facilityFilterContainer',
-          categories: 'categoryFilterContainer', specialties: 'specialtyFilterContainer',
+          categories: 'categoryFilterContainer', serviceLines: 'serviceLineFilterContainer', specialties: 'specialtyFilterContainer',
           divisions: 'divisionFilterContainer', teams: 'teamFilterContainer',
           professions: 'professionFilterContainer',
           regions: 'regionFilterContainer',
@@ -4122,6 +4210,12 @@
               if (!catMatch) return false;
             }
           }
+          // Service Line is the clinical role, kept separate from Category so
+          // the two vocabularies stop sharing one control on non-MSP.
+          if (excludeFilter !== 'serviceLines') {
+            if (s.filterSelection.serviceLines.size > 0 &&
+                !s.filterSelection.serviceLines.has(job.service_line)) return false;
+          }
           if (excludeFilter !== 'specialties') {
             if (s.filterSelection.specialties.size > 0 && !s.filterSelection.specialties.has(Utils.jobSpecialtyKey(job))) return false;
           }
@@ -4161,7 +4255,7 @@
           assignmentSources.forEach(r => {
             if (!r.healthSystem) return;
             const catOk = s.filterSelection.categories.size === 0 ||
-              Utils.matchesStatsCategoryFilter(r.specialty, s.filterSelection.categories);
+              Utils.matchesStatsCategoryFilter(r.specialty, s.filterSelection.categories, r.service_line);
             const facOk = s.filterSelection.facilities.size === 0 || s.filterSelection.facilities.has(r.facility);
             if (catOk && facOk) validSystems.add(r.healthSystem);
           });
@@ -4356,81 +4450,97 @@
         if (!wasOpen) parent.classList.add('open');
       },
 
+      /*
+       * Single source of truth for the tab bar: view key -> button id, wrapper
+       * id, and whether the view exists on the non-MSP instance.
+       *
+       * Was a hand-rolled list where every tab appeared in three separate
+       * places (wrapper toggle, button class, non-MSP hide). Adding tabs to
+       * that meant remembering all three, which is how the GHR/Affiliate
+       * guards kept getting missed in some paths and not others.
+       *
+       * mspOnly: Per Diem / Pending have no non-MSP equivalent, so they stay
+       * hidden there rather than opening onto a dead view.
+       *
+       * Closed / Extensions / Onboarding used to be mspOnly too, because they
+       * read B4 + VNDLY directly. They now have is_non_msp branches over
+       * Bullhorn + Symplr, so they show on both sides. Closed answers a
+       * different question there — fill rate and velocity over historical
+       * orders, rather than GHR's share against affiliate agencies, which is
+       * meaningless on a direct book with no vendor panel.
+       */
+      VIEWS: [
+        { key: 'closed',     btn: 'btnViewClosed',     wrap: 'closedViewWrapper' },
+        { key: 'list',       btn: 'btnViewList',       wrap: 'listViewWrapper' },
+        { key: 'extensions', btn: 'btnViewExtensions', wrap: 'extensionsViewWrapper' },
+        { key: 'onboarding', btn: 'btnViewOnboarding', wrap: 'onboardingViewWrapper' },
+        { key: 'hotjobs',    btn: 'btnViewHot',        wrap: 'hotJobsViewWrapper' },
+        { key: 'trend',      btn: 'btnViewTrend',      wrap: 'trendViewWrapper' },
+        { key: 'perdiem',    btn: 'btnViewPerDiem',    wrap: 'perDiemViewWrapper',    mspOnly: true },
+        { key: 'financials', btn: 'btnViewFinancials', wrap: 'financialsViewWrapper' },
+        { key: 'contracts',  btn: 'btnViewContracts',  wrap: 'contractsViewWrapper' },
+        { key: 'pending',    btn: 'btnViewPending',    wrap: 'pendingViewWrapper',    mspOnly: true },
+      ],
+
       viewToggle() {
-        // Non-MSP instance has no submission funnel and no per-diem actuals
-        // (BULLHORN_PORT_SPEC.md §5 + §8). Hide those tab buttons entirely so
-        // users can't navigate to dead-empty views.
-        const isNonMsp = window.store.state.dataSource === 'non_msp';
-        const btnPerDiemHide = $('btnViewPerDiem');
-        const btnPendingHide = $('btnViewPending');
-        if (btnPerDiemHide) btnPerDiemHide.classList.toggle('hidden', isNonMsp);
-        if (btnPendingHide) btnPendingHide.classList.toggle('hidden', isNonMsp);
+        const s = window.store.state;
+        const isNonMsp = s.dataSource === 'non_msp';
 
-        // If the URL/state somehow landed on a hidden tab, bounce to List.
-        if (isNonMsp && (window.store.state.view === 'perdiem' || window.store.state.view === 'pending')) {
-          window.store.state.view = 'list';
-        }
+        // Bounce off a hidden tab before anything renders it.
+        const current = View.VIEWS.find(v => v.key === s.view);
+        if (isNonMsp && current?.mspOnly) s.view = 'list';
+        const view = s.view;
 
-        // Closed / Extensions / Onboarding and the IMPACT meeting are the
-        // inverse case: they run on non-MSP only for now. MSP keeps the app
-        // exactly as it was, so the tabs are hidden there and the views are
-        // never rendered. The MSP versions of these stages are still on the
-        // feature branch awaiting review.
-        const STAGE_VIEWS = ['closed', 'extensions', 'onboarding'];
-        STAGE_VIEWS.forEach(k => {
-          const b = $('btnView' + k.charAt(0).toUpperCase() + k.slice(1));
-          if (b) b.classList.toggle('hidden', !isNonMsp);
+        const activeClass = "px-3 py-1.5 text-xs font-bold rounded-md transition-colors bg-blue-50 text-blue-700 shadow-sm border border-blue-100 flex items-center gap-1.5 whitespace-nowrap";
+        const inactiveClass = "px-3 py-1.5 text-xs font-bold rounded-md transition-colors text-slate-500 hover:text-slate-700 flex items-center gap-1.5 whitespace-nowrap";
+
+        View.VIEWS.forEach(v => {
+          const hide = isNonMsp && v.mspOnly;
+          $(v.wrap)?.classList.toggle('hidden', view !== v.key);
+          const btn = $(v.btn);
+          if (btn) {
+            btn.className = (view === v.key ? activeClass : inactiveClass) + (hide ? ' hidden' : '');
+          }
         });
-        if (!isNonMsp && STAGE_VIEWS.includes(window.store.state.view)) {
-          window.store.state.view = 'list';
-        }
-        const mc = $('meetingControls');
-        if (mc) mc.classList.toggle('hidden', !isNonMsp);
 
-        const view = window.store.state.view;
-        $('listViewWrapper')?.classList.toggle('hidden', view !== 'list');
-        $('hotJobsViewWrapper')?.classList.toggle('hidden', view !== 'hotjobs');
-        $('financialsViewWrapper')?.classList.toggle('hidden', view !== 'financials');
-        $('perDiemViewWrapper')?.classList.toggle('hidden', view !== 'perdiem');
-        $('trendViewWrapper')?.classList.toggle('hidden', view !== 'trend');
-        $('pendingViewWrapper')?.classList.toggle('hidden', view !== 'pending');
-        $('contractsViewWrapper')?.classList.toggle('hidden', view !== 'contracts');
-        $('closedViewWrapper')?.classList.toggle('hidden', view !== 'closed');
-        $('extensionsViewWrapper')?.classList.toggle('hidden', view !== 'extensions');
-        $('onboardingViewWrapper')?.classList.toggle('hidden', view !== 'onboarding');
-
-        // Use visibility to hide KPI and legend on other tabs (preserves layout)
+        // KPI + legend belong to the List/Per Diem/Financials trio. The newer
+        // views render their own tiles inside their own wrapper, the way Trend
+        // already does, so the shared containers stay hidden for them.
         const kpiEl = $('kpiContainer');
         const legendEl = $('legendContainer');
-        const kpiViews = new Set(['list', 'perdiem', 'financials']);
+        // Every view renders its cards into the shared container, so they stay
+        // in one place instead of appearing above the tab row on some tabs and
+        // inside the panel on others.
+        const kpiViews = new Set(View.VIEWS.map(v => v.key));
         if (kpiEl) {
           kpiEl.style.visibility = kpiViews.has(view) ? 'visible' : 'hidden';
           kpiEl.style.display = kpiViews.has(view) ? '' : 'none';
         }
-        if (legendEl) legendEl.style.visibility = (view === 'financials' || view === 'perdiem' || view === 'trend' || view === 'pending' || view === 'contracts' || STAGE_VIEWS.includes(view)) ? 'hidden' : 'visible';
+        // Legend chips are filters, and every view with bands defined gets them.
+        const hasBands = !!View.legendBands();
+        if (legendEl) {
+          legendEl.style.visibility = hasBands ? 'visible' : 'hidden';
+          legendEl.style.display = hasBands ? '' : 'none';
+        }
+        // Band keys are per-view ('e7' means nothing on Onboarding), so a
+        // selection carried across tabs would filter everything out with no
+        // visible chip explaining why. Clear on the way in, then redraw for
+        // whichever view we landed on.
+        if (View.__legendView !== view) {
+          View.__legendView = view;
+          s.filters.legendBands?.clear();
+          if (hasBands) View.legend();
+        }
 
-        const btnList = $('btnViewList');
-        const btnHot = $('btnViewHot');
-        const btnFinancials = $('btnViewFinancials');
-        const btnPerDiem = $('btnViewPerDiem');
-        const btnTrend = $('btnViewTrend');
-
-        const activeClass = "px-4 py-1.5 text-xs font-bold rounded-md transition-colors bg-blue-50 text-blue-700 shadow-sm border border-blue-100 flex items-center gap-1.5";
-        const inactiveClass = "px-4 py-1.5 text-xs font-bold rounded-md transition-colors text-slate-500 hover:text-slate-700 flex items-center gap-1.5";
-
-        if (btnList) btnList.className = view === 'list' ? activeClass : inactiveClass;
-        if (btnHot) btnHot.className = view === 'hotjobs' ? activeClass : inactiveClass;
-        if (btnFinancials) btnFinancials.className = view === 'financials' ? activeClass : inactiveClass;
-        if (btnPerDiem) btnPerDiem.className = view === 'perdiem' ? activeClass : inactiveClass;
-        if (btnTrend) btnTrend.className = view === 'trend' ? activeClass : inactiveClass;
-        const btnPending = $('btnViewPending');
-        if (btnPending) btnPending.className = view === 'pending' ? activeClass : inactiveClass;
-        const btnContracts = $('btnViewContracts');
-        if (btnContracts) btnContracts.className = view === 'contracts' ? activeClass : inactiveClass;
-        STAGE_VIEWS.forEach(k => {
-          const b = $('btnView' + k.charAt(0).toUpperCase() + k.slice(1));
-          if (b) b.className = (view === k ? activeClass : inactiveClass) + (isNonMsp ? '' : ' hidden');
-        });
+        // A meeting in progress follows the nav: clicking a tab that is one of
+        // its stages moves the meeting's pointer, so the banner never disagrees
+        // with what is on screen.
+        const m = s.meeting;
+        if (m) {
+          const i = View.meetingStageList().findIndex(st => st.view === view);
+          if (i >= 0) m.stageIdx = i;
+          View.renderMeetingBanner();
+        }
       },
 
       main() {
@@ -4467,6 +4577,8 @@
           let ageMatch = true;
           if (s.filters.ageMin !== null && j.daysPast < s.filters.ageMin) ageMatch = false;
           if (s.filters.ageMax !== null && j.daysPast > s.filters.ageMax) ageMatch = false;
+          // Perm chip: same program test the row bubble uses for its outline.
+          if (s.filters.permOnly && !String(j.program || '').toLowerCase().includes('perm')) ageMatch = false;
 
           let searchMatch = true;
           // Corrected to use s.searchQuery instead of s.filters.searchId
@@ -4517,11 +4629,32 @@
         const list = this.getFilteredJobs(s)
           .filter(j => j.levers && j.levers.hotJob && j.levers.hotJob.done);
 
+        // Per-view tiles, rendered into this wrapper like Trend and the stage
+        // views rather than the shared #kpiContainer (which belongs to
+        // List / Per Diem / Revenue).
+        {
+          const openings = list.reduce((a, j) => a + (Number(j.numPositions) || 1), 0);
+          const subs = list.reduce((a, j) => a + (Number(j.ghrSubs) || 0) + (Number(j.avSubs) || 0), 0);
+          const avgAge = list.length ? Math.round(list.reduce((a, j) => a + (Number(j.daysPast) || 0), 0) / list.length) : 0;
+          const stale = list.filter(j => (Number(j.daysPast) || 0) >= 16).length;
+          View.renderKpiCards([
+            { label: 'Priority Jobs', val: list.length, icon: 'flame', color: 'orange' },
+            { label: 'Openings', val: openings, icon: 'hash', color: 'blue' },
+            { label: 'Avg Days Open', val: avgAge, icon: 'clock', color: 'purple' },
+            { label: 'At 16+ Days', val: stale, icon: 'alert-triangle', color: 'red' },
+            { label: 'Active Submissions', val: subs, icon: 'users', color: 'emerald' },
+            { label: 'Avg Bill Rate', val: (() => {
+                const rates = list.map(j => Number(j.billRate)).filter(v => isFinite(v) && v > 0);
+                return rates.length ? '$' + (rates.reduce((a, b) => a + b, 0) / rates.length).toFixed(0) : '—';
+              })(), icon: 'dollar-sign', color: 'emerald' },
+          ]);
+        }
+
         const container = document.getElementById('hotJobsContainer');
         if (!container) return;
 
         // Reset container classes for list view (remove grid if present)
-        container.className = "flex-1 overflow-y-auto scroller p-6 space-y-8";
+        container.className = "md:h-[70vh] overflow-y-auto scroller p-6 space-y-8";
 
         if (list.length === 0) {
           container.innerHTML = '<div class="p-8 text-center text-slate-400">No hot jobs selected. Use the flame icon in list view to select hot jobs.</div>';
@@ -4812,6 +4945,7 @@
 
         if (expanded) {
           const view = s.rowSubView[job.id] || 'active';
+          const detailTab = s.rowDetailTab[job.id] || 'levers';
           const cands = job.candidates.filter(c => view === 'active' ? !c.isDeclined : c.isDeclined);
 
           // --- LEVER SORTING LOGIC (Columnar Flow with Next Step Spanning Bottom) ---
@@ -4852,9 +4986,44 @@
 
           // -------------------------------------------
 
+          // Row-detail sub-tabs. Levers is the existing panel and stays the
+          // default; Rate / Pipeline / Placements are new. Same pill idiom as
+          // the Trend tab's Group By control so the app reads as one piece.
+          // Comparable placements at the same facility. Matching on facility
+          // plus specialty: assignment rows carry a care type / specialty while
+          // a job carries a title, so compare against the job's STRUCTURED
+          // specialty when one exists and otherwise fall back to facility only
+          // — an over-broad list beats a pane that is always empty, which is
+          // what comparing a job title to a care type produced.
+          const jobSpec = Utils.cleanFilterText(job.specialtyName || '');
+          const activePlacements = (s.statsData?.onAssignment || []).filter(r => {
+            if (!r.facility || !job.facility || r.facility !== job.facility) return false;
+            if (!jobSpec) return true;
+            return Utils.cleanFilterText(r.specialty || '') === jobSpec;
+          });
+          const detailTabs = [
+            ['levers', 'Levers', null],
+            ['rate', 'Rate', null],
+            ['pipeline', 'Pipeline', job.ghrSubs + job.avSubs],
+            ['placements', 'Placements', activePlacements.length],
+          ];
+          const detailTabStrip = `
+            <div class="flex items-center gap-1.5 mb-5">
+              ${detailTabs.map(([key, label, count]) => {
+                const on = detailTab === key;
+                return `<button onclick="event.stopPropagation();window.store.dispatch('SET_DETAIL_TAB',{id:'${job.id}',tab:'${key}'})"
+                        class="px-3 py-1.5 rounded-full text-xs font-semibold border transition-colors flex items-center gap-1.5 ${
+                          on ? 'bg-blue-50 border-blue-300 text-blue-700'
+                             : 'bg-white border-slate-200 text-slate-500 hover:text-slate-700 hover:border-slate-300'}">
+                        ${label}${count != null ? `<span class="${on ? 'text-blue-400' : 'text-slate-400'} font-medium">${count}</span>` : ''}
+                      </button>`;
+              }).join('')}
+            </div>`;
+
           html += `
             <div class="bg-slate-50 p-6 border-b shadow-inner cursor-auto fade-in" onclick="event.stopPropagation()">
-              <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
+              ${detailTabStrip}
+              <div class="grid grid-cols-1 md:grid-cols-2 gap-8 ${detailTab === 'levers' ? '' : 'hidden'}">
                 <div>
                   <h4 class="font-bold mb-3 text-sm uppercase text-slate-500">Impact Levers</h4>
                   
@@ -4886,7 +5055,7 @@
                     ${cands.length === 0 ? '<div class="p-4 text-center text-slate-400 italic">No candidates found</div>' : cands.map((c) => {
                       const originalIndex = job.candidates.indexOf(c);
                       const daysAgo = c.date ? Utils.calcDays(c.date) : '-';
-                      const subDateStr = c.date ? c.date.toLocaleDateString() : 'N/A';
+                      const subDateStr = c.date ? Utils.fmtDate(c.date) : 'N/A';
                       
                       const agLower = (c.agency || '').toLowerCase();
                       // GHR or Planet Healthcare = internal, but not "The Planet Group"
@@ -4933,12 +5102,28 @@
                           if(c.reqReason) centerContent += `<div class="text-slate-400 italic truncate" title="${c.reqReason}">Req: ${c.reqReason}</div>`;
                       }
 
+                      // Manual interview stage, internal submissions only. The row itself
+                      // opens the candidate-action modal, so the select stops propagation —
+                      // otherwise picking a stage would also open a modal.
+                      if (isInternal) {
+                        const stage = Utils.interviewStage(job.id, c);
+                        const overridden = !!s.workspaceState?.interview?.[Utils.interviewKey(job.id, c)];
+                        centerContent += `<div class="mt-1 flex items-center gap-1" onclick="event.stopPropagation()">
+                            <select class="text-[10px] border border-slate-300 rounded px-1 py-0.5 bg-white"
+                                    onchange="event.stopPropagation();window.store.dispatch('SAVE_INTERVIEW',{jobId:'${job.id}',name:${JSON.stringify(c.name || '')},stage:this.value})">
+                              ${Utils.INTERVIEW_STAGES.map(o => `<option ${o === stage ? 'selected' : ''}>${o}</option>`).join('')}
+                            </select>
+                            <span class="text-[9px] ${overridden ? 'text-blue-500 font-semibold' : 'text-slate-300'}"
+                                  title="${overridden ? 'Manually set' : 'Derived from the source dates'}">${overridden ? 'manual' : 'auto'}</span>
+                          </div>`;
+                      }
+
                       // Right Content: Dates
                       let rightContent = `<div class="font-mono text-slate-500 text-[10px]">Sub: ${subDateStr}</div>`;
                       if(c.date) rightContent += `<div class="font-bold text-slate-700">${daysAgo}d ago</div>`;
                       
                       if (c.isDeclined && c.declineDate) {
-                          rightContent += `<div class="text-red-400 text-[9px] mt-0.5">Dec: ${c.declineDate.toLocaleDateString()}</div>`;
+                          rightContent += `<div class="text-red-400 text-[9px] mt-0.5">Dec: ${Utils.fmtDate(c.declineDate)}</div>`;
                       }
 
                       // Determine if candidate is actionable (active tab, not already declined/removed)
@@ -4990,6 +5175,9 @@
 
                 </div>
               </div>
+              ${detailTab === 'rate' ? View.detailRatePane(job) : ''}
+              ${detailTab === 'pipeline' ? View.detailPipelinePane(job) : ''}
+              ${detailTab === 'placements' ? View.detailPlacementsPane(job, activePlacements) : ''}
             </div>
           `;
         }
@@ -6430,69 +6618,6 @@
         }
       },
 
-
-      /*
-       * Legend bands per view. The colours mean different things by tab and the
-       * reference treats them accordingly: on Open Jobs a high number is bad
-       * (aging), on Extensions a LOW number is bad (running out of runway), and
-       * Onboarding / Closed band by outcome rather than by days at all. One
-       * shared five-band list would have been wrong on three of the four tabs.
-       *
-       * Chips OR together — picking two bands widens the view rather than
-       * narrowing it to their intersection, which for disjoint day-bands would
-       * always be empty.
-       *
-       * Open Jobs keeps min/max so its chips continue to drive the same
-       * ageMin/ageMax the Days Age inputs write; the other views carry a
-       * predicate because their bands aren't a numeric range on one field.
-       */
-      LEGEND_BANDS: {
-        list: [
-          { key: '1-5',   label: '1-5 Days',   dot: 'bg-[#22C55E]', min: 1,  max: 5 },
-          { key: '6-10',  label: '6-10 Days',  dot: 'bg-[#FACC15]', min: 6,  max: 10 },
-          { key: '11-15', label: '11-15 Days', dot: 'bg-[#EF4444]', min: 11, max: 15 },
-          { key: '16+',   label: '16+ Days',   dot: 'bg-red-800',   min: 16, max: null },
-          { key: 'perm',  label: 'Perm',       dot: 'border border-slate-500 bg-white', perm: true },
-        ],
-        extensions: [
-          { key: 'e7',  label: '≤7 Days Left',    dot: 'bg-red-800',   pred: r => r.days_left != null && r.days_left <= 7 },
-          { key: 'e14', label: '8-14 Days Left',  dot: 'bg-[#EF4444]', pred: r => r.days_left > 7 && r.days_left <= 14 },
-          { key: 'e21', label: '15-21 Days Left', dot: 'bg-[#FACC15]', pred: r => r.days_left > 14 && r.days_left <= 21 },
-          { key: 'e22', label: '22+ Days Left',   dot: 'bg-[#22C55E]', pred: r => r.days_left > 21 },
-        ],
-        onboarding: [
-          { key: 'ontrack', label: 'On Track',    dot: 'bg-[#22C55E]', pred: r => View.onboardingGroup(r) === 'ON TRACK' },
-          { key: 'moved',   label: 'Start Moved', dot: 'bg-[#FACC15]', pred: r => View.onboardingGroup(r) === 'START DATE CHANGED' },
-          { key: 'delayed', label: 'Delayed',     dot: 'bg-[#EF4444]', pred: r => View.onboardingGroup(r) === 'DELAYED START' },
-          { key: 'cancel',  label: 'Cancelled',   dot: 'bg-red-800',   pred: r => View.onboardingGroup(r) === 'CANCELED' },
-        ],
-        closed: [
-          { key: 'lifecycle', label: 'Ran To Term',  dot: 'bg-[#22C55E]', pred: r => /lifecycle|complete/i.test(r.group || '') },
-          { key: 'ended',     label: 'Ended Early',  dot: 'bg-[#EF4444]', pred: r => /terminat|resign/i.test(r.group || '') },
-          { key: 'cancelled', label: 'Cancelled',    dot: 'bg-red-800',   pred: r => /cancel/i.test(r.group || '') },
-          { key: 'admin',     label: 'Administrative', dot: 'bg-slate-400', pred: r => /admin/i.test(r.group || '') },
-        ],
-      },
-
-      legendBands() {
-        // Priority Jobs is Open Jobs filtered, so it shares its bands.
-        const v = window.store.state.view;
-        return View.LEGEND_BANDS[v === 'hotjobs' ? 'list' : v] || null;
-      },
-
-      // OR across selected bands. Returns true when nothing is selected.
-      legendMatch(r) {
-        const sel = window.store.state.filters.legendBands;
-        if (!sel || !sel.size) return true;
-        const bands = View.legendBands();
-        if (!bands) return true;
-        for (const key of sel) {
-          const b = bands.find(x => x.key === key);
-          if (b && b.pred && b.pred(r)) return true;
-        }
-        return false;
-      },
-
       kpis(list) {
         const total = list.length;
         const container = $('kpiContainer');
@@ -6504,7 +6629,7 @@
           const sysMatch = Utils.matchesSelectedSystems(r, s.filterSelection.systems);
           const facMatch = s.filterSelection.facilities.size === 0 || (r.facility && s.filterSelection.facilities.has(r.facility));
           const specMatch = s.filterSelection.specialties.size === 0 || (r.specialty && s.filterSelection.specialties.has(Utils.cleanFilterText(r.specialty)));
-          const catMatch = Utils.matchesStatsCategoryFilter(r.specialty, s.filterSelection.categories);
+          const catMatch = Utils.matchesStatsCategoryFilter(r.specialty, s.filterSelection.categories, r.service_line);
           const divMatch = Utils.matchesSelectedDivisions(r.division, s.filterSelection.divisions)
             && Utils.matchesSelectedTeams(r.team, s.filterSelection.teams);
           const profMatch = s.filterSelection.professions.size === 0 || (r.profession && s.filterSelection.professions.has(r.profession));
@@ -6601,16 +6726,96 @@
         lucide.createIcons();
       },
 
+      /*
+       * Aging legend, doubling as the age filter. Each chip drives the same
+       * s.filters.ageMin/ageMax the Days Age inputs write, so there is one
+       * filter behind both controls and they stay in sync rather than
+       * competing. Perm is not an age band — it keys off the program name, the
+       * same test the row bubble uses (job.program contains "perm").
+       */
+      /*
+       * Legend bands per view. The colours mean different things by tab and the
+       * reference treats them accordingly: on Open Jobs a high number is bad
+       * (aging), on Extensions a LOW number is bad (running out of runway), and
+       * Onboarding / Closed band by outcome rather than by days at all. One
+       * shared five-band list would have been wrong on three of the four tabs.
+       *
+       * Chips OR together — picking two bands widens the view rather than
+       * narrowing it to their intersection, which for disjoint day-bands would
+       * always be empty.
+       *
+       * Open Jobs keeps min/max so its chips continue to drive the same
+       * ageMin/ageMax the Days Age inputs write; the other views carry a
+       * predicate because their bands aren't a numeric range on one field.
+       */
+      LEGEND_BANDS: {
+        list: [
+          { key: '1-5',   label: '1-5 Days',   dot: 'bg-[#22C55E]', min: 1,  max: 5 },
+          { key: '6-10',  label: '6-10 Days',  dot: 'bg-[#FACC15]', min: 6,  max: 10 },
+          { key: '11-15', label: '11-15 Days', dot: 'bg-[#EF4444]', min: 11, max: 15 },
+          { key: '16+',   label: '16+ Days',   dot: 'bg-red-800',   min: 16, max: null },
+          { key: 'perm',  label: 'Perm',       dot: 'border border-slate-500 bg-white', perm: true },
+        ],
+        extensions: [
+          { key: 'e7',  label: '≤7 Days Left',    dot: 'bg-red-800',   pred: r => r.days_left != null && r.days_left <= 7 },
+          { key: 'e14', label: '8-14 Days Left',  dot: 'bg-[#EF4444]', pred: r => r.days_left > 7 && r.days_left <= 14 },
+          { key: 'e21', label: '15-21 Days Left', dot: 'bg-[#FACC15]', pred: r => r.days_left > 14 && r.days_left <= 21 },
+          { key: 'e22', label: '22+ Days Left',   dot: 'bg-[#22C55E]', pred: r => r.days_left > 21 },
+        ],
+        onboarding: [
+          { key: 'ontrack', label: 'On Track',    dot: 'bg-[#22C55E]', pred: r => View.onboardingGroup(r) === 'ON TRACK' },
+          { key: 'moved',   label: 'Start Moved', dot: 'bg-[#FACC15]', pred: r => View.onboardingGroup(r) === 'START DATE CHANGED' },
+          { key: 'delayed', label: 'Delayed',     dot: 'bg-[#EF4444]', pred: r => View.onboardingGroup(r) === 'DELAYED START' },
+          { key: 'cancel',  label: 'Cancelled',   dot: 'bg-red-800',   pred: r => View.onboardingGroup(r) === 'CANCELED' },
+        ],
+        closed: [
+          { key: 'lifecycle', label: 'Ran To Term',  dot: 'bg-[#22C55E]', pred: r => /lifecycle|complete/i.test(r.group || '') },
+          { key: 'ended',     label: 'Ended Early',  dot: 'bg-[#EF4444]', pred: r => /terminat|resign/i.test(r.group || '') },
+          { key: 'cancelled', label: 'Cancelled',    dot: 'bg-red-800',   pred: r => /cancel/i.test(r.group || '') },
+          { key: 'admin',     label: 'Administrative', dot: 'bg-slate-400', pred: r => /admin/i.test(r.group || '') },
+        ],
+      },
+
+      legendBands() {
+        // Priority Jobs is Open Jobs filtered, so it shares its bands.
+        const v = window.store.state.view;
+        return View.LEGEND_BANDS[v === 'hotjobs' ? 'list' : v] || null;
+      },
+
+      // OR across selected bands. Returns true when nothing is selected.
+      legendMatch(r) {
+        const sel = window.store.state.filters.legendBands;
+        if (!sel || !sel.size) return true;
+        const bands = View.legendBands();
+        if (!bands) return true;
+        for (const key of sel) {
+          const b = bands.find(x => x.key === key);
+          if (b && b.pred && b.pred(r)) return true;
+        }
+        return false;
+      },
+
       legend() {
         const el = $('legendContainer');
         if (!el) return;
-        el.innerHTML = `
-          <div class="flex items-center gap-2"><div class="w-3 h-3 rounded-full bg-[#22C55E]"></div> 1-5 Days</div>
-          <div class="flex items-center gap-2"><div class="w-3 h-3 rounded-full bg-[#FACC15]"></div> 6-10 Days</div>
-          <div class="flex items-center gap-2"><div class="w-3 h-3 rounded-full bg-[#EF4444]"></div> 11-15 Days</div>
-          <div class="flex items-center gap-2"><div class="w-3 h-3 rounded-full bg-red-800"></div> 16+ Days</div>
-          <div class="flex items-center gap-2"><div class="w-3 h-3 rounded-full border border-slate-500 bg-white"></div> Perm</div>
-        `;
+        const bands = View.legendBands();
+        if (!bands) { el.innerHTML = ''; return; }
+        const f = window.store.state.filters;
+        el.innerHTML = bands.map(b => {
+          // Open Jobs bands drive ageMin/ageMax (shared with the Days Age
+          // inputs); the other views track selection by band key.
+          const on = b.pred
+            ? !!f.legendBands?.has(b.key)
+            : b.perm ? f.permOnly === true
+                     : (f.ageMin === b.min && f.ageMax === b.max && !f.permOnly);
+          return `<button type="button" onclick="store.dispatch('TOGGLE_LEGEND_BAND','${b.key}')"
+              title="${on ? 'Clear this filter' : 'Filter to ' + b.label}"
+              class="flex items-center gap-2 px-2 py-1 rounded-md border transition-colors whitespace-nowrap ${
+                on ? 'bg-blue-50 border-blue-300 text-blue-800 font-semibold'
+                   : 'border-transparent hover:bg-slate-50 hover:border-slate-200'}">
+              <div class="w-3 h-3 rounded-full ${b.dot}"></div> ${b.label}
+            </button>`;
+        }).join('');
       },
 
       financials() {
@@ -9618,7 +9823,6 @@
             </div>
           </div>
           ${partialDataBanner}
-          <div class="grid grid-cols-2 ${isNonMspTrend ? '' : 'lg:grid-cols-4'} gap-3 mb-4" id="trendKpiTiles"></div>
           <div class="bg-white rounded-xl border border-slate-200 p-4 shadow-sm">
             <div id="trendChartLegend" class="flex flex-wrap justify-center gap-x-5 gap-y-2 mb-3 text-[11px] text-slate-600"></div>
             <canvas id="trendChart" height="100"></canvas>
@@ -9847,26 +10051,29 @@
         // The delta is next week vs THIS week, so the "vs" line names the current week —
         // it previously named nextWeek, i.e. the very week being measured.
         const currentLabel = weeks[currentWeekIdx] ? fmtWeekEnd(weeks[currentWeekIdx].end) : '—';
-        const tile = (label, delta) => `
-          <div class="bg-white border border-slate-200 rounded-lg px-4 py-3 shadow-sm">
-            <div class="text-[10px] uppercase tracking-wide text-slate-400 font-semibold">${label}</div>
-            <div class="text-[10px] text-slate-400 mb-1">Next 7 Days Projection</div>
-            <div class="text-2xl font-bold">${delta}</div>
-            <div class="text-[10px] text-slate-500 mt-1">vs ${currentLabel}</div>
-          </div>
-        `;
+        // Trend's cards are next-7-day deltas rather than totals, so the
+        // comparison week goes in the label — the shared card shape has no
+        // subtitle line, and that context would otherwise be lost.
+        const tile = (label, delta, icon, color) =>
+          ({ label: `${label} <span class="text-slate-400 normal-case font-normal">vs ${currentLabel}</span>`,
+             val: delta, icon, color });
         // Non-MSP: pendingTotal is always 0, which makes Expected Starts permanently ±0
         // and Booked Starts numerically identical to Total Headcount. Show only the two
         // tiles that mean something.
-        const trendKpiTilesHtml = isNonMspTrend
-          ? tile('Total Headcount', fmtDelta(hcDelta)) +
-            tile('Projected Revenue', fmtDeltaDollars(revenueDelta))
-          : tile('Total Headcount', fmtDelta(hcDelta)) +
-            tile('Booked Starts <span class="text-slate-400 normal-case font-normal">(confirmed)</span>', fmtDelta(bookedStartsDelta)) +
-            tile('Expected Starts <span class="text-slate-400 normal-case font-normal">(unconfirmed)</span>', fmtDelta(nextExpectedAddlHc)) +
-            tile('Projected Revenue', fmtDeltaDollars(revenueDelta));
-        const trendKpiTilesEl = document.getElementById('trendKpiTiles');
-        if (trendKpiTilesEl) trendKpiTilesEl.innerHTML = trendKpiTilesHtml;
+        // Two more on the same next-7-day delta basis, so the row fills out
+        // without mixing absolutes into a set of deltas.
+        const ghrDelta = (weekData[nextIdx]?.ghr || 0) - (weekData[currentWeekIdx]?.ghr || 0);
+        const affDelta = (weekData[nextIdx]?.aff || 0) - (weekData[currentWeekIdx]?.aff || 0);
+        View.renderKpiCards(isNonMspTrend
+          ? [tile('Total Headcount', fmtDelta(hcDelta), 'users', 'blue'),
+             tile('Booked Starts', fmtDelta(bookedStartsDelta), 'check-circle', 'indigo'),
+             tile('Projected Revenue', fmtDeltaDollars(revenueDelta), 'dollar-sign', 'emerald')]
+          : [tile('Total Headcount', fmtDelta(hcDelta), 'users', 'blue'),
+             tile('GHR', fmtDelta(ghrDelta), 'user-check', 'blue'),
+             tile('Affiliate', fmtDelta(affDelta), 'users', 'purple'),
+             tile('Booked Starts', fmtDelta(bookedStartsDelta), 'check-circle', 'indigo'),
+             tile('Expected Starts', fmtDelta(nextExpectedAddlHc), 'help-circle', 'amber'),
+             tile('Projected Revenue', fmtDeltaDollars(revenueDelta), 'dollar-sign', 'emerald')]);
 
         // Overlay lines shared across account/PM/division views: Total, Pipeline,
         // Projected Headcount. Same three lines the Category view shows, so
@@ -10471,6 +10678,28 @@
           return true;
         });
 
+        // Per-view tiles, rendered into this wrapper like the other tabs.
+        // Buckets come from statusBucket, so they mirror exactly what the view
+        // shows rather than recounting raw statuses.
+        {
+          const nBucket = b => filtered.filter(r => statusBucket(r.status) === b).length;
+          const ghr = filtered.filter(r => r.is_ghr).length;
+          View.renderKpiCards([
+            { label: 'In Pipeline', val: filtered.length, icon: 'file-clock', color: 'blue' },
+            { label: 'Submitted', val: nBucket('sub'), icon: 'send', color: 'indigo' },
+            { label: 'Offers Out', val: nBucket('off'), icon: 'mail', color: 'purple' },
+            { label: 'Ready To Onboard', val: nBucket('rto'), icon: 'user-check', color: 'emerald' },
+            { label: 'GHR Share', val: filtered.length ? Math.round((ghr / filtered.length) * 100) + '%' : '—', icon: 'percent', color: 'slate' },
+            { label: 'Oldest Open', val: (() => {
+                const ages = filtered.map(r => {
+                  const ms = latestMilestoneMs(r);
+                  return ms == null ? null : Math.floor((nowMs - ms) / 86400000);
+                }).filter(v => v != null);
+                return ages.length ? Math.max(...ages) + 'd' : '—';
+              })(), icon: 'clock', color: 'amber' },
+          ]);
+        }
+
         // Status color helpers
         const statusColor = (status) => {
           const s = (status || '').toLowerCase();
@@ -11066,12 +11295,16 @@
         const hiddenMissingB4V = missingInB4V.filter(r => sysOk(r.client_name) && reviewed.has(bullhornKey(r))).length;
         const totalHidden = hiddenMismatches + hiddenMissingBH + hiddenMissingB4V;
 
-        const kpiCard = (label, value, color) => `
-          <div class="bg-white rounded-lg border border-slate-200 p-3 shadow-sm">
-            <div class="text-[10px] uppercase tracking-wide text-slate-400 font-semibold">${label}</div>
-            <div class="text-2xl font-bold text-${color} mt-0.5">${value.toLocaleString()}</div>
-          </div>
-        `;
+        // Cards go to the shared container above the tab row, like every other
+        // view, rather than inline at the top of this panel.
+        View.renderKpiCards([
+          { label: 'Bullhorn Placements', val: (counts.bullhorn_total || 0).toLocaleString(), icon: 'briefcase', color: 'slate' },
+          { label: 'B4/VNDLY Assignments', val: (counts.assignments_total || 0).toLocaleString(), icon: 'users', color: 'blue' },
+          { label: 'Exact Matches', val: (counts.exact_matches || 0).toLocaleString(), icon: 'check-circle', color: 'emerald' },
+          { label: 'Date Mismatches', val: fMismatches.length.toLocaleString(), icon: 'alert-triangle', color: 'amber' },
+          { label: 'Missing Somewhere', val: (fMissingBH.length + fMissingB4V.length).toLocaleString(), icon: 'help-circle', color: 'red' },
+          { label: 'Marked Reviewed', val: totalHidden.toLocaleString(), icon: 'eye-off', color: 'slate' },
+        ]);
 
         const reviewBtn = (key) => {
           const isReviewed = reviewed.has(key);
@@ -11163,13 +11396,6 @@
             </div>
           </div>
 
-          <div class="grid grid-cols-2 md:grid-cols-5 gap-3 mb-6">
-            ${kpiCard('Bullhorn Placements', counts.bullhorn_total || 0, 'slate-700')}
-            ${kpiCard('B4/VNDLY Assignments', counts.assignments_total || 0, 'slate-700')}
-            ${kpiCard('Exact Matches', counts.exact_matches || 0, 'emerald-600')}
-            ${kpiCard('Date Mismatches', fMismatches.length, 'amber-600')}
-            ${kpiCard('Missing Somewhere', fMissingBH.length + fMissingB4V.length, 'red-600')}
-          </div>
 
           <section class="mb-8">
             <h3 class="text-sm font-bold text-amber-700 mb-2 flex items-center gap-2">
@@ -11277,22 +11503,11 @@
         perDiemFromMonth: null,
         perDiemToMonth: null,
         perDiemGHROnly: true,
-        // ---- Stage views (Closed / Extensions / Onboarding) and the IMPACT
-        // meeting. These are non-MSP only for now; on MSP the tabs stay hidden
-        // and every field below simply goes unread.
+        // Extension Search bar (Extensions tab only).
         extFilter: { endFrom: '', endTo: '', status: 'All' },
-        rowDetailTab: {},
-        extensionsRows: [], extensionsMeta: null, extensionsLoaded: false, extensionsError: null,
-        onboardingRows: [], onboardingMeta: null, onboardingLoaded: false, onboardingError: null,
-        closedRows: [], closedMeta: null, closedLoaded: false, closedError: null,
-        workspaceState: {},
-        expandedExtensions: new Set(),
-        expandedOnboarding: new Set(),
-        intelOpen: {},
-        meeting: null,
-        filters: { systems: new Set(), facilities: new Set(), categories: new Set(), specialties: new Set(), ageMin: null, ageMax: null, permOnly: false, legendBands: new Set(), searchId: '' },
+        filters: { systems: new Set(), facilities: new Set(), categories: new Set(), serviceLines: new Set(), specialties: new Set(), ageMin: null, ageMax: null, permOnly: false, legendBands: new Set(), searchId: '' },
         filterSelection: {
-          systems: new Set(), facilities: new Set(), categories: new Set(), specialties: new Set(),
+          systems: new Set(), facilities: new Set(), categories: new Set(), serviceLines: new Set(), specialties: new Set(),
           // Non-MSP filter dimensions — populated from the API's division/region/customText fields.
           // On MSP these stay empty; the UI hides the controls. Once the merged dashboard ships,
           // MSP records will carry the same shape and these become live there too.
@@ -11302,9 +11517,22 @@
         view: 'list',
         expandedRows: new Set(),
         rowSubView: {},
+        rowDetailTab: {},
+        // Closed / Extensions / Onboarding stage data (MSP-only endpoints).
+        extensionsRows: [], extensionsMeta: null, extensionsLoaded: false, extensionsError: null,
+        // WorkspaceState, keyed scope -> entityId -> { state, updatedAt, updatedBy }.
+        workspaceState: {},
+        expandedExtensions: new Set(),
+        expandedOnboarding: new Set(),
+        // Analysis strips default open; collapsed state is per stage view.
+        intelOpen: {},
+        onboardingRows: [], onboardingMeta: null, onboardingLoaded: false, onboardingError: null,
+        closedRows: [], closedMeta: null, closedLoaded: false, closedError: null,
         sort: { key: 'daysPast', dir: 'desc' },
         modal: { open: false, type: null, jobId: null, key: null, val: null, candidateIndex: null },
-        sessionLog: [],
+        // Active IMPACT meeting, or null. Shape:
+        // { id, healthSystem, recipients, stages[], stageIdx, completed[], actions[], startedAt }
+        meeting: null,
         filename: 'Updated_Positions',
         redactMode: true
       },
@@ -11345,6 +11573,7 @@
                 ...pdAssignments.map(a => a.facility)
               ].filter(v => v && !_isHiddenByFacility(v)));
               s.filters.categories = new Set(s.jobs.map(j => j.program).filter(Boolean));
+              s.filters.serviceLines = new Set(s.jobs.map(j => j.service_line).filter(Boolean));
               // Apply cleanFilterText to specialty values for consistent matching
               s.filters.specialties = new Set([
                 ...s.jobs.map(j => Utils.jobSpecialtyKey(j)),
@@ -11410,6 +11639,7 @@
                 ...pdAssignments.map(a => a.facility)
               ].filter(v => v && !_isHiddenByFacility(v)));
               s.filters.categories = new Set(s.jobs.map(j => j.program).filter(Boolean));
+              s.filters.serviceLines = new Set(s.jobs.map(j => j.service_line).filter(Boolean));
               // Apply cleanFilterText to specialty values for consistent matching
               s.filters.specialties = new Set([
                 ...s.jobs.map(j => Utils.jobSpecialtyKey(j)),
@@ -11922,6 +12152,8 @@
               const max = $('maxAge')?.value ?? '';
               s.filters.ageMin = min !== '' ? parseInt(min, 10) : null;
               s.filters.ageMax = max !== '' ? parseInt(max, 10) : null;
+              s.filters.permOnly = false;
+              View.legend();
               View.main();
               break;
             }
@@ -12002,6 +12234,7 @@
               if (s.expandedRows.has(id)) s.expandedRows.delete(id);
               else s.expandedRows.add(id);
               if (!s.rowSubView[id]) s.rowSubView[id] = 'active';
+              if (!s.rowDetailTab[id]) s.rowDetailTab[id] = 'levers';
               View.rowUpdate(id);
               break;
             }
@@ -12060,6 +12293,12 @@
 
             case 'SET_SUB_VIEW': {
               s.rowSubView[payload.id] = payload.view;
+              View.rowUpdate(payload.id);
+              break;
+            }
+
+            case 'SET_DETAIL_TAB': {
+              s.rowDetailTab[payload.id] = payload.tab;
               View.rowUpdate(payload.id);
               break;
             }
@@ -12197,9 +12436,10 @@
 
               const tag = $('leverTagInput')?.value || '';
               const pushLog = (type, desc, tagVal) => {
-                const item = { jobId: job.id, type, desc, tag: tagVal || null, time: new Date().toLocaleString() };
-                s.sessionLog.push(item);
-                job.history.push(item);
+                // job.history is what the per-job history modal renders. The
+                // parallel sessionLog array went with the AI Call Summary that
+                // was its only reader.
+                job.history.push({ jobId: job.id, type, desc, tag: tagVal || null, time: new Date().toLocaleString() });
               };
 
               if (s.modal.type === 'lever') {
@@ -12322,9 +12562,7 @@
               j.levers[payload.key].time = '';
 
               if (!j.history) j.history = [];
-              const logItem = { jobId: j.id, type: 'Undo', desc: `Reverted ${CONSTANTS.LEVER_LABELS[payload.key]}`, tag: null, time: new Date().toLocaleString() };
-              s.sessionLog.push(logItem);
-              j.history.push(logItem);
+              j.history.push({ jobId: j.id, type: 'Undo', desc: `Reverted ${CONSTANTS.LEVER_LABELS[payload.key]}`, tag: null, time: new Date().toLocaleString() });
               
               // Save to database
               recordChange(j.id, 'lever_update', {
@@ -12338,36 +12576,6 @@
               break;
             }
 
-            case 'GENERATE_SUMMARY': {
-              const txt = $('summaryText');
-              if (!txt) break;
-
-              if (s.sessionLog.length === 0) txt.value = "No actions recorded this session.";
-              else {
-                const grouped = {};
-                s.sessionLog.forEach(item => {
-                  grouped[item.jobId] = grouped[item.jobId] || [];
-                  grouped[item.jobId].push(item);
-                });
-
-                let report = `GHR Impact Manager. Session Summary\nDate: ${new Date().toLocaleString()}\n----------------------------------------\n`;
-                Object.keys(grouped).forEach(id => {
-                  const job = s.jobs.find(j => j.id === id);
-                  report += `\nJob #${id}. ${job?.specialty || 'Unknown'}\n${job?.facility ? '(' + job.facility + ')' : ''}\n`;
-                  grouped[id].forEach(a => {
-                    let line = `  • ${a.type}`;
-                    if (a.desc) line += `: ${a.desc}`;
-                    if (a.tag) line += ` (@${a.tag})`;
-                    report += line + '\n';
-                  });
-                });
-
-                txt.value = report;
-              }
-
-              this.dispatch('OPEN_MODAL', { type: 'summary' });
-              break;
-            }
 
             case 'GENERATE_HOT_JOBS_EMAIL': {
               const hotJobs = View.getFilteredJobs(s).filter(j => j.levers && j.levers.hotJob && j.levers.hotJob.done);
@@ -12538,64 +12746,7 @@
     
     let currentHistoryVersion = null;
     
-    window.openHistoryModal = async function() {
-        try {
-            document.getElementById('historyModal').classList.remove('hidden');
-            
-            // Load history versions
-            try {
-                const response = await fetch(DB_CONFIG.historyEndpoint);
-                if (response.ok) {
-                    historyVersions = await response.json();
-                }
-            } catch (error) {
-                console.warn('Could not load history from database:', error);
-                // Try localStorage in demo mode
-                const localHistory = localStorage.getItem('ghr_demo_history');
-                if (localHistory) {
-                    historyVersions = JSON.parse(localHistory);
-                } else {
-                    historyVersions = [];
-                }
-            }
-            
-            // Sort by timestamp descending (most recent first)
-            // Handle both 'timestamp' and 'snapshot_timestamp' field names from API
-            historyVersions.sort((a, b) => {
-                const dateA = new Date(a.timestamp || a.snapshot_timestamp);
-                const dateB = new Date(b.timestamp || b.snapshot_timestamp);
-                return dateB - dateA;
-            });
-            
-            // Populate dropdown
-            const select = document.getElementById('historyVersionSelect');
-            select.innerHTML = '<option value="">Current State</option>' + 
-                historyVersions.map((v, idx) => {
-                    const dateStr = Utils.formatTimestamp(v.timestamp || v.snapshot_timestamp);
-                    const changeCount = v.changeCount || v.change_count || 0;
-                    return `<option value="${idx}">${dateStr} (${changeCount} changes)</option>`;
-                }).join('');
-            
-            // Show current state by default
-            document.getElementById('historyContent').innerHTML = `
-                <div class="text-center py-8 text-slate-500">
-                    <i data-lucide="clock" class="w-12 h-12 mx-auto mb-3 opacity-50"></i>
-                    <p class="text-lg font-medium">Select a version to view historical data</p>
-                    <p class="text-sm mt-2">${historyVersions.length} versions available</p>
-                </div>
-            `;
-            
-            lucide.createIcons();
-        } catch (error) {
-            console.error('Error opening history modal:', error);
-            window.showToast('Error loading history', 'error');
-        }
-    };
     
-    window.closeHistoryModal = function() {
-        document.getElementById('historyModal').classList.add('hidden');
-        currentHistoryVersion = null;
-    };
     
     // SETTINGS MODAL FUNCTIONS
     
@@ -13207,130 +13358,7 @@
         }
     }
     
-    window.compareVersions = async function() {
-        const select = document.getElementById('historyVersionSelect');
-        const versionIdx = select.value;
-        
-        if (versionIdx === '') {
-            window.showToast('Please select a version to compare with current state', 'info');
-            return;
-        }
-        
-        const historicalVersion = historyVersions[versionIdx];
-        const historicalChanges = historicalVersion.data.changes || [];
-        const currentChanges = changeLog || [];
-        
-        // Find differences by ID
-        const added = currentChanges.filter(c => !historicalChanges.find(h => h.id === c.id));
-        const removed = historicalChanges.filter(h => !currentChanges.find(c => c.id === h.id));
-        
-        // Calculate net change count
-        const netChange = currentChanges.length - historicalChanges.length;
-        const netChangeText = netChange > 0 ? `+${netChange}` : netChange.toString();
-        
-        const content = document.getElementById('historyContent');
-        content.innerHTML = `
-            <div class="mb-4 p-4 bg-purple-50 border-l-4 border-purple-500 rounded">
-                <div class="flex items-center gap-2 text-purple-800 font-bold mb-1">
-                    <i data-lucide="git-compare" class="w-4 h-4"></i>
-                    Comparing Versions
-                </div>
-                <div class="text-sm text-purple-700">
-                    <strong>Historical:</strong> ${Utils.formatTimestamp(historicalVersion.timestamp)} (${historicalChanges.length} changes)<br>
-                    <strong>Current:</strong> ${Utils.formatTimestamp(new Date())} (${currentChanges.length} changes)<br>
-                    <strong>Net Change:</strong> <span class="${netChange >= 0 ? 'text-green-600' : 'text-red-600'}">${netChangeText} changes</span>
-                </div>
-            </div>
-            
-            <div class="grid grid-cols-2 gap-4">
-                <div>
-                    <h4 class="font-bold text-green-700 mb-2 flex items-center gap-2">
-                        <i data-lucide="plus-circle" class="w-4 h-4"></i>
-                        Added Since Then (${added.length})
-                    </h4>
-                    <div class="space-y-2 max-h-[400px] overflow-y-auto">
-                        ${added.length > 0 ? added.map(change => `
-                            <div class="border border-green-300 bg-green-50 rounded p-2 text-sm">
-                                <div class="flex justify-between">
-                                    <span class="font-bold">${change.jobId}</span>
-                                    <span class="text-xs text-slate-500">${Utils.formatTimestamp(change.timestamp)}</span>
-                                </div>
-                                <div class="text-xs text-green-700">${formatChangeData(change)}</div>
-                                <div class="text-xs text-slate-400">By: ${change.user}</div>
-                            </div>
-                        `).join('') : '<div class="text-center py-4 text-slate-400 text-sm">No new changes since this version</div>'}
-                    </div>
-                </div>
-                <div>
-                    <h4 class="font-bold text-red-700 mb-2 flex items-center gap-2">
-                        <i data-lucide="minus-circle" class="w-4 h-4"></i>
-                        Removed (${removed.length})
-                    </h4>
-                    <div class="space-y-2 max-h-[400px] overflow-y-auto">
-                        ${removed.length > 0 ? removed.map(change => `
-                            <div class="border border-red-300 bg-red-50 rounded p-2 text-sm">
-                                <div class="flex justify-between">
-                                    <span class="font-bold">${change.jobId}</span>
-                                    <span class="text-xs text-slate-500">${Utils.formatTimestamp(change.timestamp)}</span>
-                                </div>
-                                <div class="text-xs text-red-700">${formatChangeData(change)}</div>
-                                <div class="text-xs text-slate-400">By: ${change.user}</div>
-                            </div>
-                        `).join('') : '<div class="text-center py-4 text-slate-400 text-sm">No changes removed</div>'}
-                    </div>
-                </div>
-            </div>
-        `;
-        
-        lucide.createIcons();
-    };
     
-    window.restoreVersion = async function() {
-        if (!currentHistoryVersion) {
-            window.showToast('Please select a version to restore', 'info');
-            return;
-        }
-        
-        const confirmMsg = `Are you sure you want to restore to the version from ${Utils.formatTimestamp(currentHistoryVersion.timestamp || currentHistoryVersion.snapshot_timestamp)}?\n\nThis will replace the current state with ${currentHistoryVersion.changeCount || currentHistoryVersion.change_count || 0} changes.`;
-        
-        if (!confirm(confirmMsg)) {
-            return;
-        }
-        
-        try {
-            // Restore the historical changes
-            changeLog = [...currentHistoryVersion.data.changes];
-            
-            // Save to localStorage in demo mode or database
-            try {
-                // Try to save to database
-                await fetch(DB_CONFIG.changesEndpoint, {
-                    method: 'DELETE'
-                });
-                
-                // Re-add all changes
-                for (const change of changeLog) {
-                    await fetch(DB_CONFIG.changesEndpoint, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify(change)
-                    });
-                }
-            } catch (error) {
-                // Fallback to localStorage
-                localStorage.setItem('ghr_demo_changes', JSON.stringify(changeLog));
-            }
-            
-            // Reload data to reflect restored state
-            await window.loadDataFromDatabase();
-            
-            window.showToast('Version restored successfully!', 'success');
-            closeHistoryModal();
-        } catch (error) {
-            console.error('Error restoring version:', error);
-            window.showToast('Error restoring version', 'error');
-        }
-    };
   </script>
 </body>
 </html>
