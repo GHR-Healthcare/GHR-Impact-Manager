@@ -325,6 +325,63 @@
     </div>
   </div>
 
+       stage tabs in order, records what was decided, and saves to
+       /api/meetings so a past meeting can be reopened. -->
+  <div id="meetingSetupModal" class="hidden fixed inset-0 bg-black/50 z-[90] flex items-center justify-center backdrop-blur-sm">
+    <div class="bg-white rounded-lg shadow-2xl w-11/12 max-w-lg border border-slate-200 overflow-hidden flex flex-col">
+      <div class="bg-slate-100 p-4 border-b border-slate-200 flex justify-between items-center">
+        <h3 class="text-lg font-bold text-slate-900 flex items-center gap-2">
+          <i data-lucide="play-circle" class="w-5 h-5 text-emerald-600"></i> Start IMPACT Meeting
+        </h3>
+        <button onclick="store.dispatch('CLOSE_MEETING_SETUP')" class="text-slate-400 hover:text-slate-700">
+          <i data-lucide="x" class="w-5 h-5"></i>
+        </button>
+      </div>
+      <div class="p-5 space-y-4">
+        <!-- Offer to resume an unfinished meeting rather than silently starting
+             a second. s.meeting lives in memory, so a refresh mid-meeting used
+             to strand the DB row as history with no way back into it. -->
+        <div id="meetingResumeSlot" class="hidden"></div>
+        <div>
+          <label class="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">Health System</label>
+          <select id="meetingSystemSelect" class="w-full bg-white border border-slate-300 rounded-md px-3 py-2 text-sm"></select>
+          <p class="text-[10px] text-slate-400 mt-1">Scopes the meeting. The filter bar still applies on top.</p>
+        </div>
+        <div>
+          <label class="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">Recap Recipients</label>
+          <input id="meetingRecipients" type="text" placeholder="name@ghrhealthcare.com, …"
+                 class="w-full bg-white border border-slate-300 rounded-md px-3 py-2 text-sm">
+        </div>
+        <div>
+          <label class="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">Stages</label>
+          <div id="meetingStagePicks" class="space-y-1.5"></div>
+        </div>
+      </div>
+      <div class="bg-slate-50 p-4 border-t border-slate-200 flex justify-end gap-2">
+        <button onclick="store.dispatch('CLOSE_MEETING_SETUP')"
+                class="px-3 py-2 text-sm font-medium text-slate-600 hover:text-slate-800">Cancel</button>
+        <button onclick="store.dispatch('START_MEETING')"
+                class="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-md text-sm font-semibold shadow-sm">
+          Start Meeting
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <div id="meetingHistoryModal" class="hidden fixed inset-0 bg-black/50 z-[90] flex items-center justify-center backdrop-blur-sm">
+    <div class="bg-white rounded-lg shadow-2xl w-11/12 max-w-4xl border border-slate-200 overflow-hidden flex flex-col max-h-[90vh]">
+      <div class="bg-slate-100 p-4 border-b border-slate-200 flex justify-between items-center">
+        <h3 class="text-lg font-bold text-slate-900 flex items-center gap-2">
+          <i data-lucide="history" class="w-5 h-5 text-purple-600"></i> Past IMPACT Meetings
+        </h3>
+        <button onclick="store.dispatch('CLOSE_MEETING_HISTORY')" class="text-slate-400 hover:text-slate-700">
+          <i data-lucide="x" class="w-5 h-5"></i>
+        </button>
+      </div>
+      <div id="meetingHistoryBody" class="p-5 overflow-y-auto"></div>
+    </div>
+  </div>
+
   <!-- SETTINGS MODAL -->
   <div id="settingsModal" class="hidden fixed inset-0 bg-black/50 z-[90] flex items-center justify-center backdrop-blur-sm">
     <div class="bg-white rounded-lg shadow-2xl w-11/12 max-w-4xl border border-slate-200 overflow-hidden flex flex-col max-h-[90vh]">
@@ -471,10 +528,38 @@
   <div class="flex flex-col sm:flex-row justify-between items-center mb-4 gap-4 shrink-0">
     <div id="legendContainer" class="flex flex-wrap items-center gap-4 text-xs font-medium text-slate-600 bg-white p-3 rounded-md border border-slate-200 inline-flex shadow-sm min-h-[38px] flex-1"></div>
     <div class="flex items-center gap-3 shrink-0">
+      <!-- IMPACT meeting: banner while one is running, and the entry point.
+           Non-MSP only for now -- viewToggle() unhides these there and leaves
+           MSP's header exactly as it was. -->
+      <div id="meetingBanner" class="hidden mb-4"></div>
+      <div id="meetingControls" class="hidden flex items-center gap-2 mb-3">
+        <button id="btnStartMeeting" onclick="store.dispatch('OPEN_MEETING_SETUP')"
+                class="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white px-4 rounded-md shadow-sm text-xs font-semibold transition-colors h-[34px]"
+                title="Start an IMPACT meeting">
+          <i data-lucide="play-circle" class="w-4 h-4"></i> Start IMPACT Meeting
+        </button>
+        <button id="btnMeetingHistory" onclick="store.dispatch('OPEN_MEETING_HISTORY')"
+                class="flex items-center gap-2 bg-purple-600 hover:bg-purple-700 text-white px-3 rounded-md shadow-sm text-xs font-medium transition-colors h-[34px]"
+                title="Past IMPACT meetings">
+          <i data-lucide="history" class="w-4 h-4"></i> Meeting History
+        </button>
+      </div>
       <div class="flex bg-white border border-slate-200 rounded-lg p-1 shadow-sm" id="viewToggles">
+        <button onclick="store.dispatch('SET_VIEW','closed')" id="btnViewClosed"
+                class="px-4 py-1.5 text-xs font-bold rounded-md transition-colors text-slate-500 hover:text-slate-700 flex items-center gap-1.5 hidden">
+          <i data-lucide="check-circle" class="w-3.5 h-3.5"></i> Closed
+        </button>
         <button onclick="store.dispatch('SET_VIEW','list')" id="btnViewList"
                 class="px-4 py-1.5 text-xs font-bold rounded-md transition-colors bg-blue-50 text-blue-700 shadow-sm border border-blue-100 flex items-center gap-1.5">
           <i data-lucide="list" class="w-3.5 h-3.5"></i> List
+        </button>
+        <button onclick="store.dispatch('SET_VIEW','extensions')" id="btnViewExtensions"
+                class="px-4 py-1.5 text-xs font-bold rounded-md transition-colors text-slate-500 hover:text-slate-700 flex items-center gap-1.5 hidden">
+          <i data-lucide="repeat" class="w-3.5 h-3.5"></i> Extensions
+        </button>
+        <button onclick="store.dispatch('SET_VIEW','onboarding')" id="btnViewOnboarding"
+                class="px-4 py-1.5 text-xs font-bold rounded-md transition-colors text-slate-500 hover:text-slate-700 flex items-center gap-1.5 hidden">
+          <i data-lucide="user-check" class="w-3.5 h-3.5"></i> Onboarding
         </button>
         <button onclick="store.dispatch('SET_VIEW','hotjobs')" id="btnViewHot"
                 class="px-4 py-1.5 text-xs font-bold rounded-md transition-colors text-slate-500 hover:text-slate-700 flex items-center gap-1.5">
@@ -579,6 +664,19 @@
       <div class="flex-1 overflow-y-auto scroller p-6">
         <div id="pendingContent" class="space-y-6"></div>
       </div>
+    </div>
+
+    <!-- Closed / Extensions / Onboarding: each owns its content area and renders
+         its own KPI tiles inside it, the way Trend does. Non-MSP only for now;
+         viewToggle() keeps the tabs hidden on MSP. -->
+    <div id="closedViewWrapper" class="hidden flex flex-col h-full overflow-hidden bg-white shadow-lg rounded-lg border border-slate-200">
+      <div class="p-4 flex-1 min-h-0 flex flex-col" id="closedContent"></div>
+    </div>
+    <div id="extensionsViewWrapper" class="hidden flex flex-col h-full overflow-hidden bg-white shadow-lg rounded-lg border border-slate-200">
+      <div class="p-4 flex-1 min-h-0 flex flex-col" id="extensionsContent"></div>
+    </div>
+    <div id="onboardingViewWrapper" class="hidden flex flex-col h-full overflow-hidden bg-white shadow-lg rounded-lg border border-slate-200">
+      <div class="p-4 flex-1 min-h-0 flex flex-col" id="onboardingContent"></div>
     </div>
 
     <div id="contractsViewWrapper" class="hidden flex flex-col h-full overflow-hidden bg-white shadow-lg rounded-lg border border-slate-200">
@@ -768,7 +866,7 @@
     const $ = (id) => document.getElementById(id);
 
     // App version - loaded from environment variable via API, with fallback
-    let APP_VERSION = '2.2.10';
+    let APP_VERSION = '2.3.0';
 
     const API_BASE_URL = '/api';
     
@@ -1685,6 +1783,41 @@
                 window.store.state.trendLoadError = trendError.message || String(trendError);
             }
 
+            // Closed / Extensions / Onboarding stage data. Fetched only on
+            // non-MSP: the endpoints dispatch on DATA_SOURCE, but MSP has no
+            // tabs for these yet, so requesting them there would be three
+            // round trips whose results nothing reads.
+            //
+            // Each stage loads independently. One failing must not take the
+            // others or the rest of the page down, and each records its own
+            // error so the view can say so rather than rendering an empty
+            // table that looks like a quiet week.
+            if (window.store.state.dataSource === 'non_msp') {
+                const stageLoads = [
+                    { key: 'extensions', route: 'extensions-data', pick: d => Array.isArray(d) ? d : (d.rows || []) },
+                    { key: 'onboarding', route: 'onboarding-data', pick: d => Array.isArray(d) ? d : (d.rows || []) },
+                    { key: 'closed',     route: 'closed-data',     pick: d => d.rows || [], meta: d => d },
+                ];
+                await Promise.all(stageLoads.map(async ({ key, route, pick, meta }) => {
+                    try {
+                        const resp = await fetch(`${API_BASE_URL}/${route}`);
+                        if (!resp.ok) throw new Error(`HTTP ${resp.status} ${resp.statusText}`);
+                        const data = await resp.json();
+                        if (data && data.error) throw new Error(data.error);
+                        window.store.state[key + 'Rows'] = pick(data);
+                        window.store.state[key + 'Meta'] = meta ? meta(data) : null;
+                        window.store.state[key + 'Error'] = null;
+                    } catch (e) {
+                        console.warn(`Error loading ${route}:`, e);
+                        window.store.state[key + 'Rows'] = [];
+                        window.store.state[key + 'Meta'] = null;
+                        window.store.state[key + 'Error'] = e.message || String(e);
+                    } finally {
+                        window.store.state[key + 'Loaded'] = true;
+                    }
+                }));
+            }
+
             // Load pending submissions data (GHR only)
             try {
                 const pendingResponse = await fetch(`${API_BASE_URL}/pending-data`);
@@ -2358,6 +2491,93 @@
       jobSpecialtyKey(job) {
         return Utils.cleanFilterText(job.specialtyName || job.specialty);
       },
+
+      /*
+       * Interview stage for a submission.
+       *
+       * The source systems give dates (submitted / interview / offer / decline)
+       * from which a stage is derivable — but a recruiter often knows more than
+       * the dates do; "Interview Requested" has no date field at all. So the
+       * derived value is the default and a manual override sits on top, stored
+       * in workspace_state scope 'interview' keyed jobId|candidate.
+       *
+       * Editable only for internal submissions: an affiliate's pipeline is
+       * theirs to report, not ours to overwrite.
+       */
+      INTERVIEW_STAGES: ['Submitted', 'Interview Requested', 'Interview Scheduled',
+                         'Interview Complete', 'Offer Pending', 'Offer Accepted',
+                         'Post-Offer Decline', 'Declined'],
+
+      interviewKey(jobId, c) { return `${jobId}|${(c && c.name) || ''}`; },
+
+      // Is this agency string us? GHR or Planet Healthcare, matching how the
+      // rest of the app already tests it (per-diem, stats, candidate rows).
+      isGhrAgency(a) {
+        const x = String(a || '').toLowerCase();
+        return x.includes('ghr') || x.includes('planet healthcare');
+      },
+
+      interviewDerivedStage(c) {
+        if (c.isDeclined) return 'Declined';
+        if (c.awardedDate) return 'Offer Accepted';
+        if (c.offerDate) return 'Offer Pending';
+        if (c.interviewDate) return 'Interview Scheduled';
+        return 'Submitted';
+      },
+
+      interviewStage(jobId, c) {
+        const saved = window.store.state.workspaceState?.interview?.[Utils.interviewKey(jobId, c)]?.state;
+        return saved?.stage || Utils.interviewDerivedStage(c);
+      },
+
+      marginFor(id, job) {
+        if (job && job.marginOverridden) {
+          const m = parseFloat(job.margin);
+          if (isFinite(m)) return { pct: m, source: 'override' };
+        }
+        const saved = window.store.state.workspaceState?.margin?.[String(id)]?.state;
+        const c = parseFloat(saved?.pct);
+        if (isFinite(c)) return { pct: c, source: 'override' };
+        // A job's own margin is normally the configured default copied onto it.
+        // If it is missing or unparseable, fall back to the tenant default from
+        // /api/get-config rather than giving up and showing nothing.
+        const onJob = parseFloat(job ? job.margin : NaN);
+        const dflt = isFinite(onJob) ? onJob : parseFloat(defaultMargin);
+        if (isFinite(dflt) && dflt > 0) return { pct: dflt, source: 'default' };
+        return { pct: null, source: 'none' };
+      },
+
+      // An override is a deliberate number for this record; the default is an
+      // assumption applied everywhere. The tilde keeps them distinguishable at
+      // a glance rather than presenting a guess as a decision.
+      marginLabel(id, job) {
+        const m = Utils.marginFor(id, job);
+        if (m.pct == null) return '—';
+        return m.source === 'override' ? `${m.pct}%` : `~${m.pct}%`;
+      },
+
+      /*
+       * Format a source date for display.
+       *
+       * toDateOrNull turns a date-only string like "2026-08-20" into UTC
+       * midnight, which local formatting renders as Aug 19 anywhere west of
+       * UTC. A value carrying a real time component must NOT be shifted,
+       * though — so take the zone from the value: exactly-midnight-UTC is a
+       * date-only value and formats in UTC, anything else is a real instant and
+       * formats locally. (A true timestamp landing exactly on UTC midnight is
+       * treated as date-only; the failure mode there is benign.)
+       */
+      fmtDate(v, opts) {
+        const d = Utils.toDateOrNull(v);
+        if (!d) return '';
+        const dateOnly = d.getUTCHours() === 0 && d.getUTCMinutes() === 0 &&
+                         d.getUTCSeconds() === 0 && d.getUTCMilliseconds() === 0;
+        return d.toLocaleDateString('en-US', {
+          ...(opts || { month: 'short', day: 'numeric', year: 'numeric' }),
+          ...(dateOnly ? { timeZone: 'UTC' } : {}),
+        });
+      },
+
 
       matchesSelectedTeams(recordTeam, selectedTeams) {
         if (!selectedTeams || selectedTeams.size === 0) return true;
@@ -4151,6 +4371,22 @@
           window.store.state.view = 'list';
         }
 
+        // Closed / Extensions / Onboarding and the IMPACT meeting are the
+        // inverse case: they run on non-MSP only for now. MSP keeps the app
+        // exactly as it was, so the tabs are hidden there and the views are
+        // never rendered. The MSP versions of these stages are still on the
+        // feature branch awaiting review.
+        const STAGE_VIEWS = ['closed', 'extensions', 'onboarding'];
+        STAGE_VIEWS.forEach(k => {
+          const b = $('btnView' + k.charAt(0).toUpperCase() + k.slice(1));
+          if (b) b.classList.toggle('hidden', !isNonMsp);
+        });
+        if (!isNonMsp && STAGE_VIEWS.includes(window.store.state.view)) {
+          window.store.state.view = 'list';
+        }
+        const mc = $('meetingControls');
+        if (mc) mc.classList.toggle('hidden', !isNonMsp);
+
         const view = window.store.state.view;
         $('listViewWrapper')?.classList.toggle('hidden', view !== 'list');
         $('hotJobsViewWrapper')?.classList.toggle('hidden', view !== 'hotjobs');
@@ -4159,6 +4395,9 @@
         $('trendViewWrapper')?.classList.toggle('hidden', view !== 'trend');
         $('pendingViewWrapper')?.classList.toggle('hidden', view !== 'pending');
         $('contractsViewWrapper')?.classList.toggle('hidden', view !== 'contracts');
+        $('closedViewWrapper')?.classList.toggle('hidden', view !== 'closed');
+        $('extensionsViewWrapper')?.classList.toggle('hidden', view !== 'extensions');
+        $('onboardingViewWrapper')?.classList.toggle('hidden', view !== 'onboarding');
 
         // Use visibility to hide KPI and legend on other tabs (preserves layout)
         const kpiEl = $('kpiContainer');
@@ -4168,7 +4407,7 @@
           kpiEl.style.visibility = kpiViews.has(view) ? 'visible' : 'hidden';
           kpiEl.style.display = kpiViews.has(view) ? '' : 'none';
         }
-        if (legendEl) legendEl.style.visibility = (view === 'financials' || view === 'perdiem' || view === 'trend' || view === 'pending' || view === 'contracts') ? 'hidden' : 'visible';
+        if (legendEl) legendEl.style.visibility = (view === 'financials' || view === 'perdiem' || view === 'trend' || view === 'pending' || view === 'contracts' || STAGE_VIEWS.includes(view)) ? 'hidden' : 'visible';
 
         const btnList = $('btnViewList');
         const btnHot = $('btnViewHot');
@@ -4188,6 +4427,10 @@
         if (btnPending) btnPending.className = view === 'pending' ? activeClass : inactiveClass;
         const btnContracts = $('btnViewContracts');
         if (btnContracts) btnContracts.className = view === 'contracts' ? activeClass : inactiveClass;
+        STAGE_VIEWS.forEach(k => {
+          const b = $('btnView' + k.charAt(0).toUpperCase() + k.slice(1));
+          if (b) b.className = (view === k ? activeClass : inactiveClass) + (isNonMsp ? '' : ' hidden');
+        });
       },
 
       main() {
@@ -4199,6 +4442,9 @@
         else if (v === 'trend') this.trend();
         else if (v === 'pending') this.pending();
         else if (v === 'contracts') this.contracts();
+        else if (v === 'closed') this.closed();
+        else if (v === 'extensions') this.extensions();
+        else if (v === 'onboarding') this.onboarding();
         lucide.createIcons();
       },
 
@@ -4749,6 +4995,1502 @@
         }
 
         return html;
+      },
+
+      /*
+       * Row-detail panes for the Rate / Pipeline / Placements sub-tabs.
+       * Levers stays inline above — it was already there.
+       */
+      detailStat(label, value, note) {
+        return `<div class="bg-white border border-slate-200 rounded-lg px-3 py-2.5">
+            <div class="text-[9px] uppercase tracking-wide text-slate-400 font-semibold">${label}</div>
+            <div class="text-lg font-bold text-slate-800 leading-tight mt-0.5">${value}</div>
+            ${note ? `<div class="text-[10px] text-slate-400 mt-0.5">${note}</div>` : ''}
+          </div>`;
+      },
+
+      detailRatePane(job) {
+        const money = v => (v || v === 0) ? '$' + Number(v).toFixed(2) : '—';
+        const bill = Number(job.billRate) || 0;
+        const marginPct = Number(job.margin);
+        // MSP has no clinician pay rate, so GM% IS the configured margin —
+        // either the tenant default or a per-job override. The bill/pay split
+        // the new endpoints return is an MSP FEE split, not a margin, and is
+        // deliberately not shown here as one.
+        const gmHr = bill && !isNaN(marginPct) ? bill * (marginPct / 100) : null;
+        // No weekly GM: the open-jobs feed carries no hours-per-week, so it
+        // would read "unknown" on nearly every row. Extensions/Onboarding do
+        // return hours_per_week, so it belongs on those panes, not this one.
+        return `
+          <div class="fade-in">
+            <h4 class="font-bold mb-3 text-sm uppercase text-slate-500">Rate &amp; Margin</h4>
+            <div class="grid grid-cols-2 md:grid-cols-3 gap-3 max-w-2xl">
+              ${View.detailStat('Bill Rate', money(bill), job.billRateEstimated ? 'estimated' : '')}
+              ${View.detailStat('GM %', Utils.marginLabel(job.id, job),
+                                job.marginOverridden ? 'per-job override' : 'configured default — “~” marks an assumption')}
+              ${View.detailStat('GM / Hour', money(gmHr))}
+            </div>
+            <div class="mt-4 pt-3 border-t border-slate-200">
+              <div class="text-[10px] font-semibold uppercase tracking-wide text-slate-400 mb-1">Rate Rank</div>
+              ${(() => {
+                // Peer set is other OPEN JOBS at the same facility. Placements
+                // would be the better comparison, but statsData.onAssignment
+                // carries no rate field — so this ranks demand, not placements,
+                // and the note says so rather than implying otherwise.
+                const peers = (window.store.state.jobs || [])
+                  .filter(j => j.facility === job.facility && Number(j.billRate) > 0)
+                  .map(j => Number(j.billRate));
+                return View.rankStripSvg(peers, Number(job.billRate), { width: 240 }) +
+                  `<div class="text-[9px] text-slate-400 mt-1 leading-snug">
+                     Against other open jobs at ${job.facility || 'this facility'}
+                     &mdash; active placements carry no rate in the stats feed,
+                     so this ranks demand rather than placed rates.
+                   </div>`;
+              })()}
+            </div>
+            <p class="text-[10px] text-slate-400 mt-3 leading-snug">
+              GM% is the configured margin rate (or this job&rsquo;s override), not a value read from the
+              source data &mdash; MSP carries no clinician pay rate. The bill/pay split the newer
+              endpoints return is an MSP fee split, not a margin, and is deliberately not shown as one.
+            </p>
+          </div>`;
+      },
+
+      detailPipelinePane(job) {
+        const cands = job.candidates || [];
+        // Stage each candidate through interviewStage(), NOT the raw VMS
+        // interviewDate: B4 submissions carry no interview date column at all,
+        // and VNDLY populates [Client Interview Date] on 20 of 1576 rows (1.3%).
+        // Interview is therefore almost entirely a stage a user records in the
+        // app, and reading the raw date threw those recorded stages away.
+        const stageOf = c => Utils.interviewStage(job.id, c);
+        // The API already resolves this server-side; fall back to the agency
+        // string only where the flag is absent.
+        const isGhr = c => (c.isGHR != null ? !!c.isGHR : Utils.isGhrAgency(c.agency));
+
+        // Furthest stage reached, so nobody is counted twice.
+        const bucket = c => {
+          // Covers the whole Utils.INTERVIEW_STAGES vocabulary. 'Post-Offer
+          // Decline' is a decline, not a submission, and 'Interview Requested'
+          // is an interview — both used to fall through to Submitted.
+          const st = stageOf(c);
+          if (st === 'Declined' || st === 'Post-Offer Decline') return 'Declined';
+          if (st === 'Offer Accepted' || st === 'Offer Pending') return 'Offer';
+          if (st === 'Interview Requested' || st === 'Interview Scheduled'
+              || st === 'Interview Complete') return 'Interview';
+          return 'Submitted';
+        };
+        const active = cands.filter(c => bucket(c) !== 'Declined');
+        const declined = cands.filter(c => bucket(c) === 'Declined');
+
+        const STAGES = ['Submitted', 'Interview', 'Offer'];
+        const rows = STAGES.map(label => {
+          const inStage = active.filter(c => bucket(c) === label);
+          const ghr = inStage.filter(isGhr).length;
+          const aff = inStage.length - ghr;
+          return { label, ghr, aff, total: inStage.length,
+                   share: inStage.length ? Math.round((ghr / inStage.length) * 100) : 0 };
+        });
+
+        const totalGhr = active.filter(isGhr).length;
+        const totalAff = active.length - totalGhr;
+        const decGhr = declined.filter(isGhr).length;
+        const decAff = declined.length - decGhr;
+
+        const cell = v => `<td class="py-1.5 px-2 text-right tabular-nums">${v}</td>`;
+        return `
+          <div class="fade-in grid grid-cols-1 xl:grid-cols-2 gap-6">
+            <div>
+              <h4 class="font-bold mb-3 text-sm uppercase text-slate-500">Stage Summary</h4>
+              <table class="w-full text-xs border border-slate-200 rounded-lg overflow-hidden">
+                <thead class="bg-slate-50 text-[10px] uppercase tracking-wide text-slate-500">
+                  <tr>
+                    <th class="py-1.5 px-2 text-left font-semibold">Stage</th>
+                    <th class="py-1.5 px-2 text-right font-semibold">GHR</th>
+                    <th class="py-1.5 px-2 text-right font-semibold">Affiliate</th>
+                    <th class="py-1.5 px-2 text-right font-semibold">Total</th>
+                    <th class="py-1.5 px-2 text-right font-semibold">GHR Share</th>
+                  </tr>
+                </thead>
+                <tbody class="divide-y divide-slate-100">
+                  ${rows.map(r => `<tr>
+                      <td class="py-1.5 px-2 font-medium text-slate-700">${r.label}</td>
+                      ${cell(r.ghr)}${cell(r.aff)}${cell(r.total)}
+                      <td class="py-1.5 px-2 text-right font-bold ${r.total ? 'text-emerald-600' : 'text-slate-300'}">${r.total ? r.share + '%' : '—'}</td>
+                    </tr>`).join('')}
+                </tbody>
+              </table>
+
+              <h5 class="text-[10px] uppercase tracking-wide text-slate-500 font-semibold mt-4 mb-2 flex items-center gap-3">
+                GHR Share by Stage
+                <span class="flex items-center gap-1 font-normal normal-case text-slate-400">
+                  <span class="inline-block w-2 h-2 rounded-sm bg-blue-600"></span>GHR
+                  <span class="inline-block w-2 h-2 rounded-sm bg-orange-500 ml-2"></span>Affiliate
+                </span>
+              </h5>
+              <div class="space-y-2">
+                ${rows.map(r => `
+                  <div class="flex items-center gap-3">
+                    <span class="text-xs font-medium text-slate-600 w-20 flex-shrink-0">${r.label}</span>
+                    <div class="flex-1 bg-slate-100 rounded-full h-2.5 overflow-hidden flex">
+                      ${r.total
+                        ? `<div class="bg-blue-600 h-full" style="width:${r.share}%"></div>
+                           <div class="bg-orange-500 h-full" style="width:${100 - r.share}%"></div>`
+                        : ''}
+                    </div>
+                    <span class="text-xs font-bold text-slate-700 w-10 text-right">${r.total ? r.share + '%' : '—'}</span>
+                  </div>`).join('')}
+              </div>
+
+              <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-4">
+                ${View.detailStat('Total GHR', totalGhr)}
+                ${View.detailStat('Total Affiliate', totalAff)}
+                ${View.detailStat('Active', `${totalGhr} / ${totalAff}`)}
+                ${View.detailStat('Declines', `${decGhr} / ${decAff}`)}
+              </div>
+              <p class="text-[10px] text-slate-400 mt-3 leading-snug">
+                Each candidate is counted once, at the furthest stage they reached.
+                Active and Declines are shown GHR / Affiliate.
+                ${rows[1].total === 0
+                  ? ' Interview is empty because neither VMS reliably records an interview date &mdash; it fills in as stages are set on the Levers tab.'
+                  : ''}
+              </p>
+            </div>
+
+            <div>
+              <h4 class="font-bold mb-3 text-sm uppercase text-slate-500">Current Clinician Activity</h4>
+              ${cands.length ? `<div class="divide-y divide-slate-100 border border-slate-200 rounded-lg">
+                  ${cands.slice(0, 12).map(c => {
+                    const st = stageOf(c);
+                    const tone = st === 'Declined' ? 'bg-rose-100 text-rose-700'
+                               : st.startsWith('Offer') ? 'bg-emerald-100 text-emerald-700'
+                               : st.startsWith('Interview') ? 'bg-indigo-100 text-indigo-700'
+                               : 'bg-slate-100 text-slate-600';
+                    // calcDays() returns 0 for a missing date, which would
+                    // render a misleading "0d"; show nothing instead.
+                    const age = c.submitDate ? Utils.calcDays(c.submitDate) : null;
+                    return `<div class="flex items-center justify-between gap-3 px-3 py-2">
+                        <div class="min-w-0">
+                          <div class="text-xs font-semibold text-slate-800 truncate">${c.name || '—'}</div>
+                          <div class="text-[10px] text-slate-400 truncate">${isGhr(c) ? 'GHR' : (c.agency || 'Affiliate')}</div>
+                        </div>
+                        <div class="flex items-center gap-2 flex-shrink-0">
+                          <span class="text-[10px] font-semibold px-2 py-0.5 rounded-full ${tone}">${st}</span>
+                          <span class="text-[10px] text-slate-400 w-8 text-right">${age == null ? '' : age + 'd'}</span>
+                        </div>
+                      </div>`;
+                  }).join('')}
+                </div>
+                ${cands.length > 12 ? `<p class="text-[10px] text-slate-400 mt-2">Showing 12 of ${cands.length}.</p>` : ''}`
+                : '<p class="text-xs text-slate-400">No submissions on this job yet.</p>'}
+            </div>
+          </div>`;
+      },
+
+      detailPlacementsPane(job, placements) {
+        const s = window.store.state;
+        const rows = placements || [];
+        // Say which basis was used, so an over-broad list is not mistaken for a
+        // specialty-matched one.
+        const jobSpecNote = Utils.cleanFilterText(job.specialtyName || '')
+          ? ' matching this specialty'
+          : ' (facility only — no structured specialty on this job)';
+        // Assignment rows expose candidate_name and an agency STRING — there is
+        // no worker_name or is_ghr on them, which is what this pane read before.
+        const ghr = rows.filter(r => Utils.isGhrAgency(r.agency)).length;
+        const fmtDate = d => Utils.fmtDate(d, { month: 'short', day: 'numeric' }) || '—';
+        return `
+          <div class="fade-in">
+            <h4 class="font-bold mb-3 text-sm uppercase text-slate-500">Active Placements</h4>
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+              ${View.detailStat('Active At Facility', rows.length)}
+              ${View.detailStat('GHR', ghr)}
+              ${View.detailStat('Affiliate', rows.length - ghr)}
+              ${View.detailStat('GHR Share', rows.length ? Math.round((ghr / rows.length) * 100) + '%' : '—')}
+            </div>
+            ${rows.length ? `
+              <div class="bg-white border border-slate-200 rounded-lg divide-y divide-slate-100 max-h-56 overflow-y-auto">
+                ${rows.map(r => `
+                  <div class="flex items-center gap-3 px-3 py-2 text-xs">
+                    <span class="px-1.5 py-0.5 rounded text-[9px] font-bold ${Utils.isGhrAgency(r.agency) ? 'bg-blue-100 text-blue-700' : 'bg-purple-100 text-purple-700'}">${Utils.isGhrAgency(r.agency) ? 'GHR' : 'AV'}</span>
+                    <span class="font-medium text-slate-700 flex-1 truncate">${
+                      (s.redactMode && !Utils.isGhrAgency(r.agency))
+                        ? Utils.redactName(r.candidate_name || '')
+                        : (r.candidate_name || 'Unknown')}</span>
+                    <span class="text-slate-400">${fmtDate(r.startDate)} &rarr; ${fmtDate(r.endDate)}</span>
+                  </div>`).join('')}
+              </div>`
+            : `<div class="bg-white border border-slate-200 rounded-lg p-6 text-center text-slate-400 text-xs">
+                 No active placements matching this facility and specialty.
+               </div>`}
+            <p class="text-[10px] text-slate-400 mt-3">
+              Active assignments at this facility${jobSpecNote}, for rate and vendor comparison.
+            </p>
+          </div>`;
+      },
+
+      /* ---------------- Closed / Extensions / Onboarding stages ----------------
+       * Rendered natively in the app's own table + tile idiom. Each view owns
+       * its KPI tiles inside its own wrapper (the pattern Trend already uses)
+       * rather than fighting the shared #kpiContainer, which belongs to
+       * List / Per Diem / Revenue.
+       */
+      /* ------------------------------- CHART BONES -------------------------------
+       * Inline SVG, no library — matching how the reference drew these.
+       *
+       * These are scaffolding: the shapes are real and driven by real fields, but
+       * the questions they answer are still open (see the notes on each caller).
+       * Nothing here invents data — a segment with no value is omitted rather
+       * than shown as zero, and an empty set renders an explicit empty state.
+       */
+      // Compact analysis strip above a stage table. Collapsible, because the
+      // table is the working surface and these are context.
+      intelStrip(key, panels) {
+        const live = (panels || []).filter(Boolean);
+        if (!live.length) return '';
+        const open = window.store.state.intelOpen?.[key] !== false;
+        return `
+          <div class="mb-3 shrink-0 rounded-lg border border-slate-200 bg-white">
+            <button onclick="store.dispatch('TOGGLE_INTEL','${key}')"
+                    class="w-full flex items-center justify-between px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-500 hover:text-slate-700">
+              <span>Analysis</span>
+              <span class="text-slate-400">${open ? '&#9660;' : '&#9654;'}</span>
+            </button>
+            ${open ? `<div class="flex flex-wrap gap-6 px-4 pb-4 pt-1">${live.join('')}</div>` : ''}
+          </div>`;
+      },
+
+      intelPanel(title, chartHtml, legendHtml, note) {
+        return `
+          <div class="flex flex-col gap-1">
+            <div class="text-[10px] font-semibold uppercase tracking-wide text-slate-400">${title}</div>
+            <div class="flex items-center gap-3">
+              ${chartHtml}
+              ${legendHtml || ''}
+            </div>
+            ${note ? `<div class="text-[9px] text-slate-400 max-w-[15rem] leading-snug">${note}</div>` : ''}
+          </div>`;
+      },
+
+      donutSvg(segments, opts) {
+        const o = opts || {};
+        const size = o.size || 120, thickness = o.thickness || 18;
+        const r = (size - thickness) / 2, cx = size / 2, cy = size / 2;
+        const live = (segments || []).filter(s => Number(s.value) > 0);
+        const total = live.reduce((a, s) => a + Number(s.value), 0);
+        if (!total) {
+          return `<div class="flex items-center justify-center text-[10px] text-slate-400"
+                       style="width:${size}px;height:${size}px">no data</div>`;
+        }
+        const circ = 2 * Math.PI * r;
+        let offset = 0;
+        const arcs = live.map(s => {
+          const frac = Number(s.value) / total;
+          const dash = `${circ * frac} ${circ * (1 - frac)}`;
+          const el = `<circle cx="${cx}" cy="${cy}" r="${r}" fill="none"
+              stroke="${s.color}" stroke-width="${thickness}"
+              stroke-dasharray="${dash}" stroke-dashoffset="${-offset}"
+              transform="rotate(-90 ${cx} ${cy})"><title>${s.label}: ${s.value}</title></circle>`;
+          offset += circ * frac;
+          return el;
+        }).join('');
+        return `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}" role="img"
+                     aria-label="${live.map(s => `${s.label} ${s.value}`).join(', ')}">
+            ${arcs}
+            ${o.centerLabel ? `<text x="${cx}" y="${cy - 2}" text-anchor="middle"
+                 class="fill-slate-800" style="font-size:18px;font-weight:700">${o.centerLabel}</text>
+               <text x="${cx}" y="${cy + 12}" text-anchor="middle"
+                 class="fill-slate-400" style="font-size:8px;text-transform:uppercase">${o.centerSub || ''}</text>` : ''}
+          </svg>`;
+      },
+
+      chartLegend(segments) {
+        return `<div class="flex flex-col gap-1">
+            ${(segments || []).filter(s => Number(s.value) > 0).map(s => `
+              <div class="flex items-center gap-1.5 text-[10px] text-slate-600 whitespace-nowrap">
+                <span class="w-2.5 h-2.5 rounded-sm" style="background:${s.color}"></span>
+                <span class="font-medium">${s.label}</span>
+                <span class="text-slate-400">${s.value}</span>
+              </div>`).join('')}
+          </div>`;
+      },
+
+      // Where one value sits inside a distribution. Used for rate rank, where
+      // the peer set is other OPEN JOBS at the same facility — placements carry
+      // no rate field, so a placement-based comparison is not available.
+      rankStripSvg(values, mine, opts) {
+        const o = opts || {};
+        const vals = (values || []).map(Number).filter(v => isFinite(v) && v > 0).sort((a, b) => a - b);
+        if (!vals.length || !isFinite(mine)) {
+          return '<div class="text-[10px] text-slate-400">no comparable rates</div>';
+        }
+        const lo = vals[0], hi = vals[vals.length - 1], span = (hi - lo) || 1;
+        const pos = Math.max(0, Math.min(1, (mine - lo) / span));
+        const rank = vals.filter(v => v > mine).length + 1;
+        const w = o.width || 220;
+        return `
+          <div>
+            <svg width="${w}" height="26" viewBox="0 0 ${w} 26">
+              <line x1="4" y1="13" x2="${w - 4}" y2="13" stroke="#e2e8f0" stroke-width="6" stroke-linecap="round"/>
+              ${vals.map(v => {
+                const x = 4 + ((v - lo) / span) * (w - 8);
+                return `<circle cx="${x.toFixed(1)}" cy="13" r="2.5" fill="#cbd5e1"/>`;
+              }).join('')}
+              <circle cx="${(4 + pos * (w - 8)).toFixed(1)}" cy="13" r="5" fill="#2563eb"/>
+            </svg>
+            <div class="flex justify-between text-[9px] text-slate-400 -mt-1">
+              <span>$${lo.toFixed(0)}</span>
+              <span class="font-bold text-blue-700">#${rank} of ${vals.length}</span>
+              <span>$${hi.toFixed(0)}</span>
+            </div>
+          </div>`;
+      },
+
+      /*
+       * Shared table chrome for the stage views, so Closed / Extensions /
+       * Onboarding get an identical header rather than three that drift.
+       *
+       * Owns: loading and error states, the frozen header, per-column sort, and
+       * per-column filters. A column declares how to read its value (`key`) and
+       * whether it participates; the views just supply rows and cell markup.
+       *
+       * The header is sticky against the scroll container the wrapper provides,
+       * so it stays put while rows scroll under it — matching the List tab,
+       * whose grid header has always been sticky.
+       */
+      stageSort: {},
+      stageColFilter: {},
+
+      stageColValue(col, r) {
+        if (!col || !col.key) return '';
+        return typeof col.key === 'function' ? col.key(r) : r[col.key];
+      },
+
+      // Apply the per-column filters, then the active sort. Returns a new array.
+      stageApply(viewKey, rows, cols) {
+        const filters = View.stageColFilter[viewKey] || {};
+        let out = rows.filter(r => cols.every(c => {
+          const q = (filters[c.label] || '').trim().toLowerCase();
+          if (!q || !c.key) return true;
+          return String(View.stageColValue(c, r) ?? '').toLowerCase().includes(q);
+        }));
+        const sort = View.stageSort[viewKey];
+        if (sort && sort.label) {
+          const col = cols.find(c => c.label === sort.label);
+          if (col && col.key) {
+            const dir = sort.dir === 'desc' ? -1 : 1;
+            out = out.slice().sort((a, b) => {
+              const av = View.stageColValue(col, a), bv = View.stageColValue(col, b);
+              // Nulls last regardless of direction — a missing value is not
+              // "smallest", it is unknown, and burying it beats ranking it.
+              if (av == null && bv == null) return 0;
+              if (av == null) return 1;
+              if (bv == null) return -1;
+              const an = Number(av), bn = Number(bv);
+              if (isFinite(an) && isFinite(bn)) return (an - bn) * dir;
+              return String(av).localeCompare(String(bv)) * dir;
+            });
+          }
+        }
+        return out;
+      },
+
+      stageShell(key, title, subtitle, bodyHtml, cols, intelHtml) {
+        const s = window.store.state;
+        if (!s[key + 'Loaded']) {
+          return `<div class="p-6 text-slate-500 bg-slate-50 border border-slate-200 rounded flex items-center gap-3">
+              <svg class="animate-spin h-5 w-5 text-blue-500" viewBox="0 0 24 24" fill="none"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg>
+              Loading ${title.toLowerCase()}…
+            </div>`;
+        }
+        const err = s[key + 'Error'];
+        const sort = View.stageSort[key] || {};
+        const filters = View.stageColFilter[key] || {};
+        const anyFilter = Object.values(filters).some(v => (v || '').trim());
+        const th = (c) => {
+          const sortable = !!c.key;
+          const active = sort.label === c.label;
+          const arrow = !sortable ? '' : active
+            ? (sort.dir === 'desc' ? ' <span class="text-blue-600">&#9660;</span>' : ' <span class="text-blue-600">&#9650;</span>')
+            : ' <span class="text-slate-300">&#8645;</span>';
+          // Typography matches the List tab's header (bold / slate-600 /
+          // wider tracking) so the four tabs read as one table style. Kept at
+          // text-xs rather than List's text-sm because these tables carry 8-9
+          // denser columns — sized to their own body text, as List's is.
+          return `<th class="px-3 py-3 text-${c.align || 'left'} font-bold text-slate-600 text-xs uppercase tracking-wider whitespace-nowrap bg-slate-100 border-b border-slate-200 ${
+                      sortable ? 'cursor-pointer hover:text-slate-700 select-none' : ''}"
+                      ${sortable ? `onclick="store.dispatch('SORT_STAGE',{view:'${key}',label:${JSON.stringify(c.label)}})"` : ''}
+                      ${sortable ? `title="Sort by ${c.label || 'this column'}"` : ''}>${c.label}${arrow}</th>`;
+        };
+        const filterCell = (c) => {
+          if (!c.key) return '<th class="px-2 py-1 bg-slate-50"></th>';
+          return `<th class="px-2 py-1 bg-slate-50">
+              <input value="${(filters[c.label] || '').replace(/"/g, '&quot;')}"
+                     oninput="store.dispatch('FILTER_STAGE',{view:'${key}',label:${JSON.stringify(c.label)},value:this.value})"
+                     placeholder="filter"
+                     class="w-full min-w-[4.5rem] border border-slate-200 rounded px-1.5 py-0.5 text-[10px] font-normal normal-case bg-white">
+            </th>`;
+        };
+        return `
+          <div class="flex items-center justify-between mb-3 pb-3 border-b border-slate-100 shrink-0">
+            <div>
+              <h2 class="text-lg font-bold text-slate-700">${title}</h2>
+              <p class="text-xs text-slate-400">${subtitle}</p>
+            </div>
+            ${anyFilter || sort.label ? `<button onclick="store.dispatch('RESET_STAGE_TABLE','${key}')"
+                class="text-[11px] font-semibold text-blue-600 hover:text-blue-800">Reset sort &amp; filters</button>` : ''}
+          </div>
+          ${err ? `<div class="mb-4 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 flex items-start gap-3 shrink-0">
+              <i data-lucide="alert-triangle" class="w-4 h-4 text-amber-600 mt-0.5 flex-shrink-0"></i>
+              <div class="text-xs text-amber-900">
+                <div class="font-semibold">${title} failed to load</div>
+                <div class="mt-1 font-mono text-[10px] break-all text-amber-800">${err}</div>
+              </div>
+            </div>` : ''}
+          ${intelHtml || ''}
+          <!-- Mobile scroll hint, same as Open Jobs -->
+          <div class="md:hidden bg-blue-50 text-blue-700 text-xs px-3 py-2 mb-2 rounded flex items-center gap-2 border border-blue-100 shrink-0">
+            <i data-lucide="move-horizontal" class="w-4 h-4"></i>
+            <span>Swipe left/right to see all columns</span>
+          </div>
+          <!-- Same scroll model as Open Jobs: one container holding header and
+               body, scrolling horizontally always and vertically only on
+               desktop, so on mobile the page scrolls instead of trapping the
+               table in a nested box. The sticky thead sticks against this. -->
+          <div class="rounded-lg border border-slate-200 overflow-x-auto md:h-[70vh] overflow-y-visible md:overflow-y-auto">
+            <table class="w-full min-w-[900px] text-xs border-separate border-spacing-0">
+              <thead class="sticky top-0 z-10">
+                <tr>
+                  ${cols.map(th).join('')}
+                </tr>
+                <tr>${cols.map(filterCell).join('')}</tr>
+              </thead>
+              <tbody>${bodyHtml || `<tr><td colspan="${cols.length}" class="px-3 py-8 text-center text-slate-400">${
+                  anyFilter ? 'Nothing matches these column filters.' : 'Nothing in this window.'}</td></tr>`}</tbody>
+            </table>
+          </div>`;
+      },
+
+      // Filters a stage row against the shared filter bar. Stage rows carry
+      // health_system / facility, so System and Facility apply; the rest of the
+      // bar keys off fields these feeds don't have and is left alone rather
+      // than silently dropping every row.
+      stageFilter(r) {
+        const s = window.store.state;
+        if (!View.legendMatch(r)) return false;
+        const sys = Utils.getHealthSystem(r.facility, r.health_system);
+        if (Utils.isHiddenHealthSystem(sys)) return false;
+        if (s.filterSelection.systems.size > 0 && !s.filterSelection.systems.has(sys)) return false;
+        if (s.filterSelection.facilities.size > 0 && r.facility && !s.filterSelection.facilities.has(r.facility)) return false;
+        return true;
+      },
+
+      stageBadge(text, tone) {
+        const tones = {
+          critical: 'bg-red-100 text-red-700', high: 'bg-orange-100 text-orange-700',
+          medium: 'bg-amber-100 text-amber-700', low: 'bg-slate-100 text-slate-600',
+          good: 'bg-emerald-100 text-emerald-700', bad: 'bg-red-100 text-red-700',
+          info: 'bg-blue-100 text-blue-700',
+        };
+        return `<span class="px-1.5 py-0.5 rounded text-[9px] font-bold ${tones[tone] || tones.low}">${text}</span>`;
+      },
+
+      /* ---- Extensions: decision badge in the row, editing in the detail ----
+       * Mirrors the reference: the row carries a read-only decision badge and
+       * rows group by workflow state; the expanded detail owns the editable
+       * checkpoints. Team-owned steps are editable, system-confirmed facts are
+       * not — "Extension Accepted" comes from VNDLY/Bullhorn and stays read-only,
+       * the same discipline that keeps the MSP fee split from being called margin.
+       */
+      EXT_DECISIONS: ['Not Requested', 'Interested', 'Approved to Offer', 'Approved', 'Declined', 'Backfill Required'],
+      EXT_STEPS: [
+        { key: 'confirmClient',  label: 'Confirm Client',  owner: 'pm',
+          blurb: 'Record whether the client wants to extend, close, or backfill.' },
+        { key: 'gatherRTO',      label: 'Gather RTO',      owner: 'recruiter',
+          blurb: 'Capture clinician requested time off before finalizing the extension.' },
+        { key: 'sendExtension',  label: 'Send Extension',  owner: 'pm',
+          blurb: 'Confirm the extension has been sent and recorded.' },
+      ],
+      EXT_GROUP_ORDER: ['NO DECISION', 'RTO', 'OFFERED', 'PENDING ACCEPTANCE', 'APPROVED', 'BACKFILL', 'EXCEPTION'],
+
+      /*
+       * GM block for a CONTRACT row. There is no job behind these, so the
+       * override lands in workspace_state (see Utils.marginFor). Bill rate is
+       * source-owned; GM% is a rate we apply, so it is the only editable half.
+       */
+      contractMarginBlock(r) {
+        const m = Utils.marginFor(r.id, null);
+        const bill = Number(r.bill_rate) || 0;
+        const gmHr = bill && m.pct != null ? bill * (m.pct / 100) : null;
+        const money = v => (v || v === 0) ? '$' + Number(v).toFixed(2) : '—';
+        return `
+          <div class="mt-4 pt-4 border-t border-slate-200">
+            <h5 class="text-xs font-bold uppercase tracking-wide text-slate-500 mb-2">Rate &amp; GM</h5>
+            <div class="flex flex-wrap items-end gap-3">
+              <div class="bg-white border border-slate-200 rounded-lg px-3 py-2">
+                <div class="text-[9px] uppercase tracking-wide text-slate-400 font-semibold">Bill Rate</div>
+                <div class="text-sm font-bold text-slate-800 mt-0.5">${money(bill)}</div>
+              </div>
+              <div class="bg-white border border-slate-200 rounded-lg px-3 py-2">
+                <div class="text-[9px] uppercase tracking-wide text-slate-400 font-semibold">GM %</div>
+                <div class="text-sm font-bold text-slate-800 mt-0.5">${Utils.marginLabel(r.id, null)}</div>
+              </div>
+              <div class="bg-white border border-slate-200 rounded-lg px-3 py-2">
+                <div class="text-[9px] uppercase tracking-wide text-slate-400 font-semibold">GM / Hour</div>
+                <div class="text-sm font-bold text-slate-800 mt-0.5">${money(gmHr)}</div>
+              </div>
+              <div>
+                <label class="block text-[9px] font-semibold text-slate-500 uppercase tracking-wide mb-1">Override GM %</label>
+                <div class="flex gap-1.5">
+                  <input type="number" min="0" max="100" step="0.5" class="ct-margin w-20 bg-white border border-slate-300 rounded-md px-2 py-1.5 text-sm"
+                         data-id="${r.id}" value="${m.source === 'override' ? m.pct : ''}" placeholder="${m.pct ?? ''}">
+                  <button onclick="store.dispatch('SAVE_CONTRACT_MARGIN','${r.id}')"
+                          class="px-2.5 py-1.5 bg-slate-700 hover:bg-slate-800 text-white rounded-md text-xs font-semibold">Set</button>
+                </div>
+              </div>
+            </div>
+            <p class="text-[10px] text-slate-400 mt-2">
+              “~” marks the configured default rather than a number set for this seat.
+              MSP carries no clinician pay rate, so GM is a rate we apply, not one read from the data.
+            </p>
+          </div>`;
+      },
+
+      extensionEdit(r) {
+        const saved = window.store.state.workspaceState?.extension?.[r.id]?.state;
+        return {
+          decision: saved?.decision || 'Not Requested',
+          notes: saved?.notes || '',
+          steps: saved?.steps || {},
+        };
+      },
+
+      // Extension Search bar predicate. End date is compared as a plain
+      // YYYY-MM-DD string so it never drifts by a timezone the way a Date
+      // round-trip would; end_date arrives date-only from the API.
+      /* Extension Search — its own bar above the Extensions table, not a panel
+       * inside the collapsible Analysis strip. It is a control, not analysis,
+       * and collapsing Analysis used to hide it. The Extensions strip is now
+       * empty anyway: neither of its donuts had a basis in the reference.
+       *
+       * stageShell re-renders wholesale on every View.main(), so the control
+       * values are bound from state on each pass rather than left in the DOM.
+       * SET_EXT_FILTER fires on change (not input), so a re-render can't land
+       * mid-keystroke.
+       */
+      extSearchBar(total, shown) {
+        const f = window.store.state.extFilter || { endFrom: '', endTo: '', status: 'All' };
+        const active = !!(f.endFrom || f.endTo || (f.status && f.status !== 'All'));
+        const field = 'w-full bg-white border border-slate-300 rounded-md px-2 py-1.5 text-xs focus:border-blue-500 outline-none shadow-sm';
+        const lbl = 'block text-[9px] font-semibold uppercase tracking-wide text-slate-400 mb-0.5';
+        // Explicit labels — naive title-casing turns RTO into "Rto".
+        const LABELS = {
+          'All': 'All Statuses', 'NO DECISION': 'No Decision', 'RTO': 'RTO',
+          'OFFERED': 'Offered', 'PENDING ACCEPTANCE': 'Pending Acceptance',
+          'APPROVED': 'Approved', 'BACKFILL': 'Backfill', 'EXCEPTION': 'Exception',
+        };
+        const opts = ['All'].concat(View.EXT_GROUP_ORDER).map(g =>
+          `<option value="${g}" ${f.status === g ? 'selected' : ''}>${LABELS[g] || g}</option>`
+        ).join('');
+        return `
+          <div class="mb-3 shrink-0 rounded-lg border border-slate-200 bg-white px-4 py-3">
+            <div class="flex flex-wrap items-end gap-3">
+              <div class="mr-1">
+                <div class="text-[11px] font-bold uppercase tracking-wider text-slate-500">Extension Search</div>
+                <div class="text-[10px] text-slate-400">Filter by contract end date and extension status.</div>
+              </div>
+              <div class="flex-1 min-w-[130px] max-w-[200px]">
+                <label class="${lbl}">End Date From</label>
+                <input type="date" id="extensionEndFrom" class="${field}" value="${f.endFrom}"
+                       onchange="store.dispatch('SET_EXT_FILTER')">
+              </div>
+              <div class="flex-1 min-w-[130px] max-w-[200px]">
+                <label class="${lbl}">End Date To</label>
+                <input type="date" id="extensionEndTo" class="${field}" value="${f.endTo}"
+                       onchange="store.dispatch('SET_EXT_FILTER')">
+              </div>
+              <div class="flex-1 min-w-[150px] max-w-[220px]">
+                <label class="${lbl}">Extension Status</label>
+                <select id="extensionStatusFilter" class="${field}"
+                        onchange="store.dispatch('SET_EXT_FILTER')">${opts}</select>
+              </div>
+              <div class="flex items-center gap-3 pb-1 ml-auto">
+                <span class="text-[11px] ${active ? 'text-slate-600 font-semibold' : 'text-slate-400'}">${
+                  active ? `${shown} of ${total} match` : `${total} in window`}</span>
+                ${active ? `<button onclick="store.dispatch('CLEAR_EXT_FILTERS')"
+                      class="text-[11px] font-semibold text-slate-500 hover:text-slate-700 underline">Clear</button>` : ''}
+              </div>
+            </div>
+          </div>`;
+      },
+
+      extSearchMatch(r) {
+        const f = window.store.state.extFilter;
+        if (!f) return true;
+        const end = (r.end_date || '').slice(0, 10);
+        if (f.endFrom && (!end || end < f.endFrom)) return false;
+        if (f.endTo   && (!end || end > f.endTo))   return false;
+        if (f.status && f.status !== 'All' && View.extensionGroup(r) !== f.status) return false;
+        return true;
+      },
+
+      extensionGroup(r) {
+        const e = View.extensionEdit(r);
+        if (e.decision === 'Approved') return 'APPROVED';
+        if (e.decision === 'Backfill Required') return 'BACKFILL';
+        if (e.decision === 'Declined') return 'EXCEPTION';
+        if (e.steps.sendExtension) return 'PENDING ACCEPTANCE';
+        if (e.decision === 'Approved to Offer') return 'OFFERED';
+        if (e.steps.gatherRTO) return 'RTO';
+        return 'NO DECISION';
+      },
+
+      extensionDecisionBadge(d) {
+        const tone = d === 'Approved' ? 'good'
+          : (d === 'Declined' || d === 'Backfill Required') ? 'bad'
+          : (d === 'Approved to Offer' || d === 'Interested') ? 'info' : 'low';
+        return View.stageBadge(d, tone);
+      },
+
+      extensionDetail(r) {
+        const e = View.extensionEdit(r);
+        const meta = window.store.state.workspaceState?.extension?.[r.id];
+        const pm = r.account_manager || '—';
+        return `
+          <tr class="bg-slate-50">
+            <td colspan="8" class="px-4 py-4 border-b border-slate-200">
+              <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <div>
+                  <h5 class="text-xs font-bold uppercase tracking-wide text-slate-500 mb-1">Extension Progress</h5>
+                  <p class="text-[10px] text-slate-400 mb-3">Team owns the client, RTO and send checkpoints. Acceptance stays system-confirmed.</p>
+                  <div class="space-y-1.5">
+                    ${View.EXT_STEPS.map(st => `
+                      <label class="flex items-start gap-2 bg-white border border-slate-200 rounded-lg px-3 py-2 cursor-pointer hover:border-slate-300">
+                        <input type="checkbox" class="mt-0.5 w-4 h-4 ext-step" data-id="${r.id}" data-step="${st.key}" ${e.steps[st.key] ? 'checked' : ''}>
+                        <span class="flex-1">
+                          <span class="block text-xs font-semibold text-slate-700">${st.label}</span>
+                          <span class="block text-[10px] text-slate-400">${st.blurb}</span>
+                        </span>
+                        <span class="text-[10px] text-slate-400 whitespace-nowrap">${
+                          st.owner === 'pm'
+                            ? `PM · ${pm}`
+                            // No recruiter name exists on the MSP side: B4 and
+                            // VNDLY carry an account manager and the client's
+                            // hiring manager, neither of which is a GHR
+                            // recruiter. The step is still real and checkable;
+                            // only the attribution is missing, and saying so
+                            // beats relabelling it PM.
+                            : `Recruiter · <span class="italic text-slate-300" title="Not recorded in B4 or VNDLY">not in data</span>`
+                        }</span>
+                      </label>`).join('')}
+                    <div class="flex items-start gap-2 bg-slate-100 border border-slate-200 rounded-lg px-3 py-2">
+                      <span class="mt-0.5 text-slate-400">${r.is_extension ? '✓' : '○'}</span>
+                      <span class="flex-1">
+                        <span class="block text-xs font-semibold text-slate-600">Extension Accepted</span>
+                        <span class="block text-[10px] text-slate-400">Confirmed from the source systems — not editable.</span>
+                      </span>
+                      <span class="text-[10px] text-slate-400">System</span>
+                    </div>
+                  </div>
+                </div>
+                <div>
+                  <h5 class="text-xs font-bold uppercase tracking-wide text-slate-500 mb-3">Decision</h5>
+                  <label class="block text-[10px] font-semibold text-slate-500 uppercase tracking-wide mb-1">Client Decision</label>
+                  <select class="ext-decision w-full bg-white border border-slate-300 rounded-md px-3 py-2 text-sm mb-3" data-id="${r.id}">
+                    ${View.EXT_DECISIONS.map(d => `<option ${e.decision === d ? 'selected' : ''}>${d}</option>`).join('')}
+                  </select>
+                  <label class="block text-[10px] font-semibold text-slate-500 uppercase tracking-wide mb-1">Shared Notes</label>
+                  <textarea class="ext-notes w-full bg-white border border-slate-300 rounded-md px-3 py-2 text-xs h-20"
+                            data-id="${r.id}" placeholder="Client or extension context…">${e.notes}</textarea>
+                  <div class="flex items-center gap-3 mt-3">
+                    <button onclick="store.dispatch('SAVE_EXTENSION','${r.id}')"
+                            class="px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-md text-xs font-semibold shadow-sm">
+                      Save Extension Update
+                    </button>
+                    ${meta?.updatedBy ? `<span class="text-[10px] text-slate-400">Last saved by ${meta.updatedBy}${
+                      meta.updatedAt ? ' · ' + new Date(meta.updatedAt).toLocaleString() : ''}</span>` : ''}
+                  </div>
+                  <p class="text-[10px] text-slate-400 mt-3 leading-snug">
+                    Linked backfill isn&rsquo;t shown &mdash; nothing in B4 or VNDLY ties an ending seat to its replacement job.
+                  </p>
+                </div>
+              </div>
+              ${View.contractMarginBlock(r)}
+            </td>
+          </tr>`;
+      },
+
+      extensions() {
+        const s = window.store.state;
+        const extCols = [
+          { label: '' },
+          { label: 'Clinician',       key: 'clinician' },
+          { label: 'Source',          key: 'source_system', align: 'center' },
+          { label: 'Ends',            key: 'end_date',      align: 'center' },
+          { label: 'Days Left',       key: 'days_left',     align: 'center' },
+          { label: 'Client Decision', key: r => View.extensionEdit(r).decision, align: 'center' },
+          { label: 'PM',              key: 'account_manager' },
+          { label: '13-Wk Value',     key: 'extension_value_13wk', align: 'right' },
+        ];
+        const all = (s.extensionsRows || []).filter(View.stageFilter);
+        const rows = View.stageApply('extensions',
+          all.filter(View.extSearchMatch), extCols);
+        const money = v => (v || v === 0) ? '$' + Number(v).toLocaleString(undefined, { maximumFractionDigits: 0 }) : '—';
+        const expiring = rows.filter(r => r.days_left != null && r.days_left <= 14).length;
+        const events = rows.reduce((a, r) => a + (Number(r.extension_events || r.ext_events) || 0), 0);
+        const value = rows.reduce((a, r) => a + (Number(r.extension_value_13wk) || 0), 0);
+        const undecided = rows.filter(r => View.extensionGroup(r) === 'NO DECISION').length;
+        View.renderKpiCards([
+          { label: 'Seats In Window', val: rows.length, icon: 'repeat', color: 'blue' },
+          { label: 'Expiring ≤14 Days', val: expiring, icon: 'alert-triangle', color: 'red' },
+          { label: 'No Decision Yet', val: undecided, icon: 'help-circle', color: 'amber' },
+          { label: 'Extension Events', val: events, icon: 'activity', color: 'indigo' },
+          { label: 'Already Extended', val: rows.filter(r => r.is_extension).length, icon: 'refresh-cw', color: 'purple' },
+          { label: '13-Week Value', val: value ? money(value) : '—', icon: 'dollar-sign', color: 'emerald' },
+        ]);
+
+        // Group by workflow state, in the reference's order.
+        const groups = {};
+        rows.forEach(r => { (groups[View.extensionGroup(r)] = groups[View.extensionGroup(r)] || []).push(r); });
+        let body = '';
+        View.EXT_GROUP_ORDER.forEach(g => {
+          // Rows arrive already sorted when a column sort is active; only fall
+          // back to the default days-left ordering when none is.
+          const list = View.stageSort.extensions?.label
+            ? (groups[g] || [])
+            : (groups[g] || []).slice().sort((a, b) => (a.days_left ?? 999) - (b.days_left ?? 999));
+          if (!list.length) return;
+          const gv = list.reduce((a, r) => a + (Number(r.extension_value_13wk) || 0), 0);
+          body += `<tr class="bg-slate-200">
+              <td colspan="8" class="px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-600">
+                ${g} <span class="text-slate-400 font-semibold ml-1">${list.length}</span>
+                ${gv ? `<span class="text-slate-400 font-normal ml-2">${money(gv)} contract value</span>` : ''}
+              </td></tr>`;
+          list.forEach(r => {
+            const open = s.expandedExtensions.has(r.id);
+            const e = View.extensionEdit(r);
+            body += `
+              <tr class="hover:bg-slate-50 border-b border-slate-100 cursor-pointer" onclick="store.dispatch('TOGGLE_EXTENSION_ROW','${r.id}')">
+                <td class="px-3 py-2 text-slate-400">${open ? '&#9660;' : '&#9654;'}</td>
+                <td class="px-3 py-2">
+                  <div class="font-medium text-slate-700">${r.clinician || '—'}</div>
+                  <div class="text-[10px] text-slate-400">${r.facility || '—'} · ${r.role || r.care_type || '—'}</div>
+                </td>
+                <td class="px-3 py-2 text-center">${View.stageBadge(r.source_system || r.source || '—', 'info')}</td>
+                <td class="px-3 py-2 text-center text-slate-600">${r.end_date || '—'}</td>
+                <td class="px-3 py-2 text-center">${r.days_left != null ? View.stageBadge(r.days_left + 'd', r.urgency || 'low') : '—'}</td>
+                <td class="px-3 py-2 text-center">${View.extensionDecisionBadge(e.decision)}</td>
+                <td class="px-3 py-2 text-slate-500">${r.account_manager || '—'}</td>
+                <td class="px-3 py-2 text-right text-slate-600">${money(r.extension_value_13wk)}</td>
+              </tr>`;
+            if (open) body += View.extensionDetail(r);
+          });
+        });
+
+        const el = $('extensionsContent');
+        // Runway and Decision Mix donuts removed: neither exists in the v24.6
+        // reference, which puts its charts (6-week lineCharts) in the stage
+        // overview modals instead. Runway also duplicated the coloured legend
+        // bands above the table, which do the same split and are clickable,
+        // and Decision Mix could only ever show one grey ring until decisions
+        // are recorded. Extension Search takes this slot instead.
+        const intel = View.extSearchBar(all.length, rows.length);
+        if (el) el.innerHTML = View.stageShell('extensions', 'Extensions',
+          'Assignments approaching their end date, grouped by where the extension decision stands',
+          body, extCols, intel);
+        lucide.createIcons();
+      },
+
+      /* ---- Onboarding: status badge in the row, editing in the detail ----
+       * Same split as Extensions. The reference compares each start against the
+       * one recorded at the previous meeting; no source field carries that, but
+       * workspace_state already stores a revised start per seat — so the last
+       * SAVED start is the previously-recorded start, which is what makes the
+       * reference's "START DATE CHANGED" group derivable rather than invented.
+       */
+      ONB_CATEGORIES: ['None', 'Compliance', 'Clinician', 'Client', 'Onboarding', 'Lack of Onboarding'],
+      ONB_GROUP_ORDER: ['CANCELED', 'DELAYED START', 'START DATE CHANGED', 'ON TRACK'],
+
+      onboardingEdit(r) {
+        const saved = window.store.state.workspaceState?.onboarding?.[r.id]?.state;
+        return {
+          currentStart: saved?.currentStart || r.current_start || '',
+          delayCategory: saved?.delayCategory || 'None',
+          context: saved?.context || '',
+          // The start as recorded last time this seat was saved. Null means it
+          // has never been reviewed, so there is nothing to have moved from.
+          recordedStart: saved?.currentStart || null,
+        };
+      },
+
+      // Slip between what was recorded last time and what the source says now.
+      // Deliberately not "days delayed from the original start" — neither feed
+      // carries an original start date, so that number does not exist.
+      onboardingSlip(r) {
+        const e = View.onboardingEdit(r);
+        if (!e.recordedStart || !r.current_start) return null;
+        const a = Utils.toDateOrNull(e.recordedStart), b = Utils.toDateOrNull(r.current_start);
+        if (!a || !b) return null;
+        return Math.round((b - a) / 86400000);
+      },
+
+      onboardingGroup(r) {
+        if (r.group === 'CANCELED') return 'CANCELED';
+        const slip = View.onboardingSlip(r);
+        if (slip) return 'START DATE CHANGED';
+        if (r.group === 'DELAYED START') return 'DELAYED START';
+        return 'ON TRACK';
+      },
+
+      // Movement against the planned start (the start as of the application),
+      // as opposed to onboardingSlip() which measures against the start recorded
+      // at the last review. Null days_delayed means the jobs feed doesn't cover
+      // this seat — say so rather than rendering a confident zero. Negative is
+      // real and common: the start was pulled EARLIER than planned.
+      onboardingPlannedSlip(r) {
+        const d = r.days_delayed;
+        if (d == null) return '<span class="italic text-slate-300">not tracked</span>';
+        if (d === 0) return '<span class="text-emerald-600">on plan</span>';
+        return d > 0
+          ? `<span class="text-amber-600">+${d}d later</span>`
+          : `<span class="text-sky-600">${Math.abs(d)}d earlier</span>`;
+      },
+
+      onboardingDetail(r) {
+        const e = View.onboardingEdit(r);
+        const slip = View.onboardingSlip(r);
+        const meta = window.store.state.workspaceState?.onboarding?.[r.id];
+        const notInData = '<span class="italic text-slate-300" title="Not recorded in B4 or VNDLY">not in data</span>';
+        const notTracked = '<span class="italic text-slate-300" title="No planned start on file for this seat">not tracked</span>';
+        const metric = (label, value) => `<div class="bg-white border border-slate-200 rounded-lg px-3 py-2">
+            <div class="text-[9px] uppercase tracking-wide text-slate-400 font-semibold">${label}</div>
+            <div class="text-sm font-bold text-slate-800 mt-0.5">${value}</div>
+          </div>`;
+        return `
+          <tr class="bg-slate-50">
+            <td colspan="9" class="px-4 py-4 border-b border-slate-200">
+              <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <div>
+                  <h5 class="text-xs font-bold uppercase tracking-wide text-slate-500 mb-1">Start Status</h5>
+                  <p class="text-[10px] text-slate-400 mb-3">From the source systems. Not editable here.</p>
+                  <div class="grid grid-cols-2 gap-2">
+                    ${metric('Current Start (source)', r.current_start || '—')}
+                    ${metric('Last Recorded Start', e.recordedStart || '<span class="text-slate-300">never reviewed</span>')}
+                    ${metric('Planned Start (at application)', r.planned_start || notTracked)}
+                    ${metric('Moved vs Planned', View.onboardingPlannedSlip(r))}
+                    ${metric('Times Moved', r.move_count == null ? notInData : r.move_count)}
+                    ${metric('Moved Since Recorded', slip == null ? '—' : (slip > 0 ? '+' : '') + slip + 'd')}
+                  </div>
+                  <p class="text-[10px] text-slate-400 mt-3 leading-snug">
+                    ${r.delay_measure === 'days'
+                      ? `Planned start is the start as of the application, kept when the
+                         work order&rsquo;s own start later moves. It is not necessarily
+                         the first date ever scheduled.`
+                      : `No planned start on file for this seat, so total movement
+                         can&rsquo;t be measured &mdash; only slip against the start
+                         recorded at the last review.`}
+                    ${r.move_count == null
+                      ? ' Move count is B4-blind: only VNDLY reports start-change events.'
+                      : ' Move count is a floor &mdash; a start can move without a delay reason being logged.'}
+                  </p>
+                </div>
+                <div>
+                  <h5 class="text-xs font-bold uppercase tracking-wide text-slate-500 mb-1">Start Date Feedback</h5>
+                  <p class="text-[10px] text-slate-400 mb-3">Update the expected start and record why it moved.</p>
+                  ${slip ? `<div class="mb-3 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-[11px] text-amber-900">
+                      <b>Context required.</b> Last recorded ${e.recordedStart}, source now says ${r.current_start}.
+                      Record why before saving.
+                    </div>` : ''}
+                  <label class="block text-[10px] font-semibold text-slate-500 uppercase tracking-wide mb-1">Current Start Date</label>
+                  <input type="date" class="onb-start w-full bg-white border border-slate-300 rounded-md px-3 py-2 text-sm mb-3"
+                         data-id="${r.id}" value="${(e.currentStart || '').slice(0, 10)}">
+                  <label class="block text-[10px] font-semibold text-slate-500 uppercase tracking-wide mb-1">Delay Category</label>
+                  <select class="onb-category w-full bg-white border border-slate-300 rounded-md px-3 py-2 text-sm mb-3" data-id="${r.id}">
+                    ${View.ONB_CATEGORIES.map(c => `<option ${e.delayCategory === c ? 'selected' : ''}>${c}</option>`).join('')}
+                  </select>
+                  <label class="block text-[10px] font-semibold text-slate-500 uppercase tracking-wide mb-1">Meeting Context</label>
+                  <textarea class="onb-context w-full bg-white border border-slate-300 rounded-md px-3 py-2 text-xs h-20"
+                            data-id="${r.id}" placeholder="Why did the date move? What changed since the last review?">${e.context}</textarea>
+                  <div class="flex items-center gap-3 mt-3">
+                    <button onclick="store.dispatch('SAVE_ONBOARDING','${r.id}')"
+                            class="px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-md text-xs font-semibold shadow-sm">
+                      Save Start Update
+                    </button>
+                    ${meta?.updatedBy ? `<span class="text-[10px] text-slate-400">Last saved by ${meta.updatedBy}${
+                      meta.updatedAt ? ' · ' + new Date(meta.updatedAt).toLocaleString() : ''}</span>` : ''}
+                  </div>
+                </div>
+              </div>
+              ${View.contractMarginBlock(r)}
+            </td>
+          </tr>`;
+      },
+
+      onboarding() {
+        const s = window.store.state;
+        const onbCols = [
+          { label: '' },
+          { label: 'Clinician',     key: 'clinician' },
+          { label: 'Source',        key: 'source_system', align: 'center' },
+          { label: 'Status',        key: r => View.onboardingGroup(r), align: 'center' },
+          { label: 'Current Start', key: 'current_start',  align: 'center' },
+          { label: 'Moves',         key: 'move_count',     align: 'center' },
+          { label: 'Moved',         key: r => View.onboardingSlip(r), align: 'center' },
+          { label: 'Delay Reason',  key: r => View.onboardingEdit(r).context || r.delay_reason || '' },
+          { label: 'PM',            key: 'account_manager' },
+        ];
+        const rows = View.stageApply('onboarding',
+          (s.onboardingRows || []).filter(View.stageFilter), onbCols);
+        const delayed = rows.filter(r => View.onboardingGroup(r) === 'DELAYED START').length;
+        const cancelled = rows.filter(r => View.onboardingGroup(r) === 'CANCELED').length;
+        const moved = rows.filter(r => View.onboardingSlip(r)).length;
+        const soon = rows.filter(r => r.days_until_start != null && r.days_until_start >= 0 && r.days_until_start <= 7).length;
+        View.renderKpiCards([
+          { label: 'Starts In Window', val: rows.length, icon: 'user-check', color: 'blue' },
+          { label: 'Delayed', val: delayed, icon: 'clock', color: 'amber' },
+          { label: 'Moved Since Review', val: moved, icon: 'alert-triangle', color: 'red' },
+          { label: 'Cancelled', val: cancelled, icon: 'x-circle', color: 'slate' },
+          { label: 'Starting ≤7 Days', val: soon, icon: 'calendar', color: 'emerald' },
+          { label: '13-Week Value', val: (() => {
+              const v = rows.reduce((a, r) => a + (Number(r.value_13wk) || 0), 0);
+              return v ? '$' + v.toLocaleString(undefined, { maximumFractionDigits: 0 }) : '—';
+            })(), icon: 'dollar-sign', color: 'indigo' },
+        ]);
+
+        const tone = { 'ON TRACK': 'good', 'DELAYED START': 'medium', 'START DATE CHANGED': 'high', 'CANCELED': 'bad' };
+        const groups = {};
+        rows.forEach(r => { const g = View.onboardingGroup(r); (groups[g] = groups[g] || []).push(r); });
+        let body = '';
+        View.ONB_GROUP_ORDER.forEach(g => {
+          const list = View.stageSort.onboarding?.label
+            ? (groups[g] || [])
+            : (groups[g] || []).slice().sort((a, b) => (b.move_count || 0) - (a.move_count || 0));
+          if (!list.length) return;
+          const mv = list.reduce((a, r) => a + (Number(r.move_count) || 0), 0);
+          body += `<tr class="bg-slate-200">
+              <td colspan="9" class="px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-600">
+                ${g} <span class="text-slate-400 font-semibold ml-1">${list.length}</span>
+                ${mv ? `<span class="text-slate-400 font-normal ml-2">${mv} start-date move${mv === 1 ? '' : 's'}</span>` : ''}
+              </td></tr>`;
+          list.forEach(r => {
+            const open = s.expandedOnboarding.has(r.id);
+            const e = View.onboardingEdit(r);
+            const slip = View.onboardingSlip(r);
+            body += `
+              <tr class="hover:bg-slate-50 border-b border-slate-100 cursor-pointer" onclick="store.dispatch('TOGGLE_ONBOARDING_ROW','${r.id}')">
+                <td class="px-3 py-2 text-slate-400">${open ? '&#9660;' : '&#9654;'}</td>
+                <td class="px-3 py-2">
+                  <div class="font-medium text-slate-700">${r.clinician || '—'}</div>
+                  <div class="text-[10px] text-slate-400">${r.facility || '—'} · ${r.role || '—'}</div>
+                </td>
+                <td class="px-3 py-2 text-center">${View.stageBadge(r.source_system || r.source || '—', 'info')}</td>
+                <td class="px-3 py-2 text-center">${View.stageBadge(g, tone[g] || 'low')}</td>
+                <td class="px-3 py-2 text-center text-slate-600">${r.current_start || '—'}</td>
+                <td class="px-3 py-2 text-center text-slate-600">${
+                  r.move_count == null
+                    ? '<span class="text-slate-300" title="Only VNDLY reports start-change events">—</span>'
+                    : r.move_count}</td>
+                <td class="px-3 py-2 text-center">${slip == null
+                    ? '<span class="text-slate-300">—</span>'
+                    : `<span class="${slip >= 7 ? 'text-red-600 font-semibold' : 'text-slate-600'}">${slip > 0 ? '+' : ''}${slip}d</span>`}</td>
+                <td class="px-3 py-2">
+                  <div class="text-slate-700">${e.delayCategory !== 'None' ? e.delayCategory : (r.delay_category || '—')}</div>
+                  <div class="text-[10px] text-slate-400 truncate max-w-[16rem]">${e.context || r.delay_reason || ''}</div>
+                </td>
+                <td class="px-3 py-2 text-slate-500">${r.account_manager || '—'}</td>
+              </tr>`;
+            if (open) body += View.onboardingDetail(r);
+          });
+        });
+
+        const el = $('onboardingContent');
+        // No Onboarding chart in the reference — its onboarding stage has no
+        // pie or chart at all, only the table and the overview modal.
+        const onbIntel = '';
+        if (el) el.innerHTML = View.stageShell('onboarding', 'Onboarding',
+          'Upcoming and recent starts, grouped by whether the date has moved since it was last reviewed',
+          body, onbCols, onbIntel);
+        lucide.createIcons();
+      },
+
+      closed() {
+        const s = window.store.state;
+        const closedCols = [
+          { label: 'Clinician',    key: 'clinician' },
+          { label: 'Facility',     key: 'facility' },
+          { label: 'Role',         key: 'role' },
+          { label: 'Source',       key: 'source_system', align: 'center' },
+          { label: 'Closed',       key: 'closed_on',     align: 'center' },
+          { label: 'Outcome',      key: 'group',         align: 'center' },
+          { label: 'Reason',       key: 'outcome_reason' },
+          { label: '13-Wk Value',  key: 'value_13wk',    align: 'right' },
+        ];
+        const rows = View.stageApply('closed',
+          (s.closedRows || []).filter(View.stageFilter), closedCols);
+        const money = v => (v || v === 0) ? '$' + Number(v).toLocaleString(undefined, { maximumFractionDigits: 0 }) : '—';
+        const byGroup = {};
+        rows.forEach(r => { byGroup[r.group] = (byGroup[r.group] || 0) + 1; });
+        const top = Object.entries(byGroup).sort((a, b) => b[1] - a[1])[0];
+        const windowDays = s.closedMeta?.coverage?.windowDays;
+        const value = rows.reduce((a, r) => a + (Number(r.value_13wk) || 0), 0);
+        const nonMspKpi = s.dataSource === 'non_msp';
+        const covKpi = s.closedMeta?.coverage || {};
+        View.renderKpiCards([
+          { label: windowDays ? `Closed (${windowDays}d)` : 'Closed In Window', val: rows.length, icon: 'check-circle', color: 'blue' },
+          // Fill rate and velocity are what the non-MSP meeting acts on;
+          // "top outcome" is a label, not a number anyone can move.
+          nonMspKpi
+            ? { label: 'Fill Rate', val: covKpi.fillRatePct != null ? covKpi.fillRatePct + '%' : '—',
+                icon: 'target', color: 'indigo' }
+            : { label: 'Top Outcome', val: top ? top[0] : '—', icon: 'pie-chart', color: 'indigo' },
+          // Median, not mean: same-day bookings dominate and a long tail drags
+          // the average well above where most fills actually land.
+          nonMspKpi
+            ? { label: 'Median Days To Fill',
+                val: covKpi.medianDaysToFill != null ? covKpi.medianDaysToFill + 'd' : '—',
+                icon: 'clock', color: 'purple' }
+            : { label: 'Outcome Types', val: Object.keys(byGroup).length, icon: 'layers', color: 'purple' },
+          { label: 'Ended Early', val: rows.filter(r => /terminat|resign|cancel/i.test(r.group || '')).length,
+            icon: 'alert-triangle', color: 'red' },
+          { label: 'Avg Tenure', val: (() => {
+              // Only rows with both ends of the span — a partial one would drag
+              // the average toward zero rather than being left out.
+              const spans = rows.map(r => {
+                const a = Utils.toDateOrNull(r.start_date), b = Utils.toDateOrNull(r.closed_on);
+                return (a && b) ? Math.round((b - a) / 86400000) : null;
+              }).filter(v => v != null && v >= 0);
+              return spans.length ? Math.round(spans.reduce((x, y) => x + y, 0) / spans.length) + 'd' : '—';
+            })(), icon: 'calendar', color: 'slate' },
+          { label: '13-Week Value', val: value ? money(value) : '—', icon: 'dollar-sign', color: 'emerald' },
+        ]);
+
+        const body = rows.map(r => `
+          <tr class="hover:bg-slate-50 border-b border-slate-100">
+            <td class="px-3 py-2 font-medium text-slate-700 whitespace-nowrap">${r.clinician || '—'}</td>
+            <td class="px-3 py-2 text-slate-500">${r.facility || '—'}</td>
+            <td class="px-3 py-2 text-slate-500">${r.role || '—'}</td>
+            <td class="px-3 py-2 text-center">${View.stageBadge(r.source_system || r.source || '—', 'info')}</td>
+            <td class="px-3 py-2 text-center text-slate-600">${r.closed_on || '—'}</td>
+            <td class="px-3 py-2 text-center">${r.group ? View.stageBadge(r.group, 'low') : '—'}</td>
+            <td class="px-3 py-2 text-slate-500">${r.outcome_reason || '—'}</td>
+            <td class="px-3 py-2 text-right text-slate-600">${money(r.value_13wk)}</td>
+          </tr>`).join('');
+
+        const el = $('closedContent');
+        const isNonMspClosed = s.dataSource === 'non_msp';
+        const cov = s.closedMeta?.coverage || {};
+
+        // The two sides ask different questions of the same stage. MSP asks
+        // who won the seat against affiliate agencies; non-MSP is GHR's direct
+        // book with no vendor panel, so capture has no meaning there and the
+        // question is how much we fill and where we lose it.
+        let closedIntel;
+        if (isNonMspClosed) {
+          const fillSeg = [
+            { label: 'Filled',   value: rows.filter(r => r.group === 'FILLED').length,   color: '#22C55E' },
+            { label: 'Unfilled', value: rows.filter(r => r.group === 'UNFILLED').length, color: '#EF4444' },
+          ];
+          const denom = fillSeg[0].value + fillSeg[1].value;
+          const comp = cov.competitive || {};
+          const lossRows = Object.entries(cov.lossBreakdown || {})
+            .sort((a, b) => b[1] - a[1]).slice(0, 5);
+          const lossList = lossRows.length ? `
+            <div class="flex flex-col gap-1 min-w-[13rem]">
+              ${lossRows.map(([k, v]) => `
+                <div class="flex items-center justify-between gap-3 text-[10px] text-slate-600">
+                  <span class="font-medium truncate">${k}</span>
+                  <span class="text-slate-400 tabular-nums">${v}</span>
+                </div>`).join('')}
+            </div>` : '<div class="text-[10px] text-slate-400">no reasons recorded</div>';
+
+          // Reason coverage differs sharply between the books (Symplr ~60%,
+          // Bullhorn ~15%), so the competitive count is a floor. Saying so on
+          // the panel keeps it from being read as a measurement.
+          const covNote = Object.entries(comp.reasonCoverage || {})
+            .map(([src, st]) => `${src} ${st.pct == null ? '—' : st.pct + '%'}`).join(' · ');
+
+          closedIntel = View.intelStrip('closed', [
+            View.intelPanel('Fill Rate',
+              View.donutSvg(fillSeg, {
+                centerLabel: denom ? Math.round((fillSeg[0].value / denom) * 100) + '%' : '—',
+                centerSub: 'filled' }),
+              View.chartLegend(fillSeg),
+              `Of ${denom} real opportunities. Cancelled orders are excluded — they stopped existing rather than going unfilled` +
+              (cov.unfilledWithoutReason ? `. ${cov.unfilledWithoutReason} unfilled carry no reason and count against the rate, so this is a floor` : '') + '.'),
+            View.intelPanel('Why We Lost',
+              lossList, '',
+              comp.total
+                ? `${comp.total} lost to a competitor${comp.pctOfOpportunities != null ? ` (${comp.pctOfOpportunities}% of opportunities)` : ''}. Reason coverage: ${covNote || 'n/a'}.`
+                : 'No competitive losses recorded in this window.'),
+          ]);
+        } else {
+          const capSeg = [
+            { label: 'GHR',       value: rows.filter(r => Utils.isGhrAgency(r.agency)).length,  color: '#3b82f6' },
+            { label: 'Affiliate', value: rows.filter(r => !Utils.isGhrAgency(r.agency)).length, color: '#a855f7' },
+          ];
+          // Account Capture is the one chart with a basis in the reference —
+          // accountCapturePie(m.capture), "Closed Market Share / Agency starts",
+          // GHR vs Affiliates, on Closed. Kept for that reason. "Why It Ended"
+          // had no counterpart and is gone; the grouped table already says it.
+          closedIntel = View.intelStrip('closed', [
+            View.intelPanel('Account Capture',
+              View.donutSvg(capSeg, { centerLabel: rows.length ? Math.round((capSeg[0].value / rows.length) * 100) + '%' : '—', centerSub: 'GHR' }),
+              View.chartLegend(capSeg),
+              'GHR share of everything that closed in this window. NOTE: share of SEATS, not of billings — say which you want.'),
+          ]);
+        }
+        if (el) el.innerHTML = View.stageShell('closed', 'Closed',
+          isNonMspClosed
+            ? 'Historical orders and how they resolved — fill rate and time to fill across Bullhorn and Symplr'
+            : 'Assignments that ended, grouped by why — reasons canonicalised across VNDLY spelling variants',
+          body, closedCols, closedIntel);
+        lucide.createIcons();
+      },
+
+      /* ------------------------------ IMPACT MEETING ------------------------------
+       * A meeting walks the four stage tabs in order, records what was decided
+       * along the way, and saves to /api/meetings so it can be reopened later.
+       *
+       * Stage order matches the tab order so "next stage" and "next tab" are the
+       * same motion — the meeting drives the nav rather than living beside it.
+       */
+      MEETING_STAGES: [
+        { view: 'closed',     label: 'Closed',     blurb: 'What ended, and why' },
+        { view: 'list',       label: 'Open Jobs',  blurb: 'What needs filling' },
+        { view: 'extensions', label: 'Extensions', blurb: 'Who needs a decision' },
+        { view: 'onboarding', label: 'Onboarding', blurb: 'Who is starting' },
+      ],
+
+      // Meeting fields are user-entered (recipients) or app-composed action
+      // text, and were being interpolated into innerHTML raw.
+      esc(v) {
+        return String(v == null ? '' : v)
+          .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+          .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+      },
+
+      meetingStageList() {
+        const m = window.store.state.meeting;
+        // An empty stages array must fall back to all four, the same way the
+        // recall chips do — `!m.stages` missed that, since [] is truthy, and
+        // would have left the banner with no stages at all.
+        const picked = (m && m.stages) || [];
+        return View.MEETING_STAGES.filter(st => !picked.length || picked.includes(st.view));
+      },
+
+      renderMeetingSetup() {
+        const s = window.store.state;
+        const sel = $('meetingSystemSelect');
+        if (sel) {
+          const systems = [...(s.filters.systems || [])].sort();
+          sel.innerHTML = `<option value="">All systems in view</option>` +
+            systems.map(x => `<option value="${x}">${x}</option>`).join('');
+        }
+        const picks = $('meetingStagePicks');
+        if (picks) {
+          picks.innerHTML = View.MEETING_STAGES.map(st => `
+            <label class="flex items-center gap-2 text-sm text-slate-700 cursor-pointer">
+              <input type="checkbox" class="meeting-stage-pick w-4 h-4" value="${st.view}" checked>
+              <span class="font-medium">${st.label}</span>
+              <span class="text-slate-400 text-xs">— ${st.blurb}</span>
+            </label>`).join('');
+        }
+        lucide.createIcons();
+        View.offerMeetingResume();
+      },
+
+      /* Looks for an unfinished meeting (no ended_at) started by this user and
+       * offers to pick it back up. Non-fatal: if the lookup fails the setup
+       * modal still works, it just doesn't offer a resume. */
+      async offerMeetingResume() {
+        const slot = $('meetingResumeSlot');
+        if (!slot) return;
+        slot.classList.add('hidden');
+        slot.innerHTML = '';
+        try {
+          const resp = await fetch(`${API_BASE_URL}/meetings?limit=20`);
+          if (!resp.ok) return;
+          const rows = await resp.json();
+          if (!Array.isArray(rows)) return;
+          const me = (typeof getCurrentUser === 'function' ? getCurrentUser() : null) || '';
+          const open = rows.find(r => !r.ended_at &&
+            (!me || !r.created_by || String(r.created_by).toLowerCase() === String(me).toLowerCase()));
+          if (!open) return;
+          slot.innerHTML = `
+            <div class="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2.5 flex items-center justify-between gap-3">
+              <div class="text-xs text-amber-900 min-w-0">
+                <div class="font-semibold">Unfinished meeting</div>
+                <div class="text-[11px] truncate">${View.esc(open.health_system || 'All systems')}
+                  · started ${open.started_at ? new Date(open.started_at).toLocaleString() : '—'}
+                  · ${(open.actions || []).length} action(s)</div>
+              </div>
+              <button onclick="store.dispatch('RESUME_MEETING','${View.esc(open.meeting_id)}')"
+                      class="shrink-0 px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white rounded-md text-xs font-semibold">
+                Resume
+              </button>
+            </div>`;
+          slot.classList.remove('hidden');
+        } catch (e) {
+          console.warn('Resume lookup failed:', e);
+        }
+      },
+
+      renderMeetingBanner() {
+        const el = $('meetingBanner');
+        if (!el) return;
+        const m = window.store.state.meeting;
+        if (!m) { el.classList.add('hidden'); el.innerHTML = ''; return; }
+        el.classList.remove('hidden');
+        const stages = View.meetingStageList();
+        const done = m.completed.length;
+        const cur = stages[m.stageIdx];
+        const pct = stages.length ? Math.round((done / stages.length) * 100) : 0;
+        el.innerHTML = `
+          <div class="bg-emerald-50 border border-emerald-200 rounded-lg px-4 py-3">
+            <div class="flex items-center justify-between gap-4 flex-wrap">
+              <div class="flex items-center gap-3">
+                <span class="px-2 py-0.5 rounded-full bg-emerald-600 text-white text-[10px] font-bold uppercase tracking-wide">Meeting</span>
+                <div>
+                  <div class="text-sm font-bold text-emerald-900">
+                    ${cur ? cur.label : 'Complete'}${m.healthSystem ? ` · ${m.healthSystem}` : ''}
+                  </div>
+                  <div class="text-[10px] text-emerald-700">
+                    ${done} of ${stages.length} stages complete${cur ? ` · ${cur.blurb}` : ''}
+                  </div>
+                </div>
+              </div>
+              <div class="flex items-center gap-2">
+                ${stages.map((st, i) => `
+                  <button onclick="store.dispatch('GOTO_MEETING_STAGE',${i})"
+                          title="${st.label}"
+                          class="w-2.5 h-2.5 rounded-full transition-colors ${
+                            m.completed.includes(st.view) ? 'bg-emerald-600'
+                            : i === m.stageIdx ? 'bg-emerald-400 ring-2 ring-emerald-300' : 'bg-emerald-200'}"></button>`).join('')}
+                <span class="text-[10px] font-semibold text-emerald-700 ml-1">${pct}%</span>
+                ${cur ? `<button onclick="store.dispatch('COMPLETE_MEETING_STAGE')"
+                        class="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-md text-xs font-semibold shadow-sm">
+                        ${m.stageIdx >= stages.length - 1 ? 'Finish' : 'Next Stage'}</button>`
+                      : `<button onclick="store.dispatch('END_MEETING')"
+                        class="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-md text-xs font-semibold shadow-sm">
+                        Save &amp; Close</button>`}
+                <button onclick="store.dispatch('END_MEETING')" title="End without finishing"
+                        class="text-emerald-700 hover:text-emerald-900 text-xs font-medium">End</button>
+              </div>
+            </div>
+          </div>`;
+        lucide.createIcons();
+      },
+
+      // Plain-text recap. Deliberately not HTML: it goes in the clipboard and an
+      // email body, and the actions are already plain strings.
+      meetingRecapText(m) {
+        const lines = [
+          `IMPACT Meeting Recap`,
+          m.healthSystem ? `Scope: ${m.healthSystem}` : `Scope: all systems in view`,
+          `Started: ${new Date(m.startedAt).toLocaleString()}`,
+          `Stages completed: ${m.completed.length} of ${View.meetingStageList().length}`,
+          '',
+        ];
+        if (!m.actions.length) lines.push('No actions were recorded.');
+        else {
+          const byStage = {};
+          m.actions.forEach(a => { (byStage[a.stage] = byStage[a.stage] || []).push(a); });
+          Object.keys(byStage).forEach(stage => {
+            lines.push(`${stage}:`);
+            byStage[stage].forEach(a => lines.push(`  • ${a.text}`));
+            lines.push('');
+          });
+        }
+        return lines.join('\n');
+      },
+
+      async saveMeeting(m, ended) {
+        try {
+          const resp = await fetch(`${API_BASE_URL}/meetings`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              meetingId: m.id,
+              healthSystem: m.healthSystem || null,
+              facilities: [...(window.store.state.filterSelection.facilities || [])],
+              recipients: m.recipients || null,
+              stage: m.stageIdx,
+              stages: m.stages || [],
+              completed: m.completed,
+              actions: m.actions,
+              recapHtml: ended ? View.meetingRecapText(m) : null,
+              startedAt: m.startedAt,
+              endedAt: ended ? new Date().toISOString() : null,
+            }),
+          });
+          if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+          return true;
+        } catch (e) {
+          console.warn('Meeting save failed:', e);
+          window.showToast?.('Meeting could not be saved: ' + (e.message || e), 'error');
+          return false;
+        }
+      },
+
+      async renderMeetingHistory() {
+        const body = $('meetingHistoryBody');
+        if (!body) return;
+        body.innerHTML = `<div class="text-slate-500 text-sm">Loading…</div>`;
+        try {
+          const resp = await fetch(`${API_BASE_URL}/meetings?limit=50`);
+          if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+          const rows = await resp.json();
+          if (!Array.isArray(rows) || !rows.length) {
+            body.innerHTML = `<div class="text-center text-slate-400 text-sm py-8">No meetings recorded yet.</div>`;
+            return;
+          }
+          body.innerHTML = `
+            <div class="rounded-lg border border-slate-200 overflow-hidden divide-y divide-slate-100">
+              ${rows.map(r => `
+                <button onclick="store.dispatch('VIEW_MEETING','${r.meeting_id}')"
+                        class="w-full text-left px-4 py-3 hover:bg-slate-50 flex items-center justify-between gap-4">
+                  <div>
+                    <div class="text-sm font-semibold text-slate-700">
+                      ${View.esc(r.health_system || 'All systems')}
+                      ${r.ended_at ? '' : '<span class="ml-2 text-[10px] font-bold text-amber-600 uppercase">in progress</span>'}
+                    </div>
+                    <div class="text-[11px] text-slate-400">
+                      ${r.started_at ? new Date(r.started_at).toLocaleString() : '—'}
+                      · ${(r.completed || []).length} stages · ${(r.actions || []).length} actions
+                      ${r.created_by ? ' · ' + View.esc(r.created_by) : ''}
+                    </div>
+                  </div>
+                  <i data-lucide="chevron-right" class="w-4 h-4 text-slate-400"></i>
+                </button>`).join('')}
+            </div>`;
+          lucide.createIcons();
+        } catch (e) {
+          body.innerHTML = `<div class="rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-xs text-amber-900">
+              <div class="font-semibold">Could not load meetings</div>
+              <div class="mt-1 font-mono text-[10px]">${e.message || e}</div>
+            </div>`;
+        }
+      },
+
+      async renderMeetingDetail(id) {
+        const body = $('meetingHistoryBody');
+        if (!body) return;
+        body.innerHTML = `<div class="text-slate-500 text-sm">Loading…</div>`;
+        try {
+          const resp = await fetch(`${API_BASE_URL}/meetings?id=${encodeURIComponent(id)}`);
+          if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+          const m = await resp.json();
+          if (m.error) throw new Error(m.error);
+          body.innerHTML = `
+            <button onclick="store.dispatch('OPEN_MEETING_HISTORY')"
+                    class="text-xs font-semibold text-blue-600 hover:text-blue-800 mb-3 flex items-center gap-1">
+              <i data-lucide="chevron-left" class="w-3 h-3"></i> All meetings
+            </button>
+            <div class="mb-4">
+              <div class="text-base font-bold text-slate-800">${View.esc(m.health_system || 'All systems')}</div>
+              <div class="text-[11px] text-slate-400">
+                ${m.started_at ? new Date(m.started_at).toLocaleString() : '—'}
+                ${m.ended_at ? ' → ' + new Date(m.ended_at).toLocaleString() : ' · not finished'}
+                ${m.created_by ? ' · ' + View.esc(m.created_by) : ''}
+              </div>
+              ${m.recipients ? `<div class="text-[11px] text-slate-500 mt-1">Recap to: ${View.esc(m.recipients)}</div>` : ''}
+            </div>
+            <!-- Chips are the stages this meeting was scoped to. Older rows
+                 saved before the stages column existed fall back to all four,
+                 which is what they effectively meant. -->
+            <div class="flex flex-wrap gap-1.5 mb-4">
+              ${View.MEETING_STAGES
+                .filter(st => !(m.stages || []).length || m.stages.includes(st.view))
+                .map(st => `
+                <span class="px-2 py-1 rounded text-[10px] font-bold ${
+                  (m.completed || []).includes(st.view)
+                    ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-400'}">${st.label}</span>`).join('')}
+              ${(m.stages || []).length && m.stages.length < View.MEETING_STAGES.length
+                ? `<span class="px-2 py-1 rounded text-[10px] text-slate-400">${
+                    View.MEETING_STAGES.length - m.stages.length} stage(s) not in scope</span>` : ''}
+            </div>
+            <h4 class="text-xs font-bold uppercase tracking-wide text-slate-500 mb-2">Actions Recorded</h4>
+            ${(m.actions || []).length
+              ? `<div class="rounded-lg border border-slate-200 divide-y divide-slate-100">
+                  ${m.actions.map(a => `<div class="px-3 py-2 text-xs">
+                      <span class="font-semibold text-slate-500 mr-2">${View.esc(a.stage || '—')}</span>
+                      <span class="text-slate-700">${View.esc(a.text || '')}</span>
+                      ${a.at ? `<span class="text-slate-300 ml-2">${new Date(a.at).toLocaleString()}</span>` : ''}
+                    </div>`).join('')}
+                </div>`
+              : `<div class="text-slate-400 text-xs">Nothing was recorded.</div>`}
+            ${m.recap_html ? `<h4 class="text-xs font-bold uppercase tracking-wide text-slate-500 mt-4 mb-2">Recap As Sent</h4>
+              <pre class="bg-slate-50 border border-slate-200 rounded p-3 text-[11px] whitespace-pre-wrap">${View.esc(m.recap_html)}</pre>` : ''}`;
+          lucide.createIcons();
+        } catch (e) {
+          body.innerHTML = `<div class="rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-xs text-amber-900">
+              <div class="font-semibold">Could not load that meeting</div>
+              <div class="mt-1 font-mono text-[10px]">${e.message || e}</div>
+            </div>`;
+        }
+      },
+
+
+      /*
+       * Legend bands per view. The colours mean different things by tab and the
+       * reference treats them accordingly: on Open Jobs a high number is bad
+       * (aging), on Extensions a LOW number is bad (running out of runway), and
+       * Onboarding / Closed band by outcome rather than by days at all. One
+       * shared five-band list would have been wrong on three of the four tabs.
+       *
+       * Chips OR together — picking two bands widens the view rather than
+       * narrowing it to their intersection, which for disjoint day-bands would
+       * always be empty.
+       *
+       * Open Jobs keeps min/max so its chips continue to drive the same
+       * ageMin/ageMax the Days Age inputs write; the other views carry a
+       * predicate because their bands aren't a numeric range on one field.
+       */
+      LEGEND_BANDS: {
+        list: [
+          { key: '1-5',   label: '1-5 Days',   dot: 'bg-[#22C55E]', min: 1,  max: 5 },
+          { key: '6-10',  label: '6-10 Days',  dot: 'bg-[#FACC15]', min: 6,  max: 10 },
+          { key: '11-15', label: '11-15 Days', dot: 'bg-[#EF4444]', min: 11, max: 15 },
+          { key: '16+',   label: '16+ Days',   dot: 'bg-red-800',   min: 16, max: null },
+          { key: 'perm',  label: 'Perm',       dot: 'border border-slate-500 bg-white', perm: true },
+        ],
+        extensions: [
+          { key: 'e7',  label: '≤7 Days Left',    dot: 'bg-red-800',   pred: r => r.days_left != null && r.days_left <= 7 },
+          { key: 'e14', label: '8-14 Days Left',  dot: 'bg-[#EF4444]', pred: r => r.days_left > 7 && r.days_left <= 14 },
+          { key: 'e21', label: '15-21 Days Left', dot: 'bg-[#FACC15]', pred: r => r.days_left > 14 && r.days_left <= 21 },
+          { key: 'e22', label: '22+ Days Left',   dot: 'bg-[#22C55E]', pred: r => r.days_left > 21 },
+        ],
+        onboarding: [
+          { key: 'ontrack', label: 'On Track',    dot: 'bg-[#22C55E]', pred: r => View.onboardingGroup(r) === 'ON TRACK' },
+          { key: 'moved',   label: 'Start Moved', dot: 'bg-[#FACC15]', pred: r => View.onboardingGroup(r) === 'START DATE CHANGED' },
+          { key: 'delayed', label: 'Delayed',     dot: 'bg-[#EF4444]', pred: r => View.onboardingGroup(r) === 'DELAYED START' },
+          { key: 'cancel',  label: 'Cancelled',   dot: 'bg-red-800',   pred: r => View.onboardingGroup(r) === 'CANCELED' },
+        ],
+        closed: [
+          { key: 'lifecycle', label: 'Ran To Term',  dot: 'bg-[#22C55E]', pred: r => /lifecycle|complete/i.test(r.group || '') },
+          { key: 'ended',     label: 'Ended Early',  dot: 'bg-[#EF4444]', pred: r => /terminat|resign/i.test(r.group || '') },
+          { key: 'cancelled', label: 'Cancelled',    dot: 'bg-red-800',   pred: r => /cancel/i.test(r.group || '') },
+          { key: 'admin',     label: 'Administrative', dot: 'bg-slate-400', pred: r => /admin/i.test(r.group || '') },
+        ],
+      },
+
+      legendBands() {
+        // Priority Jobs is Open Jobs filtered, so it shares its bands.
+        const v = window.store.state.view;
+        return View.LEGEND_BANDS[v === 'hotjobs' ? 'list' : v] || null;
+      },
+
+      // OR across selected bands. Returns true when nothing is selected.
+      legendMatch(r) {
+        const sel = window.store.state.filters.legendBands;
+        if (!sel || !sel.size) return true;
+        const bands = View.legendBands();
+        if (!bands) return true;
+        for (const key of sel) {
+          const b = bands.find(x => x.key === key);
+          if (b && b.pred && b.pred(r)) return true;
+        }
+        return false;
       },
 
       kpis(list) {
@@ -9535,7 +11277,20 @@
         perDiemFromMonth: null,
         perDiemToMonth: null,
         perDiemGHROnly: true,
-        filters: { systems: new Set(), facilities: new Set(), categories: new Set(), specialties: new Set(), ageMin: null, ageMax: null, searchId: '' },
+        // ---- Stage views (Closed / Extensions / Onboarding) and the IMPACT
+        // meeting. These are non-MSP only for now; on MSP the tabs stay hidden
+        // and every field below simply goes unread.
+        extFilter: { endFrom: '', endTo: '', status: 'All' },
+        rowDetailTab: {},
+        extensionsRows: [], extensionsMeta: null, extensionsLoaded: false, extensionsError: null,
+        onboardingRows: [], onboardingMeta: null, onboardingLoaded: false, onboardingError: null,
+        closedRows: [], closedMeta: null, closedLoaded: false, closedError: null,
+        workspaceState: {},
+        expandedExtensions: new Set(),
+        expandedOnboarding: new Set(),
+        intelOpen: {},
+        meeting: null,
+        filters: { systems: new Set(), facilities: new Set(), categories: new Set(), specialties: new Set(), ageMin: null, ageMax: null, permOnly: false, legendBands: new Set(), searchId: '' },
         filterSelection: {
           systems: new Set(), facilities: new Set(), categories: new Set(), specialties: new Set(),
           // Non-MSP filter dimensions — populated from the API's division/region/customText fields.
@@ -9728,6 +11483,436 @@
             case 'SET_SEARCH_ID': {
               const val = document.getElementById('searchId').value;
               s.filters.searchId = val.trim().toLowerCase();
+              View.main();
+              break;
+            }
+
+            case 'TOGGLE_INTEL': {
+              s.intelOpen[payload] = s.intelOpen[payload] === false;
+              View[payload]?.();
+              break;
+            }
+
+            case 'SORT_STAGE': {
+              const { view, label } = payload || {};
+              const cur = View.stageSort[view];
+              // Third click clears rather than cycling forever back to asc, so
+              // the view's own default ordering is reachable again.
+              if (cur && cur.label === label) {
+                View.stageSort[view] = cur.dir === 'asc' ? { label, dir: 'desc' } : {};
+              } else {
+                View.stageSort[view] = { label, dir: 'asc' };
+              }
+              View[view]?.();
+              break;
+            }
+
+            case 'FILTER_STAGE': {
+              const { view, label, value } = payload || {};
+              View.stageColFilter[view] = View.stageColFilter[view] || {};
+              View.stageColFilter[view][label] = value;
+              View[view]?.();
+              break;
+            }
+
+            case 'RESET_STAGE_TABLE': {
+              View.stageSort[payload] = {};
+              View.stageColFilter[payload] = {};
+              View[payload]?.();
+              break;
+            }
+
+            case 'SAVE_INTERVIEW': {
+              const { jobId, name, stage } = payload || {};
+              const key = `${jobId}|${name || ''}`;
+              (async () => {
+                try {
+                  const resp = await fetch(`${API_BASE_URL}/workspace-state`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify([{ scope: 'interview', entityId: key, state: { stage } }]),
+                  });
+                  if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                  s.workspaceState.interview = s.workspaceState.interview || {};
+                  s.workspaceState.interview[key] = {
+                    state: { stage }, updatedAt: new Date().toISOString(),
+                    updatedBy: (typeof getCurrentUser === 'function' ? getCurrentUser() : null),
+                  };
+                  if (s.meeting) {
+                    window.store.dispatch('LOG_MEETING_ACTION', `${name || 'Candidate'} marked “${stage}” on job ${jobId}`);
+                  }
+                  View.rowUpdate(jobId);
+                } catch (e) {
+                  console.warn('Interview save failed:', e);
+                  window.showToast?.('Could not save: ' + (e.message || e), 'error');
+                }
+              })();
+              break;
+            }
+
+            case 'SAVE_CONTRACT_MARGIN': {
+              const id = payload;
+              const raw = document.querySelector(`.ct-margin[data-id="${id}"]`)?.value ?? '';
+              const pct = parseFloat(raw);
+              if (raw !== '' && (!isFinite(pct) || pct < 0 || pct > 100)) {
+                window.showToast?.('GM% must be between 0 and 100.', 'error');
+                break;
+              }
+              // Blank clears the override and falls back to the configured default.
+              const state = raw === '' ? null : { pct };
+              (async () => {
+                try {
+                  const resp = await fetch(`${API_BASE_URL}/workspace-state`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify([{ scope: 'margin', entityId: String(id), state }]),
+                  });
+                  if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                  s.workspaceState.margin = s.workspaceState.margin || {};
+                  if (state) {
+                    s.workspaceState.margin[String(id)] = {
+                      state, updatedAt: new Date().toISOString(),
+                      updatedBy: (typeof getCurrentUser === 'function' ? getCurrentUser() : null),
+                    };
+                  } else {
+                    delete s.workspaceState.margin[String(id)];
+                  }
+                  if (s.meeting) {
+                    window.store.dispatch('LOG_MEETING_ACTION',
+                      state ? `GM% set to ${pct}% on ${id}` : `GM% override cleared on ${id}`);
+                  }
+                  window.showToast?.(state ? `GM% set to ${pct}%.` : 'GM% override cleared.', 'success');
+                  View.extensions(); View.onboarding();
+                } catch (e) {
+                  console.warn('Margin save failed:', e);
+                  window.showToast?.('Could not save: ' + (e.message || e), 'error');
+                }
+              })();
+              break;
+            }
+
+            case 'TOGGLE_ONBOARDING_ROW': {
+              if (s.expandedOnboarding.has(payload)) s.expandedOnboarding.delete(payload);
+              else s.expandedOnboarding.add(payload);
+              View.onboarding();
+              break;
+            }
+
+            case 'SAVE_ONBOARDING': {
+              const id = payload;
+              const currentStart = document.querySelector(`.onb-start[data-id="${id}"]`)?.value || '';
+              const delayCategory = document.querySelector(`.onb-category[data-id="${id}"]`)?.value || 'None';
+              const context = document.querySelector(`.onb-context[data-id="${id}"]`)?.value || '';
+              const row = (s.onboardingRows || []).find(r => r.id === id);
+              const moved = View.onboardingSlip(row || {});
+              // The reference requires context when the date has moved since the
+              // last review. Enforce it rather than saving a move with no reason.
+              if (moved && !context.trim()) {
+                window.showToast?.('Add context — the start moved since it was last recorded.', 'error');
+                break;
+              }
+              const state = { currentStart, delayCategory, context };
+              (async () => {
+                try {
+                  const resp = await fetch(`${API_BASE_URL}/workspace-state`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify([{ scope: 'onboarding', entityId: id, state }]),
+                  });
+                  if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                  s.workspaceState.onboarding = s.workspaceState.onboarding || {};
+                  s.workspaceState.onboarding[id] = {
+                    state, updatedAt: new Date().toISOString(),
+                    updatedBy: (typeof getCurrentUser === 'function' ? getCurrentUser() : null),
+                  };
+                  if (s.meeting) {
+                    const who = row ? `${row.clinician || 'seat ' + id}${row.facility ? ' · ' + row.facility : ''}` : `seat ${id}`;
+                    window.store.dispatch('LOG_MEETING_ACTION',
+                      `Start for ${who} recorded as ${currentStart}` +
+                      (delayCategory !== 'None' ? ` (${delayCategory})` : '') +
+                      (moved ? ` — moved ${moved > 0 ? '+' : ''}${moved}d` : ''));
+                  }
+                  window.showToast?.('Start update saved.', 'success');
+                  View.onboarding();
+                } catch (e) {
+                  console.warn('Onboarding save failed:', e);
+                  window.showToast?.('Could not save: ' + (e.message || e), 'error');
+                }
+              })();
+              break;
+            }
+
+            case 'TOGGLE_EXTENSION_ROW': {
+              if (s.expandedExtensions.has(payload)) s.expandedExtensions.delete(payload);
+              else s.expandedExtensions.add(payload);
+              View.extensions();
+              break;
+            }
+
+            case 'SAVE_EXTENSION': {
+              const id = payload;
+              // Read straight off the open detail — the inputs are the source of
+              // truth until saved, so nothing is mirrored into state twice.
+              const decision = document.querySelector(`.ext-decision[data-id="${id}"]`)?.value || 'Not Requested';
+              const notes = document.querySelector(`.ext-notes[data-id="${id}"]`)?.value || '';
+              const steps = {};
+              document.querySelectorAll(`.ext-step[data-id="${id}"]`).forEach(cb => {
+                steps[cb.dataset.step] = cb.checked;
+              });
+              const state = { decision, notes, steps };
+              (async () => {
+                try {
+                  const resp = await fetch(`${API_BASE_URL}/workspace-state`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify([{ scope: 'extension', entityId: id, state }]),
+                  });
+                  if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                  // Reflect locally so the badge and grouping update without a reload.
+                  s.workspaceState.extension = s.workspaceState.extension || {};
+                  s.workspaceState.extension[id] = {
+                    state, updatedAt: new Date().toISOString(),
+                    updatedBy: (typeof getCurrentUser === 'function' ? getCurrentUser() : null),
+                  };
+                  // Same funnel the job mutations use, so an extension decision
+                  // lands in the meeting recap like everything else.
+                  if (s.meeting) {
+                    const row = (s.extensionsRows || []).find(r => r.id === id);
+                    const who = row ? `${row.clinician || 'seat ' + id}${row.facility ? ' · ' + row.facility : ''}` : `seat ${id}`;
+                    window.store.dispatch('LOG_MEETING_ACTION', `Extension decision “${decision}” for ${who}`);
+                  }
+                  window.showToast?.('Extension updated.', 'success');
+                  View.extensions();
+                } catch (e) {
+                  console.warn('Extension save failed:', e);
+                  window.showToast?.('Could not save: ' + (e.message || e), 'error');
+                }
+              })();
+              break;
+            }
+
+            case 'OPEN_MEETING_SETUP': {
+              View.renderMeetingSetup();
+              $('meetingSetupModal')?.classList.remove('hidden');
+              break;
+            }
+
+            case 'CLOSE_MEETING_SETUP': {
+              $('meetingSetupModal')?.classList.add('hidden');
+              break;
+            }
+
+            case 'START_MEETING': {
+              const picks = [...document.querySelectorAll('.meeting-stage-pick')]
+                .filter(c => c.checked).map(c => c.value);
+              if (!picks.length) {
+                window.showToast?.('Pick at least one stage.', 'error');
+                break;
+              }
+              const sys = $('meetingSystemSelect')?.value || '';
+              s.meeting = {
+                // Timestamp-based id: the MERGE upserts on it, so saving
+                // repeatedly through a meeting updates one row.
+                id: 'M' + Date.now(),
+                healthSystem: sys || null,
+                recipients: ($('meetingRecipients')?.value || '').trim() || null,
+                stages: picks,
+                stageIdx: 0,
+                completed: [],
+                actions: [],
+                startedAt: new Date().toISOString(),
+              };
+              // Scoping the meeting to a system drives the real filter, so every
+              // tab is already narrowed rather than the banner claiming a scope
+              // the data ignores.
+              if (sys) {
+                s.filterSelection.systems = new Set([sys]);
+                View.updateAllFilterOptions('systems');
+              }
+              $('meetingSetupModal')?.classList.add('hidden');
+              s.view = picks[0];
+              View.saveMeeting(s.meeting, false);
+              View.viewToggle();
+              View.renderMeetingBanner();
+              View.main();
+              break;
+            }
+
+            case 'RESUME_MEETING': {
+              // Rebuild the in-memory meeting from its saved row. The id is
+              // reused, so the MERGE keeps updating the same record rather than
+              // forking a second one.
+              (async () => {
+                try {
+                  const resp = await fetch(`${API_BASE_URL}/meetings?id=${encodeURIComponent(payload)}`);
+                  if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                  const r = await resp.json();
+                  if (r.error) throw new Error(r.error);
+                  const stages = (r.stages || []).length
+                    ? r.stages
+                    : View.MEETING_STAGES.map(st => st.view);
+                  s.meeting = {
+                    id: r.meeting_id,
+                    healthSystem: r.health_system || null,
+                    recipients: r.recipients || null,
+                    stages,
+                    stageIdx: Number.isInteger(r.stage) ? r.stage : 0,
+                    completed: r.completed || [],
+                    actions: r.actions || [],
+                    startedAt: r.started_at || new Date().toISOString(),
+                  };
+                  if (r.health_system) {
+                    s.filterSelection.systems = new Set([r.health_system]);
+                    View.updateAllFilterOptions('systems');
+                  }
+                  const list = View.meetingStageList();
+                  const at = list[s.meeting.stageIdx] || list[0];
+                  if (at) s.view = at.view;
+                  $('meetingSetupModal')?.classList.add('hidden');
+                  View.viewToggle();
+                  View.renderMeetingBanner();
+                  View.main();
+                  window.showToast?.('Meeting resumed.', 'success');
+                } catch (e) {
+                  console.warn('Resume failed:', e);
+                  window.showToast?.('Could not resume: ' + (e.message || e), 'error');
+                }
+              })();
+              break;
+            }
+
+            case 'GOTO_MEETING_STAGE': {
+              const m = s.meeting;
+              if (!m) break;
+              const stages = View.meetingStageList();
+              const st = stages[payload];
+              if (!st) break;
+              m.stageIdx = payload;
+              s.view = st.view;
+              View.viewToggle();
+              View.renderMeetingBanner();
+              View.main();
+              break;
+            }
+
+            case 'COMPLETE_MEETING_STAGE': {
+              const m = s.meeting;
+              if (!m) break;
+              const stages = View.meetingStageList();
+              const st = stages[m.stageIdx];
+              if (st && !m.completed.includes(st.view)) m.completed.push(st.view);
+              if (m.stageIdx < stages.length - 1) {
+                m.stageIdx += 1;
+                s.view = stages[m.stageIdx].view;
+              } else {
+                // Past the last stage: banner switches to Save & Close.
+                m.stageIdx = stages.length;
+              }
+              View.saveMeeting(m, false);
+              View.viewToggle();
+              View.renderMeetingBanner();
+              View.main();
+              break;
+            }
+
+            case 'LOG_MEETING_ACTION': {
+              // Anything the meeting should remember. Only recorded while a
+              // meeting is running, so normal use writes nothing.
+              const m = s.meeting;
+              if (!m || !payload) break;
+              const stages = View.meetingStageList();
+              m.actions.push({
+                stage: (stages[m.stageIdx] || stages[stages.length - 1] || {}).label || '—',
+                text: String(payload).slice(0, 500),
+                at: new Date().toISOString(),
+              });
+              View.saveMeeting(m, false);
+              break;
+            }
+
+            case 'END_MEETING': {
+              const m = s.meeting;
+              if (!m) break;
+              (async () => {
+                const ok = await View.saveMeeting(m, true);
+                if (!ok) {
+                  // The final save is the only copy — s.meeting lives in memory
+                  // and nothing else holds the recap. Keep the meeting open so
+                  // End can be pressed again rather than losing it.
+                  window.showToast?.('Meeting NOT saved — still open, try End again.', 'error');
+                  View.renderMeetingBanner();
+                  return;
+                }
+                const recap = View.meetingRecapText(m);
+                try { await navigator.clipboard.writeText(recap); } catch {}
+                window.showToast?.('Meeting saved. Recap copied to clipboard.', 'success');
+                s.meeting = null;
+                View.renderMeetingBanner();
+              })();
+              break;
+            }
+
+            case 'OPEN_MEETING_HISTORY': {
+              $('meetingHistoryModal')?.classList.remove('hidden');
+              View.renderMeetingHistory();
+              break;
+            }
+
+            case 'CLOSE_MEETING_HISTORY': {
+              $('meetingHistoryModal')?.classList.add('hidden');
+              break;
+            }
+
+            case 'VIEW_MEETING': {
+              View.renderMeetingDetail(payload);
+              break;
+            }
+
+            case 'SET_EXT_FILTER': {
+              s.extFilter = {
+                endFrom: $('extensionEndFrom')?.value || '',
+                endTo:   $('extensionEndTo')?.value   || '',
+                status:  $('extensionStatusFilter')?.value || 'All',
+              };
+              View.main();
+              break;
+            }
+
+            case 'CLEAR_EXT_FILTERS': {
+              s.extFilter = { endFrom: '', endTo: '', status: 'All' };
+              const ef = $('extensionEndFrom'), et = $('extensionEndTo'), es = $('extensionStatusFilter');
+              if (ef) ef.value = ''; if (et) et.value = ''; if (es) es.value = 'All';
+              View.main();
+              break;
+            }
+
+            case 'TOGGLE_LEGEND_BAND': {
+              const bands = View.legendBands() || [];
+              const b = bands.find(x => x.key === payload);
+              if (!b) break;
+              // Predicate bands (Extensions / Onboarding / Closed) OR together.
+              if (b.pred) {
+                if (s.filters.legendBands.has(b.key)) s.filters.legendBands.delete(b.key);
+                else s.filters.legendBands.add(b.key);
+                View.legend();
+                View.main();
+                break;
+              }
+              if (b.perm) {
+                s.filters.permOnly = !s.filters.permOnly;
+                if (s.filters.permOnly) { s.filters.ageMin = null; s.filters.ageMax = null; }
+              } else {
+                const already = s.filters.ageMin === b.min && s.filters.ageMax === b.max && !s.filters.permOnly;
+                s.filters.permOnly = false;
+                s.filters.ageMin = already ? null : b.min;
+                s.filters.ageMax = already ? null : b.max;
+              }
+              // Mirror into the Days Age inputs so the two controls never
+              // disagree about what is filtered.
+              const minEl = $('minAge'), maxEl = $('maxAge');
+              if (minEl) minEl.value = s.filters.ageMin ?? '';
+              if (maxEl) maxEl.value = s.filters.ageMax ?? '';
+              View.legend();
               View.main();
               break;
             }
