@@ -79,3 +79,20 @@ def require_allowed_domain(req):
             mimetype='application/json',
         )
     return None
+
+
+def current_user_email(req) -> str:
+    """Caller's email, or '' when unauthenticated.
+
+    Only safe to use after require_allowed_domain() has passed — it re-reads
+    the same header rather than trusting anything client-supplied, so writes
+    are attributed to the signed-in principal and not to a request body field.
+    """
+    raw = req.headers.get('x-ms-client-principal')
+    if not raw:
+        return ''
+    try:
+        principal = json.loads(base64.b64decode(raw).decode('utf-8'))
+    except Exception:
+        return ''
+    return _extract_email(principal)

@@ -2,6 +2,116 @@
 
 ## Version History
 
+**3.1.0** - Closed stage on non-MSP
+
+The Closed stage now runs on the non-MSP side, re-anchored on fill outcome instead of vendor capture. MSP asks who won a seat against affiliate agencies; non-MSP is GHR's direct book with no panel to compete against, so the stage answers what the meeting actually needs there — fill rate and velocity over historical orders.
+
+Orders resolve into FILLED / UNFILLED / CANCELED across Bullhorn and Symplr. Fill rate is `FILLED / (FILLED + UNFILLED)`; cancellations are excluded from the denominator because those orders stopped existing rather than going unfilled. Velocity is measured per order and reported as mean and median.
+
+### Four measurement traps found on the way
+
+Each of these produces a plausible wrong number rather than an error, which is how the earlier filter defects behaved too.
+
+- **Bullhorn's `Archive` status is not an outcome.** It is the largest status on the book — 38,062 orders in 180 days — and not one has ever carried a placement. They spread evenly across major systems, the signature of an inbound feed that is ingested and auto-archived rather than worked. Counted as unfilled they report a 5% fill rate against a real 52%. Excluded.
+- **Bullhorn's `Filled` status lies.** Of 269 orders marked Filled, 12 have a placement; `Placed` carries 2,204 of 2,279. Fill is derived from placement existence, never from the status label.
+- **`dateClosed` is populated on zero resolved orders** despite existing in the schema. `dateLastModified` covers 100% and anchors unfilled orders; filled orders anchor on their placement date.
+- **Symplr velocity cannot use `date_start`.** Orders are routinely logged after the shift begins, so `date_entered → date_start` averages *negative four days*. `BookedByDT` is populated on 100% of fills and never precedes entry.
+
+### Fill rate has an honest denominator
+
+Symplr's `voidreason` separates orders GHR lost (Filled by Competition, Unable to Fill, Filled by Internal Staff) from orders that stopped existing (Scheduling Error, Census Dropped). Leaving the latter in understates the rate by about seven points — 63.9% raw against 70.9% on true opportunities. Voids with no recorded reason, 40% of them, fall through to unfilled and count against the rate; that count is reported in `coverage.unfilledWithoutReason` so the figure is quoted as a floor rather than a point estimate.
+
+Symplr `lt_order` carries no bill or pay rate, only `ratecode` and `rateSheetID`. Those fields stay null and 13-week value is Bullhorn-only, rather than being filled with a guess.
+
+### Where we lose shifts
+
+`coverage.competitive` rolls competitive losses up by health system, facility, credential and service line, each reporting how many entries were omitted so a top-15 is never mistaken for the whole list. The full void vocabulary — 13 values over a year — is mapped exhaustively rather than by prefix, so a reason Symplr starts writing tomorrow surfaces under its own name instead of being folded into a neighbouring bucket.
+
+Two things the breakdown makes obvious. **Competitors are not the main threat: clients filling shifts with their own staff outnumber competitive losses roughly ten to one** (166 against 17 in a 30-day window). And `No Show` / `Call-out` / `DNR` are separated as *Clinician fell through* — those shifts were booked and then failed, which is a service problem, not a sourcing one, and lumping them under "unable to fill" would point the meeting at the wrong fix.
+
+This is Symplr-only. Bullhorn job orders carry no cancellation-reason field, so a competitive loss there is indistinguishable from any other unfilled order; the payload names its sources rather than implying book-wide coverage.
+
+### Bullhorn's own close reasons
+
+`View_JobOrder.reasonClosed` exists and carries a real vocabulary, including an explicit `Lost to Competition` and a named competitor (`Filled by HCTec Partners`). It is wired in, with a hard limit on what it may be used for.
+
+Book-wide the field has run at 1.3%-3.8% for six years — not abandoned, just rarely filled in. Within the thirteen accounts this app actually scopes to it is better, 35.7% all-time, but carries only **8** `Lost to Competition` rows ever, against 2,585 outside that scope. So Bullhorn close reasons label individual orders and must never drive a competitive *rate*; `coverage.competitive.reasonCoverage` reports the populated share per source so the counts read as a floor.
+
+Three of its values — `Duplicate`, `Data Cleanup - Admin`, `System Error` — are data artifacts rather than lost work, and now leave the fill-rate denominator alongside Symplr's `Scheduling Error`.
+
+The more useful discovery is adjacent: `View_Placement.terminationReason` is populated on 21.9% of placements with an operational vocabulary (Candidate Cancellation 2,852, Company Cancellation 1,513, GHR Cancellation 1,074). That is fallout data, and it belongs to the Onboarding and Extensions stages rather than to Closed.
+
+### Velocity is reported as median, not just mean
+
+Mean days-to-fill is 6.6 against a **median of 0** — most shifts book same-day and a long tail drags the average. Both are returned; the mean alone would describe a book that doesn't exist.
+
+## Extensions on non-MSP
+
+133 seats ending inside the 45-day horizon (34 Bullhorn, 99 Symplr), banded by urgency on the same legend MSP uses.
+
+Bullhorn does something neither MSP source can: it shows the seat's real extension history. `EditHistoryPlacement` records every change to `dateEnd` with old and new values, so an extension is an edit where the end date moved *later* — not an inference from a parent-contract chain (B4) or a reason-text match (VNDLY). Count, date and the user who made it come straight from the audit trail, and the note writes itself: *"End date moved 2026-08-22 to 2026-08-29"*, by Joe Andrews.
+
+Symplr has no such trail. `original_lt_orderid` looks like B4's parent chain but is populated on 2 rows out of 4,735 in a year, so it is read and flagged where present and relied on nowhere. Its 99 seats are genuine long-term assignments rather than per-diem shifts — the average span in the window is 139 days.
+
+Neither book has a VMS decision feed, so `decision_state` is `Not tracked in Bullhorn` / `Not tracked in Symplr` on every row and the decision is whatever the meeting records. Unlike MSP, that means the stage starts empty and earns its value after a few meetings.
+
+### Fields that were blank and now aren't
+
+`lt_order.tempid` and `BookedByUserID` resolve to the assigned clinician and the internal booker on 100% of filled orders; both were coming back empty. An extension conversation without the clinician's name is most of the way to useless. The same join was missing on Closed. On Bullhorn, `hiring_manager` comes from the placement's client contact, which resolves on 100% of live seats — `jo.reportToClientContactID` is never populated and would have looked like the obvious choice.
+
+What stays blank is blank at the source: Bullhorn has no department, unit or cost-centre column on either the job order or the placement, and Symplr `lt_order` carries no rate, so 13-week extension value is Bullhorn-only.
+
+## Onboarding on non-MSP
+
+Seats starting in the -30/+45 day window, grouped ON TRACK / DELAYED START / CANCELED on the same rules MSP uses.
+
+Bullhorn measures start-date slip properly, which B4 cannot. `EditHistoryPlacement` records every change to `dateBegin` with old and new values, so the planned start is what the first edit replaced and the slip is a real day count — B4 carries only a Yes/No `Delayed Starts` flag. On the live window: 30 of 62 seats have measurable movement, median slip 1 day, longest 364.
+
+`onboardingStatus` is a genuine progress field on this book (Initiated 4,270, Completed 1,506, In Progress 169, Cancelled 298 over a year) with no MSP equivalent.
+
+Symplr can't measure movement at all: no audit trail on `lt_order`, `temp_confirm_date` and `client_confirm_date` both 0% populated, and `StatusChangeLog` keyed on WorkerID rather than the order. Those rows carry `movement_tracked: false` and a null day count, so the UI shows "not tracked" rather than a zero that would read as *started on time*.
+
+### The planned start is the first edit, not the earliest date
+
+`MIN(oldValue)` looks like the original start and answers a different question — the earliest date ever *proposed*. The two diverge whenever a start is pulled earlier before being pushed back. One seat in thirty on the live window, but it reported a 392-day slip where the truth is 364. The planned start is now the value the chronologically first edit replaced.
+
+**3.0.0** - IMPACT Meeting Workflow
+
+The facilitated IMPACT meeting, merged into the app we already ship rather than replacing it with the marketing prototype's shell. PR #58 carries additive backend work plus native views; the prototype's own UI is dropped.
+
+### The meeting layer
+
+Start IMPACT Meeting scopes a session to a health system, walks the chosen stages in order, records every mutation made along the way, and saves to `impactmgr.meetings` so a meeting can be reopened later. Past meetings list from the same table, with the recap stored exactly as it was sent.
+
+Meeting state lives in memory during the session, so the persistence path matters more than it looks: the stage scope is saved (not just progress), a failed final save keeps the meeting open rather than discarding the only copy, and an unfinished meeting can be resumed from setup — reusing its id so the MERGE keeps updating one row.
+
+### Ten tabs, one layout
+
+Closed · Open Jobs · Extensions · Onboarding · Priority Jobs · Trends · Per Diem · Revenue · Contracts · Pending.
+
+`viewToggle` was a hand-rolled list where every tab appeared in three places; it is now driven by a single `View.VIEWS` table, because adding three tabs to the old shape meant remembering all three spots — the same drift that kept losing the GHR/Affiliate guards.
+
+Extensions, Onboarding and Closed render in the app's own table + tile idiom, with frozen headers, per-column sort and filter, coloured legend bands and six KPI cards.
+
+The scaffolded donut charts are gone. Checked against the v24.6 reference, which puts its charts (6-week `lineChart`s) in the **stage overview modals**, not on the table views: Extensions' Runway and Decision Mix and Onboarding's Start Status and Vendor Split had no counterpart at all. Runway also duplicated the coloured legend bands, which show the same split and are clickable, and Decision Mix could only ever render one grey ring until decisions are recorded. Closed keeps **Account Capture**, the one chart with a basis in the reference (`accountCapturePie` — "Closed Market Share / Agency starts", GHR vs Affiliates); its "Why It Ended" companion went, since the grouped table already says that.
+
+Extension Search now has its own always-visible bar above the Extensions table rather than living inside the collapsible Analysis strip — it is a control, not analysis, and collapsing Analysis hid it. All ten tabs put their KPI cards in the shared `#kpiContainer` above the tab row, so nothing shifts between tabs. **The page scrolls on desktop.** It used to be pinned to the viewport (`body ... md:h-screen md:overflow-hidden`), so every table was `flex-1` — it got whatever height was left after the app header, filter bar, KPI row, tab heading and Analysis strip. On Closed that was four rows in a sliver with its own scrollbar, and no way to scroll the page to reclaim the space. The page now scrolls, the wrappers size to their content, and each table is a `70vh` window with its frozen header sticking inside it — so scrolling down moves the chrome off-screen and leaves the table filling most of the display. All three read B4 + VNDLY with no `is_non_msp` branch, so they are MSP-only and a request for one bounces to Open Jobs rather than opening a dead view.
+
+Row-detail sub-tabs on List rows: Levers (still the default) plus Rate, Pipeline and Placements. Pipeline splits GHR vs Affiliate by stage. GM% is the configured margin rate or the per-job override; the bill/pay split the new endpoints return is an MSP *fee* split and is never labelled as margin.
+
+### Data corrections found on the way
+
+Most of these came from checking the queries against live data rather than reading them.
+
+- **Onboarding start slip is now real.** `STAGING_VNDLY_JOBS` holds the start as of the application and keeps it when the work order's start moves, so it serves as a planned start (96.6% control match). Getting its grain right exposed three defects in one CTE: the join fanned out across every seat on a requisition, `hours_per_week` was therefore the largest value on the whole req rather than this seat's (177 reqs differ across seats), and `days_delayed` was hardcoded null on VNDLY while referencing a dropped alias on B4 — which made the entire B4 branch invalid and silently swallowed.
+- **Per Diem open orders were filtered to the past.** Unfilled requisitions start in the future; the drill-down applied the worked-shift date cap, hiding 91 of 104 live open orders and all three Per Diem ones.
+- **The Pipeline interview stage read a field that is almost never populated.** B4 carries no interview date at all and VNDLY fills one on 1.3% of submissions, so interview is a stage users record in the app — and reading the raw date discarded all of them.
+- **Placements read fields that don't exist** on the stats payload, and compared job title against care type, so the pane was usually empty.
+- Margin now has one read path over two stores, with the configured default marked as an assumption rather than presented as a decision.
+- Date-only values stop shifting a day, and "not tracked" is shown wherever a source genuinely cannot answer — never a confident zero.
+
+Where a source can't support something the prototype showed, the app says so instead of inventing it.
+
 **2.2.10** - Non-MSP: division rollups (Travel/Planet→Nursing, Human Services→Education, LTC→Non-Acute)
 
 Extends the 2.2.9 alias map with the remaining org changes Bullhorn's `correlatedCustomText1` hasn't caught up with:
