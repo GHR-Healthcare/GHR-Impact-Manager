@@ -2738,8 +2738,15 @@
         if (!filterVal) return true;
         const p = String(program || '').toLowerCase();
         const f = String(filterVal || '').toLowerCase();
-        if (f === 'all nursing') return CONSTANTS.NURSING_KEYWORDS.some(k => p.includes(k));
-        if (f === 'all allied') return CONSTANTS.ALLIED_KEYWORDS.some(k => p.includes(k));
+        // Sentinels test the PROGRAM, which is a short controlled vocabulary
+        // ("Travel Nursing", "Local Contract Allied Health", "Per Diem
+        // (Allied)"...), not free specialty text. Checked against all 28
+        // distinct programs in B4 + VNDLY, 'nurs' and 'allied' classify every
+        // one correctly. The keyword lists are for specialty text and misfire
+        // here: ALLIED_KEYWORDS contains 'tech', so "Information Technology"
+        // was counted as Allied.
+        if (f === 'all nursing') return p.includes('nurs');
+        if (f === 'all allied') return p.includes('allied');
         return p === f;
       },
 
@@ -8558,13 +8565,36 @@
         // ALL nursing categories — Trend disagreed with every other tab under a
         // category filter. Now uses the same case-insensitive substring test the
         // rest of the app uses (matches "Travel Nursing" but not "Nursing").
+        // The "All Nursing" / "All Allied" sentinels have to be handled first.
+        // They are not category names, so the substring test below can never
+        // match them properly: against "All Allied", the only raw category that
+        // passes is the one literally called "Allied" — 105 of 852 allied rows
+        // (12%). "Local Contract Allied Health", "Allied Health", "Travel
+        // Allied Health", "Contract (Allied)" and "Per Diem (Allied)" were all
+        // dropped, which is why a filtered Trend disagreed wildly with the
+        // unfiltered totals. "All Nursing" kept 44%.
+        //
+        // Delegating to Utils.checkCategoryMatch is what every other tab does,
+        // so Trend now agrees with them under a sentinel. The substring test is
+        // retained for real category names, because Trend compares the filter
+        // against the RAW category while the table shows a normalized one.
         const selectedCats = s.filterSelection.categories;
         const matchesTrendCategory = (cat) => {
           if (selectedCats.size === 0) return true;
           const nc = (cat || '').toLowerCase();
           for (const filterCat of selectedCats) {
             const fc = String(filterCat).toLowerCase();
-            if (nc === fc || nc.includes(fc) || fc.includes(nc)) return true;
+            if (fc === 'all nursing' || fc === 'all allied') {
+              if (Utils.checkCategoryMatch(cat, filterCat)) return true;
+              continue;
+            }
+            // Only nc.includes(fc): the dropdown offers normalized names
+            // while Trend holds the raw value, so "Travel Nursing" must match
+            // "Travel Nursing - 48". The reverse test (fc.includes(nc)) also
+            // made "Travel Nursing" match the plain "Nursing" category — and
+            // "Allied Health" match "Allied", which is a different category
+            // with its own 105 rows.
+            if (nc === fc || nc.includes(fc)) return true;
           }
           return false;
         };
@@ -11503,6 +11533,9 @@
         perDiemFromMonth: null,
         perDiemToMonth: null,
         perDiemGHROnly: true,
+        // Set once the Nursing+Allied category default has been applied,
+        // so a user clearing the filter doesn't get it re-applied.
+        categoryDefaultApplied: false,
         // Extension Search bar (Extensions tab only).
         extFilter: { endFrom: '', endTo: '', status: 'All' },
         filters: { systems: new Set(), facilities: new Set(), categories: new Set(), serviceLines: new Set(), specialties: new Set(), ageMin: null, ageMax: null, permOnly: false, legendBands: new Set(), searchId: '' },
@@ -11544,6 +11577,17 @@
           switch (action) {
             case 'LOAD_DATA': {
               s.jobs = payload.jobs || [];
+              // Default the book to Nursing + Allied (requested by Daniel,
+              // 2026-09-01). Applied once per session, and only before the user
+              // has touched the Category filter, so it never fights a manual
+              // choice. MSP only: on non-MSP, Category is engagement mode
+              // (Travel / Per Diem) and the sentinels mean nothing there.
+              if (!s.categoryDefaultApplied && s.dataSource !== 'non_msp'
+                  && s.filterSelection.categories.size === 0) {
+                s.filterSelection.categories.add('All Nursing');
+                s.filterSelection.categories.add('All Allied');
+                s.categoryDefaultApplied = true;
+              }
               s.statsData = payload.statsData || { onAssignment: [], upcoming: [] };
 
               // Combine jobs AND statsData AND perDiemData for filter options
@@ -11681,21 +11725,18 @@
               if (!set) break;
 
               if (val === 'All') set.clear();
-              else if (val === 'All Nursing') {
-                // Toggle sentinel — if already active, clear it; otherwise set it exclusively
-                if (s.filterSelection.categories.has('All Nursing')) {
-                  s.filterSelection.categories.clear();
-                } else {
-                  s.filterSelection.categories.clear();
-                  s.filterSelection.categories.add('All Nursing');
-                }
-              } else if (val === 'All Allied') {
-                if (s.filterSelection.categories.has('All Allied')) {
-                  s.filterSelection.categories.clear();
-                } else {
-                  s.filterSelection.categories.clear();
-                  s.filterSelection.categories.add('All Allied');
-                }
+              else if (val === 'All Nursing' || val === 'All Allied') {
+                // The sentinels used to be exclusive — picking one cleared the
+                // other, so "Nursing and Allied" was unreachable. They now
+                // toggle like any other option and OR together, which is what
+                // the default selection needs. Picking a sentinel still drops
+                // specific categories, since mixing "All Nursing" with one
+                // named nursing category just means "All Nursing".
+                const cats = s.filterSelection.categories;
+                const others = [...cats].filter(c => c !== 'All Nursing' && c !== 'All Allied');
+                others.forEach(c => cats.delete(c));
+                if (cats.has(val)) cats.delete(val);
+                else cats.add(val);
               } else {
                 if (set.has(val)) set.delete(val);
                 else set.add(val);

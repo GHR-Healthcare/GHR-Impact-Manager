@@ -2,6 +2,21 @@
 
 ## Version History
 
+**3.0.1** - Category filter: "All Allied" was dropping 88% of allied
+
+Reported from the field: filtering the tracker to Allied gave figures far below the unfiltered totals.
+
+`matchesTrendCategory` compared the selected value against the raw category by substring, but **"All Nursing" and "All Allied" are sentinels, not category names**, so the test could never match them properly. Against `All Allied` the only raw category that passed was the one literally called `Allied` — 105 of 852 allied rows. `Local Contract Allied Health` (322), `Allied Health` (245), `Travel Allied Health`, `Contract (Allied)` and `Per Diem (Allied)` were all dropped. `All Nursing` kept 44%.
+
+This was introduced by an earlier fix. Trend used to fall back to a broad `/nurs/ ∨ /allied/` regex, which made a specific category like "Travel Nursing" return *all* nursing. Removing that fallback fixed the specific case and silently broke the sentinels, which had been relying on it. Trend now delegates sentinels to `Utils.checkCategoryMatch`, the way every other tab does.
+
+Two neighbouring bugs fell out of checking it against the real vocabulary — all 28 distinct programs across B4 and VNDLY:
+
+- **`Information Technology` counted as Allied.** The sentinels tested `ALLIED_KEYWORDS`, which contains `tech`. Those keyword lists are for free specialty text; a program is a short controlled vocabulary where `nurs` and `allied` classify all 28 correctly. This affected every tab, not just Trend.
+- **A specific category pulled in a broader one.** The substring test ran both directions, so selecting `Travel Nursing` also matched plain `Nursing`, and `Allied Health` swallowed `Allied` — a separate category with its own 105 rows. Only the raw-contains-selected direction is needed, since the dropdown offers normalized names while Trend holds the raw value.
+
+**Default category is now Nursing + Allied** (requested by Daniel). The two sentinels used to be mutually exclusive — picking one cleared the other — so that combination was literally unreachable. They now toggle like any other option and OR together. The default applies once per session, only when the Category filter is untouched, and only on MSP, where Category is a service line; on non-MSP it is engagement mode and the sentinels mean nothing.
+
 **3.1.0** - Closed stage on non-MSP
 
 The Closed stage now runs on the non-MSP side, re-anchored on fill outcome instead of vendor capture. MSP asks who won a seat against affiliate agencies; non-MSP is GHR's direct book with no panel to compete against, so the stage answers what the meeting actually needs there — fill rate and velocity over historical orders.
