@@ -2,7 +2,7 @@
 
 ## Version History
 
-**3.0.1** - Category filter: "All Allied" was dropping 88% of allied
+**3.1.1** - Category filter: "All Allied" was dropping 88% of allied
 
 Reported from the field: filtering the tracker to Allied gave figures far below the unfiltered totals.
 
