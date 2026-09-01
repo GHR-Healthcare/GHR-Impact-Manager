@@ -4,7 +4,12 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>GHR Impact Manager</title>
-  <link rel="icon" type="image/x-icon" href="favicon.ico">
+  <!-- Both paths serve the same icon: the link tag is authoritative, but
+       browsers still request /favicon.ico implicitly (bookmarks, and the
+       tab before this HTML is parsed). The ?v= is a cache-buster --
+       favicons are cached hard and a stale one outlives a deploy. -->
+  <link rel="icon" type="image/x-icon" href="impact-manager.ico?v=2.3.4">
+  <link rel="shortcut icon" type="image/x-icon" href="impact-manager.ico?v=2.3.4">
 
   <!-- Libraries -->
   <script src="https://cdn.tailwindcss.com"></script>
@@ -889,7 +894,7 @@
     const $ = (id) => document.getElementById(id);
 
     // App version - loaded from environment variable via API, with fallback
-    let APP_VERSION = '2.3.3';
+    let APP_VERSION = '2.3.4';
 
     const API_BASE_URL = '/api';
     

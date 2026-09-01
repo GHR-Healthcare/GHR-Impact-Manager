@@ -2,6 +2,12 @@
 
 ## Version History
 
+**2.3.4** - New favicon
+
+`impact-manager.ico` replaces the old icon. The `<link>` tag points at it and `favicon.ico` is updated to the same bytes, because browsers still request `/favicon.ico` implicitly — from bookmarks, and for the tab before this page's HTML has been parsed. Both paths therefore serve the same image rather than the old one lingering wherever the link tag isn't consulted.
+
+The href carries a `?v=` cache-buster. Favicons are cached hard enough that a stale one routinely outlives a deploy.
+
 **2.3.3** - IMPACT meeting: review pass, three fixes
 
 A pass over the meeting flow and its persistence. The shape held up — `impactmgr.meetings` has every column including the additive `stages` and `recap_html`, the MERGE upserts on `meeting_id` so repeated saves update one row rather than forking, `created_by` is set only on insert so the original owner survives, and two real meetings saved by actual users show correct rows with a stored recap. Three defects did surface.
