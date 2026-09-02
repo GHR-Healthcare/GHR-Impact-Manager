@@ -430,6 +430,8 @@
               <tr>
                 <th class="text-left p-3 font-semibold text-slate-700">Keywords (comma-separated)</th>
                 <th class="text-left p-3 font-semibold text-slate-700 w-48">Health System</th>
+                <th class="text-left p-3 font-semibold text-slate-700 w-32" title="How GHR reaches this system: we run the MSP, we work direct, or another MSP sits in between">Relationship</th>
+                <th class="text-left p-3 font-semibold text-slate-700 w-40" title="The incumbent MSP, when it isn't GHR">Incumbent</th>
                 <th class="text-center p-3 font-semibold text-slate-700 w-36" title="Break out per diem metrics by facility instead of rolling up to system level">Per Diem Breakout</th>
                 <th class="text-center p-3 font-semibold text-slate-700 w-20" title="Hide this health system from all tabs and filters">Hide</th>
                 <th class="w-16 p-3"></th>
@@ -1536,7 +1538,9 @@
                             keywords: Array.isArray(m.keywords) ? m.keywords : m.keywords.split(',').map(k => k.trim()),
                             system: m.system_name,
                             perdiem_breakout: !!m.perdiem_breakout,
-                            hidden: !!m.hidden
+                            hidden: !!m.hidden,
+                            relationship: m.relationship || '',
+                            incumbent: m.incumbent || ''
                         }));
                         console.log('Loaded', CONSTANTS.HEALTH_SYSTEM_MAPPINGS.length, 'health system mappings from database');
                     }
@@ -2656,6 +2660,34 @@
         const m = Utils.marginFor(id, job);
         if (m.pct == null) return '—';
         return m.source === 'override' ? `${m.pct}%` : `~${m.pct}%`;
+      },
+
+      /*
+       * How GHR reaches a health system, and through whom.
+       *
+       * 'MSP'       - GHR runs the program.
+       * 'Direct'    - GHR works with the system directly, no MSP in between.
+       * '3rd Party' - someone else's MSP sits in between; `incumbent` is who.
+       *
+       * Configured per system in Settings rather than derived. dhc.crosswalk
+       * carries OPPORTUNITY_TYPE and EXISTING_MSP, but covers only 7 of the 20
+       * systems this app reports on, has no '3rd Party' value at all, and
+       * stores free text ('UnKnown', 'No (but using Qualivis as VMS)'). Good
+       * enough to seed a setting, not to drive a badge.
+       *
+       * Returns null when unset, so the card omits the badge rather than
+       * asserting a relationship nobody recorded.
+       */
+      systemRelationship(systemName) {
+        if (!systemName) return null;
+        const key = String(systemName).trim().toLowerCase();
+        const m = (CONSTANTS.HEALTH_SYSTEM_MAPPINGS || [])
+          .find(x => String(x.system || '').trim().toLowerCase() === key);
+        if (!m) return null;
+        const rel = (m.relationship || '').trim();
+        const inc = (m.incumbent || '').trim();
+        if (!rel && !inc) return null;
+        return { relationship: rel, incumbent: inc };
       },
 
       matchesSelectedTeams(recordTeam, selectedTeams) {
@@ -4933,6 +4965,22 @@
             <div class="col-span-3 pr-4 pl-2">
               <div class="text-[10px] uppercase font-bold text-slate-400 truncate" title="${job.healthSystem}${job.healthSystem && job.requisitionReason ? ' - ' : ''}${job.requisitionReason || (job.healthSystem ? '' : 'No Reason Given')}">${job.healthSystem}${job.healthSystem && job.requisitionReason ? ' - ' : ''}${job.requisitionReason || (job.healthSystem ? '' : 'No Reason Given')}</div>
               <div class="font-bold text-sm truncate">${job.facility}</div>
+              ${(() => {
+                // Relationship + incumbent, the first thing asked of a job:
+                // do we own this program, or are we bidding through someone
+                // else's? Rendered only when configured.
+                const r = Utils.systemRelationship(job.healthSystem);
+                if (!r) return '';
+                const tone = r.relationship === 'MSP' ? 'bg-emerald-100 text-emerald-700 border-emerald-200'
+                           : r.relationship === 'Direct' ? 'bg-blue-100 text-blue-700 border-blue-200'
+                           : r.relationship === '3rd Party' ? 'bg-amber-100 text-amber-800 border-amber-200'
+                           : 'bg-slate-100 text-slate-600 border-slate-200';
+                const inc = r.incumbent
+                  ? `<span class="text-[10px] text-slate-500 truncate">via ${View.esc(r.incumbent)}</span>` : '';
+                const rel = r.relationship
+                  ? `<span class="px-1.5 py-0.5 rounded border text-[9px] font-bold uppercase tracking-wide ${tone}">${View.esc(r.relationship)}</span>` : '';
+                return `<div class="flex items-center gap-1.5 mt-0.5 min-w-0">${rel}${inc}</div>`;
+              })()}
               <div class="text-xs text-slate-500 truncate" title="${job.shiftTime ? `${job.shiftTime}${job.shift && job.shift !== 'N/A' ? ` (${job.shift})` : ''}` : (job.shift || '')}">
                 ${abbrSpecialty}${showUnit ? ` • ${job.unit}` : ''}${job.costCenter ? ` • ${job.costCenter}` : ''}${job.startTime && job.endTime ? ` • ${job.startTime}-${job.endTime}` : (job.shift && job.shift !== 'N/A' ? ` • ${job.shift}` : '')}
               </div>
@@ -12917,6 +12965,8 @@
                         <td class="p-3 text-center text-slate-300">—</td>
                         <td class="p-3 text-center text-slate-300">—</td>
                         <td class="p-3 text-center text-slate-300">—</td>
+                        <td class="p-3 text-center text-slate-300">—</td>
+                        <td class="p-3 text-center text-slate-300">—</td>
                     </tr>
                 `;
             }
@@ -12933,6 +12983,19 @@
                     <td class="p-2">
                         <input type="text" value="${mapping.system_name || mapping.system || ''}"
                                onchange="updateMapping(${idx}, 'system_name', this.value)"
+                               class="w-full border border-slate-300 rounded px-2 py-1.5 text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none">
+                    </td>
+                    <td class="p-2">
+                        <select onchange="updateMapping(${idx}, 'relationship', this.value)"
+                                class="w-full border border-slate-300 rounded px-2 py-1.5 text-sm bg-white focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none">
+                            ${['', 'MSP', 'Direct', '3rd Party'].map(v => `
+                              <option value="${v}" ${(mapping.relationship || '') === v ? 'selected' : ''}>${v || '— not set —'}</option>`).join('')}
+                        </select>
+                    </td>
+                    <td class="p-2">
+                        <input type="text" value="${(mapping.incumbent || '').replace(/"/g, '&quot;')}"
+                               onchange="updateMapping(${idx}, 'incumbent', this.value)"
+                               placeholder="e.g. Qualivis"
                                class="w-full border border-slate-300 rounded px-2 py-1.5 text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none">
                     </td>
                     <td class="p-2 text-center">
@@ -13107,6 +13170,8 @@
             version: '1.0',
             exported: new Date().toISOString(),
             mappings: currentMappings.map(m => ({
+                relationship: m.relationship || '',
+                incumbent: m.incumbent || '',
                 keywords: m.keywords,
                 system_name: m.system_name || m.system
             }))
@@ -13263,7 +13328,9 @@
                     keywords: Array.isArray(m.keywords) ? m.keywords : [m.keywords],
                     system: m.system_name || m.system,
                     perdiem_breakout: !!m.perdiem_breakout,
-                    hidden: !!m.hidden
+                    hidden: !!m.hidden,
+                    relationship: m.relationship || '',
+                    incumbent: m.incumbent || ''
                 }));
 
                 // Update PM mappings in store for trend view

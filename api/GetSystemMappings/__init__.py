@@ -31,6 +31,8 @@ def _non_msp_mappings_response():
             'sort_order': idx,
             'perdiem_breakout': 0,
             'hidden': 0,
+            'relationship': '',
+            'incumbent': '',
         })
         idx += 1
     for entry in SYMPLR_SYSTEM_ROLLUP:
@@ -47,6 +49,8 @@ def _non_msp_mappings_response():
             'sort_order': idx,
             'perdiem_breakout': 0,
             'hidden': 0,
+            'relationship': '',
+            'incumbent': '',
         })
         idx += 1
     return func.HttpResponse(
@@ -54,6 +58,12 @@ def _non_msp_mappings_response():
         mimetype="application/json",
         status_code=200,
     )
+
+
+# What the card is allowed to display. 'Direct' means GHR works with the
+# system directly; 'MSP' means GHR runs the program; '3rd Party' means someone
+# else's MSP sits in between -- and that is when the incumbent matters.
+VALID_RELATIONSHIPS = ('MSP', 'Direct', '3rd Party')
 
 
 def ensure_schema(cursor):
@@ -74,6 +84,27 @@ def ensure_schema(cursor):
             perdiem_breakout  BIT NOT NULL DEFAULT 0,
             hidden            BIT NOT NULL DEFAULT 0
         )
+    """)
+    # Additive migrations. Relationship and incumbent answer "how do we reach
+    # this system, and through whom" -- MSP / Direct / 3rd Party, and the
+    # incumbent MSP when it isn't us. Both are configured per system rather
+    # than derived: dhc.crosswalk carries OPPORTUNITY_TYPE and EXISTING_MSP,
+    # but only for 7 of the 20 systems the app reports on, it has no '3rd
+    # Party' value at all, and what it does hold is free text ('UnKnown',
+    # 'No (but using Qualivis as VMS)'). It seeds this; it cannot drive it.
+    cursor.execute("""
+        IF NOT EXISTS (
+            SELECT 1 FROM sys.columns
+            WHERE object_id = OBJECT_ID('impactmgr.system_mappings') AND name = 'relationship'
+        )
+        ALTER TABLE impactmgr.system_mappings ADD relationship NVARCHAR(20) NULL
+    """)
+    cursor.execute("""
+        IF NOT EXISTS (
+            SELECT 1 FROM sys.columns
+            WHERE object_id = OBJECT_ID('impactmgr.system_mappings') AND name = 'incumbent'
+        )
+        ALTER TABLE impactmgr.system_mappings ADD incumbent NVARCHAR(200) NULL
     """)
 
 
@@ -117,7 +148,9 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             cursor.execute('''
                 SELECT id, keywords, system_name, sort_order,
                        CASE WHEN perdiem_breakout = 1 THEN 1 ELSE 0 END AS perdiem_breakout,
-                       CASE WHEN hidden = 1 THEN 1 ELSE 0 END AS hidden
+                       CASE WHEN hidden = 1 THEN 1 ELSE 0 END AS hidden,
+                       ISNULL(relationship, '') AS relationship,
+                       ISNULL(incumbent, '')    AS incumbent
                 FROM impactmgr.system_mappings
                 ORDER BY sort_order, id
             ''')
@@ -161,11 +194,21 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
 
                 perdiem_breakout = 1 if mapping.get('perdiem_breakout') else 0
                 hidden = 1 if mapping.get('hidden') else 0
+                # Constrained to the three the card renders, so a typo can't
+                # reach the badge. Anything unrecognised stores blank, which
+                # the card treats as "not set" rather than showing a wrong
+                # relationship confidently.
+                relationship = str(mapping.get('relationship') or '').strip()
+                if relationship not in VALID_RELATIONSHIPS:
+                    relationship = ''
+                incumbent = str(mapping.get('incumbent') or '').strip()[:200]
 
                 cursor.execute('''
-                    INSERT INTO impactmgr.system_mappings (keywords, system_name, sort_order, perdiem_breakout, hidden)
-                    VALUES (?, ?, ?, ?, ?)
-                ''', keywords_str, system_name, idx, perdiem_breakout, hidden)
+                    INSERT INTO impactmgr.system_mappings
+                        (keywords, system_name, sort_order, perdiem_breakout, hidden, relationship, incumbent)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                ''', keywords_str, system_name, idx, perdiem_breakout, hidden,
+                     relationship or None, incumbent or None)
 
             conn.commit()
             conn.close()
