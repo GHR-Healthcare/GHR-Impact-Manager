@@ -82,12 +82,19 @@ RELATIONSHIP_MAP = {
     'third party':     '3rd Party',
 }
 
-# customText57 doubles as a mirror of the relationship when no outside MSP is
-# involved, so these are not incumbents. 'Preview' is a Bullhorn sandbox
-# artifact that shows up against Grand View.
+# customText57 mirrors the relationship back when nobody sits in the middle.
+# On a Direct account there is no MSP at all, so these are not incumbents and
+# naming one would be wrong.
 NON_INCUMBENTS = {
-    'ghrhealthcare', 'ghrhealthcare preview', 'ghr healthcare',
     'direct contract', 'perm contract', 'no msp', 'none', 'n/a',
+}
+
+# On a GHR MSP account the incumbent is us, which is worth saying rather than
+# leaving blank -- the question the card answers is "who holds this program",
+# and "nothing" is not an answer. Bullhorn spells it a few ways, and 'Preview'
+# is a sandbox artifact that shows up against Grand View.
+GHR_INCUMBENT_ALIASES = {
+    'ghrhealthcare', 'ghrhealthcare preview', 'ghr healthcare', 'ghr',
 }
 
 RELATIONSHIP_LOOKBACK_YEARS = 2
@@ -158,16 +165,25 @@ def _derive_relationships(mappings):
                 rel_votes[rel] = rel_votes.get(rel, 0) + n
             inc = (incumbent or '').strip()
             if inc and inc.lower() not in NON_INCUMBENTS:
+                if inc.lower() in GHR_INCUMBENT_ALIASES:
+                    inc = 'GHR'
                 inc_votes[inc] = inc_votes.get(inc, 0) + n
         if not rel_votes:
             continue
         best_rel = max(rel_votes.items(), key=lambda kv: kv[1])[0]
-        # An incumbent only means something when someone else's MSP is in the
-        # middle. On a GHR MSP or Direct account the stray vendor names are
-        # one-off exceptions, not the account's incumbent.
-        best_inc = ''
-        if best_rel == '3rd Party' and inc_votes:
-            best_inc = max(inc_votes.items(), key=lambda kv: kv[1])[0]
+        # Name the holder on every account that has one. Previously this was
+        # gated to 3rd Party, which meant that on the MSP book -- where ten of
+        # the eleven live systems are GHR MSP -- the incumbent was blank
+        # essentially everywhere, and the field looked broken.
+        #
+        # Direct is the one case with genuinely nobody in the middle, so it
+        # stays blank by construction: its only customText57 values are the
+        # placeholders filtered out above.
+        best_inc = max(inc_votes.items(), key=lambda kv: kv[1])[0] if inc_votes else ''
+        # A stray third-party name on a GHR MSP account is an exception, not
+        # the incumbent; the account is held by GHR.
+        if best_rel == 'MSP':
+            best_inc = 'GHR' if (not best_inc or best_inc == 'GHR') else best_inc
         out[name] = {'relationship': best_rel, 'incumbent': best_inc}
     return out
 

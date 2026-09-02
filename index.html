@@ -329,9 +329,9 @@
 
   <!-- HISTORY MODAL -->
 
-  <!-- IMPACT MEETING: setup, banner and history. The meeting walks the four
-       stage tabs in order, records what was decided, and saves to
-       /api/meetings so a past meeting can be reopened. -->
+  <!-- IMPACT meeting setup and history. A meeting walks the chosen stage
+       tabs in order, records what was decided, and saves to /api/meetings
+       so a past meeting can be reopened. -->
   <div id="meetingSetupModal" class="hidden fixed inset-0 bg-black/50 z-[90] flex items-center justify-center backdrop-blur-sm">
     <div class="bg-white rounded-lg shadow-2xl w-11/12 max-w-lg border border-slate-200 overflow-hidden flex flex-col">
       <div class="bg-slate-100 p-4 border-b border-slate-200 flex justify-between items-center">
@@ -433,8 +433,7 @@
                 <th class="text-left p-3 font-semibold text-slate-700">Keywords (comma-separated)</th>
                 <th class="text-left p-3 font-semibold text-slate-700 w-48">Health System</th>
                 <th class="text-left p-3 font-semibold text-slate-700 w-32" title="How GHR reaches this system: we run the MSP, we work direct, or another MSP sits in between">Relationship</th>
-                <th class="text-left p-3 font-semibold text-slate-700 w-40" title="The incumbent MSP, when it isn't GHR">Incumbent</th>
-                <th class="text-center p-3 font-semibold text-slate-700 w-36" title="Break out per diem metrics by facility instead of rolling up to system level">Per Diem Breakout</th>
+                <th class="text-left p-3 font-semibold text-slate-700 w-40" title="Who holds the program — GHR on an MSP account, the incumbent MSP on a third-party one">Incumbent</th>                <th class="text-center p-3 font-semibold text-slate-700 w-36" title="Break out per diem metrics by facility instead of rolling up to system level">Per Diem Breakout</th>
                 <th class="text-center p-3 font-semibold text-slate-700 w-20" title="Hide this health system from all tabs and filters">Hide</th>
                 <th class="w-16 p-3"></th>
               </tr>
@@ -875,7 +874,7 @@
     const $ = (id) => document.getElementById(id);
 
     // App version - loaded from environment variable via API, with fallback
-    let APP_VERSION = '2.3.4';
+    let APP_VERSION = '2.3.5';
 
     const API_BASE_URL = '/api';
     
@@ -6364,9 +6363,11 @@
         const cov = s.closedMeta?.coverage || {};
 
         // The two sides ask different questions of the same stage. MSP asks
-        // who won the seat against affiliate agencies; non-MSP is GHR's direct
-        // book with no vendor panel, so capture has no meaning there and the
-        // question is how much we fill and where we lose it.
+        // who won the seat against affiliate agencies -- the reference's
+        // accountCapturePie. Non-MSP is GHR's direct book with no vendor
+        // panel, so capture has no meaning there and fill rate is the
+        // headline instead. One chart each; the loss breakdown it used to sit
+        // beside is in the table's Reason column already.
         let closedIntel;
         if (isNonMspClosed) {
           const fillSeg = [
@@ -6375,22 +6376,6 @@
           ];
           const denom = fillSeg[0].value + fillSeg[1].value;
           const comp = cov.competitive || {};
-          const lossRows = Object.entries(cov.lossBreakdown || {})
-            .sort((a, b) => b[1] - a[1]).slice(0, 5);
-          const lossList = lossRows.length ? `
-            <div class="flex flex-col gap-1 min-w-[13rem]">
-              ${lossRows.map(([k, v]) => `
-                <div class="flex items-center justify-between gap-3 text-[10px] text-slate-600">
-                  <span class="font-medium truncate">${k}</span>
-                  <span class="text-slate-400 tabular-nums">${v}</span>
-                </div>`).join('')}
-            </div>` : '<div class="text-[10px] text-slate-400">no reasons recorded</div>';
-
-          // Reason coverage differs sharply between the books (Symplr ~60%,
-          // Bullhorn ~15%), so the competitive count is a floor. Saying so on
-          // the panel keeps it from being read as a measurement.
-          const covNote = Object.entries(comp.reasonCoverage || {})
-            .map(([src, st]) => `${src} ${st.pct == null ? '—' : st.pct + '%'}`).join(' · ');
 
           closedIntel = View.intelStrip('closed', [
             View.intelPanel('Fill Rate',
@@ -6400,11 +6385,6 @@
               View.chartLegend(fillSeg),
               `Of ${denom} real opportunities. Cancelled orders are excluded — they stopped existing rather than going unfilled` +
               (cov.unfilledWithoutReason ? `. ${cov.unfilledWithoutReason} unfilled carry no reason and count against the rate, so this is a floor` : '') + '.'),
-            View.intelPanel('Why We Lost',
-              lossList, '',
-              comp.total
-                ? `${comp.total} lost to a competitor${comp.pctOfOpportunities != null ? ` (${comp.pctOfOpportunities}% of opportunities)` : ''}. Reason coverage: ${covNote || 'n/a'}.`
-                : 'No competitive losses recorded in this window.'),
           ]);
         } else {
           const capSeg = [

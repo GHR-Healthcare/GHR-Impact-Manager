@@ -2,6 +2,16 @@
 
 ## Version History
 
+**2.3.5** - Leaked comment fix, relationship on non-MSP, one chart per side
+
+**A comment was rendering as visible text on the page.** Porting the meeting modals across branches sliced them starting mid-comment, so the `<!--` opener was left behind and only the tail came over — `stage tabs in order, records what was decided… -->` sat in the markup as content. Repaired, and the file is now checked for orphaned comment tails alongside the other structural checks.
+
+Relationship and incumbent now show on non-MSP too, not just the MSP prototype: the badge on the card, the two fields in Settings, and the Bullhorn derivation behind them.
+
+**The incumbent rule was wrong.** It only named a holder on Third Party accounts, on the reasoning that `customText57` echoes the relationship back elsewhere. But ten of the eleven live MSP systems are GHR MSP, so the field was blank almost everywhere and looked broken. The card's question is *who holds this program*, and "nothing" is not an answer — GHR MSP accounts now read **MSP · via GHR**, third-party ones **3RD PARTY · via Symmetry**. Direct stays blank by construction, since there genuinely is no one in the middle.
+
+Charts are back in line with the reference: one per side. MSP keeps Account Capture, which the reference draws via `accountCapturePie` in its stage trends slot. Non-MSP keeps Fill Rate, that stage's headline number. "Why We Lost" is gone — it had no counterpart in the reference and the table's Reason column already says it.
+
 **2.3.4** - New favicon
 
 `impact-manager.ico` replaces the old icon. The `<link>` tag points at it and `favicon.ico` is updated to the same bytes, because browsers still request `/favicon.ico` implicitly — from bookmarks, and for the tab before this page's HTML has been parsed. Both paths therefore serve the same image rather than the old one lingering wherever the link tag isn't consulted.
