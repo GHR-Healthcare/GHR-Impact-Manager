@@ -2,6 +2,12 @@
 
 ## Version History
 
+**2.3.7** - Redact Vendor Info is MSP-only
+
+The button masks the names of clinicians placed by *other* agencies. Non-MSP is GHR's direct book with no vendor panel, so every row is already ours and the toggle could never change anything — every redaction site tests `!isGhrAgency` before masking. It is hidden there now, and hiding it strands nothing, since nothing was being masked to begin with.
+
+Noted while checking this, not yet addressed: **the stage views apply no redaction at all.** Across 1,245 lines of Closed / Extensions / Onboarding there is not one reference to `redactMode`. That is harmless today because those views only carry GHR rows, which are never masked — but it becomes real the moment affiliate rows are shown there.
+
 **2.3.6** - List views load in parallel
 
 Six of the loads behind the list views — stats, revenue, per diem, hours, trend and pending — were awaited one after another, so the page waited for the *sum* of their latencies before those tabs had anything in them. They share no data; each writes its own state keys. The requests now start together and each response is still handled in place by the same code, so wall time is the slowest of the six rather than their total.
