@@ -896,7 +896,7 @@
     const $ = (id) => document.getElementById(id);
 
     // App version - loaded from environment variable via API, with fallback
-    let APP_VERSION = '2.3.6';
+    let APP_VERSION = '2.3.7';
 
     const API_BASE_URL = '/api';
     
@@ -4476,6 +4476,12 @@
           ['btnChangeHistory',  !isNonMsp, 'flex'],
           ['btnMeetingHistory',  isNonMsp, 'flex'],
           ['meetingStartSlot',   isNonMsp, 'flex'],
+          // Redact Vendor Info masks the names of clinicians placed by other
+          // agencies. Non-MSP is GHR's direct book with no vendor panel, so
+          // every row is already ours and the button can never change
+          // anything -- every redaction site tests !isGhrAgency first. Hiding
+          // it strands nothing: nothing was being masked there to begin with.
+          ['privacyBtn',        !isNonMsp, 'flex'],
         ];
         headerSwap.forEach(([id, show, disp]) => {
           const el = $(id);
@@ -5598,6 +5604,30 @@
         return true;
       },
 
+      /*
+       * Clinician name for a stage row, honouring Redact Vendor Info.
+       *
+       * These four tables were the one part of the app the privacy toggle did
+       * not reach: 1,245 lines of stage view without a single redactMode
+       * reference. It went unnoticed because the stages only ever carried GHR
+       * rows, and GHR is never masked -- but the button would have silently
+       * stopped meaning what it says the moment an affiliate row appeared.
+       *
+       * Same test the rest of the app uses, so a name masked on Open Jobs is
+       * masked here too. On non-MSP every row is GHR, so this is a no-op and
+       * the button is hidden there.
+       */
+      stageWorker(r) {
+        const name = (r && r.clinician) || '';
+        if (!name) return '—';
+        const s = window.store.state;
+        // r.agency is the vendor on MSP rows; r.source is 'GHR'/'Affiliate'.
+        // Either identifies an outside agency, so both are consulted rather
+        // than assuming every endpoint populates the same one.
+        const isOurs = Utils.isGhrAgency(r.agency) || r.source === 'GHR';
+        return (s.redactMode && !isOurs) ? Utils.redactName(name) : name;
+      },
+
       stageBadge(text, tone) {
         const tones = {
           critical: 'bg-red-100 text-red-700', high: 'bg-orange-100 text-orange-700',
@@ -5886,7 +5916,7 @@
               <tr class="hover:bg-slate-50 border-b border-slate-100 cursor-pointer" onclick="store.dispatch('TOGGLE_EXTENSION_ROW','${r.id}')">
                 <td class="px-3 py-2 text-slate-400">${open ? '&#9660;' : '&#9654;'}</td>
                 <td class="px-3 py-2">
-                  <div class="font-medium text-slate-700">${r.clinician || '—'}</div>
+                  <div class="font-medium text-slate-700">${View.stageWorker(r)}</div>
                   <div class="text-[10px] text-slate-400">${r.facility || '—'} · ${r.role || r.care_type || '—'}</div>
                 </td>
                 <td class="px-3 py-2 text-center">${View.stageBadge(r.source_system || r.source || '—', 'info')}</td>
@@ -6093,7 +6123,7 @@
               <tr class="hover:bg-slate-50 border-b border-slate-100 cursor-pointer" onclick="store.dispatch('TOGGLE_ONBOARDING_ROW','${r.id}')">
                 <td class="px-3 py-2 text-slate-400">${open ? '&#9660;' : '&#9654;'}</td>
                 <td class="px-3 py-2">
-                  <div class="font-medium text-slate-700">${r.clinician || '—'}</div>
+                  <div class="font-medium text-slate-700">${View.stageWorker(r)}</div>
                   <div class="text-[10px] text-slate-400">${r.facility || '—'} · ${r.role || '—'}</div>
                 </td>
                 <td class="px-3 py-2 text-center">${View.stageBadge(r.source_system || r.source || '—', 'info')}</td>
@@ -6179,7 +6209,7 @@
 
         const body = rows.map(r => `
           <tr class="hover:bg-slate-50 border-b border-slate-100">
-            <td class="px-3 py-2 font-medium text-slate-700 whitespace-nowrap">${r.clinician || '—'}</td>
+            <td class="px-3 py-2 font-medium text-slate-700 whitespace-nowrap">${View.stageWorker(r)}</td>
             <td class="px-3 py-2 text-slate-500">${r.facility || '—'}</td>
             <td class="px-3 py-2 text-slate-500">${r.role || '—'}</td>
             <td class="px-3 py-2 text-center">${View.stageBadge(r.source_system || r.source || '—', 'info')}</td>

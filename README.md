@@ -2,6 +2,14 @@
 
 ## Version History
 
+**2.3.7** - Redact Vendor Info is MSP-only
+
+The button masks the names of clinicians placed by *other* agencies. Non-MSP is GHR's direct book with no vendor panel, so every row is already ours and the toggle could never change anything — every redaction site tests `!isGhrAgency` before masking. It is hidden there now, and hiding it strands nothing, since nothing was being masked to begin with.
+
+**The stage views applied no redaction at all**, and now do. Across 1,245 lines of Closed / Extensions / Onboarding there was not one reference to `redactMode` — the four IMPACT tables were the one part of the app the privacy toggle never reached. It went unnoticed because those views only carry GHR rows, and GHR is never masked, so the button would have silently stopped meaning what it says the moment an affiliate row appeared. All three now render clinician names through `View.stageWorker`, using the same `isGhrAgency` test as the rest of the app.
+
+A sweep of every view confirms the rest were already covered. `perDiem` and `trend` reference `worker_name` but never display it — it is a deduplication key and a headcount counter there, so there is nothing to mask.
+
 **2.3.6** - List views load in parallel
 
 Six of the loads behind the list views — stats, revenue, per diem, hours, trend and pending — were awaited one after another, so the page waited for the *sum* of their latencies before those tabs had anything in them. They share no data; each writes its own state keys. The requests now start together and each response is still handled in place by the same code, so wall time is the slowest of the six rather than their total.
