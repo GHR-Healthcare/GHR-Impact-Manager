@@ -874,7 +874,7 @@
     const $ = (id) => document.getElementById(id);
 
     // App version - loaded from environment variable via API, with fallback
-    let APP_VERSION = '2.3.5';
+    let APP_VERSION = '2.3.8';
 
     const API_BASE_URL = '/api';
     
@@ -1458,7 +1458,28 @@
     window.loadDataFromDatabase = async function() {
         try {
             let rawPositions;
-            
+
+            // These six were awaited one after another several hundred lines
+            // below, so the page waited for the SUM of their latencies before
+            // the Stats, Revenue, Per Diem, Hours, Trend and Pending tabs had
+            // anything in them. They share no data -- each writes its own
+            // state keys -- so the requests are started together here and the
+            // responses are still handled in place, in the same order, by the
+            // same code. Wall time becomes the slowest of the six rather than
+            // their total.
+            //
+            // The bare .catch() keeps a rejection from being reported as
+            // unhandled while nothing is awaiting yet. It does not swallow it:
+            // the promise stays rejected and each existing try/catch still
+            // sees the failure when it awaits.
+            const inflight = {};
+            for (const route of ['stats-data', 'financial-data', 'perdiem-data',
+                                 'hours-data', 'trend-data', 'pending-data']) {
+                const p = fetch(`${API_BASE_URL}/${route}`);
+                p.catch(() => {});
+                inflight[route] = p;
+            }
+
             // Fetch config (default margin, app version) from API
             try {
                 const configResponse = await fetch(`${API_BASE_URL}/get-config`);
@@ -1625,7 +1646,7 @@
             
             // Load stats data for the Stats tab
             try {
-                const statsResponse = await fetch(`${API_BASE_URL}/stats-data`);
+                const statsResponse = await inflight['stats-data'];
                 if (statsResponse.ok) {
                     const statsData = await statsResponse.json();
                     
@@ -1667,7 +1688,7 @@
 
             // Load financial data for the Financials tab
             try {
-                const finResponse = await fetch(`${API_BASE_URL}/financial-data`);
+                const finResponse = await inflight['financial-data'];
                 if (finResponse.ok) {
                     const finData = await finResponse.json();
                     window.store.state.financialData = finData.monthlyData || [];
@@ -1687,7 +1708,7 @@
 
             // Load per diem data for the Per Diem tab
             try {
-                const pdResponse = await fetch(`${API_BASE_URL}/perdiem-data`);
+                const pdResponse = await inflight['perdiem-data'];
                 if (pdResponse.ok) {
                     const pdData = await pdResponse.json();
                     // Normalize assignments
@@ -1725,7 +1746,7 @@
 
             // Load hours analysis data (GHR vs other agencies, per diem hours)
             try {
-                const hoursResponse = await fetch(`${API_BASE_URL}/hours-data`);
+                const hoursResponse = await inflight['hours-data'];
                 if (hoursResponse.ok) {
                     const hoursData = await hoursResponse.json();
                     if (hoursData.rows) {
@@ -1752,7 +1773,7 @@
 
             // Load trend data
             try {
-                const trendResponse = await fetch(`${API_BASE_URL}/trend-data`);
+                const trendResponse = await inflight['trend-data'];
                 if (trendResponse.ok) {
                     const trendData = await trendResponse.json();
                     const parseLocalDate = s => { if (!s) return null; const [y,m,d] = s.split('T')[0].split('-'); return new Date(+y, +m-1, +d); };
@@ -1800,9 +1821,15 @@
             // take the others or the rest of the page with it, and each records its
             // own error so the view can say so instead of rendering an empty table
             // that looks like a quiet week.
+                // On MSP these tabs cover the whole vendor panel, not just
+                // GHR's seats: Extensions and Onboarding default to GHR-only
+                // server-side, which hid 29% and 44% of their windows. Closed
+                // always returned both, capture rate being GHR against
+                // affiliate. Non-MSP has no panel, so the flag stays off there.
+                const av = window.store.state.dataSource === 'non_msp' ? '' : '?includeAffiliate=1';
             const stageLoads = [
-              { key: 'extensions', route: 'extensions-data', pick: d => Array.isArray(d) ? d : (d.rows || []) },
-              { key: 'onboarding', route: 'onboarding-data', pick: d => Array.isArray(d) ? d : (d.rows || []) },
+              { key: 'extensions', route: `extensions-data${av}`, pick: d => Array.isArray(d) ? d : (d.rows || []) },
+              { key: 'onboarding', route: `onboarding-data${av}`, pick: d => Array.isArray(d) ? d : (d.rows || []) },
               { key: 'closed',     route: 'closed-data',     pick: d => d.rows || [], meta: d => d },
             ];
             await Promise.all(stageLoads.map(async ({ key, route, pick, meta }) => {
@@ -1840,7 +1867,7 @@
 
             // Load pending submissions data (GHR only)
             try {
-                const pendingResponse = await fetch(`${API_BASE_URL}/pending-data`);
+                const pendingResponse = await inflight['pending-data'];
                 if (pendingResponse.ok) {
                     const pendingData = await pendingResponse.json();
                     if (pendingData.submissions) {
@@ -4571,8 +4598,12 @@
         // 'hidden' has to be paired with the flex display class each element
         // wants, or un-hiding leaves it as a block and the icon/label stack.
         const headerSwap = [
-          ['btnMeetingHistory',  showImpactUi, 'flex'],
-          ['meetingStartSlot',   showImpactUi, 'flex'],
+              ['btnMeetingHistory',  showImpactUi, 'flex'],
+              ['meetingStartSlot',   showImpactUi, 'flex'],
+              // Redact Vendor Info masks names of clinicians placed by other
+              // agencies. Non-MSP has no vendor panel, so it can change nothing
+              // there and is hidden.
+              ['privacyBtn',        !isNonMsp, 'flex'],
         ];
         headerSwap.forEach(([id, show, disp]) => {
           const el = $(id);
@@ -5767,6 +5798,56 @@
         return true;
       },
 
+      /*
+       * Clinician name for a stage row, honouring Redact Vendor Info.
+       *
+       * These four tables were the one part of the app the privacy toggle did
+       * not reach: 1,245 lines of stage view without a single redactMode
+       * reference. It went unnoticed because the stages only ever carried GHR
+       * rows, and GHR is never masked -- but the button would have silently
+       * stopped meaning what it says the moment an affiliate row appeared.
+       *
+       * Same test the rest of the app uses, so a name masked on Open Jobs is
+       * masked here too. On non-MSP every row is GHR, so this is a no-op and
+       * the button is hidden there.
+       */
+      stageWorker(r) {
+        const name = (r && r.clinician) || '';
+        if (!name) return '—';
+        const s = window.store.state;
+        // Shares stageAgencyLabel so the masked name and the AV badge can
+        // never disagree about whose seat a row is.
+        const isOurs = View.stageAgencyLabel(r) === 'GHR';
+        return (s.redactMode && !isOurs) ? Utils.redactName(name) : name;
+      },
+
+      /*
+       * GHR or AV, for a stage row.
+       *
+       * On MSP these tables carry the whole vendor panel, so a row's agency is
+       * the first thing that has to be legible -- an affiliate seat ending is
+       * a different conversation from one of ours ending. 'Source' is already
+       * taken by B4/VNDLY, which is the system of record, not the vendor.
+       *
+       * The vendor's name sits in the tooltip and follows Redact Vendor Info;
+       * the GHR/AV distinction itself is not redacted, since knowing a seat is
+       * not ours is the point of showing it and identifies nobody.
+       */
+      stageAgencyLabel(r) {
+        return (Utils.isGhrAgency(r.agency) || r.source === 'GHR') ? 'GHR' : 'AV';
+      },
+
+      stageAgency(r) {
+        const ours = View.stageAgencyLabel(r) === 'GHR';
+        const s = window.store.state;
+        const vendor = (r.agency || '').trim();
+        const label = View.stageAgencyLabel(r);
+        const tip = ours ? (vendor || 'GHR')
+                  : (s.redactMode ? 'Affiliate vendor (hidden)' : (vendor || 'Affiliate'));
+        const tone = ours ? 'bg-blue-100 text-blue-700' : 'bg-purple-100 text-purple-700';
+        return `<span class="px-1.5 py-0.5 rounded text-[9px] font-bold ${tone}" title="${View.esc(tip)}">${label}</span>`;
+      },
+
       stageBadge(text, tone) {
         const tones = {
           critical: 'bg-red-100 text-red-700', high: 'bg-orange-100 text-orange-700',
@@ -6008,6 +6089,11 @@
           { label: '' },
           { label: 'Clinician',       key: 'clinician' },
           { label: 'Source',          key: 'source_system', align: 'center' },
+          // Sorts and filters on what is actually on screen. Keyed on the
+          // raw vendor instead, someone could type a vendor name into the
+          // Agency filter while Redact Vendor Info was on and infer the
+          // masked value from which rows matched.
+          { label: 'Agency',          key: r => View.stageAgencyLabel(r), align: 'center' },
           { label: 'Ends',            key: 'end_date',      align: 'center' },
           { label: 'Days Left',       key: 'days_left',     align: 'center' },
           { label: 'Client Decision', key: r => View.extensionEdit(r).decision, align: 'center' },
@@ -6055,10 +6141,11 @@
               <tr class="hover:bg-slate-50 border-b border-slate-100 cursor-pointer" onclick="store.dispatch('TOGGLE_EXTENSION_ROW','${r.id}')">
                 <td class="px-3 py-2 text-slate-400">${open ? '&#9660;' : '&#9654;'}</td>
                 <td class="px-3 py-2">
-                  <div class="font-medium text-slate-700">${r.clinician || '—'}</div>
+                  <div class="font-medium text-slate-700">${View.stageWorker(r)}</div>
                   <div class="text-[10px] text-slate-400">${r.facility || '—'} · ${r.role || r.care_type || '—'}</div>
                 </td>
                 <td class="px-3 py-2 text-center">${View.stageBadge(r.source_system || r.source || '—', 'info')}</td>
+                <td class="px-3 py-2 text-center">${View.stageAgency(r)}</td>
                 <td class="px-3 py-2 text-center text-slate-600">${r.end_date || '—'}</td>
                 <td class="px-3 py-2 text-center">${r.days_left != null ? View.stageBadge(r.days_left + 'd', r.urgency || 'low') : '—'}</td>
                 <td class="px-3 py-2 text-center">${View.extensionDecisionBadge(e.decision)}</td>
@@ -6214,6 +6301,11 @@
           { label: '' },
           { label: 'Clinician',     key: 'clinician' },
           { label: 'Source',        key: 'source_system', align: 'center' },
+          // Sorts and filters on what is actually on screen. Keyed on the
+          // raw vendor instead, someone could type a vendor name into the
+          // Agency filter while Redact Vendor Info was on and infer the
+          // masked value from which rows matched.
+          { label: 'Agency',          key: r => View.stageAgencyLabel(r), align: 'center' },
           { label: 'Status',        key: r => View.onboardingGroup(r), align: 'center' },
           { label: 'Current Start', key: 'current_start',  align: 'center' },
           { label: 'Moves',         key: 'move_count',     align: 'center' },
@@ -6262,10 +6354,11 @@
               <tr class="hover:bg-slate-50 border-b border-slate-100 cursor-pointer" onclick="store.dispatch('TOGGLE_ONBOARDING_ROW','${r.id}')">
                 <td class="px-3 py-2 text-slate-400">${open ? '&#9660;' : '&#9654;'}</td>
                 <td class="px-3 py-2">
-                  <div class="font-medium text-slate-700">${r.clinician || '—'}</div>
+                  <div class="font-medium text-slate-700">${View.stageWorker(r)}</div>
                   <div class="text-[10px] text-slate-400">${r.facility || '—'} · ${r.role || '—'}</div>
                 </td>
                 <td class="px-3 py-2 text-center">${View.stageBadge(r.source_system || r.source || '—', 'info')}</td>
+                <td class="px-3 py-2 text-center">${View.stageAgency(r)}</td>
                 <td class="px-3 py-2 text-center">${View.stageBadge(g, tone[g] || 'low')}</td>
                 <td class="px-3 py-2 text-center text-slate-600">${r.current_start || '—'}</td>
                 <td class="px-3 py-2 text-center text-slate-600">${
@@ -6302,6 +6395,11 @@
           { label: 'Facility',     key: 'facility' },
           { label: 'Role',         key: 'role' },
           { label: 'Source',       key: 'source_system', align: 'center' },
+          // Sorts and filters on what is actually on screen. Keyed on the
+          // raw vendor instead, someone could type a vendor name into the
+          // Agency filter while Redact Vendor Info was on and infer the
+          // masked value from which rows matched.
+          { label: 'Agency',          key: r => View.stageAgencyLabel(r), align: 'center' },
           { label: 'Closed',       key: 'closed_on',     align: 'center' },
           { label: 'Outcome',      key: 'group',         align: 'center' },
           { label: 'Reason',       key: 'outcome_reason' },
@@ -6348,10 +6446,11 @@
 
         const body = rows.map(r => `
           <tr class="hover:bg-slate-50 border-b border-slate-100">
-            <td class="px-3 py-2 font-medium text-slate-700 whitespace-nowrap">${r.clinician || '—'}</td>
+            <td class="px-3 py-2 font-medium text-slate-700 whitespace-nowrap">${View.stageWorker(r)}</td>
             <td class="px-3 py-2 text-slate-500">${r.facility || '—'}</td>
             <td class="px-3 py-2 text-slate-500">${r.role || '—'}</td>
             <td class="px-3 py-2 text-center">${View.stageBadge(r.source_system || r.source || '—', 'info')}</td>
+                <td class="px-3 py-2 text-center">${View.stageAgency(r)}</td>
             <td class="px-3 py-2 text-center text-slate-600">${r.closed_on || '—'}</td>
             <td class="px-3 py-2 text-center">${r.group ? View.stageBadge(r.group, 'low') : '—'}</td>
             <td class="px-3 py-2 text-slate-500">${r.outcome_reason || '—'}</td>
