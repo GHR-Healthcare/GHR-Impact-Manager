@@ -2,6 +2,7 @@ import azure.functions as func
 import pyodbc
 import os
 import json
+import time
 from shared_code.auth import require_allowed_domain
 from shared_code.data_source import is_non_msp, get_bullhorn_conn
 from shared_code.bullhorn_systems import BULLHORN_SYSTEM_ROLLUP
@@ -99,6 +100,17 @@ GHR_INCUMBENT_ALIASES = {
 
 RELATIONSHIP_LOOKBACK_YEARS = 2
 
+# How long a derivation is reused before Bullhorn is asked again.
+#
+# This endpoint runs on every page load, and the derivation adds a second
+# database -- the Bullhorn mirror, over the network -- to that path. The query
+# itself is 47ms; the connection setup is the part worth avoiding. Which MSP
+# holds an account changes on the order of months, so re-deriving per request
+# buys nothing. Cached in module scope, so it lives per worker and a restart
+# or a scale-out re-derives naturally.
+RELATIONSHIP_CACHE_SECONDS = 15 * 60
+_relationship_cache = {'at': 0.0, 'value': None}
+
 
 def _derive_relationships(mappings):
     """Relationship and incumbent per health system, from Bullhorn placements.
@@ -113,6 +125,11 @@ def _derive_relationships(mappings):
     stored values stand on their own -- the badge is worth omitting, never
     worth blocking the page for.
     """
+    now = time.time()
+    if (_relationship_cache['value'] is not None
+            and now - _relationship_cache['at'] < RELATIONSHIP_CACHE_SECONDS):
+        return _relationship_cache['value']
+
     try:
         conn = get_bullhorn_conn()
     except Exception as e:
@@ -184,7 +201,18 @@ def _derive_relationships(mappings):
         # the incumbent; the account is held by GHR.
         if best_rel == 'MSP':
             best_inc = 'GHR' if (not best_inc or best_inc == 'GHR') else best_inc
+        # Direct means nobody is in the middle, so naming a holder contradicts
+        # the badge beside it. Real vendor names do leak through here -- a
+        # handful of Trinity Health placements carry Trustaff -- and rendering
+        # "Direct - via Trustaff" would be worse than saying nothing.
+        elif best_rel == 'Direct':
+            best_inc = ''
         out[name] = {'relationship': best_rel, 'incumbent': best_inc}
+    # Only a successful derivation is cached. A failure returns {} above
+    # without poisoning the cache, so the next request retries rather than
+    # serving fifteen minutes of blank badges.
+    _relationship_cache['at'] = now
+    _relationship_cache['value'] = out
     return out
 
 

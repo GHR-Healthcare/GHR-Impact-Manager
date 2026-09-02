@@ -2,6 +2,16 @@
 
 ## Version History
 
+**2.3.6** - List views load in parallel
+
+Six of the loads behind the list views — stats, revenue, per diem, hours, trend and pending — were awaited one after another, so the page waited for the *sum* of their latencies before those tabs had anything in them. They share no data; each writes its own state keys. The requests now start together and each response is still handled in place by the same code, so wall time is the slowest of the six rather than their total.
+
+The database was never the bottleneck here, which is worth recording: the MSP tables are small and scan in 0–5ms (`B4HealthOrder` 29,061 rows in 5ms, the VNDLY staging tables in under 1ms). The cost is per-request — function invocation plus a fresh `pyodbc` connection each time — which is exactly what overlapping the requests hides.
+
+Relationship derivation is now cached for 15 minutes in module scope. It had added a second database to the page-load path: the query is only 47ms, but the Bullhorn connection setup is not, and which MSP holds an account changes on the order of months. Only successful derivations are cached, so a Bullhorn outage retries on the next request instead of serving fifteen minutes of blank badges.
+
+Direct accounts no longer name a holder. Real vendor names leak into `customText57` on a handful of them — some Trinity Health placements carry Trustaff — and "Direct · via Trustaff" contradicts the badge beside it.
+
 **2.3.5** - Leaked comment fix, relationship on non-MSP, one chart per side
 
 **A comment was rendering as visible text on the page.** Porting the meeting modals across branches sliced them starting mid-comment, so the `<!--` opener was left behind and only the tail came over — `stage tabs in order, records what was decided… -->` sat in the markup as content. Repaired, and the file is now checked for orphaned comment tails alongside the other structural checks.

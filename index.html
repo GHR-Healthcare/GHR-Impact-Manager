@@ -896,7 +896,7 @@
     const $ = (id) => document.getElementById(id);
 
     // App version - loaded from environment variable via API, with fallback
-    let APP_VERSION = '2.3.5';
+    let APP_VERSION = '2.3.6';
 
     const API_BASE_URL = '/api';
     
@@ -1480,7 +1480,28 @@
     window.loadDataFromDatabase = async function() {
         try {
             let rawPositions;
-            
+
+            // These six were awaited one after another several hundred lines
+            // below, so the page waited for the SUM of their latencies before
+            // the Stats, Revenue, Per Diem, Hours, Trend and Pending tabs had
+            // anything in them. They share no data -- each writes its own
+            // state keys -- so the requests are started together here and the
+            // responses are still handled in place, in the same order, by the
+            // same code. Wall time becomes the slowest of the six rather than
+            // their total.
+            //
+            // The bare .catch() keeps a rejection from being reported as
+            // unhandled while nothing is awaiting yet. It does not swallow it:
+            // the promise stays rejected and each existing try/catch still
+            // sees the failure when it awaits.
+            const inflight = {};
+            for (const route of ['stats-data', 'financial-data', 'perdiem-data',
+                                 'hours-data', 'trend-data', 'pending-data']) {
+                const p = fetch(`${API_BASE_URL}/${route}`);
+                p.catch(() => {});
+                inflight[route] = p;
+            }
+
             // Fetch config (default margin, app version) from API
             try {
                 const configResponse = await fetch(`${API_BASE_URL}/get-config`);
@@ -1647,7 +1668,7 @@
             
             // Load stats data for the Stats tab
             try {
-                const statsResponse = await fetch(`${API_BASE_URL}/stats-data`);
+                const statsResponse = await inflight['stats-data'];
                 if (statsResponse.ok) {
                     const statsData = await statsResponse.json();
                     
@@ -1689,7 +1710,7 @@
 
             // Load financial data for the Financials tab
             try {
-                const finResponse = await fetch(`${API_BASE_URL}/financial-data`);
+                const finResponse = await inflight['financial-data'];
                 if (finResponse.ok) {
                     const finData = await finResponse.json();
                     window.store.state.financialData = finData.monthlyData || [];
@@ -1709,7 +1730,7 @@
 
             // Load per diem data for the Per Diem tab
             try {
-                const pdResponse = await fetch(`${API_BASE_URL}/perdiem-data`);
+                const pdResponse = await inflight['perdiem-data'];
                 if (pdResponse.ok) {
                     const pdData = await pdResponse.json();
                     // Normalize assignments
@@ -1747,7 +1768,7 @@
 
             // Load hours analysis data (GHR vs other agencies, per diem hours)
             try {
-                const hoursResponse = await fetch(`${API_BASE_URL}/hours-data`);
+                const hoursResponse = await inflight['hours-data'];
                 if (hoursResponse.ok) {
                     const hoursData = await hoursResponse.json();
                     if (hoursData.rows) {
@@ -1774,7 +1795,7 @@
 
             // Load trend data
             try {
-                const trendResponse = await fetch(`${API_BASE_URL}/trend-data`);
+                const trendResponse = await inflight['trend-data'];
                 if (trendResponse.ok) {
                     const trendData = await trendResponse.json();
                     const parseLocalDate = s => { if (!s) return null; const [y,m,d] = s.split('T')[0].split('-'); return new Date(+y, +m-1, +d); };
@@ -1852,7 +1873,7 @@
 
             // Load pending submissions data (GHR only)
             try {
-                const pendingResponse = await fetch(`${API_BASE_URL}/pending-data`);
+                const pendingResponse = await inflight['pending-data'];
                 if (pendingResponse.ok) {
                     const pendingData = await pendingResponse.json();
                     if (pendingData.submissions) {
