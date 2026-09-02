@@ -3,7 +3,7 @@ import pyodbc
 import os
 import json
 from shared_code.auth import require_allowed_domain
-from shared_code.data_source import is_non_msp
+from shared_code.data_source import is_non_msp, get_bullhorn_conn
 from shared_code.bullhorn_systems import BULLHORN_SYSTEM_ROLLUP
 from shared_code.symplr_systems import SYMPLR_SYSTEM_ROLLUP
 
@@ -64,6 +64,112 @@ def _non_msp_mappings_response():
 # system directly; 'MSP' means GHR runs the program; '3rd Party' means someone
 # else's MSP sits in between -- and that is when the incumbent matters.
 VALID_RELATIONSHIPS = ('MSP', 'Direct', '3rd Party')
+
+
+# Bullhorn is the system of record for how GHR reaches a client. FieldMaps
+# decodes the custom fields that hold it:
+#
+#   Placement.customText59  "Relationship"     GHR MSP | Direct Contract | Third Party
+#   Placement.customText57  "MSP/Group Name"   the incumbent, when there is one
+#
+# customText59 is populated on 98.6% of placements in the last two years
+# (7,508 / 4,263 / 3,587 against 213 blank), which is why this is derived
+# rather than typed in. The per-system Settings fields still win where set --
+# they exist for the cases this cannot see.
+RELATIONSHIP_MAP = {
+    'ghr msp':         'MSP',
+    'direct contract': 'Direct',
+    'third party':     '3rd Party',
+}
+
+# customText57 doubles as a mirror of the relationship when no outside MSP is
+# involved, so these are not incumbents. 'Preview' is a Bullhorn sandbox
+# artifact that shows up against Grand View.
+NON_INCUMBENTS = {
+    'ghrhealthcare', 'ghrhealthcare preview', 'ghr healthcare',
+    'direct contract', 'perm contract', 'no msp', 'none', 'n/a',
+}
+
+RELATIONSHIP_LOOKBACK_YEARS = 2
+
+
+def _derive_relationships(mappings):
+    """Relationship and incumbent per health system, from Bullhorn placements.
+
+    Matching is by the same keywords the app already uses to group facilities
+    into systems, so a system resolves here exactly as it does everywhere else.
+    The winner is the most-placed relationship rather than the most recent: a
+    single stray placement should not relabel an account, and these books carry
+    them (one 'Third Party' against 1,741 'GHR MSP' at Cooper).
+
+    Best effort. If Bullhorn is unreachable this returns nothing and the
+    stored values stand on their own -- the badge is worth omitting, never
+    worth blocking the page for.
+    """
+    try:
+        conn = get_bullhorn_conn()
+    except Exception as e:
+        print(f'system-mappings: Bullhorn unavailable, skipping derivation: {e}')
+        return {}
+    if conn is None:
+        return {}
+    try:
+        cursor = conn.cursor()
+        cursor.execute('SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED')
+        cursor.execute(f'''
+            SELECT LOWER(cc.name) AS client_name,
+                   NULLIF(LTRIM(RTRIM(p.customText59)), '') AS relationship,
+                   NULLIF(LTRIM(RTRIM(p.customText57)), '') AS incumbent,
+                   COUNT(*) AS n
+            FROM dbo.View_Placement p WITH (NOLOCK)
+            JOIN dbo.View_ClientCorporation cc WITH (NOLOCK)
+              ON cc.clientCorporationID = p.clientCorporationID
+            WHERE p.dateAdded >= DATEADD(YEAR, -{RELATIONSHIP_LOOKBACK_YEARS}, GETDATE())
+              AND NULLIF(LTRIM(RTRIM(p.customText59)), '') IS NOT NULL
+              AND cc.isDeleted = 0
+            GROUP BY LOWER(cc.name), NULLIF(LTRIM(RTRIM(p.customText59)), ''),
+                     NULLIF(LTRIM(RTRIM(p.customText57)), '')
+        ''')
+        rows = cursor.fetchall()
+    except Exception as e:
+        print(f'system-mappings: relationship derivation failed: {e}')
+        return {}
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+    out = {}
+    for m in mappings:
+        name = m.get('system_name') or ''
+        kws = m.get('keywords') or []
+        if isinstance(kws, str):
+            kws = [k.strip() for k in kws.split(',')]
+        kws = [k.lower().strip() for k in kws if k and k.strip()]
+        if not name or not kws:
+            continue
+        rel_votes, inc_votes = {}, {}
+        for client_name, relationship, incumbent, n in rows:
+            if not any(k in client_name for k in kws):
+                continue
+            rel = RELATIONSHIP_MAP.get((relationship or '').lower().strip())
+            if rel:
+                rel_votes[rel] = rel_votes.get(rel, 0) + n
+            inc = (incumbent or '').strip()
+            if inc and inc.lower() not in NON_INCUMBENTS:
+                inc_votes[inc] = inc_votes.get(inc, 0) + n
+        if not rel_votes:
+            continue
+        best_rel = max(rel_votes.items(), key=lambda kv: kv[1])[0]
+        # An incumbent only means something when someone else's MSP is in the
+        # middle. On a GHR MSP or Direct account the stray vendor names are
+        # one-off exceptions, not the account's incumbent.
+        best_inc = ''
+        if best_rel == '3rd Party' and inc_votes:
+            best_inc = max(inc_votes.items(), key=lambda kv: kv[1])[0]
+        out[name] = {'relationship': best_rel, 'incumbent': best_inc}
+    return out
 
 
 def ensure_schema(cursor):
@@ -163,6 +269,21 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                 mappings.append(row_dict)
 
             conn.close()
+
+            # Bullhorn is the source of truth for relationship and incumbent;
+            # the stored columns are an override for what it cannot see. A
+            # value typed in Settings therefore wins, and anything left blank
+            # falls back to what the placements say.
+            derived = _derive_relationships(mappings)
+            for m in mappings:
+                d = derived.get(m.get('system_name') or '')
+                if not d:
+                    continue
+                if not (m.get('relationship') or '').strip():
+                    m['relationship'] = d['relationship']
+                    m['relationship_source'] = 'bullhorn'
+                if not (m.get('incumbent') or '').strip():
+                    m['incumbent'] = d['incumbent']
 
             return func.HttpResponse(
                 json.dumps({'mappings': mappings}),
