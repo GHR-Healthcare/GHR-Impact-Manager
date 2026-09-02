@@ -2,6 +2,40 @@
 
 ## Version History
 
+**2.3.4** - New favicon
+
+`impact-manager.ico` replaces the old icon. The `<link>` tag points at it and `favicon.ico` is updated to the same bytes, because browsers still request `/favicon.ico` implicitly — from bookmarks, and for the tab before this page's HTML has been parsed. Both paths therefore serve the same image rather than the old one lingering wherever the link tag isn't consulted.
+
+The href carries a `?v=` cache-buster. Favicons are cached hard enough that a stale one routinely outlives a deploy.
+
+**2.3.3** - IMPACT meeting: review pass, three fixes
+
+A pass over the meeting flow and its persistence. The shape held up — `impactmgr.meetings` has every column including the additive `stages` and `recap_html`, the MERGE upserts on `meeting_id` so repeated saves update one row rather than forking, `created_by` is set only on insert so the original owner survives, and two real meetings saved by actual users show correct rows with a stored recap. Three defects did surface.
+
+**Stage jumps were never persisted.** `GOTO_MEETING_STAGE` moved `stageIdx` in memory but never saved, so `stage` in the database only advanced on Complete. Closing the tab mid-meeting resumed at the last *completed* stage rather than where the user actually was.
+
+**Resuming a finished-but-unclosed meeting went back to the beginning.** `stageIdx === stages.length` is the legitimate "all stages done, not yet closed" state, and indexing it yields `undefined`; the fallback was `list[0]`. There is a real row in this state. It now lands on the last stage, which is where the user left off — the banner already rendered this correctly as Save & Close.
+
+**Lever, margin and next-step changes were missing from the recap.** Actions were only logged from the four stage editors (interview, margin override, onboarding, extension decision). Everything done through the job action modal — the levers especially — went to `sessionLog` and the `changes` table but never reached the meeting record. `pushLog` is the single choke point for all of it, so logging there covers every modal action at once. `LOG_MEETING_ACTION` no-ops when no meeting is running, so this changes nothing outside a meeting, MSP included.
+
+Checked and found correct: every DOM id the meeting code touches exists, no dispatch lacks a reducer case, the resume offer is scoped to the signed-in user, the meeting's health-system scope really does drive `stageFilter`, and a failed stage load renders an amber error banner rather than an empty table. `workspace_state` is empty, which is expected — those editors have only ever been reachable from a preview environment.
+
+**2.3.2** - GHR logo in the header, instant tooltips on the icon buttons
+
+The header's lucide `activity` pulse is replaced by the GHR logo, on both instances.
+
+Every icon-only control in the header now has an instant hover tooltip. They already carried `title`, but a native tooltip waits well over a second and is easy to miss on a button whose whole meaning is an icon. `data-tip` renders immediately in the app's own styling; `title` is dropped where `data-tip` replaces it so the two don't stack, and `aria-label` keeps each control named for screen readers.
+
+Covered: connection status, instance switch, settings, sign out, AI hot job summary, AI impact call summary, redact vendor info, change history, past IMPACT meetings, and start IMPACT meeting. Which of those are present depends on the instance — MSP shows AI summary and change history, non-MSP shows past meetings and start meeting in their place. Controls inside modals are left alone; they have visible text labels.
+
+**2.3.1** - Non-MSP header: the meeting takes the retired buttons' place
+
+Non-MSP retires the same two header buttons the prototype did — AI Impact Call Summary and Change History. Meeting History takes the Change History slot in the utility cluster, and Start IMPACT Meeting sits centred at the top of the header rather than in a strip above the tabs.
+
+MSP keeps all four of its original buttons and shows neither meeting control. The swap is done in `viewToggle()` off `dataSource`, so the only edits to MSP's own markup are two added `id` attributes — inert, and needed to address the buttons at all. Against the pre-2.3.0 MSP baseline `index.html` still differs by five lines, two of which are those ids.
+
+One detail worth recording: hiding these with `hidden` alone leaves them `display:block` when un-hidden, which stacks the icon above the label. Each element toggles `hidden` and its intended `flex` together.
+
 **2.3.0** - Non-MSP: Closed, Extensions and Onboarding stages
 
 The IMPACT stage views ship to the non-MSP instance. MSP is deliberately untouched: its versions of these stages stay on the feature branch for review before they reach main.

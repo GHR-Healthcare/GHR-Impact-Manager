@@ -4,8 +4,12 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>GHR Impact Manager</title>
-  <link rel="icon" type="image/x-icon" href="favicon.ico">
-  <link rel="icon" type="image/png" href="ghr-logo.png">
+  <!-- Both paths serve the same icon: the link tag is authoritative, but
+       browsers still request /favicon.ico implicitly (bookmarks, and the
+       tab before this HTML is parsed). The ?v= is a cache-buster --
+       favicons are cached hard and a stale one outlives a deploy. -->
+  <link rel="icon" type="image/x-icon" href="impact-manager.ico?v=2.3.4">
+  <link rel="shortcut icon" type="image/x-icon" href="impact-manager.ico?v=2.3.4">
 
   <!-- Libraries -->
   <script src="https://cdn.tailwindcss.com"></script>
@@ -112,6 +116,7 @@
       box-shadow: 0 2px 8px rgba(15,23,42,.18);
     }
     [data-tip]:hover::after { opacity: 1; transform: translateY(0); }
+    /* Left-anchor the ones near the left edge so the bubble stays on screen. */
     [data-tip-left]::after { right: auto; left: 0; }
   </style>
 </head>
@@ -196,9 +201,10 @@
         <p id="appSubtitle" class="text-slate-500 text-xs sm:text-base mt-1 hidden sm:block">Account Performance Workspace</p>
       </div>
       
-      <!-- Start Meeting, centred — the primary action on this screen, so it
-           sits apart from the utility cluster on the right. -->
-      <div class="flex justify-center order-last w-full lg:order-none lg:w-auto lg:flex-1">
+      <!-- Start IMPACT Meeting sits centred in the header, as the reference
+           had it, apart from the utility cluster on the right. Non-MSP only;
+           viewToggle() reveals it. -->
+      <div id="meetingStartSlot" class="hidden justify-center order-last w-full lg:order-none lg:w-auto lg:flex-1">
         <button id="btnStartMeeting" onclick="store.dispatch('OPEN_MEETING_SETUP')"
                 class="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white px-5 rounded-md shadow-sm text-sm font-semibold transition-colors h-[38px]"
                 data-tip-left data-tip="Start an IMPACT meeting" aria-label="Start an IMPACT meeting">
@@ -309,14 +315,10 @@
                   onclick="store.dispatch('TOGGLE_PRIVACY')" data-tip="Redact vendor info" aria-label="Redact vendor info">
             <i data-lucide="eye-off" id="privacyIcon" class="w-4 h-4 text-red-400"></i>
           </button>
-          
-          <!-- Past meetings sits with the other utilities; Start Meeting is
-               centred in the header (see below), as the reference had it.
-               Both replace the retired AI Impact Call Summary and Change
-               History buttons. Snapshot saving on /history is untouched —
-               only its viewer is gone. -->
+          <!-- Takes the retired Change History slot on non-MSP. Snapshot saving
+               on /history is untouched there; only its viewer is replaced. -->
           <button id="btnMeetingHistory" onclick="store.dispatch('OPEN_MEETING_HISTORY')"
-                  class="flex items-center gap-1 sm:gap-2 bg-purple-600 hover:bg-purple-700 text-white px-2 sm:px-4 rounded-md shadow-sm text-xs sm:text-sm font-medium transition-colors h-[32px] sm:h-[38px]"
+                  class="hidden items-center gap-1 sm:gap-2 bg-purple-600 hover:bg-purple-700 text-white px-2 sm:px-4 rounded-md shadow-sm text-xs sm:text-sm font-medium transition-colors h-[32px] sm:h-[38px]"
                   data-tip="Past IMPACT meetings" aria-label="Past IMPACT meetings">
             <i data-lucide="history" class="w-4 h-4"></i>
           </button>
@@ -873,7 +875,7 @@
     const $ = (id) => document.getElementById(id);
 
     // App version - loaded from environment variable via API, with fallback
-    let APP_VERSION = '3.1.0';
+    let APP_VERSION = '2.3.4';
 
     const API_BASE_URL = '/api';
     
@@ -4551,6 +4553,33 @@
           if (btn) {
             btn.className = (view === v.key ? activeClass : inactiveClass) + (hide ? ' hidden' : '');
           }
+        });
+        // THE DELIBERATE DIVERGENCE FROM MAIN ON THIS BRANCH.
+        //
+        // main shows the IMPACT UI on non-MSP only, so MSP stays as it has
+        // been. This branch exists to show reviewers MSP *with* it, so the
+        // controls are shown on both instances. Merging to main is a matter
+        // of deciding this flag, not re-reading the diff.
+        //
+        // Tab visibility itself needs nothing here: View.VIEWS drives it, and
+        // closed / extensions / onboarding carry no mspOnly on this branch.
+        const showImpactUi = true;
+
+        // Header swap: the AI Impact Call Summary and Change History
+        // buttons retire, Meeting History takes the Change History slot, and
+        // Start IMPACT Meeting sits centred at the top. MSP keeps all four of
+        // its original buttons and never shows the meeting controls.
+        // 'hidden' has to be paired with the flex display class each element
+        // wants, or un-hiding leaves it as a block and the icon/label stack.
+        const headerSwap = [
+          ['btnMeetingHistory',  showImpactUi, 'flex'],
+          ['meetingStartSlot',   showImpactUi, 'flex'],
+        ];
+        headerSwap.forEach(([id, show, disp]) => {
+          const el = $(id);
+          if (!el) return;
+          el.classList.toggle('hidden', !show);
+          el.classList.toggle(disp, show);
         });
 
         // KPI + legend belong to the List/Per Diem/Financials trio. The newer
@@ -12062,7 +12091,14 @@
                     View.updateAllFilterOptions('systems');
                   }
                   const list = View.meetingStageList();
-                  const at = list[s.meeting.stageIdx] || list[0];
+                  // stageIdx === list.length is the legitimate "all stages done,
+                  // not yet closed" state, and indexing it yields undefined.
+                  // Falling back to list[0] threw the user back to the first
+                  // stage; the last one is where they actually left off. The
+                  // banner already renders this state as Save & Close.
+                  const at = list[s.meeting.stageIdx]
+                          || list[Math.min(s.meeting.stageIdx, list.length - 1)]
+                          || list[0];
                   if (at) s.view = at.view;
                   $('meetingSetupModal')?.classList.add('hidden');
                   View.viewToggle();
@@ -12085,6 +12121,10 @@
               if (!st) break;
               m.stageIdx = payload;
               s.view = st.view;
+              // Persist the jump. Without this the saved `stage` only moved on
+              // Complete, so closing the tab mid-meeting resumed at whatever
+              // stage was last *completed* rather than where the user was.
+              View.saveMeeting(m, false);
               View.viewToggle();
               View.renderMeetingBanner();
               View.main();
@@ -12502,10 +12542,16 @@
 
               const tag = $('leverTagInput')?.value || '';
               const pushLog = (type, desc, tagVal) => {
-                // job.history is what the per-job history modal renders. The
-                // parallel sessionLog array went with the AI Call Summary that
-                // was its only reader.
-                job.history.push({ jobId: job.id, type, desc, tag: tagVal || null, time: new Date().toLocaleString() });
+                const item = { jobId: job.id, type, desc, tag: tagVal || null, time: new Date().toLocaleString() };
+                s.sessionLog.push(item);
+                job.history.push(item);
+                // Everything done through this modal -- levers, margin changes,
+                // next steps -- is part of the meeting record when one is
+                // running. This is the single choke point for those actions, so
+                // logging here is what keeps the recap from omitting them.
+                // LOG_MEETING_ACTION no-ops when no meeting is open.
+                this.dispatch('LOG_MEETING_ACTION',
+                  `${type}: ${desc}${tagVal ? ` (${tagVal})` : ''} — job ${job.id}`);
               };
 
               if (s.modal.type === 'lever') {
