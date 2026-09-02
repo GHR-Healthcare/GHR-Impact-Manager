@@ -1,0 +1,49 @@
+# Permanent home for the MSP prototype build.
+#
+# Until now the prototype was only reachable through PR #61's preview, which
+# Azure creates for an open pull request and DELETES the moment that PR is
+# merged or closed. Two review links have already been lost that way, and a
+# link that disappears when someone tidies up a PR is not a link you can send
+# to anyone.
+#
+# This deploys the prototype branch to a NAMED static web apps environment
+# instead, so its URL is tied to the branch rather than to a pull request and
+# stays put. Three links, all permanent:
+#
+#   Original MSP   lively-plant-057be0a0f.6.azurestaticapps.net              (main, MSP)
+#   New MSP        lively-plant-057be0a0f-prototype.eastus2.6.azurestaticapps.net
+#   Non-MSP        witty-stone-0bf78240f.7.azurestaticapps.net               (main, non-MSP)
+#
+# Only the MSP app builds this: the prototype is the MSP build, and pointing
+# the non-MSP instance at it produced the "the MSP link goes to non-MSP"
+# confusion earlier.
+name: MSP Prototype Environment
+
+on:
+  push:
+    branches:
+      - feature/msp-impact-prototype
+  workflow_dispatch:
+
+jobs:
+  build_and_deploy_prototype:
+    runs-on: ubuntu-latest
+    name: Deploy MSP Prototype
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+          lfs: false
+      - name: Build And Deploy
+        uses: Azure/static-web-apps-deploy@v1
+        with:
+          azure_static_web_apps_api_token: ${{ secrets.AZURE_STATIC_WEB_APPS_API_TOKEN_LIVELY_PLANT_057BE0A0F }}
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          action: "upload"
+          app_location: "/"
+          api_location: "api"
+          output_location: ""
+          # The named environment. Anything other than the production branch
+          # lands in a staging slot; naming it keeps the hostname stable
+          # instead of Azure assigning one per pull request.
+          deployment_environment: prototype
