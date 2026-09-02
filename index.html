@@ -896,7 +896,7 @@
     const $ = (id) => document.getElementById(id);
 
     // App version - loaded from environment variable via API, with fallback
-    let APP_VERSION = '2.3.7';
+    let APP_VERSION = '2.3.8';
 
     const API_BASE_URL = '/api';
     
@@ -1846,10 +1846,25 @@
             // error so the view can say so rather than rendering an empty
             // table that looks like a quiet week.
             if (window.store.state.dataSource === 'non_msp') {
+                // On MSP these tabs cover the whole vendor panel, not just
+                // GHR's seats. Extensions and Onboarding default to GHR-only
+                // server-side and the UI had never overridden it, so they were
+                // hiding 29% and 44% of the window respectively -- on the B4
+                // side of Onboarding there are more affiliate starts than GHR
+                // ones. An affiliate start that is slipping is still the
+                // programme's problem, and an affiliate seat ending is
+                // potentially a seat to win.
+                //
+                // Closed already returned both: capture rate is GHR against
+                // affiliate, so it could never have been GHR-only.
+                //
+                // Non-MSP has no vendor panel -- 'GHR' is the only agency
+                // there -- so the flag is meaningless and stays off.
+                const av = window.store.state.dataSource === 'non_msp' ? '' : '?includeAffiliate=1';
                 const stageLoads = [
-                    { key: 'extensions', route: 'extensions-data', pick: d => Array.isArray(d) ? d : (d.rows || []) },
-                    { key: 'onboarding', route: 'onboarding-data', pick: d => Array.isArray(d) ? d : (d.rows || []) },
-                    { key: 'closed',     route: 'closed-data',     pick: d => d.rows || [], meta: d => d },
+                    { key: 'extensions', route: `extensions-data${av}`, pick: d => Array.isArray(d) ? d : (d.rows || []) },
+                    { key: 'onboarding', route: `onboarding-data${av}`, pick: d => Array.isArray(d) ? d : (d.rows || []) },
+                    { key: 'closed',     route: 'closed-data',          pick: d => d.rows || [], meta: d => d },
                 ];
                 await Promise.all(stageLoads.map(async ({ key, route, pick, meta }) => {
                     try {
@@ -5621,11 +5636,37 @@
         const name = (r && r.clinician) || '';
         if (!name) return '—';
         const s = window.store.state;
-        // r.agency is the vendor on MSP rows; r.source is 'GHR'/'Affiliate'.
-        // Either identifies an outside agency, so both are consulted rather
-        // than assuming every endpoint populates the same one.
-        const isOurs = Utils.isGhrAgency(r.agency) || r.source === 'GHR';
+        // Shares stageAgencyLabel so the masked name and the AV badge can
+        // never disagree about whose seat a row is.
+        const isOurs = View.stageAgencyLabel(r) === 'GHR';
         return (s.redactMode && !isOurs) ? Utils.redactName(name) : name;
+      },
+
+      /*
+       * GHR or AV, for a stage row.
+       *
+       * On MSP these tables carry the whole vendor panel, so a row's agency is
+       * the first thing that has to be legible -- an affiliate seat ending is
+       * a different conversation from one of ours ending. 'Source' is already
+       * taken by B4/VNDLY, which is the system of record, not the vendor.
+       *
+       * The vendor's name sits in the tooltip and follows Redact Vendor Info;
+       * the GHR/AV distinction itself is not redacted, since knowing a seat is
+       * not ours is the point of showing it and identifies nobody.
+       */
+      stageAgencyLabel(r) {
+        return (Utils.isGhrAgency(r.agency) || r.source === 'GHR') ? 'GHR' : 'AV';
+      },
+
+      stageAgency(r) {
+        const ours = View.stageAgencyLabel(r) === 'GHR';
+        const s = window.store.state;
+        const vendor = (r.agency || '').trim();
+        const label = View.stageAgencyLabel(r);
+        const tip = ours ? (vendor || 'GHR')
+                  : (s.redactMode ? 'Affiliate vendor (hidden)' : (vendor || 'Affiliate'));
+        const tone = ours ? 'bg-blue-100 text-blue-700' : 'bg-purple-100 text-purple-700';
+        return `<span class="px-1.5 py-0.5 rounded text-[9px] font-bold ${tone}" title="${View.esc(tip)}">${label}</span>`;
       },
 
       stageBadge(text, tone) {
@@ -5869,6 +5910,11 @@
           { label: '' },
           { label: 'Clinician',       key: 'clinician' },
           { label: 'Source',          key: 'source_system', align: 'center' },
+          // Sorts and filters on what is actually on screen. Keyed on the
+          // raw vendor instead, someone could type a vendor name into the
+          // Agency filter while Redact Vendor Info was on and infer the
+          // masked value from which rows matched.
+          { label: 'Agency',          key: r => View.stageAgencyLabel(r), align: 'center' },
           { label: 'Ends',            key: 'end_date',      align: 'center' },
           { label: 'Days Left',       key: 'days_left',     align: 'center' },
           { label: 'Client Decision', key: r => View.extensionEdit(r).decision, align: 'center' },
@@ -5920,6 +5966,7 @@
                   <div class="text-[10px] text-slate-400">${r.facility || '—'} · ${r.role || r.care_type || '—'}</div>
                 </td>
                 <td class="px-3 py-2 text-center">${View.stageBadge(r.source_system || r.source || '—', 'info')}</td>
+                <td class="px-3 py-2 text-center">${View.stageAgency(r)}</td>
                 <td class="px-3 py-2 text-center text-slate-600">${r.end_date || '—'}</td>
                 <td class="px-3 py-2 text-center">${r.days_left != null ? View.stageBadge(r.days_left + 'd', r.urgency || 'low') : '—'}</td>
                 <td class="px-3 py-2 text-center">${View.extensionDecisionBadge(e.decision)}</td>
@@ -6075,6 +6122,11 @@
           { label: '' },
           { label: 'Clinician',     key: 'clinician' },
           { label: 'Source',        key: 'source_system', align: 'center' },
+          // Sorts and filters on what is actually on screen. Keyed on the
+          // raw vendor instead, someone could type a vendor name into the
+          // Agency filter while Redact Vendor Info was on and infer the
+          // masked value from which rows matched.
+          { label: 'Agency',          key: r => View.stageAgencyLabel(r), align: 'center' },
           { label: 'Status',        key: r => View.onboardingGroup(r), align: 'center' },
           { label: 'Current Start', key: 'current_start',  align: 'center' },
           { label: 'Moves',         key: 'move_count',     align: 'center' },
@@ -6127,6 +6179,7 @@
                   <div class="text-[10px] text-slate-400">${r.facility || '—'} · ${r.role || '—'}</div>
                 </td>
                 <td class="px-3 py-2 text-center">${View.stageBadge(r.source_system || r.source || '—', 'info')}</td>
+                <td class="px-3 py-2 text-center">${View.stageAgency(r)}</td>
                 <td class="px-3 py-2 text-center">${View.stageBadge(g, tone[g] || 'low')}</td>
                 <td class="px-3 py-2 text-center text-slate-600">${r.current_start || '—'}</td>
                 <td class="px-3 py-2 text-center text-slate-600">${
@@ -6163,6 +6216,11 @@
           { label: 'Facility',     key: 'facility' },
           { label: 'Role',         key: 'role' },
           { label: 'Source',       key: 'source_system', align: 'center' },
+          // Sorts and filters on what is actually on screen. Keyed on the
+          // raw vendor instead, someone could type a vendor name into the
+          // Agency filter while Redact Vendor Info was on and infer the
+          // masked value from which rows matched.
+          { label: 'Agency',          key: r => View.stageAgencyLabel(r), align: 'center' },
           { label: 'Closed',       key: 'closed_on',     align: 'center' },
           { label: 'Outcome',      key: 'group',         align: 'center' },
           { label: 'Reason',       key: 'outcome_reason' },
@@ -6213,6 +6271,7 @@
             <td class="px-3 py-2 text-slate-500">${r.facility || '—'}</td>
             <td class="px-3 py-2 text-slate-500">${r.role || '—'}</td>
             <td class="px-3 py-2 text-center">${View.stageBadge(r.source_system || r.source || '—', 'info')}</td>
+                <td class="px-3 py-2 text-center">${View.stageAgency(r)}</td>
             <td class="px-3 py-2 text-center text-slate-600">${r.closed_on || '—'}</td>
             <td class="px-3 py-2 text-center">${r.group ? View.stageBadge(r.group, 'low') : '—'}</td>
             <td class="px-3 py-2 text-slate-500">${r.outcome_reason || '—'}</td>
