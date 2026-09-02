@@ -6,7 +6,9 @@
 
 The button masks the names of clinicians placed by *other* agencies. Non-MSP is GHR's direct book with no vendor panel, so every row is already ours and the toggle could never change anything — every redaction site tests `!isGhrAgency` before masking. It is hidden there now, and hiding it strands nothing, since nothing was being masked to begin with.
 
-Noted while checking this, not yet addressed: **the stage views apply no redaction at all.** Across 1,245 lines of Closed / Extensions / Onboarding there is not one reference to `redactMode`. That is harmless today because those views only carry GHR rows, which are never masked — but it becomes real the moment affiliate rows are shown there.
+**The stage views applied no redaction at all**, and now do. Across 1,245 lines of Closed / Extensions / Onboarding there was not one reference to `redactMode` — the four IMPACT tables were the one part of the app the privacy toggle never reached. It went unnoticed because those views only carry GHR rows, and GHR is never masked, so the button would have silently stopped meaning what it says the moment an affiliate row appeared. All three now render clinician names through `View.stageWorker`, using the same `isGhrAgency` test as the rest of the app.
+
+A sweep of every view confirms the rest were already covered. `perDiem` and `trend` reference `worker_name` but never display it — it is a deduplication key and a headcount counter there, so there is nothing to mask.
 
 **2.3.6** - List views load in parallel
 
