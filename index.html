@@ -896,7 +896,7 @@
     const $ = (id) => document.getElementById(id);
 
     // App version - loaded from environment variable via API, with fallback
-    let APP_VERSION = '2.3.8';
+    let APP_VERSION = '2.3.9';
 
     const API_BASE_URL = '/api';
     
@@ -5654,6 +5654,68 @@
        * the GHR/AV distinction itself is not redacted, since knowing a seat is
        * not ours is the point of showing it and identifies nobody.
        */
+      /*
+       * Market share behind a closed seat: who holds the comparable demand at
+       * that account right now.
+       *
+       * The reference drew this as marketSharePie, but its data was
+       * scaffolding -- headcount from the job id modulo 7, dates from a
+       * hardcoded array. Both VMSs carry the real figures, so this is the same
+       * shape on live numbers.
+       *
+       * Prefers the seat's own role and falls back to the whole account when
+       * that role has too few seats for a percentage to survive one placement
+       * moving. It always says which it is showing, because "GHR hold 85%"
+       * means something quite different across 109 RN seats than across 3.
+       */
+      closedMarketShare(r) {
+        const ms = window.store.state.closedMeta?.marketShare;
+        if (!ms || !ms.byAccount) return null;
+        const hs = r.health_system || '';
+        if (!hs) return null;
+        const roleKey = `${hs}|${r.role || ''}`;
+        const byRole = ms.byRole?.[roleKey];
+        if (byRole && byRole.total >= (ms.minSeats || 6)) {
+          return { ...byRole, scope: `${r.role} at ${hs}` };
+        }
+        const acct = ms.byAccount[hs];
+        return acct ? { ...acct, scope: `all roles at ${hs}` } : null;
+      },
+
+      closedDetail(r) {
+        const d = View.closedMarketShare(r);
+        if (!d) {
+          return `<div class="p-4 text-xs text-slate-400">No comparable live demand at this account to compare against.</div>`;
+        }
+        const s = window.store.state;
+        const palette = ['#f97316', '#7c3aed', '#0aa36c', '#e11d48', '#0891b2', '#a16207'];
+        let other = 0;
+        const seg = [{ label: 'GHR', value: d.ghr, color: '#3157d5' }];
+        d.vendors.filter(v => !v.isGhr).forEach((v, i) => {
+          // Vendor identities follow Redact Vendor Info, the same as every
+          // other place an affiliate is named.
+          const label = s.redactMode ? `Vendor ${i + 1}` : v.name;
+          if (i < 5) seg.push({ label, value: v.seats, color: palette[i % palette.length] });
+          else other += v.seats;
+        });
+        if (other) seg.push({ label: 'Other', value: other, color: '#94a3b8' });
+        return `
+          <div class="p-4 bg-slate-50 border-t border-slate-100">
+            <div class="text-[10px] font-semibold uppercase tracking-wide text-slate-400 mb-2">
+              Market share &middot; ${View.esc(d.scope)}
+            </div>
+            <div class="flex items-center gap-6 flex-wrap">
+              ${View.donutSvg(seg, { centerLabel: d.ghrPct + '%', centerSub: 'GHR' })}
+              ${View.chartLegend(seg)}
+              <div class="text-[11px] text-slate-500 leading-relaxed">
+                GHR hold <b class="text-slate-700">${d.ghr}</b> of
+                <b class="text-slate-700">${d.total}</b> live seats here,
+                across ${d.vendors.length} vendor${d.vendors.length === 1 ? '' : 's'}.
+              </div>
+            </div>
+          </div>`;
+      },
+
       stageAgencyLabel(r) {
         return (Utils.isGhrAgency(r.agency) || r.source === 'GHR') ? 'GHR' : 'AV';
       },
@@ -6265,18 +6327,31 @@
           { label: '13-Week Value', val: value ? money(value) : '—', icon: 'dollar-sign', color: 'emerald' },
         ]);
 
-        const body = rows.map(r => `
-          <tr class="hover:bg-slate-50 border-b border-slate-100">
-            <td class="px-3 py-2 font-medium text-slate-700 whitespace-nowrap">${View.stageWorker(r)}</td>
+        // Rows expand to the market-share pane, matching Extensions and
+        // Onboarding. Only where there is something to open: on non-MSP every
+        // seat is GHR, so a vendor split would be a single 100% slice.
+        const closedExpandable = s.dataSource !== 'non_msp';
+        const body = rows.map(r => {
+          const open = closedExpandable && s.expandedClosed.has(r.id);
+          const row = `
+          <tr class="hover:bg-slate-50 border-b border-slate-100 ${closedExpandable ? 'cursor-pointer' : ''}"
+              ${closedExpandable ? `onclick="store.dispatch('TOGGLE_CLOSED_ROW','${r.id}')"` : ''}>
+            <td class="px-3 py-2 font-medium text-slate-700 whitespace-nowrap">${
+              closedExpandable ? `<span class="text-slate-400 mr-1">${open ? '&#9660;' : '&#9654;'}</span>` : ''
+            }${View.stageWorker(r)}</td>
             <td class="px-3 py-2 text-slate-500">${r.facility || '—'}</td>
             <td class="px-3 py-2 text-slate-500">${r.role || '—'}</td>
             <td class="px-3 py-2 text-center">${View.stageBadge(r.source_system || r.source || '—', 'info')}</td>
-                <td class="px-3 py-2 text-center">${View.stageAgency(r)}</td>
+            <td class="px-3 py-2 text-center">${View.stageAgency(r)}</td>
             <td class="px-3 py-2 text-center text-slate-600">${r.closed_on || '—'}</td>
             <td class="px-3 py-2 text-center">${r.group ? View.stageBadge(r.group, 'low') : '—'}</td>
             <td class="px-3 py-2 text-slate-500">${r.outcome_reason || '—'}</td>
             <td class="px-3 py-2 text-right text-slate-600">${money(r.value_13wk)}</td>
-          </tr>`).join('');
+          </tr>`;
+          return open
+            ? row + `<tr><td colspan="${closedCols.length}" class="p-0">${View.closedDetail(r)}</td></tr>`
+            : row;
+        }).join('');
 
         const el = $('closedContent');
         const isNonMspClosed = s.dataSource === 'non_msp';
@@ -11471,6 +11546,7 @@
         workspaceState: {},
         expandedExtensions: new Set(),
         expandedOnboarding: new Set(),
+        expandedClosed: new Set(),
         intelOpen: {},
         meeting: null,
         filters: { systems: new Set(), facilities: new Set(), categories: new Set(), specialties: new Set(), ageMin: null, ageMax: null, permOnly: false, legendBands: new Set(), searchId: '' },
@@ -11771,6 +11847,13 @@
                   window.showToast?.('Could not save: ' + (e.message || e), 'error');
                 }
               })();
+              break;
+            }
+
+            case 'TOGGLE_CLOSED_ROW': {
+              if (s.expandedClosed.has(payload)) s.expandedClosed.delete(payload);
+              else s.expandedClosed.add(payload);
+              View.closed();
               break;
             }
 

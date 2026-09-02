@@ -2,6 +2,27 @@
 
 ## Version History
 
+**2.3.9** - Market share on the Closed row detail
+
+The last prototype feature worth porting. The reference drew this as `marketSharePie` — vendor share for comparable roles at the account — but its version could not have shipped: `pieHeadcounts` derived headcount from *the job id modulo 7* and read start dates from a hardcoded array. The shape was right and the data was scaffolding. Both VMSs carry the real figures.
+
+Closed rows now expand, matching Extensions and Onboarding, onto a donut of who holds the live demand at that account:
+
+```
+Cooper · Registered Nurse      109 seats   GHR 85.3%
+Inspira · Registered Nurse      85 seats   GHR 80.0%
+RUMC · Registered Nurse         50 seats   GHR 62.0%
+Cooper · Respiratory Therapist   9 seats   GHR 44.4%
+```
+
+That last line is the point of the feature: GHR hold under half the respiratory demand at Cooper, behind Nurse Staffing LLC.
+
+**Keyed on health system, not facility.** The two sources disagree about what a facility is — B4's `Facility` is the hospital, VNDLY's `Default Work Site Name` is a unit (`Nursing Float-6211`) — so a facility key silently splits one account in two. Health system is also the level "share at the account" is asked at.
+
+It prefers the seat's own role and falls back to the whole account when that role has fewer than six seats, always labelling which it is showing: "GHR hold 85%" means something very different across 109 seats than across 3. Vendor names follow Redact Vendor Info. Non-MSP rows do not expand — every seat there is GHR, so the split would be one 100% slice.
+
+The other missing prototype feature, `canSeeAffiliateExtensions`, is deliberately not built. It gated affiliate rows behind an Admin role, and the app has no roles — the config carries only `anonymous` and `authenticated`, and custom roles from AAD groups need Standard tier. Redact Vendor Info already covers the same concern by masking identities rather than hiding rows, and now reaches the stage views.
+
 **2.3.8** - MSP stage tabs show the whole vendor panel
 
 Extensions and Onboarding were returning GHR seats only. Both endpoints take an `includeAffiliate` parameter, it defaults off, and the UI had never passed it — so the tabs were quietly hiding **29%** of the extensions window and **44%** of the onboarding window. On the B4 side of Onboarding there are more affiliate starts than GHR ones (428 against 408).
