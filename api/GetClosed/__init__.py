@@ -120,6 +120,90 @@ COMPETITIVE_LOSS_CATEGORY = 'Lost to competitor'
 COMPETITIVE_ROLLUP_LIMIT = 15
 
 
+# Minimum seats before a role-level split is worth drawing. Below this the
+# percentages swing on one placement, so the view falls back to the account.
+MARKET_SHARE_MIN_SEATS = 6
+
+
+def _market_share(cursor):
+    """Vendor split of the live book, by account and by account+role.
+
+    This is what the reference drew as marketSharePie -- "vendor share for
+    comparable roles at the account". Its own version could not have been
+    shipped: pieHeadcounts derived headcount from the job id modulo 7 and read
+    start dates out of a hardcoded array. The shape was right, the data was
+    scaffolding. Both VMSs carry the real thing.
+
+    Keyed on health system rather than facility. The two sources do not agree
+    on what a facility is -- B4's Facility is the hospital, VNDLY's Default
+    Work Site Name is a unit ('Nursing Float-6211') -- so a facility key
+    silently splits one account in two. Health system is also the level the
+    question is actually asked at.
+
+    Returns both granularities. Role level answers "how much of their RN
+    demand do we hold"; the account level is the fallback where a role has too
+    few seats for a percentage to mean anything.
+    """
+    cursor.execute('''
+        WITH seats AS (
+            SELECT LTRIM(RTRIM(o.Health_System))  AS hs,
+                   LTRIM(RTRIM(o.Position_Type))  AS role_,
+                   LTRIM(RTRIM(o.Agency))         AS vendor
+            FROM dhc.B4HealthOrder o WITH (NOLOCK)
+            WHERE o.Contract_Status NOT LIKE 'Closed%'
+              AND o.Health_System IS NOT NULL
+              AND o.Position_Type IS NOT NULL
+              AND o.Agency IS NOT NULL
+            UNION ALL
+            SELECT LTRIM(RTRIM(w.[Health System])),
+                   LTRIM(RTRIM(COALESCE(w.[Job Title], w.[Title]))),
+                   LTRIM(RTRIM(w.[Vendor Name]))
+            FROM dbo.STAGING_VNDLY_WORKORDERS w WITH (NOLOCK)
+            WHERE w.[Current Status] = 'Active'
+              AND w.[Health System] IS NOT NULL
+              AND COALESCE(w.[Job Title], w.[Title]) IS NOT NULL
+              AND w.[Vendor Name] IS NOT NULL
+        )
+        SELECT hs, role_, vendor, COUNT(*) AS seats
+        FROM seats
+        WHERE hs <> '' AND role_ <> '' AND vendor <> ''
+        GROUP BY hs, role_, vendor
+    ''')
+    by_role, by_account = {}, {}
+    for hs, role_, vendor, seats in cursor.fetchall():
+        by_role.setdefault(f'{hs}|{role_}', {})
+        by_role[f'{hs}|{role_}'][vendor] = by_role[f'{hs}|{role_}'].get(vendor, 0) + seats
+        by_account.setdefault(hs, {})
+        by_account[hs][vendor] = by_account[hs].get(vendor, 0) + seats
+
+    def shape(d):
+        out = {}
+        for key, vendors in d.items():
+            total = sum(vendors.values())
+            if not total:
+                continue
+            ranked = sorted(vendors.items(), key=lambda kv: -kv[1])
+            ghr = sum(n for v, n in ranked if _is_ghr(v))
+            out[key] = {
+                'total': total,
+                'ghr': ghr,
+                'ghrPct': round(100.0 * ghr / total, 1),
+                # Vendors are returned named. The UI masks them under Redact
+                # Vendor Info; withholding them here would break the panel for
+                # the people allowed to see it.
+                'vendors': [{'name': v, 'seats': n, 'isGhr': _is_ghr(v)} for v, n in ranked],
+            }
+        return out
+
+    return {'minSeats': MARKET_SHARE_MIN_SEATS,
+            'byRole': shape(by_role), 'byAccount': shape(by_account)}
+
+
+def _is_ghr(vendor):
+    v = (vendor or '').lower()
+    return 'ghr' in v or 'planet healthcare' in v
+
+
 def _b4_rows(cursor, lookback):
     """Closed outcomes still recorded in B4Health.
 
@@ -705,8 +789,19 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
         for r in rows:
             counts[r['group']] = counts.get(r['group'], 0) + 1
 
+        # Vendor share of the live book, for the row-detail pie. Best effort:
+        # the stage is perfectly usable without it, so a failure here must not
+        # take the whole response down.
+        market_share = {}
+        try:
+            market_share = _market_share(cursor)
+        except Exception as e:
+            print(f'Closed: market share rollup failed: {e}')
+            errors.append(f'marketShare: {e}')
+
         payload = {
             'rows': rows,
+            'marketShare': market_share,
             'coverage': {
                 'windowDays': abs(lookback),
                 'counts': counts,
