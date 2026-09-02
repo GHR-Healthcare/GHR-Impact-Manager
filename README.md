@@ -2,6 +2,26 @@
 
 ## Version History
 
+**2.3.8** - MSP stage tabs show the whole vendor panel
+
+Extensions and Onboarding were returning GHR seats only. Both endpoints take an `includeAffiliate` parameter, it defaults off, and the UI had never passed it — so the tabs were quietly hiding **29%** of the extensions window and **44%** of the onboarding window. On the B4 side of Onboarding there are more affiliate starts than GHR ones (428 against 408).
+
+That was a default nobody revisited rather than a decision. On MSP, GHR runs the panel: an affiliate start that is slipping is still the programme's problem, and an affiliate seat ending is potentially a seat to win. Closed already returned both, because capture rate is GHR measured against affiliates and could never have been GHR-only.
+
+Non-MSP is unaffected — `'GHR'` is the only agency there, so the flag is meaningless and stays off.
+
+**An Agency column comes with it,** because showing affiliate rows without labelling them would be worse than hiding them. `Source` was already taken by B4/VNDLY, which is the system of record rather than the vendor. Rows now carry a GHR or AV badge, with the vendor name in the tooltip, following Redact Vendor Info. The GHR/AV distinction itself is not masked: knowing a seat is not ours is the point of showing it, and it identifies nobody.
+
+The column sorts and filters on the displayed label rather than the raw vendor. Keyed on the vendor, someone could type a name into the Agency filter with redaction on and infer the masked value from which rows matched.
+
+**2.3.7** - Redact Vendor Info is MSP-only
+
+The button masks the names of clinicians placed by *other* agencies. Non-MSP is GHR's direct book with no vendor panel, so every row is already ours and the toggle could never change anything — every redaction site tests `!isGhrAgency` before masking. It is hidden there now, and hiding it strands nothing, since nothing was being masked to begin with.
+
+**The stage views applied no redaction at all**, and now do. Across 1,245 lines of Closed / Extensions / Onboarding there was not one reference to `redactMode` — the four IMPACT tables were the one part of the app the privacy toggle never reached. It went unnoticed because those views only carry GHR rows, and GHR is never masked, so the button would have silently stopped meaning what it says the moment an affiliate row appeared. All three now render clinician names through `View.stageWorker`, using the same `isGhrAgency` test as the rest of the app.
+
+A sweep of every view confirms the rest were already covered. `perDiem` and `trend` reference `worker_name` but never display it — it is a deduplication key and a headcount counter there, so there is nothing to mask.
+
 **2.3.6** - List views load in parallel
 
 Six of the loads behind the list views — stats, revenue, per diem, hours, trend and pending — were awaited one after another, so the page waited for the *sum* of their latencies before those tabs had anything in them. They share no data; each writes its own state keys. The requests now start together and each response is still handled in place by the same code, so wall time is the slowest of the six rather than their total.

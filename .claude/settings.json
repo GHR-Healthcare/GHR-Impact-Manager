@@ -1,0 +1,27 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(grep -oE \"matchesStatsCategoryFilter\\\\\\([^\\)]*\\\\\\)\\\\{.{0,80}\" index.html)",
+      "Bash(grep -oE \"regions: '[A-Z/ ]*'|regionFilterContainer'[^;]{0,60}\" index.html)",
+      "Bash(python3 -)",
+      "Bash(python3 -m py_compile api/GetOnboarding/__init__.py)",
+      "Bash(git rm *)",
+      "Bash(grep -oE \"service_line[^,;\\)]{0,40}\" index.html)",
+      "Bash(grep -oE \"filters: \\\\{[^}]{0,200}\" index.html)",
+      "Bash(grep -oE \"categories: '[A-Z/ ]*'[^}]{0,120}\" index.html)",
+      "Bash(node --check /tmp/main.js)",
+      "Bash(grep -oE \"case 'TOGGLE_FILTER'[^}]{0,120}\" index.html)",
+      "Bash(SP=/tmp/claude-1000/-home-mjones-Projects-GHR-Impact-Manager/a1037c54-7ca4-418e-bef9-4fa80ddadc41/scratchpad node /tmp/claude-1000/-home-mjones-Projects-GHR-Impact-Manager/a1037c54-7ca4-418e-bef9-4fa80ddadc41/scratchpad/svc-test.js)",
+      "Bash(python3 -c ' *)",
+      "Bash(grep -oE \"profession: String\\\\\\(row\\\\.[a-z_]*\\\\\\)|profession: [^,]{0,40}\" index.html)",
+      "Bash(grep -oE \"shift_hours[^,;\\)]{0,50}|shiftHours[^,;\\)]{0,45}|hoursPerWeek[^,;\\)]{0,40}\" index.html)",
+      "Bash(python3 -m py_compile api/GetClosed/__init__.py)",
+      "Bash(python3 -c \"import pyodbc; print\\('pyodbc', pyodbc.version\\); print\\([d for d in pyodbc.drivers\\(\\)]\\)\")",
+      "Bash(export SP=\"/tmp/claude-1000/-home-mjones-Projects-GHR-Impact-Manager/a1037c54-7ca4-418e-bef9-4fa80ddadc41/scratchpad\")",
+      "Bash(python3 - /tmp/claude-1000/-home-mjones-Projects-GHR-Impact-Manager/a1037c54-7ca4-418e-bef9-4fa80ddadc41/scratchpad/symplr_closed.sql)",
+      "Bash(timeout 115 /tmp/claude-1000/-home-mjones-Projects-GHR-Impact-Manager/a1037c54-7ca4-418e-bef9-4fa80ddadc41/scratchpad/q ghr_ctmsync)",
+      "Bash(timeout 115 /tmp/claude-1000/-home-mjones-Projects-GHR-Impact-Manager/a1037c54-7ca4-418e-bef9-4fa80ddadc41/scratchpad/qj ghr_ctmsync)",
+      "Bash(python3 /tmp/claude-1000/-home-mjones-Projects-GHR-Impact-Manager/a1037c54-7ca4-418e-bef9-4fa80ddadc41/scratchpad/test_closed_agg.py)"
+    ]
+  }
+}
