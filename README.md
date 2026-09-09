@@ -29,6 +29,14 @@ VNDLY gets neither, and says so rather than showing a blank: no identifier reach
 
 Also: the Extensions group header spanned 8 columns against a 12-column table, and KPI cards silently dropped any `sub` line they were given.
 
+### 2.6.1 - Standing revenue bar
+
+The reference's footer, live on every tab: Revenue Won, Revenue Missed, Open Exposure. Won and Missed read the Closed rows' signed revenue, which the API decides -- a GHR win positive, an affiliate win or unfilled seat negative, a cancellation zero -- so both instances agree without the client re-deriving the rule. All three follow the active filters.
+
+Open Exposure is 13 weeks of bill rate x weekly hours across open seats. Seats whose source carries no weekly hours are counted in neither the money nor the seat total and are reported as excluded, the same discipline `extension_value_13wk` uses. Coverage is good: all 86 open B4 orders carry hours and 40 of 49 active VNDLY jobs do.
+
+Two things this turned up. `shift_hours` was being folded into a display string (`shift`) and the number thrown away, so nothing downstream could multiply it. And the exposure filter was written as `jobs.filter(j => !j.filled)` against a `filled` property no job has -- every branch of GetPositions already filters to open demand at source, so the filter was inert and read as though it were not.
+
 ### Extensions and Onboarding realigned to the reference
 
 Both tabs now carry the reference's columns and its three-line assignment block — system eyebrow, facility, specialty — with Source and Agency moved under the clinician so a row reads the same on every stage tab.
