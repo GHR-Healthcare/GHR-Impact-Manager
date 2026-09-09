@@ -4685,6 +4685,12 @@
         else if (v === 'closed') this.closed();
         else if (v === 'extensions') this.extensions();
         else if (v === 'onboarding') this.onboarding();
+        // The legend's bands are per view -- Open Jobs shows age bands, the
+        // stage tabs show outcome bands -- but it was only drawn once at
+        // startup and again when a chip was clicked, never on a tab change. So
+        // whatever bands happened to be rendered at load stayed there, and on
+        // the stage tabs the filter chips appeared to be missing entirely.
+        View.legend();
         View.revenueBar();
         lucide.createIcons();
       },
