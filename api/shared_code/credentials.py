@@ -131,6 +131,17 @@ def normalize(raw):
     for alias, canon in _LOOKUP:
         if key == alias:
             return canon
+    # A trailing seniority level is not part of the credential. "Registered
+    # Nurse II" already resolved through the contained match below, but "RN
+    # III" could not: that match needs an alias longer than three characters
+    # and "rn" is two, so 1,508 B4 rows (RN I / II / III) fell through to their
+    # own unmapped names and matched no peer set. Stripped only from the end,
+    # and only a level marker, so "Level II Trauma" is untouched.
+    base = re.sub(r'\s+(?:i{1,3}|iv|v|[1-4])$', '', key).strip()
+    if base and base != key:
+        for alias, canon in _LOOKUP:
+            if base == alias:
+                return canon
     # Fall back to a contained match so "Registered Nurse II" still lands on RN,
     # but only on a word boundary — "Coder" must not match inside "Recoder".
     for alias, canon in _LOOKUP:

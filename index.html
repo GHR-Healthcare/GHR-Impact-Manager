@@ -908,7 +908,7 @@
     const $ = (id) => document.getElementById(id);
 
     // App version - loaded from environment variable via API, with fallback
-    let APP_VERSION = '2.6.1';
+    let APP_VERSION = '2.7.0';
 
     const API_BASE_URL = '/api';
     
@@ -1877,6 +1877,10 @@
                     { key: 'extensions', route: `extensions-data${av}`, pick: d => Array.isArray(d) ? d : (d.rows || []) },
                     { key: 'onboarding', route: `onboarding-data${av}`, pick: d => Array.isArray(d) ? d : (d.rows || []) },
                     { key: 'closed',     route: 'closed-data',          pick: d => d.rows || [], meta: d => d },
+                    // Peer rates for RATE RANK. Ships peers rather than ranks
+                    // so the rank is computed against whatever scope the
+                    // ladder resolves, without a refetch -- see GetRateIntel.
+                    { key: 'rate',       route: 'rate-intel',           pick: d => d.peers || [], meta: d => d.coverage || null },
                 ];
                 await Promise.all(stageLoads.map(async ({ key, route, pick, meta }) => {
                     try {
@@ -6221,6 +6225,143 @@
           </div>`;
       },
 
+      /* ---- RATE RANK ----
+       * Where this seat's bill rate sat against comparable job orders. The
+       * API ships the peers, not a rank, because filters here are client-side:
+       * a rank computed server-side would be locked to one scope and would
+       * stop agreeing with the System picker the moment anyone used it.
+       *
+       * The ladder is category-first and never leaves the category. Travel is
+       * 20,312 job orders against Local's 1,069 and pays structurally more, so
+       * ranking a Local seat against Travel peers would mark it underpaid
+       * however well it is priced -- the same error as comparing a CNA to an
+       * RN. The widest rung is still *within* the category, so nothing is ever
+       * ranked across the book as a whole.
+       *
+       * The account rungs fire only where the two vocabularies agree. They do
+       * on non-MSP, whose Closed rows and peers are both Bullhorn. They mostly
+       * do not on MSP: 3 of 18 B4 health systems match a peer account exactly
+       * ("Penn Medicine" against "University of Pennsylvania Health System"),
+       * and the near-misses are false friends -- "Cooper University
+       * Healthcare" and "University of Maryland Medical System" share only the
+       * word "University". So no fuzzy bridge is attempted; the rung simply
+       * does not fire and the rank resolves one rung wider, saying so.
+       */
+      rateKeyOf(r, field) {
+        const v = field === 'account'
+          ? (r.health_system || r.facility || '')
+          : field === 'profession' ? (r.profession || '')
+          : field === 'specialty'  ? (r.specialty || '')
+          // A Closed row's CATEGORY column is the booking programme ('Travel
+          // Nursing', 'Contract (Nursing)'); the peers' is Bullhorn's
+          // employmentType ('Travel', 'Local'). rate_category carries the
+          // engagement type in the peers' own vocabulary -- read out of the
+          // programme name on MSP, taken straight from employmentType on
+          // non-MSP -- and is the only one of the two that can meet a peer.
+          // Null there means the source never stated one, so the key stays
+          // empty and the rung is skipped rather than matched on a guess.
+          // Peers carry no rate_category at all and use their own category.
+          : ('rate_category' in r ? (r.rate_category || '') : (r.category || ''));
+        return String(v).trim().toLowerCase();
+      },
+
+      // Peers bucketed per ladder rung, built once per payload. Rebuilt only
+      // when the rows themselves change -- ranking every visible row against
+      // 22k peers on each render would be a scan per row per paint.
+      rateIndex() {
+        const s = window.store.state;
+        const peers = s.rateRows || [];
+        if (View._rateIdx && View._rateIdxSrc === peers) return View._rateIdx;
+        const ladder = (s.rateMeta?.scopeLadder) || [];
+        const idx = new Map();
+        ladder.forEach(rung => {
+          const bucket = new Map();
+          peers.forEach(p => {
+            if (!(p.rate > 0)) return;
+            const parts = rung.map(f => View.rateKeyOf(p, f));
+            if (parts.some(x => !x)) return;
+            const k = parts.join('|');
+            (bucket.get(k) || bucket.set(k, []).get(k)).push(p.rate);
+          });
+          bucket.forEach(list => list.sort((a, b) => b - a));
+          idx.set(rung.join('+'), bucket);
+        });
+        View._rateIdx = idx;
+        View._rateIdxSrc = peers;
+        return idx;
+      },
+
+      RATE_SCOPE_LABEL: {
+        'account+category+profession+specialty': 'account · specialty',
+        'account+category+profession': 'account · profession',
+        'category+profession+specialty': 'all accounts · specialty',
+        'category+profession': 'all accounts · profession',
+      },
+
+      rateRank(r) {
+        const s = window.store.state;
+        const bill = Number(r.bill_rate);
+        if (!s.rateLoaded || !(bill > 0)) return null;
+        const meta = s.rateMeta || {};
+        const minPeers = meta.minPeers || 3;
+        const ladder = meta.scopeLadder || [];
+        const idx = View.rateIndex();
+        for (const rung of ladder) {
+          const parts = rung.map(f => View.rateKeyOf(r, f));
+          if (parts.some(x => !x)) continue;
+          const rates = idx.get(rung.join('+'))?.get(parts.join('|'));
+          if (!rates || rates.length < minPeers) continue;
+          // Rank by rate, highest first: #1 is the best-priced seat in scope.
+          //
+          // Ties are averaged rather than ignored. Bill rates cluster hard on
+          // round numbers -- counting only strictly higher peers put the median
+          // closed seat at the 93rd percentile while its rate was exactly the
+          // peer median, because a seat tied with 75 others at $38 was being
+          // called "#1 of 76". Mid-rank puts a fully tied seat at the middle
+          // of its group, where it belongs.
+          // Counted by binary search, not two linear scans: this runs once
+          // per visible row per render and again for the sort key, and the
+          // widest rung's buckets reach a couple of thousand peers. The array
+          // is already sorted descending, so both counts are two lookups.
+          const of = rates.length;
+          let lo = 0, hi = of;
+          while (lo < hi) { const m = (lo + hi) >> 1; if (rates[m] > bill) lo = m + 1; else hi = m; }
+          const better = lo;
+          let lo2 = better, hi2 = of;
+          while (lo2 < hi2) { const m = (lo2 + hi2) >> 1; if (rates[m] >= bill) lo2 = m + 1; else hi2 = m; }
+          const equal = lo2 - better;
+          const pct = Math.round((of - better - (equal - 1) / 2) / of * 100);
+          return {
+            rank: better + Math.ceil((equal + 1) / 2), of, pct,
+            scope: View.RATE_SCOPE_LABEL[rung.join('+')] || rung.join(' · '),
+            // Below the ordinal threshold "#2 of 4" claims more precision than
+            // four peers support, so it reads as a band instead.
+            ordinal: of >= (meta.ordinalThreshold || 10),
+            tone: pct >= 67 ? 'good' : pct <= 33 ? 'bad' : 'medium',
+          };
+        }
+        return null;
+      },
+
+      rateRankCell(r) {
+        const rr = View.rateRank(r);
+        if (!rr) {
+          const s = window.store.state;
+          const why = !s.rateLoaded ? 'Rate peers not loaded'
+            : !(Number(r.bill_rate) > 0) ? 'No bill rate on this record'
+            : `Fewer than ${(s.rateMeta?.minPeers) || 3} comparable job orders in the last ${(s.rateMeta?.lookbackDays) || 90} days`;
+          return `<span class="text-slate-300 text-[10px] italic" title="${View.esc(why)}">—</span>`;
+        }
+        const cls = rr.tone === 'good' ? 'text-emerald-600'
+                  : rr.tone === 'bad' ? 'text-red-600' : 'text-amber-600';
+        const label = rr.ordinal
+          ? `#${rr.rank} of ${rr.of}`
+          : (rr.pct >= 67 ? 'Above' : rr.pct <= 33 ? 'Below' : 'At market');
+        return `<span class="font-bold ${cls}" title="${View.esc(
+                  `${rr.pct}th percentile of ${rr.of} comparable job orders — ${rr.scope}`)}">${label}</span>
+                <div class="text-[9px] text-slate-400 mt-0.5">${View.esc(rr.scope)}</div>`;
+      },
+
       extensionDetail(r) {
         const e = View.extensionEdit(r);
         const meta = window.store.state.workspaceState?.extension?.[r.id];
@@ -6674,6 +6815,10 @@
             { label: 'Market Share', key: r => View.closedSharePct(r), align: 'center' },
           ]),
           { label: 'Days To Close', key: 'days_to_close', align: 'center' },
+          // The last reference column that was missing. Sorts on percentile,
+          // so a rank from a 40-peer scope orders against one from a 12-peer
+          // scope; rows with no comparable peers sort last rather than as 0.
+          { label: 'Rate Rank',     key: r => { const rr = View.rateRank(r); return rr ? rr.pct : -1; } },
           { label: 'Revenue',       key: 'revenue',       align: 'right' },
           { label: 'Owner',         key: 'account_manager' },
         ];
@@ -6771,6 +6916,7 @@
                 ${closedExpandable ? `<td class="px-3 py-2 text-center font-semibold ${
                   share == null ? 'text-slate-300' : 'text-blue-600'}">${share == null ? '—' : share + '%'}</td>` : ''}
                 <td class="px-3 py-2 text-center text-slate-700">${r.days_to_close == null ? '—' : r.days_to_close}</td>
+                <td class="px-3 py-2">${View.rateRankCell(r)}</td>
                 <td class="px-3 py-2 text-right font-semibold ${
                   (Number(r.revenue) || 0) < 0 ? 'text-red-600' : (r.revenue ? 'text-emerald-700' : 'text-slate-400')
                 }">${signedMoney(r.revenue)}</td>
@@ -12038,6 +12184,9 @@
         extensionsRows: [], extensionsMeta: null, extensionsLoaded: false, extensionsError: null,
         onboardingRows: [], onboardingMeta: null, onboardingLoaded: false, onboardingError: null,
         closedRows: [], closedMeta: null, closedLoaded: false, closedError: null,
+        // Peer bill rates behind RATE RANK, plus the coverage block that says
+        // how they may be used (minimum peers, scope ladder, lookback).
+        rateRows: [], rateMeta: null, rateLoaded: false, rateError: null,
         workspaceState: {},
         expandedExtensions: new Set(),
         expandedOnboarding: new Set(),
