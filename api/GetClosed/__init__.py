@@ -261,6 +261,32 @@ def _closed_window(req, non_msp):
     return start, start + datetime.timedelta(days=6), 'previous week'
 
 
+# RATE RANK compares against Bullhorn job orders, whose category axis is
+# `employmentType` -- Travel / Local / Remote, an engagement type. MSP books a
+# programme instead, which fuses engagement type with service line: B4's
+# Program is 'Travel Nursing' / 'Local Contract Allied Health' / 'Contract
+# (Nursing)', VNDLY's Labor Type is 'Nursing' / 'Per Diem Nursing'. The two
+# vocabularies do not meet, so the engagement type is read back out of the
+# programme name -- but only where the name states it. 'Contract (Nursing)',
+# the single largest B4 bucket at 6,871 rows, could be travel or local and is
+# left unmapped rather than guessed: a Local seat ranked against Travel peers
+# reads as underpaid however well it is priced.
+#
+# Derivable on 16,749 of 29,106 B4 orders (58%). The rest carry no rank, which
+# is the honest answer.
+def _rate_category(programme):
+    p = (programme or '').lower()
+    if 'travel' in p:
+        return 'Travel'
+    if 'local' in p:
+        return 'Local'
+    if 'per diem' in p or 'perdiem' in p or 'prn' in p:
+        return 'Per Diem'
+    if 'remote' in p:
+        return 'Remote'
+    return None
+
+
 def _filled_by_and_revenue(row):
     group = (row.get('group') or '').upper()
     agency = (row.get('agency') or '').strip()
@@ -312,6 +338,9 @@ def _b4_rows(cursor, lookback):
             o.Facility                                  AS facility,
             o.Unit                                      AS unit,
             o.Position_Type                             AS role,
+            -- B4's specialty, for RATE RANK. 'Medical Surgical', 'ICU',
+            -- 'Emergency Room' -- the same axis the peer set is keyed on.
+            o.Care_Type                                 AS care_type,
             o.Program                                   AS program,
             -- CATEGORY on the Closed table. Program is the booking category
             -- B4 already records ('Travel Nursing', 'Local Contract Allied
@@ -456,6 +485,11 @@ def _bullhorn_closed_rows(cursor, app_conn, lookback):
             TRY_CAST(jo.clientBillRate AS DECIMAL(10,2))  AS bill_rate,
             TRY_CAST(jo.payRate AS DECIMAL(10,2))         AS pay_rate,
             TRY_CAST(jo.hoursPerWeek AS DECIMAL(10,2))    AS hours_per_week,
+            -- RATE RANK's category axis. Non-MSP needs no derivation: this is
+            -- the same employmentType column the peer set is built from
+            -- (Travel / Local / Permanent / Remote / PRN), so the two
+            -- vocabularies are identical rather than merely comparable.
+            NULLIF(LTRIM(RTRIM(jo.employmentType)), '')    AS rate_category,
             ISNULL(pl.n, 0)                               AS placement_count,
             CASE WHEN pl.n > 0
                  THEN CAST(DATEDIFF(HOUR, jo.dateAdded, pl.first_placed) AS FLOAT) / 24.0
@@ -553,6 +587,9 @@ def _symplr_closed_rows(cursor, app_conn, lookback):
             LTRIM(RTRIM(ISNULL(lt.nursetype, '') + ' — ' + ISNULL(lt.specialty, ''))) AS role,
             lt.nursetype                                  AS credential_raw,
             lt.specialty                                  AS specialty_raw,
+            -- Symplr records no engagement type, so these rows carry no rank
+            -- rather than being ranked against a category they never stated.
+            NULL                                          AS rate_category,
             lt.status                                     AS status,
             CAST(lt.date_entered AS DATE)                 AS opened_on,
             CAST(COALESCE(lt.BookedByDT, lt.voiddt, lt.datetimemodified) AS DATE) AS closed_on,
@@ -884,6 +921,21 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             bill, pay = r.get('bill_rate'), r.get('pay_rate')
             r['agency_receipt_pct'] = round(pay / bill * 100, 1) if bill and pay and bill > 0 else None
             r['margin_pct'] = None
+            # RATE RANK needs the same profession vocabulary the peer set is
+            # keyed on. MSP books a role, not a credential -- B4's
+            # Position_Type is 'Registered Nurse' / 'RN III', VNDLY's Job Title
+            # 'Registered Nurse' / 'CT Tech' -- so it is normalised here rather
+            # than left for the client to guess at. Non-MSP already does this.
+            role = r.get('role') or ''
+            r['profession'] = normalize_credential(role)
+            r['service_line'] = credential_service_line(role)
+            # B4 does record a specialty, under Care_Type ('Medical Surgical',
+            # 'ICU', 'Emergency Room'), already selected as care_type. It
+            # matches a peer specialty on 6,504 of 29,106 orders; where it does
+            # not, the ladder drops to a profession rung rather than failing.
+            # VNDLY carries no specialty field at all.
+            r['specialty'] = (r.get('specialty') or r.get('care_type') or '') or ''
+            r['rate_category'] = _rate_category(r.get('category'))
             rate, hrs = r.get('bill_rate'), r.get('hours_per_week')
             r['value_13wk'] = round(rate * hrs * 13, 2) if rate and hrs else None
             r['filled_by'], r['revenue'] = _filled_by_and_revenue(r)

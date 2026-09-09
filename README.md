@@ -29,6 +29,22 @@ VNDLY gets neither, and says so rather than showing a blank: no identifier reach
 
 Also: the Extensions group header spanned 8 columns against a 12-column table, and KPI cards silently dropped any `sub` line they were given.
 
+### 2.7.0 - Rate Rank shipped, and the tie bug that nearly went with it
+
+`GetRateIntel` had been built and never called: the endpoint shipped, nothing fetched it, and Closed still had no RATE RANK. It is now wired, and the column is live — the last reference column that was missing.
+
+**Ties were being ignored, and that was not a detail.** Ranking counted only peers with a strictly higher rate, so a seat tied with 75 others at $38 was reported as "#1 of 76". Bill rates cluster hard on round numbers, so this was the common case, not an edge: the median closed seat came out at the **93rd percentile** while its rate was exactly the peer median, and 53% of rows read p90+. Mid-ranking ties moves the median to **48** and the spread to 10% / 15% / 52% / 23% across the quartile bands, which agrees with the independent check that the median GHR rate is 1.00x the peer median.
+
+Three vocabularies had to be reconciled first, and none of them met:
+
+- **Category.** Peers use Bullhorn's `employmentType` (Travel / Local / Remote) — an engagement type. B4's `Program` fuses engagement type with service line ("Travel Nursing", "Local Contract Allied Health"), and VNDLY's `Labor Type` is mostly service line. The engagement type is now read back out of the programme name, but only where the name states it. "Contract (Nursing)", the largest B4 bucket at 6,871 rows, could be travel or local and is left unmapped rather than guessed — a Local seat ranked against Travel peers reads as underpaid however well it is priced. Derivable on 16,749 of 29,106 orders (58%). Non-MSP needs no derivation: its Closed rows carry the same `employmentType` column the peers are built from.
+- **Specialty.** B4 does have one, under `Care_Type` ("Medical Surgical", "ICU"), which was not being selected. It matches a peer specialty on 6,504 of 29,106 orders (22%).
+- **Account.** Only **3 of 18** B4 health systems match a peer account name exactly — "Penn Medicine" against "University of Pennsylvania Health System" — and every near-miss is a false friend: "Cooper University Healthcare" and "University of Maryland Medical System" share only the word "University". No fuzzy bridge is attempted. The rung simply does not fire, and the rank resolves one rung wider and says which scope it used.
+
+A fourth ladder rung, `category + profession`, was added for this. Without it MSP could rank one seat in eight; with it, 49% of recent closed seats rank (37% at category+profession, 8% at account+category+profession, 4% with specialty). Still category-first — the widest rung is all accounts *within* one engagement type, never across the book.
+
+Two smaller fixes: `normalize()` could not resolve "RN III" (its contained-match fallback needs an alias longer than three characters and "rn" is two), so 1,508 B4 rows fell through to unmapped names and matched no peers; a trailing seniority level is now stripped, leaving "Level II Trauma" alone. And the rank counts are computed by binary search over the already-sorted peer array rather than two linear scans, since this runs per visible row per render and again for the sort key.
+
 ### 2.6.1 - Standing revenue bar
 
 The reference's footer, live on every tab: Revenue Won, Revenue Missed, Open Exposure. Won and Missed read the Closed rows' signed revenue, which the API decides -- a GHR win positive, an affiliate win or unfilled seat negative, a cancellation zero -- so both instances agree without the client re-deriving the rule. All three follow the active filters.

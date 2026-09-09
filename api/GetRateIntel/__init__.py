@@ -141,6 +141,14 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                     ['account', 'category', 'profession', 'specialty'],
                     ['account', 'category', 'profession'],
                     ['category', 'profession', 'specialty'],
+                    # Needed for MSP, which mostly cannot reach the rungs
+                    # above. Measured over 29,106 B4 orders: an engagement type
+                    # is derivable on 16,749 (58%), but Care_Type matches a
+                    # peer specialty on only 6,504 (22%) and both hold on 3,595
+                    # (12%). Without this rung MSP would rank one seat in eight.
+                    # Still category-first -- all accounts *within* one
+                    # engagement type -- so nothing is ranked across the book.
+                    ['category', 'profession'],
                 ],
                 'dataSource': 'non_msp' if is_non_msp() else 'msp',
             },
