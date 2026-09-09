@@ -908,7 +908,7 @@
     const $ = (id) => document.getElementById(id);
 
     // App version - loaded from environment variable via API, with fallback
-    let APP_VERSION = '2.9.0';
+    let APP_VERSION = '2.10.0';
 
     const API_BASE_URL = '/api';
     
@@ -2057,6 +2057,12 @@
                 daysPast: 0,
                 billRate: cleanBillRate(row.bill_rate || ''),
                 billRateEstimated: row.bill_rate_estimated === 1 || row.bill_rate_estimated === true,
+                // Non-MSP only: the cut a third party's VMS takes off the bill
+                // rate. Absent on MSP, where GHR runs the programme itself.
+                vmsFeePct: (() => {
+                  const v = Number(row.vms_fee_pct);
+                  return isFinite(v) && v > 0 ? v : null;
+                })(),
                 shift: String(row.time_type || row.shift_hours || row.shift || 'N/A'),
                 // Kept as a number as well as folded into the `shift` label:
                 // exposure is rate x hours x weeks, and the label can't be
@@ -4285,6 +4291,15 @@
           return true;
         };
 
+        // Assignments (Stats/Trend) alongside open jobs, so a system or facility
+        // that is filled but has no open order stays selectable. Declared once
+        // here because both the Systems and the Facilities block need it.
+        const assignmentSources = [
+          ...(s.statsData?.onAssignment || []),
+          ...(s.statsData?.upcoming || []),
+          ...(s.trendData?.assignments || []),
+        ];
+
         // Update Systems dropdown (based on jobs + assignments matching all OTHER filters)
         if (changedFilter !== 'systems') {
           const validSystems = new Set();
@@ -4293,19 +4308,22 @@
               validSystems.add(job.healthSystem);
             }
           });
-          // Also include systems that have matching assignments (Stats/Trend data)
-          // so selecting "All Nursing" doesn't remove systems with nursing assignments but no open orders
-          const assignmentSources = [
-            ...(s.statsData?.onAssignment || []),
-            ...(s.statsData?.upcoming || []),
-            ...(s.trendData?.assignments || []),
-          ];
           assignmentSources.forEach(r => {
             if (!r.healthSystem) return;
             const catOk = s.filterSelection.categories.size === 0 ||
               Utils.matchesStatsCategoryFilter(r.specialty, s.filterSelection.categories);
             const facOk = s.filterSelection.facilities.size === 0 || s.filterSelection.facilities.has(r.facility);
-            if (catOk && facOk) validSystems.add(r.healthSystem);
+            // Open jobs are already narrowed by the non-MSP hierarchy through
+            // jobMatchesFilters, but assignments were only checked against
+            // category and facility -- so picking a Division still left every
+            // system whose sole presence was an assignment in some other
+            // division. Assignments carry the same dimensions; they are asked
+            // the same questions.
+            const divOk  = Utils.matchesSelectedDivisions(r.division, s.filterSelection.divisions);
+            const teamOk = Utils.matchesSelectedTeams(r.team, s.filterSelection.teams);
+            const profOk = s.filterSelection.professions.size === 0
+              || (r.profession && s.filterSelection.professions.has(r.profession));
+            if (catOk && facOk && divOk && teamOk && profOk) validSystems.add(r.healthSystem);
           });
 
           // Hide systems flagged as hidden in Settings
@@ -4329,6 +4347,22 @@
             if (jobMatchesFilters(job, 'facilities') && job.facility) {
               validFacilities.add(job.facility);
             }
+          });
+          // Same reasoning as Systems above: a facility with assignments but no
+          // open orders was unreachable here while its system stayed
+          // selectable, so a filled-but-quiet site could not be filtered to.
+          assignmentSources.forEach(r => {
+            if (!r.facility) return;
+            const sysOk = s.filterSelection.systems.size === 0
+              || s.filterSelection.systems.has(r.healthSystem);
+            const catOk = s.filterSelection.categories.size === 0 ||
+              Utils.matchesStatsCategoryFilter(r.specialty, s.filterSelection.categories);
+            const divOk  = Utils.matchesSelectedDivisions(r.division, s.filterSelection.divisions);
+            const teamOk = Utils.matchesSelectedTeams(r.team, s.filterSelection.teams);
+            const profOk = s.filterSelection.professions.size === 0
+              || (r.profession && s.filterSelection.professions.has(r.profession));
+            if (sysOk && catOk && divOk && teamOk && profOk
+                && !Utils.isHiddenHealthSystem(r.healthSystem)) validFacilities.add(r.facility);
           });
 
           // Remove invalid selections
@@ -5349,7 +5383,19 @@
               ${View.detailStat('GM %', Utils.marginLabel(job.id, job),
                                 job.marginOverridden ? 'per-job override' : 'configured default — “~” marks an assumption')}
               ${View.detailStat('GM / Hour', money(gmHr))}
+              ${job.vmsFeePct != null ? View.detailStat(
+                  'VMS Fee', job.vmsFeePct + '%',
+                  bill ? `${money(bill * job.vmsFeePct / 100)}/hr to the VMS` : 'recorded on the job') : ''}
+              ${job.vmsFeePct != null && bill ? View.detailStat(
+                  'Net Of VMS Fee', money(bill * (1 - job.vmsFeePct / 100)),
+                  'bill rate after the VMS cut') : ''}
             </div>
+            ${job.vmsFeePct != null ? `
+              <p class="text-[10px] text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1.5 mt-2 leading-snug">
+                A third party&rsquo;s VMS takes ${job.vmsFeePct}% of this bill rate. GM above is
+                calculated on the gross rate, not the net &mdash; the fee is shown separately rather
+                than folded in, because it is a fact from the job and GM is a rate we apply.
+              </p>` : ''}
             <div class="mt-4 pt-3 border-t border-slate-200">
               <div class="text-[10px] font-semibold uppercase tracking-wide text-slate-400 mb-1">Rate Rank</div>
               ${(() => {

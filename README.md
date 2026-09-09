@@ -29,6 +29,18 @@ VNDLY gets neither, and says so rather than showing a blank: no identifier reach
 
 Also: the Extensions group header spanned 8 columns against a 12-column table, and KPI cards silently dropped any `sub` line they were given.
 
+### 2.10.0 - Non-MSP: Division narrows System, and the VMS fee surfaces
+
+**Division did not narrow System, and the reason was one unasked question.** The Systems dropdown builds its options from open jobs *and* from assignments, so a system that is filled but has no open order stays selectable. Open jobs were checked against the whole non-MSP hierarchy; assignments were checked only against category and facility. So choosing a Division left behind every system whose sole presence was an assignment in some other division. Assignments carry `division`, `team` and `profession` like everything else and are now asked the same questions.
+
+Facilities had a larger version of the same gap: that dropdown never looked at assignments at all, so a facility with assignments but no open orders was unreachable while its system stayed selectable. Fixing it required hoisting the shared assignment list out of the Systems block — it had been declared inside it, so the Facilities block referencing it would have thrown at runtime. `node --check` cannot see that; only reading the scope can.
+
+**VMS Fee.** Bullhorn's `FieldMaps` decodes Job Posting `correlatedCustomFloat3` as "VMS Fee %" — the cut a third party's VMS takes when GHR delivers through someone else's programme, which is exactly the account the Relationship badge already labels "3rd Party". It has no MSP counterpart: there GHR runs the programme and the bill/pay split is the fee, already carried as `agency_receipt_pct`.
+
+It is populated on 41,454 of 513,198 job orders (8.1%) averaging 4.88%, and on 317 of the 6,325 currently open (5%) averaging 4.45%. Shown only where recorded, never as a zero — a zero would read as "this VMS takes nothing" rather than "nobody recorded one". The Rate pane shows the fee, the per-hour amount and the rate net of it, and says plainly that GM is calculated on the gross rate: the fee is a fact from the job, GM is a rate we apply, and folding one into the other would blur that line.
+
+Incumbent and Channel were already delivered — `Utils.systemRelationship()` puts the relationship and the incumbent holder on the job card. Worth noting `CLIENT_DIM.ParentAccount` sometimes holds "MSP" or "Direct" instead of an account name, which is a data-entry artifact rather than a channel field, and is why a 1,920-row "MSP" bucket shows up among the rate peers.
+
 ### 2.9.0 - The row-detail panes: real rates, real funnel math, one definition of declined
 
 Three feedback items — Rate, Pipeline and Placements — were all about the job row-detail panes.
