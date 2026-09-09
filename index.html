@@ -1873,6 +1873,10 @@
                 // Non-MSP has no vendor panel -- 'GHR' is the only agency
                 // there -- so the flag is meaningless and stays off.
                 const av = window.store.state.dataSource === 'non_msp' ? '' : '?includeAffiliate=1';
+                // The revenue bar reads Closed; only an instance that loads it
+                // can fill the bar, so the flag is set here at the load site
+                // rather than duplicating this gate's condition elsewhere.
+                window.store.state.stageDataEnabled = true;
                 const stageLoads = [
                     { key: 'extensions', route: `extensions-data${av}`, pick: d => Array.isArray(d) ? d : (d.rows || []) },
                     { key: 'onboarding', route: `onboarding-data${av}`, pick: d => Array.isArray(d) ? d : (d.rows || []) },
@@ -4657,6 +4661,19 @@
         const el = $('revenueBar');
         if (!el) return;
         const s = window.store.state;
+        /* Revenue Won and Missed come from Closed, which the original MSP does
+         * not load -- its stage tabs are prototype-only. Shown there, the bar
+         * stood permanently empty. It is hidden instead, and the body padding
+         * that reserves room for it comes off with it so the pinned desktop
+         * layout does not lose 64px to a bar that is not there.
+         */
+        if (!s.stageDataEnabled) {
+          el.hidden = true;
+          document.body.classList.remove('pb-16', 'sm:pb-20');
+          return;
+        }
+        el.hidden = false;
+        document.body.classList.add('pb-16', 'sm:pb-20');
         const money = v => '$' + Math.round(Math.abs(v)).toLocaleString();
 
         const closed = (s.closedRows || []).filter(View.stageFilter);
@@ -12475,6 +12492,10 @@
         // Peer bill rates behind RATE RANK, plus the coverage block that says
         // how they may be used (minimum peers, scope ladder, lookback).
         rateRows: [], rateMeta: null, rateLoaded: false, rateError: null,
+        // True only where Closed / Extensions / Onboarding are loaded. The
+        // original MSP does not load them, and the revenue bar is hidden there
+        // rather than standing empty.
+        stageDataEnabled: false,
         workspaceState: {},
         expandedExtensions: new Set(),
         expandedOnboarding: new Set(),
