@@ -4737,7 +4737,8 @@
         const el = $('listContent');
         if (!el) return;
         el.innerHTML = View.stageShell('list', 'Open Jobs',
-          'Open requisitions with pipeline activity, Impact levers and the submission log',
+          'Open requisitions with pipeline activity, Impact levers, and the submission log. '
+          + 'Group identical demand by position type, category, or health system.',
           body, openCols, null);
         lucide.createIcons();
       },
@@ -7183,7 +7184,8 @@
         // are recorded. Extension Search takes this slot instead.
         const intel = View.extSearchBar(all.length, rows.length);
         if (el) el.innerHTML = View.stageShell('extensions', 'Extensions',
-          'Assignments approaching their end date, grouped by where the extension decision stands',
+          'GHR contracts ending within 45 days. Day colors count down to contract end — '
+          + 'deeper red means fewer days remain to secure a decision.',
           body, extCols, intel);
         lucide.createIcons();
       },
@@ -7554,7 +7556,8 @@
         // pie or chart at all, only the table and the overview modal.
         const onbIntel = '';
         if (el) el.innerHTML = View.stageShell('onboarding', 'Onboarding',
-          'Upcoming and recent starts, grouped by whether the date has moved since it was last reviewed',
+          'Accepted offers through actual start, focused on status, start-date movement, '
+          + 'delay duration, and team context.',
           body, onbCols, onbIntel);
         lucide.createIcons();
       },
@@ -7574,7 +7577,8 @@
           { label: 'Outcome',       key: 'group',         align: 'center' },
           { label: 'Filled By',     key: 'filled_by' },
           ...(isNonMspClosedCols ? [] : [
-            { label: 'Market Share', key: r => View.closedSharePct(r), align: 'center' },
+            { label: 'Market Share', key: r => View.closedSharePct(r), align: 'center',
+              sub: 'GHR · these roles' },
           ]),
           { label: 'Days To Close', key: 'days_to_close', align: 'center' },
           // The last reference column that was missing. Sorts on percentile,
@@ -7738,7 +7742,7 @@
             const label = c.windowLabel ? c.windowLabel.replace(/^./, ch => ch.toUpperCase()) : '';
             return isNonMspClosed
               ? `Historical orders and how they resolved — fill rate and time to fill${range}`
-              : `Weekly account outcomes — capture, revenue and market share. ${label}${range}`;
+              : `Weekly account outcomes with capture, financial value, market share, and comparable performance.${label ? ' ' + label : ''}${range}`;
           })(),
           body, closedCols, closedIntel);
         lucide.createIcons();
@@ -8071,14 +8075,16 @@
         // side. It went unnoticed because nothing rendered a chip to click.
         closed_msp: [
           { key: 'ghrwon', label: 'GHR Won',       dot: 'bg-[#22C55E]', pred: r => r.group === 'GHR WON' },
-          { key: 'avwon',  label: 'Affiliate Won', dot: 'bg-[#a855f7]', pred: r => r.group === 'AFFILIATE WON' },
-          { key: 'missed', label: 'Missed',        dot: 'bg-[#EF4444]', pred: r => r.group === 'MISSED' },
-          { key: 'cxl',    label: 'Cancelled',     dot: 'bg-red-800',   pred: r => r.group === 'CANCELED' },
+          // Orange, not purple: the reference colours affiliate orange here and
+          // in every pie, so the legend and the charts agree on what orange is.
+          { key: 'avwon',  label: 'Affiliate Won',    dot: 'bg-[#f97316]', pred: r => r.group === 'AFFILIATE WON' },
+          { key: 'missed', label: 'Missed / Declined', dot: 'bg-[#EF4444]', pred: r => r.group === 'MISSED' },
+          { key: 'cxl',    label: 'Canceled',          dot: 'bg-red-800',   pred: r => r.group === 'CANCELED' },
         ],
         closed_non_msp: [
           { key: 'filled',   label: 'Filled',    dot: 'bg-[#22C55E]', pred: r => r.group === 'FILLED' },
           { key: 'unfilled', label: 'Unfilled',  dot: 'bg-[#EF4444]', pred: r => r.group === 'UNFILLED' },
-          { key: 'cxl',      label: 'Cancelled', dot: 'bg-red-800',   pred: r => r.group === 'CANCELED' },
+          { key: 'cxl',      label: 'Canceled',  dot: 'bg-red-800',   pred: r => r.group === 'CANCELED' },
         ],
       },
 
