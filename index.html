@@ -12533,6 +12533,20 @@
         modal: { open: false, type: null, jobId: null, key: null, val: null, candidateIndex: null },
         sessionLog: [],
         filename: 'Updated_Positions',
+        /* Actions taken this session, shown in the row history and exported in
+         * the update log.
+         *
+         * This was never initialised. pushLog() opens with `s.sessionLog.push`,
+         * and pushLog runs BEFORE recordChange in every branch of
+         * CONFIRM_MODAL, so it threw a TypeError on the first statement and
+         * the reducer's catch swallowed it -- taking six recordChange calls
+         * with it. Turning a lever ON, overriding a margin, setting a next
+         * step, recording an interview and removing a candidate all mutated
+         * state in memory (so the UI looked right) and never reached the
+         * database. Turning a lever OFF persisted, because that path does not
+         * call pushLog. One missing line, five silently unsaved actions.
+         */
+        sessionLog: [],
         redactMode: true
       },
 
@@ -13446,7 +13460,10 @@
               const tag = $('leverTagInput')?.value || '';
               const pushLog = (type, desc, tagVal) => {
                 const item = { jobId: job.id, type, desc, tag: tagVal || null, time: new Date().toLocaleString() };
-                s.sessionLog.push(item);
+                // Defensive: logging is a side effect of the action, never a
+                // precondition for saving it. If this list is ever missing
+                // again the change must still reach the database.
+                (s.sessionLog = s.sessionLog || []).push(item);
                 job.history.push(item);
                 // Everything done through this modal -- levers, margin changes,
                 // next steps -- is part of the meeting record when one is
@@ -13761,6 +13778,38 @@
 
       document.addEventListener('click', () => {
         document.querySelectorAll('.multi-select-container').forEach(c => c.classList.remove('open'));
+      });
+
+      /* Stage-detail edits save themselves.
+       *
+       * These controls -- the three extension checkpoints, the client decision,
+       * the shared notes, the revised start, the delay reason and its context --
+       * had no change handler at all. They were read only when the Save button
+       * fired, and stageShell re-renders the whole table on any View.main()
+       * pass, so a tick was thrown away by typing in the search box, changing a
+       * filter, collapsing the row, or saving a different row. Worse, the
+       * checkbox renders its state from what was last SAVED, so ticking one and
+       * triggering any re-render silently un-ticked it.
+       *
+       * A checkpoint being ticked is the thing worth keeping, so it is written
+       * when it happens rather than when someone remembers to press Save. The
+       * button stays -- it is the affordance people expect -- but it is now a
+       * confirmation, not the only way through.
+       *
+       * Bound on 'change', not 'input': for a textarea that means on blur, so
+       * a note is saved once when the user leaves it rather than per keystroke.
+       * Delegated from the document so it survives every re-render.
+       */
+      document.addEventListener('change', (e) => {
+        const t = e.target;
+        const id = t && t.dataset ? t.dataset.id : null;
+        if (!id || !t.classList) return;
+        const has = c => t.classList.contains(c);
+        if (has('ext-step') || has('ext-decision') || has('ext-notes')) {
+          window.store.dispatch('SAVE_EXTENSION', id);
+        } else if (has('onb-start') || has('onb-category') || has('onb-context')) {
+          window.store.dispatch('SAVE_ONBOARDING', id);
+        }
       });
 
       // File input handlers removed - app now loads from database
