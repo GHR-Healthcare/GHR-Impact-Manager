@@ -2,6 +2,22 @@
 
 ## Version History
 
+**2.5.0** - Rate intelligence: real ranking from the rate trend tables
+
+The prototype's Rate pane could not have shipped — its `rateRank` came from a mock field and its comparable median was `days * 0.82 + 4`. The feedback said to leave Rate out until market data was validated. It turns out the data was already in `ghrdhc`.
+
+`BH_BILL_RATE_TRENDS_OUTLIERS_FACT` holds the full population despite its name: 35.07M rated rows across 288,348 job orders, of which only 7% carry `bt_Outlier`. The flag marks which rates are outliers; it does not filter the table. Two filters are mandatory — `Group_Context` and `Sensitivity_Level` — because each job order appears once per grouping context (six) and per sensitivity level (ten), so without them every job counts dozens of times and a rank's denominator is meaningless.
+
+**The endpoint ships peer rates, not ranks.** Filters in this app are client-side; they narrow loaded rows and never refetch. A rank computed server-side would be locked to one scope and would stop agreeing with the System picker the moment anyone used it. With the peers in hand the client ranks within whatever the active filters leave, so the ranking follows the System picker — and facility, category and division — with no extra control and no refetch. 21,824 rows over 90 days across 657 accounts.
+
+Ranking rules: minimum 3 peers, and a fallback ladder taking the tightest grouping that clears it — account + profession + specialty, then account + profession, then book-wide — each labelling its own scope. Coverage measured within a health system: 23% at profession+specialty with a 5-peer floor, 40% at 3 peers, and 66% at profession level. Service line reaches 68% but is not used for ranking, because an RN at $95 and a CNA at $35 are both Nursing and the CNA would always rank last regardless of pricing.
+
+Below ten peers the display is a percentile rather than an ordinal. "#1 of 3" and "#1 of 149" read as equally strong claims and are not.
+
+A $20–400/hr sanity bound is enforced. One RN Case Management req carried $1,100/hr — a weekly figure in an hourly field — which alone lifted its group's average from about $90 to $144 and made every other req in that group look far below market. `bt_Outlier` did not catch it; inside the bound only 97 of 21,824 rows are flagged, so the bound is doing nearly all the work.
+
+Weeks are Sunday-based, matching the `DATEFIRST 7` the app pins elsewhere and the Saturday period ends in the rate trend tables.
+
 **2.4.0** - Legend filter buttons on non-MSP, and the source badge tells the truth
 
 **The source badge said B4 on the non-MSP side.** It tested `sourceSystem === 'VNDLY'` and labelled everything else `B4`, so Bullhorn and Symplr rows both claimed to come from a system that supplies none of that instance's data. All four sources now have their own badge — **B4**, **V**, **BH**, **SY** — and an unrecognised value shows its own initials rather than being relabelled. The `|| 'B4'` default on the row mapping went too; every query on both sides selects `source_system` explicitly, so it was only ever a guard, and a guard that lies is worse than none.
