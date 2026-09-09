@@ -29,6 +29,14 @@ VNDLY gets neither, and says so rather than showing a blank: no identifier reach
 
 Also: the Extensions group header spanned 8 columns against a 12-column table, and KPI cards silently dropped any `sub` line they were given.
 
+### 2.11.1 - Sweep for things built but never wired
+
+Two things this session were fully built and never called — `GetRateIntel` shipped as an endpoint nothing fetched, and three row-detail panes existed only on the prototype. So the codebase was swept for the same shape of defect.
+
+Every one of the 26 API routes is now referenced by the client. Of 120 View methods, one was genuinely unreachable: `updateFacilityOptions()`, which rebuilt the facility dropdown from open jobs filtered by system alone — ignoring division, team, profession, category and assignments entirely. That is the behaviour 2.10.0 replaced, so leaving it in place invited a silent regression by anyone who called it. Removed.
+
+Also verified rather than assumed: no duplicated DOM ids across the 124 in static markup (past merge conflicts have produced them), and the remaining hand-written `colspan` values all match their table headers — 13, 8 and 8 against headers of 13, 8 and 8.
+
 ### 2.11.0 - Explainable headcount movement
 
 Headcount per week is a set of distinct workers on assignment, so a change between two weeks is the difference between two sets — who appeared and who dropped out. The size of the swing was already on screen; the names behind it were not, which is what made a fall of six impossible to act on. Each headcount cell now carries the change from the previous column, and hovering it names who started and who ended.

@@ -908,7 +908,7 @@
     const $ = (id) => document.getElementById(id);
 
     // App version - loaded from environment variable via API, with fallback
-    let APP_VERSION = '2.11.0';
+    let APP_VERSION = '2.11.1';
 
     const API_BASE_URL = '/api';
     
@@ -4228,20 +4228,6 @@
         }
       },
 
-      updateFacilityOptions() {
-        const s = window.store.state;
-        const validSystems = s.filterSelection.systems;
-        const newFacilities = new Set();
-        s.jobs.forEach(item => {
-          // Use healthSystem (mapped value) to match system filter
-          if (validSystems.size === 0 || validSystems.has(item.healthSystem)) {
-            if (item.facility) newFacilities.add(item.facility);
-          }
-        });
-        View.renderDropdown('facilityFilterContainer', 'facilities', newFacilities, false);
-        View.updateFilterUI('facilities');
-        lucide.createIcons();
-      },
 
       /**
        * Update all filter dropdown options based on currently filtered data
