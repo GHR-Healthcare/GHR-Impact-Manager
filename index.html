@@ -6133,39 +6133,283 @@
         return acct ? { ...acct, scope: `all roles at ${hs}` } : null;
       },
 
-      closedDetail(r) {
-        const d = View.closedMarketShare(r);
-        if (!d) {
-          return `<div class="p-4 text-xs text-slate-400">No comparable live demand at this account to compare against.</div>`;
+      /* ---- Closed row detail: three panels, matching the reference ----
+       *
+       * The reference shows Closed Financial Summary | Market Share |
+       * Comparable Performance. Ours showed only a market-share donut.
+       *
+       * Two of the reference's numbers are mock formulas rather than measured
+       * values, so they are computed for real here instead of ported:
+       *
+       *   Comparable Median  the reference uses `days * 0.82 + 4`, a function
+       *                      of the row's own days-to-close, so it can never
+       *                      disagree with the row it is meant to benchmark.
+       *                      Here it is the real median days-to-close of
+       *                      comparable closed jobs already loaded.
+       *   Capture impact     the reference uses a hardcoded lookup (+2.4..8.8
+       *                      for a win, -3.2 for an affiliate win). Here it is
+       *                      this row's actual effect on the account's capture
+       *                      rate: capture including it minus capture without.
+       *
+       * Anything with no honest source says so rather than showing a number.
+       */
+      // Median days-to-close of comparable closed jobs. Same account and
+      // profession first; failing that, the same profession across accounts.
+      // Null below three peers -- a "median" of two is not one.
+      closedComparables(r) {
+        const rows = (window.store.state.closedRows || []).filter(View.stageFilter);
+        const prof = (r.profession || '').toLowerCase();
+        const acct = r.health_system || '';
+        const usable = x => x.id !== r.id && Number(x.days_to_close) >= 0;
+        const pick = list => list.map(x => Number(x.days_to_close)).sort((a, b) => a - b);
+        let peers = pick(rows.filter(x => usable(x)
+          && (x.health_system || '') === acct
+          && (x.profession || '').toLowerCase() === prof));
+        let scope = 'same role at this account';
+        if (peers.length < 3) {
+          peers = pick(rows.filter(x => usable(x) && (x.profession || '').toLowerCase() === prof));
+          scope = 'same role, all accounts';
         }
+        if (peers.length < 3) return null;
+        const mid = Math.floor(peers.length / 2);
+        const median = peers.length % 2 ? peers[mid] : Math.round((peers[mid - 1] + peers[mid]) / 2);
+        return { median, n: peers.length, scope };
+      },
+
+      // What this row did to the account's capture rate: capture with it,
+      // minus capture without it. Real arithmetic on the loaded cohort, so a
+      // win at a weak account moves it more than a win at a strong one --
+      // which is the whole point of showing it.
+      closedCaptureImpact(r) {
         const s = window.store.state;
-        const palette = ['#f97316', '#7c3aed', '#0aa36c', '#e11d48', '#0891b2', '#a16207'];
-        let other = 0;
-        const seg = [{ label: 'GHR', value: d.ghr, color: '#3157d5' }];
-        d.vendors.filter(v => !v.isGhr).forEach((v, i) => {
-          // Vendor identities follow Redact Vendor Info, the same as every
-          // other place an affiliate is named.
-          const label = s.redactMode ? `Vendor ${i + 1}` : v.name;
-          if (i < 5) seg.push({ label, value: v.seats, color: palette[i % palette.length] });
-          else other += v.seats;
-        });
-        if (other) seg.push({ label: 'Other', value: other, color: '#94a3b8' });
+        if (s.dataSource === 'non_msp') return null;   // no affiliate, no capture
+        const acct = r.health_system || '';
+        if (!acct) return null;
+        const cohort = (s.closedRows || []).filter(View.stageFilter)
+          .filter(x => (x.health_system || '') === acct
+                    && (x.group === 'GHR WON' || x.group === 'AFFILIATE WON'));
+        if (cohort.length < 2 || !cohort.some(x => x.id === r.id)) return null;
+        const rate = list => {
+          const g = list.filter(x => x.group === 'GHR WON').length;
+          return list.length ? g / list.length * 100 : null;
+        };
+        const withRow = rate(cohort);
+        const without = rate(cohort.filter(x => x.id !== r.id));
+        if (withRow == null || without == null) return null;
+        return { pts: Math.round((withRow - without) * 10) / 10, n: cohort.length };
+      },
+
+      // Where GHR sits among the vendors holding seats at this account.
+      closedMarketRank(d) {
+        if (!d || !Array.isArray(d.vendors) || !d.vendors.length) return null;
+        const ranked = [...d.vendors].sort((a, b) => (b.seats || 0) - (a.seats || 0));
+        const i = ranked.findIndex(v => v.isGhr);
+        return i < 0 ? null : { rank: i + 1, of: ranked.length };
+      },
+
+      // The reference's "Auto-synced" provenance strip at the top of a panel.
+      panelHead(sourceText) {
+        return `
+          <div class="flex items-center justify-between gap-2 pb-2 mb-2 border-b border-slate-100">
+            <span class="inline-flex items-center gap-1.5 text-[9px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-full px-2 py-0.5">
+              <span class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>Auto-synced
+            </span>
+            <span class="text-[9px] text-slate-400 truncate">${View.esc(sourceText)}</span>
+          </div>`;
+      },
+
+      panelTile(label, value, sub) {
+        return `
+          <div class="bg-slate-50/70 border border-slate-200 rounded-lg px-2.5 py-2">
+            <div class="text-[9px] uppercase tracking-wide text-slate-400 font-semibold">${label}</div>
+            <div class="text-sm font-bold text-slate-800 mt-0.5 truncate">${value}</div>
+            ${sub ? `<div class="text-[9px] text-slate-400 mt-0.5 truncate">${sub}</div>` : ''}
+          </div>`;
+      },
+
+      /* The outcome, not the bucket.
+       *
+       * The row badge printed the group key -- GHR WON, MISSED, CANCELED -- in
+       * a fixed grey, which throws away the distinction the reference names: a
+       * client cancellation, an agency cancellation, a post-offer decline and
+       * an onboarding failure all landed on the same word in the same colour.
+       * The reference's outcomeLabel map is reproduced here from the fields we
+       * actually carry, with its four tones.
+       */
+      CLOSED_OUTCOME: {
+        'GHR WON':       { label: 'Filled · GHR',        tone: 'good'   },
+        'AFFILIATE WON': { label: 'Filled · Affiliate',  tone: 'medium' },
+        'MISSED':        { label: 'Closed · Unfilled',   tone: 'bad'    },
+        'CANCELED':      { label: 'Canceled',            tone: 'low'    },
+        // Non-MSP groups: one agency, so "GHR" adds nothing to the label.
+        'FILLED':        { label: 'Filled',              tone: 'good'   },
+        'UNFILLED':      { label: 'Closed · Unfilled',   tone: 'bad'    },
+      },
+
+      closedOutcome(r) {
+        const base = View.CLOSED_OUTCOME[r.group] || { label: r.group || '—', tone: 'low' };
+        // A cancellation reason distinguishes client from agency where the
+        // source records it; otherwise it stays the plain word rather than
+        // guessing which party pulled out.
+        if (r.group === 'CANCELED' && r.outcome_reason) {
+          const why = String(r.outcome_reason).toLowerCase();
+          if (why.includes('client')) return { label: 'Canceled · Client', tone: 'low' };
+          if (why.includes('agency') || why.includes('vendor')) return { label: 'Canceled · Agency', tone: 'low' };
+          if (why.includes('declin')) return { label: 'Declined · Post-Offer', tone: 'bad' };
+        }
+        return base;
+      },
+
+      closedOutcomeLabel(r) { return View.closedOutcome(r).label; },
+
+      closedDetail(r) {
+        const s = window.store.state;
+        const d = View.closedMarketShare(r);
+        const cmp = View.closedComparables(r);
+        const rr = View.rateRank(r);
+        const rev = Number(r.revenue) || 0;
+        const money = v => (v || v === 0)
+          ? (v < 0 ? '-' : '') + '$' + Math.abs(Number(v)).toLocaleString(undefined, { maximumFractionDigits: 0 })
+          : '—';
+        const dtc = Number(r.days_to_close);
+        const hasDtc = isFinite(dtc) && dtc >= 0;
+        const none = '<span class="text-slate-300 font-normal">—</span>';
+        const panel = inner => `<section class="bg-white border border-slate-200 rounded-lg p-3.5 flex flex-col">${inner}</section>`;
+
+        // ---- Panel A: Closed Financial Summary ----
+        const captured = rev > 0 ? money(rev) : '$0';
+        const panelA = panel(`
+          ${View.panelHead('Closed placement + financial data')}
+          <h5 class="text-xs font-bold uppercase tracking-wide text-slate-600">Closed Financial Summary</h5>
+          <p class="text-[11px] text-slate-500 mt-0.5 mb-3">
+            Financial value and close performance, ahead of the activity timeline.
+          </p>
+          <div class="bg-slate-50/70 border border-slate-200 rounded-lg px-3 py-2.5 mb-2">
+            <div class="text-[9px] uppercase tracking-wide text-slate-400 font-semibold">Revenue Captured</div>
+            <div class="text-2xl font-extrabold mt-0.5 ${rev > 0 ? 'text-emerald-600' : 'text-slate-800'}">${captured}</div>
+          </div>
+          <div class="grid grid-cols-2 gap-2">
+            ${View.panelTile('Days to Close', hasDtc ? dtc : none)}
+            ${View.panelTile('Comparable Median', cmp ? `${cmp.median} days` : none,
+                             cmp ? `${cmp.n} peers · ${cmp.scope}` : 'fewer than 3 comparable closes')}
+            ${View.panelTile('Rate Rank', rr ? (rr.ordinal ? `#${rr.rank} of ${rr.of}` :
+                             (rr.pct >= 67 ? 'Above' : rr.pct <= 33 ? 'Below' : 'At market')) : none,
+                             rr ? rr.scope : 'no comparable rates')}
+            ${View.panelTile('Bill Rate', r.bill_rate ? '$' + Number(r.bill_rate).toFixed(0) + '/hr' : none)}
+          </div>
+          <div class="mt-2 bg-slate-50/70 border border-slate-200 rounded-lg px-3 py-2">
+            <div class="text-[10px] font-bold text-slate-600">Outcome</div>
+            <div class="text-[11px] text-slate-600 mt-0.5">
+              ${View.esc([View.closedOutcomeLabel(r), View.closedFilledBy(r), r.outcome_reason]
+                          .filter(Boolean).join(' · '))}
+            </div>
+          </div>`);
+
+        // ---- Panel B: Market Share ----
+        let panelB;
+        if (d) {
+          const palette = ['#f97316', '#7c3aed', '#0aa36c', '#e11d48', '#0891b2', '#a16207'];
+          let other = 0;
+          const seg = [{ label: 'GHR', value: d.ghr, color: '#3157d5' }];
+          d.vendors.filter(v => !v.isGhr).forEach((v, i) => {
+            // Vendor identities follow Redact Vendor Info, as everywhere else.
+            const label = s.redactMode ? `Vendor ${i + 1}` : v.name;
+            if (i < 5) seg.push({ label, value: v.seats, color: palette[i % palette.length] });
+            else other += v.seats;
+          });
+          if (other) seg.push({ label: 'Other', value: other, color: '#94a3b8' });
+          const total = seg.reduce((a, x) => a + (Number(x.value) || 0), 0);
+          const lift = View.closedCaptureImpact(r);
+          panelB = panel(`
+            ${View.panelHead('Active placements + closed outcomes')}
+            <h5 class="text-xs font-bold uppercase tracking-wide text-slate-600">Market Share</h5>
+            <p class="text-[11px] text-slate-500 mt-0.5 mb-2">
+              Vendor share for comparable roles at the account &mdash; ${View.esc(d.scope)}.
+            </p>
+            <div class="flex items-center gap-4 flex-wrap">
+              ${View.donutSvg(seg, { centerLabel: d.ghrPct + '%', centerSub: 'GHR share' })}
+              <div class="flex-1 min-w-[140px]">
+                ${seg.map(x => `
+                  <div class="flex items-center gap-2 text-[11px] py-0.5">
+                    <span class="w-2.5 h-2.5 rounded-sm" style="background:${x.color}"></span>
+                    <span class="flex-1 truncate text-slate-600">${View.esc(x.label)}</span>
+                    <span class="font-semibold text-slate-700 tabular-nums">${x.value}</span>
+                    <span class="text-slate-400 tabular-nums w-9 text-right">${
+                      total ? Math.round(x.value / total * 100) + '%' : '—'}</span>
+                  </div>`).join('')}
+                <div class="text-[10px] text-slate-400 mt-1">${d.total} clinician${d.total === 1 ? '' : 's'} on seat</div>
+              </div>
+            </div>
+            ${lift ? `
+              <div class="mt-3 border-l-[3px] rounded px-2.5 py-2 ${
+                lift.pts >= 0 ? 'border-emerald-500 bg-emerald-50' : 'border-red-500 bg-red-50'}">
+                <div class="text-[9px] uppercase tracking-wide font-bold ${
+                  lift.pts >= 0 ? 'text-emerald-700' : 'text-red-700'}">Impact on Account Capture</div>
+                <div class="text-base font-bold ${lift.pts >= 0 ? 'text-emerald-700' : 'text-red-700'}">
+                  ${lift.pts > 0 ? '+' : ''}${lift.pts} pts
+                </div>
+                <div class="text-[9px] text-slate-500 mt-0.5">
+                  capture across ${lift.n} decided seat${lift.n === 1 ? '' : 's'} here, with this one against without
+                </div>
+              </div>` : ''}`);
+        } else {
+          panelB = panel(`
+            ${View.panelHead('Active placements + closed outcomes')}
+            <h5 class="text-xs font-bold uppercase tracking-wide text-slate-600">Market Share</h5>
+            <p class="text-[11px] text-slate-400 mt-2">
+              No live vendor panel at this account to compare against.
+            </p>`);
+        }
+
+        // ---- Panel C: Comparable Performance ----
+        const mr = View.closedMarketRank(d);
+        const barMax = Math.max(hasDtc ? dtc : 0, cmp ? cmp.median : 0) || 1;
+        const bar = (label, val, cls) => `
+          <div class="grid grid-cols-[104px_1fr_52px] items-center gap-2 my-1.5 text-[11px]">
+            <span class="text-slate-500 truncate">${label}</span>
+            <span class="h-2.5 bg-slate-100 rounded-full overflow-hidden">
+              <span class="block h-full rounded-full ${cls}"
+                    style="width:${Math.max(8, Math.round((val / barMax) * 100))}%"></span>
+            </span>
+            <span class="text-slate-600 text-right tabular-nums">${val} days</span>
+          </div>`;
+        const panelC = panel(`
+          ${View.panelHead('Comparable closed jobs')}
+          <h5 class="text-xs font-bold uppercase tracking-wide text-slate-600">Comparable Performance</h5>
+          <p class="text-[11px] text-slate-500 mt-0.5 mb-3">How this closed job ranked against similar demand.</p>
+          <div class="grid grid-cols-2 gap-2">
+            ${View.panelTile('GHR Market Rank', mr ? `#${mr.rank} of ${mr.of}` :
+                             '<span class="text-slate-400 text-xs font-normal">Not ranked</span>',
+                             mr ? 'by seats held here' : 'GHR holds no seat here')}
+            ${View.panelTile('Rate Rank', rr ? (rr.ordinal ? `#${rr.rank} of ${rr.of}` :
+                             (rr.pct >= 67 ? 'Above' : rr.pct <= 33 ? 'Below' : 'At market')) : none,
+                             rr ? `${rr.pct}th percentile` : 'no comparable rates')}
+            ${View.panelTile('This Job · Days to Close', hasDtc ? dtc : none)}
+            ${View.panelTile('Comparable Median', cmp ? `${cmp.median} days` : none)}
+          </div>
+          ${(hasDtc && cmp) ? `
+            <div class="mt-3">
+              <div class="text-[9px] font-bold uppercase tracking-wide text-slate-500 mb-1">Days to Close vs Comparables</div>
+              ${bar('This Job', dtc, dtc <= cmp.median ? 'bg-emerald-500' : 'bg-blue-600')}
+              ${bar('Comparable Median', cmp.median, 'bg-slate-400')}
+            </div>`
+          : `<p class="text-[10px] text-slate-400 mt-3">
+               ${hasDtc ? 'Too few comparable closes to chart against.' : 'This job carries no close date, so it cannot be compared.'}
+             </p>`}
+          <div class="mt-3">
+            ${View.panelTile('Revenue Outcome',
+                `<span class="${rev > 0 ? 'text-emerald-600' : rev < 0 ? 'text-red-600' : ''}">${
+                  rev ? (rev > 0 ? '+' : '') + money(rev) : money(0)}</span>`)}
+          </div>`);
+
         return `
           <div class="p-4 bg-slate-50 border-t border-slate-100">
-            <div class="text-[10px] font-semibold uppercase tracking-wide text-slate-400 mb-2">
-              Market share &middot; ${View.esc(d.scope)}
-            </div>
-            <div class="flex items-center gap-6 flex-wrap">
-              ${View.donutSvg(seg, { centerLabel: d.ghrPct + '%', centerSub: 'GHR' })}
-              ${View.chartLegend(seg)}
-              <div class="text-[11px] text-slate-500 leading-relaxed">
-                GHR hold <b class="text-slate-700">${d.ghr}</b> of
-                <b class="text-slate-700">${d.total}</b> live seats here,
-                across ${d.vendors.length} vendor${d.vendors.length === 1 ? '' : 's'}.
-              </div>
+            <div class="grid grid-cols-1 xl:grid-cols-3 gap-3">
+              ${panelA}${panelB}${panelC}
             </div>
           </div>`;
       },
+
 
       stageAgencyLabel(r) {
         return (Utils.isGhrAgency(r.agency) || r.source === 'GHR') ? 'GHR' : 'AV';
@@ -7366,7 +7610,7 @@
                   <div class="text-[10px] uppercase tracking-wide text-blue-600">${View.esc(r.role || r.specialty || '')}</div>
                 </td>
                 <td class="px-3 py-2 text-center">
-                  ${r.group ? View.stageBadge(r.group, 'low') : '—'}
+                  ${r.group ? View.stageBadge(View.closedOutcome(r).label, View.closedOutcome(r).tone) : '—'}
                   ${r.outcome_reason ? `<div class="text-[10px] text-slate-400 mt-0.5">${View.esc(r.outcome_reason)}</div>` : ''}
                 </td>
                 <td class="px-3 py-2 font-medium text-slate-700">${View.esc(View.closedFilledBy(r))}</td>
