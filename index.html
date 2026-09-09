@@ -8098,23 +8098,55 @@
         // and placement is GHR-direct. Swap the two GHR/AV-framed cards for
         // simpler ones.
         const isNonMspKpi = s.dataSource === 'non_msp';
-        const cards = isNonMspKpi
-          ? [
-              { label: 'Avg Days Open', val: avgDays, icon: 'clock', color: 'purple', tooltip: 'Average number of days positions have been open' },
-              { label: 'Submission Pending', val: `${avgPending} Days`, icon: 'hourglass', color: 'orange', tooltip: 'Average days submissions have been pending review' },
-              { label: 'Total Submissions', val: totalSubs.toLocaleString(), icon: 'users', color: 'blue', tooltip: 'All active submissions across visible open jobs' },
-              { label: 'Avg Margin', val: avgMargin + '%', icon: 'trending-up', color: 'green', tooltip: 'Average margin percentage across all open positions' },
-              { label: 'Total Jobs', val: `${total} / <span class="text-red-500">${critical}</span>`, icon: 'alert-triangle', color: 'red', tooltip: 'Total open positions / Critical (aging) positions' },
-              { label: 'Fill Rate / Active', val: `${overallFillRate}% / ${activeCount}`, icon: 'check-circle', color: 'emerald', tooltip: 'Overall fill rate % / Total active on contract' },
-            ]
-          : [
-              { label: 'Avg Days Open', val: avgDays, icon: 'clock', color: 'purple', tooltip: 'Average number of days positions have been open' },
-              { label: 'Submission Pending', val: `${avgPending} Days`, icon: 'hourglass', color: 'orange', tooltip: 'Average days submissions have been pending review' },
-              { label: 'Active Sub Mix', val: `${ghrPct}% / ${avPct}%`, icon: 'users', color: 'blue', tooltip: 'GHR submissions % / Agency Vendor submissions %' },
-              { label: 'Avg Margin', val: avgMargin + '%', icon: 'trending-up', color: 'green', tooltip: 'Average margin percentage across all open positions' },
-              { label: 'Total Jobs', val: `${total} / <span class="text-red-500">${critical}</span>`, icon: 'alert-triangle', color: 'red', tooltip: 'Total open positions / Critical (aging) positions' },
-              { label: 'GHR / Overall Fill / Active', val: `${ghrFillRate}% / ${overallFillRate}% / ${activeCount}`, icon: 'check-circle', color: 'emerald', tooltip: 'GHR fill rate % / Overall fill rate % / Total active on contract' },
-            ];
+
+        /* KPI row, to the reference's viewConfig.open spec: Avg Days Open,
+         * Pending Offers, Post-Offer Declines, Open Jobs, Active Jobs, GHR
+         * Fill Rate.
+         *
+         * Offers and post-offer declines are counted through
+         * Utils.interviewStage(), not a raw VMS date -- B4 carries no
+         * interview date at all and VNDLY populates one on 1.3% of rows, so
+         * the stage a person recorded in the app is the only real signal.
+         * Declines are windowed to the last seven days as the reference does;
+         * a decline with no recorded date cannot be placed in that window and
+         * is left out rather than assumed recent.
+         */
+        let pendingOffers = 0, postOfferDeclines = 0, jobsWithActivity = 0;
+        const sevenDaysAgo = new Date(now.getTime() - 7 * 86400000);
+        list.forEach(j => {
+          let activeHere = 0;
+          (j.candidates || []).forEach(c => {
+            const stage = Utils.interviewStage(j.id, c);
+            if (stage === 'Offer Pending') pendingOffers++;
+            if (stage === 'Post-Offer Decline' && c.declineDate && c.declineDate >= sevenDaysAgo) {
+              postOfferDeclines++;
+            }
+            if (!Utils.isDeclinedNow(j.id, c)) activeHere++;
+          });
+          if (activeHere > 0) jobsWithActivity++;
+        });
+
+        const cards = [
+          { label: 'Avg Days Open', val: avgDays, icon: 'clock', color: 'purple',
+            tooltip: 'Average days the visible positions have been open' },
+          { label: 'Pending Offers', val: pendingOffers, icon: 'hourglass', color: 'orange',
+            tooltip: isNonMspKpi ? 'Candidates sitting at offer'
+                                 : 'Candidates sitting at offer, GHR and affiliate' },
+          { label: 'Post-Offer Declines', val: postOfferDeclines, icon: 'user-x', color: 'red',
+            tooltip: 'Offers declined in the last 7 days. Declines with no recorded date are excluded.' },
+          { label: 'Open Jobs', val: `${total} / <span class="text-red-500">${critical}</span>`,
+            icon: 'alert-triangle', color: 'red',
+            tooltip: 'Open positions in view / of those, aged past the critical threshold' },
+          { label: 'Active Jobs', val: jobsWithActivity, icon: 'users', color: 'blue',
+            tooltip: 'Open jobs carrying at least one live submission' },
+          isNonMspKpi
+            ? { label: 'Fill Rate / Active', val: `${overallFillRate}% / ${activeCount}`,
+                icon: 'check-circle', color: 'emerald',
+                tooltip: 'Filled share of open plus active seats / clinicians on assignment' }
+            : { label: 'GHR Fill Rate', val: `${ghrFillRate}% / ${activeCount}`,
+                icon: 'check-circle', color: 'emerald',
+                tooltip: 'GHR share of active seats here / total clinicians on assignment' },
+        ];
 
         container.innerHTML = cards.map(c => `
           <div class="bg-white p-2 sm:p-4 rounded-lg border border-slate-200 shadow-sm flex flex-col justify-between hover:shadow-md transition-shadow relative">
