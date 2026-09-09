@@ -2714,6 +2714,19 @@
 
       abbreviate(text) {
         if (!text) return '';
+        /* B4 writes many specialties as "X - X" -- "Medical Assistant - Medical
+         * Assistant", "CT TECH - CT TECH" -- on 62 of its 91 open orders. The
+         * halves are identical, so the second is noise: it doubled the longest
+         * cell on Open Jobs and was what pushed the table into a horizontal
+         * scroll. Collapsed only when both halves match exactly; a genuine
+         * "RN - ICU" is left alone.
+         */
+        {
+          const parts = String(text).split(' - ');
+          if (parts.length === 2 && parts[0].trim() && parts[0].trim() === parts[1].trim()) {
+            text = parts[0].trim();
+          }
+        }
         const MAP = { 'Registered Nurse': 'RN', 'Medical Surgical': 'MS', 'Med Surg': 'MS', 'Med/Surg': 'MS', 'Telemetry': 'TELE', 'Tele': 'TELE', 'Intensive Care Unit': 'ICU', 'Emergency Room': 'ER', 'Emergency Dept': 'ED', 'Emergency Department': 'ED', 'Operating Room': 'OR', 'Labor & Delivery': 'L&D', 'Labor and Delivery': 'L&D', 'Progressive Care Unit': 'PCU', 'Catheterization Lab': 'Cath Lab', 'Radiologic Technologist': 'Rad Tech', 'Certified Nursing Assistant': 'CNA', 'Medical Technologist': 'Med Tech' };
         let s = String(text);
         Object.keys(MAP).forEach(key => { s = s.replace(new RegExp(key, 'gi'), MAP[key]); });
@@ -4704,18 +4717,18 @@
          * and column filtering the stage tabs have.
          */
         const openCols = [
-          { label: 'ID',            key: 'id' },
-          { label: 'Category',      key: 'program' },
+          { label: 'ID',            key: 'id', w: '9rem' },
+          { label: 'Category',      key: 'program', w: '9rem' },
           { label: 'System / Facility / Specialty', key: 'facility' },
-          { label: '#',             key: 'numPositions', align: 'center', sub: 'Pos' },
-          { label: 'Bill Rate',     key: r => parseFloat(String(r.billRate).replace(/[^0-9.]/g, '')) || null, align: 'center' },
-          { label: 'Days',          key: 'daysPast', align: 'center' },
-          { label: 'Margin',        key: r => parseFloat(r.margin), align: 'center' },
-          { label: 'Impact',        key: r => Utils.calculateImpactPercent(r.levers), align: 'center' },
+          { label: '#',             key: 'numPositions', align: 'center', sub: 'Pos', w: '3.5rem' },
+          { label: 'Bill Rate',     key: r => parseFloat(String(r.billRate).replace(/[^0-9.]/g, '')) || null, align: 'center', w: '5.5rem' },
+          { label: 'Days',          key: 'daysPast', align: 'center', w: '4.5rem' },
+          { label: 'Margin',        key: r => parseFloat(r.margin), align: 'center', w: '5rem' },
+          { label: 'Impact',        key: r => Utils.calculateImpactPercent(r.levers), align: 'center', w: '5rem' },
           { label: 'Active',        key: r => (Number(r.ghrSubs) || 0) + (Number(r.avSubs) || 0),
-            align: 'center', sub: s.dataSource === 'non_msp' ? 'GHR' : 'GHR / Agency' },
+            align: 'center', w: '5.5rem', sub: s.dataSource === 'non_msp' ? 'GHR' : 'GHR / Agency' },
           { label: 'Declines',      key: r => (Number(r.ghrDeclines) || 0) + (Number(r.avDeclines) || 0),
-            align: 'center', sub: s.dataSource === 'non_msp' ? 'GHR' : 'GHR / Agency' },
+            align: 'center', w: '5.5rem', sub: s.dataSource === 'non_msp' ? 'GHR' : 'GHR / Agency' },
         ];
         View.stageColCount.list = openCols.length;
 
@@ -5331,7 +5344,7 @@
             </div>
           </td>
           <td class="px-3 py-2 text-xs font-medium text-slate-700 truncate" title="${View.esc(job.program || '')}">${View.esc(job.program || '')}</td>
-          <td class="px-3 py-2">
+          <td class="px-3 py-2 max-w-0">
             <div class="text-[10px] uppercase font-bold text-slate-400 truncate" title="${View.esc(eyebrow)}">${View.esc(eyebrow)}</div>
             <div class="font-bold text-sm text-slate-700 truncate">${View.esc(job.facility || '')}</div>
             ${rel}
@@ -5921,7 +5934,7 @@
           // wider tracking) so the four tabs read as one table style. Kept at
           // text-xs rather than List's text-sm because these tables carry 8-9
           // denser columns — sized to their own body text, as List's is.
-          return `<th class="px-3 py-3 text-${c.align || 'left'} font-bold text-slate-600 text-xs uppercase tracking-wider whitespace-nowrap bg-slate-100 border-b border-slate-200 ${
+          return `<th ${c.w ? `style="width:${c.w}"` : ''} class="px-3 py-3 text-${c.align || 'left'} font-bold text-slate-600 text-xs uppercase tracking-wider whitespace-nowrap bg-slate-100 border-b border-slate-200 ${
                       sortable ? 'cursor-pointer hover:text-slate-700 select-none' : ''}"
                       ${sortable ? `onclick="store.dispatch('SORT_STAGE',{view:'${key}',label:${JSON.stringify(c.label)}})"` : ''}
                       ${sortable ? `title="Sort by ${c.label || 'this column'}"` : ''}>${c.label}${arrow}</th>`;
@@ -5962,7 +5975,10 @@
                desktop, so on mobile the page scrolls instead of trapping the
                table in a nested box. The sticky thead sticks against this. -->
           <div class="rounded-lg border border-slate-200 overflow-x-auto md:h-[70vh] overflow-y-visible md:overflow-y-auto">
-            <table class="w-full min-w-[900px] text-xs border-separate border-spacing-0">
+            <!-- table-fixed once any column declares a width: with auto layout a
+                 single long cell (a job title repeated twice by the source) stretched
+                 the table past its container and forced a horizontal scroll. -->
+            <table class="w-full ${cols.some(c => c.w) ? 'table-fixed' : 'min-w-[900px]'} text-xs border-separate border-spacing-0">
               <thead class="sticky top-0 z-10">
                 <tr>
                   ${cols.map(th).join('')}
@@ -7215,12 +7231,27 @@
       // Slip between what was recorded last time and what the source says now.
       // Deliberately not "days delayed from the original start" — neither feed
       // carries an original start date, so that number does not exist.
+      /* How far this start has slipped.
+       *
+       * Preferred basis is the start recorded at the previous IMPACT meeting,
+       * because that answers "what changed since we last looked". But that
+       * only exists once someone has saved one, and until then this returned
+       * null for every row -- which emptied the Days Delayed column and left
+       * Avg and Total Days Delayed showing a dash on a cohort that had
+       * demonstrably moved (rows showing 5, 3 and 2 moves).
+       *
+       * So it falls back to the slip the source itself reports: current start
+       * against the start first agreed, which the API already computes from
+       * the audit trail. Null only when the source tracks no movement at all.
+       */
       onboardingSlip(r) {
         const e = View.onboardingEdit(r);
-        if (!e.recordedStart || !r.current_start) return null;
-        const a = Utils.toDateOrNull(e.recordedStart), b = Utils.toDateOrNull(r.current_start);
-        if (!a || !b) return null;
-        return Math.round((b - a) / 86400000);
+        if (e.recordedStart && r.current_start) {
+          const a = Utils.toDateOrNull(e.recordedStart), b = Utils.toDateOrNull(r.current_start);
+          if (a && b) return Math.round((b - a) / 86400000);
+        }
+        const d = Number(r.days_delayed);
+        return isFinite(d) ? d : null;
       },
 
       onboardingGroup(r) {
@@ -8319,11 +8350,16 @@
           let activeHere = 0;
           (j.candidates || []).forEach(c => {
             const stage = Utils.interviewStage(j.id, c);
-            if (stage === 'Offer Pending') pendingOffers++;
-            if (stage === 'Post-Offer Decline' && c.declineDate && c.declineDate >= sevenDaysAgo) {
-              postOfferDeclines++;
-            }
-            if (!Utils.isDeclinedNow(j.id, c)) activeHere++;
+            const declined = Utils.isDeclinedNow(j.id, c);
+            if (!declined && (stage === 'Offer Pending' || stage === 'Offer Accepted')) pendingOffers++;
+            // interviewDerivedStage never returns 'Post-Offer Decline' -- it
+            // only says 'Declined' -- so counting that stage alone could only
+            // ever be zero unless somebody had typed it in. A decline that
+            // carries an offer date IS a post-offer decline, which is the
+            // question being asked.
+            if (declined && c.offerDate
+                && (!c.declineDate || c.declineDate >= sevenDaysAgo)) postOfferDeclines++;
+            if (!declined) activeHere++;
           });
           if (activeHere > 0) jobsWithActivity++;
         });
