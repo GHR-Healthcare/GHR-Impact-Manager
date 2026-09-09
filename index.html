@@ -896,7 +896,7 @@
     const $ = (id) => document.getElementById(id);
 
     // App version - loaded from environment variable via API, with fallback
-    let APP_VERSION = '2.3.9';
+    let APP_VERSION = '2.4.0';
 
     const API_BASE_URL = '/api';
     
@@ -2019,7 +2019,12 @@
             const job = {
                 id: String(row.position_id || row.id || row.req_id || ''),
                 positionId: String(row.position_id || row.req_id || ''),
-                sourceSystem: row.source_system || 'B4',  // B4 or VNDLY
+                // Every query on both sides selects source_system explicitly
+                // (B4, VNDLY, Bullhorn, Symplr), so this is only a guard. It
+                // used to default to 'B4', which on the non-MSP side named a
+                // system that supplies none of its data; blank lets the badge
+                // say it does not know instead of saying something false.
+                sourceSystem: row.source_system || '',
                 system: String(row.program || row.system || ''),
                 program: String(row.program || row.system || ''),
                 healthSystem: Utils.getHealthSystem(facilityName, row.health_system),
@@ -4525,7 +4530,13 @@
           kpiEl.style.visibility = kpiViews.has(view) ? 'visible' : 'hidden';
           kpiEl.style.display = kpiViews.has(view) ? '' : 'none';
         }
-        if (legendEl) legendEl.style.visibility = (view === 'financials' || view === 'perdiem' || view === 'trend' || view === 'pending' || view === 'contracts' || STAGE_VIEWS.includes(view)) ? 'hidden' : 'visible';
+        // Stage views hid the legend because they had no bands to show. On
+        // non-MSP they do now, and those bands are the only way to reach the
+        // filter, so it stays visible there.
+        const legendHiddenViews = ['financials', 'perdiem', 'trend', 'pending', 'contracts'];
+        const legendHidden = legendHiddenViews.includes(view)
+          || (STAGE_VIEWS.includes(view) && !isNonMsp);
+        if (legendEl) legendEl.style.visibility = legendHidden ? 'hidden' : 'visible';
 
         const btnList = $('btnViewList');
         const btnHot = $('btnViewHot');
@@ -4884,8 +4895,21 @@
         const isHot = job.levers && job.levers.hotJob && job.levers.hotJob.done;
         const totalDeclines = job.ghrDeclines + job.avDeclines;
 
-        const sourceColor = job.sourceSystem === 'VNDLY' ? 'bg-purple-100 text-purple-700' : 'bg-blue-100 text-blue-700';
-        const sourceLabel = job.sourceSystem === 'VNDLY' ? 'V' : 'B4';
+        // Four systems feed this list, not two. The old test was VNDLY-or-else,
+        // so Bullhorn and Symplr rows both rendered a 'B4' badge -- on the
+        // non-MSP side, where no B4 data exists at all. Unknown values show
+        // their own first character rather than being relabelled as B4.
+        const SOURCE_BADGE = {
+          B4:       { label: 'B4', cls: 'bg-blue-100 text-blue-700' },
+          VNDLY:    { label: 'V',  cls: 'bg-purple-100 text-purple-700' },
+          Bullhorn: { label: 'BH', cls: 'bg-emerald-100 text-emerald-700' },
+          Symplr:   { label: 'SY', cls: 'bg-amber-100 text-amber-800' },
+        };
+        const srcKey = job.sourceSystem || '';
+        const srcBadge = SOURCE_BADGE[srcKey]
+          || { label: (srcKey || '?').slice(0, 2).toUpperCase(), cls: 'bg-slate-100 text-slate-600' };
+        const sourceColor = srcBadge.cls;
+        const sourceLabel = srcBadge.label;
         
         let html = `
           <div class="grid grid-cols-12 p-4 items-center hover:bg-slate-50 cursor-pointer group transition-colors" onclick="window.store.dispatch('TOGGLE_ROW','${job.id}')">
@@ -4893,7 +4917,7 @@
               <button onclick="event.stopPropagation(); window.store.dispatch('TOGGLE_HOT_JOB','${job.id}')" class="shrink-0 transition-transform hover:scale-110">
                 <i data-lucide="flame" class="w-4 h-4 ${isHot ? 'hot-job-active' : 'text-slate-300 hover:text-orange-400'}"></i>
               </button>
-              <span class="px-1 py-0.5 rounded text-[9px] font-bold ${sourceColor}" title="${job.sourceSystem || 'B4'}">${sourceLabel}</span>
+              <span class="px-1 py-0.5 rounded text-[9px] font-bold ${sourceColor}" title="${job.sourceSystem || 'Unknown source'}">${sourceLabel}</span>
               <span class="px-1.5 py-0.5 rounded text-xs font-bold ${colorClass} truncate">${job.id}</span>
             </div>
             <div class="col-span-1 text-xs font-medium text-slate-700 truncate overflow-hidden" title="${job.program}">${job.program}</div>
@@ -6724,18 +6748,38 @@
           { key: 'delayed', label: 'Delayed',     dot: 'bg-[#EF4444]', pred: r => View.onboardingGroup(r) === 'DELAYED START' },
           { key: 'cancel',  label: 'Cancelled',   dot: 'bg-red-800',   pred: r => View.onboardingGroup(r) === 'CANCELED' },
         ],
-        closed: [
-          { key: 'lifecycle', label: 'Ran To Term',  dot: 'bg-[#22C55E]', pred: r => /lifecycle|complete/i.test(r.group || '') },
-          { key: 'ended',     label: 'Ended Early',  dot: 'bg-[#EF4444]', pred: r => /terminat|resign/i.test(r.group || '') },
-          { key: 'cancelled', label: 'Cancelled',    dot: 'bg-red-800',   pred: r => /cancel/i.test(r.group || '') },
-          { key: 'admin',     label: 'Administrative', dot: 'bg-slate-400', pred: r => /admin/i.test(r.group || '') },
+        // Closed bands differ by instance because the outcome vocabulary does.
+        //
+        // These were previously one list testing for 'lifecycle|complete',
+        // 'terminat|resign' and 'admin' -- none of which any endpoint has ever
+        // produced. Three of the four bands could not match a row on either
+        // side. It went unnoticed because nothing rendered a chip to click.
+        closed_msp: [
+          { key: 'ghrwon', label: 'GHR Won',       dot: 'bg-[#22C55E]', pred: r => r.group === 'GHR WON' },
+          { key: 'avwon',  label: 'Affiliate Won', dot: 'bg-[#a855f7]', pred: r => r.group === 'AFFILIATE WON' },
+          { key: 'missed', label: 'Missed',        dot: 'bg-[#EF4444]', pred: r => r.group === 'MISSED' },
+          { key: 'cxl',    label: 'Cancelled',     dot: 'bg-red-800',   pred: r => r.group === 'CANCELED' },
+        ],
+        closed_non_msp: [
+          { key: 'filled',   label: 'Filled',    dot: 'bg-[#22C55E]', pred: r => r.group === 'FILLED' },
+          { key: 'unfilled', label: 'Unfilled',  dot: 'bg-[#EF4444]', pred: r => r.group === 'UNFILLED' },
+          { key: 'cxl',      label: 'Cancelled', dot: 'bg-red-800',   pred: r => r.group === 'CANCELED' },
         ],
       },
 
       legendBands() {
         // Priority Jobs is Open Jobs filtered, so it shares its bands.
         const v = window.store.state.view;
-        return View.LEGEND_BANDS[v === 'hotjobs' ? 'list' : v] || null;
+        const key = v === 'hotjobs' ? 'list' : v;
+        // Closed reports a different outcome vocabulary per instance -- won
+        // against affiliates on MSP, filled or not on non-MSP -- so it has a
+        // band list per side.
+        if (key === 'closed') {
+          return View.LEGEND_BANDS[
+            window.store.state.dataSource === 'non_msp' ? 'closed_non_msp' : 'closed_msp'
+          ] || null;
+        }
+        return View.LEGEND_BANDS[key] || null;
       },
 
       // OR across selected bands. Returns true when nothing is selected.
@@ -6859,16 +6903,53 @@
         lucide.createIcons();
       },
 
+      /*
+       * The legend, static or clickable depending on the instance.
+       *
+       * LEGEND_BANDS, legendBands() and legendMatch() were ported when the
+       * stage views arrived, and TOGGLE_LEGEND_BAND has a reducer case -- but
+       * nothing ever rendered a chip to dispatch it, so the filter existed
+       * with no way to reach it. stageFilter() has been consulting a selection
+       * the user could not make.
+       *
+       * Clickable on non-MSP only. Original MSP keeps the legend it has always
+       * had; it gets the interactive version through the prototype build,
+       * which is where the rest of that UI lives.
+       */
       legend() {
         const el = $('legendContainer');
         if (!el) return;
-        el.innerHTML = `
-          <div class="flex items-center gap-2"><div class="w-3 h-3 rounded-full bg-[#22C55E]"></div> 1-5 Days</div>
-          <div class="flex items-center gap-2"><div class="w-3 h-3 rounded-full bg-[#FACC15]"></div> 6-10 Days</div>
-          <div class="flex items-center gap-2"><div class="w-3 h-3 rounded-full bg-[#EF4444]"></div> 11-15 Days</div>
-          <div class="flex items-center gap-2"><div class="w-3 h-3 rounded-full bg-red-800"></div> 16+ Days</div>
-          <div class="flex items-center gap-2"><div class="w-3 h-3 rounded-full border border-slate-500 bg-white"></div> Perm</div>
-        `;
+
+        if (window.store.state.dataSource !== 'non_msp') {
+          el.innerHTML = `
+            <div class="flex items-center gap-2"><div class="w-3 h-3 rounded-full bg-[#22C55E]"></div> 1-5 Days</div>
+            <div class="flex items-center gap-2"><div class="w-3 h-3 rounded-full bg-[#FACC15]"></div> 6-10 Days</div>
+            <div class="flex items-center gap-2"><div class="w-3 h-3 rounded-full bg-[#EF4444]"></div> 11-15 Days</div>
+            <div class="flex items-center gap-2"><div class="w-3 h-3 rounded-full bg-red-800"></div> 16+ Days</div>
+            <div class="flex items-center gap-2"><div class="w-3 h-3 rounded-full border border-slate-500 bg-white"></div> Perm</div>
+          `;
+          return;
+        }
+
+        const bands = View.legendBands();
+        if (!bands) { el.innerHTML = ''; return; }
+        const f = window.store.state.filters;
+        el.innerHTML = bands.map(b => {
+          // Open Jobs bands drive ageMin/ageMax, shared with the Days Age
+          // inputs. The stage views carry a predicate instead, so their
+          // selection is tracked by band key.
+          const on = b.pred
+            ? !!f.legendBands?.has(b.key)
+            : b.perm ? f.permOnly === true
+                     : (f.ageMin === b.min && f.ageMax === b.max && !f.permOnly);
+          return `<button type="button" onclick="store.dispatch('TOGGLE_LEGEND_BAND','${b.key}')"
+              title="${on ? 'Clear this filter' : 'Filter to ' + b.label}"
+              class="flex items-center gap-2 px-2 py-1 rounded-md border transition-colors whitespace-nowrap ${
+                on ? 'bg-blue-50 border-blue-300 text-blue-800 font-semibold'
+                   : 'border-transparent hover:bg-slate-50 hover:border-slate-200'}">
+              <div class="w-3 h-3 rounded-full ${b.dot}"></div> ${b.label}
+            </button>`;
+        }).join('');
       },
 
       financials() {

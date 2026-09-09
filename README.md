@@ -2,6 +2,14 @@
 
 ## Version History
 
+**2.4.0** - Legend filter buttons on non-MSP, and the source badge tells the truth
+
+**The source badge said B4 on the non-MSP side.** It tested `sourceSystem === 'VNDLY'` and labelled everything else `B4`, so Bullhorn and Symplr rows both claimed to come from a system that supplies none of that instance's data. All four sources now have their own badge — **B4**, **V**, **BH**, **SY** — and an unrecognised value shows its own initials rather than being relabelled. The `|| 'B4'` default on the row mapping went too; every query on both sides selects `source_system` explicitly, so it was only ever a guard, and a guard that lies is worse than none.
+
+**The legend filter existed with no way to reach it.** `LEGEND_BANDS`, `legendBands()`, `legendMatch()` and a `TOGGLE_LEGEND_BAND` reducer case were all ported with the stage views, and `stageFilter()` has been consulting a band selection ever since — but nothing rendered a chip to dispatch it. The legend is now clickable on non-MSP, and shows on the stage views there instead of being hidden. Original MSP keeps the legend it has always had; it gets the interactive one through the prototype build.
+
+**Three of the four Closed bands could never match a row.** They tested for `lifecycle|complete`, `terminat|resign` and `admin`, none of which any endpoint has ever produced — the real outcomes are `GHR WON` / `AFFILIATE WON` / `MISSED` / `CANCELED` on MSP and `FILLED` / `UNFILLED` / `CANCELED` on non-MSP. Closed now has a band list per instance, matching the vocabulary each side actually reports. This was invisible until a chip existed to click.
+
 **2.3.9** - Market share on the Closed row detail
 
 The last prototype feature worth porting. The reference drew this as `marketSharePie` — vendor share for comparable roles at the account — but its version could not have shipped: `pieHeadcounts` derived headcount from *the job id modulo 7* and read start dates from a hardcoded array. The shape was right and the data was scaffolding. Both VMSs carry the real figures.
