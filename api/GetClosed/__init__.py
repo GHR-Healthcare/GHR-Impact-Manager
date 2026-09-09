@@ -2,6 +2,7 @@ import azure.functions as func
 import pyodbc
 import os
 import json
+import datetime
 from shared_code.auth import require_allowed_domain
 from shared_code.vndly_reasons import canonical_reason, reason_category
 from shared_code.data_source import (
@@ -204,6 +205,81 @@ def _is_ghr(vendor):
     return 'ghr' in v or 'planet healthcare' in v
 
 
+# What the Closed table shows in FILLED BY, and the sign of REVENUE.
+#
+# The reference screenshot reads: a GHR win names GHR Healthcare and carries
+# positive revenue; an affiliate win names the vendor that took it and carries
+# negative revenue, because that is revenue lost rather than earned; an
+# unfilled seat names None and is also negative, the demand having gone
+# uncovered; a cancellation names Excluded at zero, since nobody lost anything
+# that was ever really there.
+#
+# Kept server-side so both instances agree, and so the sign convention lives
+# next to the money rather than being re-derived in the view.
+def _closed_window(req, non_msp):
+    """The date range the Closed stage covers.
+
+    Defaults to the previous *completed* week rather than a rolling seven
+    days. The stage is read as a weekly review -- "how much did we win last
+    week" -- and a rolling window silently mixes a partial current week into
+    that answer, so the same question gives a different number depending on
+    which day it is asked.
+
+    Weeks run Sunday to Saturday, matching the DATEFIRST 7 the app pins for
+    every other week bucket.
+
+    An explicit from/to still wins, and `days` is still honoured for anything
+    that wants a rolling window, so nothing that already calls this breaks.
+    """
+    today = datetime.date.today()
+
+    frm, to = req.params.get('from'), req.params.get('to')
+    if frm and to:
+        try:
+            return (datetime.date.fromisoformat(frm),
+                    datetime.date.fromisoformat(to), 'custom')
+        except ValueError:
+            pass
+
+    days = req.params.get('days')
+    if days:
+        try:
+            n = abs(int(days))
+            return today - datetime.timedelta(days=n), today, f'rolling {n}d'
+        except (TypeError, ValueError):
+            pass
+
+    if non_msp:
+        # Non-MSP reads fill rate, not a weekly win count, and a single week of
+        # resolved Symplr orders is small enough that the rate swings on noise.
+        n = NON_MSP_LOOKBACK_DAYS
+        return today - datetime.timedelta(days=n), today, f'rolling {n}d'
+
+    # Sunday of the current week, then back one week: the last full Sun-Sat.
+    this_week_start = today - datetime.timedelta(days=(today.weekday() + 1) % 7)
+    start = this_week_start - datetime.timedelta(days=7)
+    return start, start + datetime.timedelta(days=6), 'previous week'
+
+
+def _filled_by_and_revenue(row):
+    group = (row.get('group') or '').upper()
+    agency = (row.get('agency') or '').strip()
+    value = row.get('value_13wk')
+
+    if group in ('GHR WON', 'FILLED'):
+        return (agency or 'GHR Healthcare'), (value if value else None)
+    if group == 'AFFILIATE WON':
+        # Named, not anonymised. Redact Vendor Info masks it in the view where
+        # required; blanking it here would break the panel for the people
+        # entitled to see it.
+        return (agency or 'Affiliate'), (-value if value else None)
+    if group in ('MISSED', 'UNFILLED'):
+        return 'None', (-value if value else None)
+    if group == 'CANCELED':
+        return 'Excluded', 0
+    return (agency or '—'), value
+
+
 def _b4_rows(cursor, lookback):
     """Closed outcomes still recorded in B4Health.
 
@@ -237,6 +313,16 @@ def _b4_rows(cursor, lookback):
             o.Unit                                      AS unit,
             o.Position_Type                             AS role,
             o.Program                                   AS program,
+            -- CATEGORY on the Closed table. Program is the booking category
+            -- B4 already records ('Travel Nursing', 'Local Contract Allied
+            -- Health'), so it needs no derivation.
+            o.Program                                   AS category,
+            -- DAYS TO CLOSE, from when the order was raised to when it was
+            -- awarded. Computable on 19,430 of 28,831 closed B4 rows; the
+            -- rest carry no Order_Date_Created and report null rather than a
+            -- zero that would read as "closed same day".
+            CASE WHEN o.Awarded_Date IS NOT NULL AND o.Order_Date_Created IS NOT NULL
+                 THEN DATEDIFF(DAY, o.Order_Date_Created, o.Awarded_Date) END AS days_to_close,
             o.Contract_Status                           AS status,
             o.Agency                                    AS agency,
             CASE WHEN ''' + B4_GHR_PREDICATE + ''' THEN 'GHR' ELSE 'Affiliate' END AS source,
@@ -284,6 +370,12 @@ def _vndly_rows(cursor, lookback):
             w.[Organization Unit]                         AS unit,
             COALESCE(w.[Job Title], w.[Title])            AS role,
             w.[Busines Unit - Name]                       AS program,
+            -- VNDLY's equivalent of B4's Program.
+            w.[Labor Type]                                AS category,
+            CASE WHEN TRY_CAST(w.[Onboarded Date] AS DATE) IS NOT NULL
+                  AND TRY_CAST(w.[Created On] AS DATE) IS NOT NULL
+                 THEN DATEDIFF(DAY, TRY_CAST(w.[Created On] AS DATE),
+                                    TRY_CAST(w.[Onboarded Date] AS DATE)) END AS days_to_close,
             w.[Current Status]                            AS status,
             w.[Vendor Name]                               AS agency,
             CASE WHEN ''' + VNDLY_GHR_PREDICATE + ''' THEN 'GHR' ELSE 'Affiliate' END AS source,
@@ -649,11 +741,24 @@ def _aggregate_non_msp(rows, lookback, errors):
         raw_cred = r.pop('credential_raw', None)
         r['profession'] = normalize_credential(raw_cred)
         r['service_line'] = credential_service_line(raw_cred)
+        # The Closed table is one definition across both instances, so the
+        # non-MSP rows answer to the same column names.
+        #
+        # CATEGORY on MSP is the VMS booking category (Program / Labor Type).
+        # Non-MSP has no such field -- Bullhorn and Symplr book by credential,
+        # not by programme -- so the service line stands in: Nursing / Allied /
+        # Advanced Practices reads at the same altitude as Travel Nursing /
+        # Allied Health rather than pretending to be the same field.
+        r['category'] = r.get('service_line') or ''
+        # DAYS TO CLOSE is the same question as days-to-fill here, already
+        # measured off BookedByDT and the placement date.
+        r['days_to_close'] = r.get('days_to_fill')
         r['specialty'] = (r.pop('specialty_raw', None) or '')
         r['region'] = normalize_state(r.get('region'))
         r['agency'] = 'GHR'
         rate, hrs = r.get('bill_rate'), r.get('hours_per_week')
         r['value_13wk'] = round(rate * hrs * 13, 2) if rate and hrs else None
+        r['filled_by'], r['revenue'] = _filled_by_and_revenue(r)
 
     rows.sort(key=lambda r: r.get('closed_on') or '', reverse=True)
 
@@ -676,6 +781,13 @@ def _aggregate_non_msp(rows, lookback, errors):
         'rows': rows,
         'coverage': {
             'windowDays': abs(lookback),
+            # Same three fields the MSP path reports, so the header can label
+            # the range without knowing which instance it is on. Non-MSP stays
+            # rolling: a single week of resolved Symplr orders is small enough
+            # that the fill rate swings on noise.
+            'windowFrom': (datetime.date.today() - datetime.timedelta(days=abs(lookback))).isoformat(),
+            'windowTo': datetime.date.today().isoformat(),
+            'windowLabel': f'rolling {abs(lookback)}d',
             'counts': counts,
             # Fill rate deliberately excludes CANCELED. Those orders stopped
             # existing (Scheduling Error, Census Dropped, cancelled reqs)
@@ -744,8 +856,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
         cursor = conn.cursor()
         cursor.execute('SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED')
 
-        import datetime
-        cutoff = datetime.date.today() - datetime.timedelta(days=abs(lookback))
+        win_from, win_to, win_label = _closed_window(req, False)
 
         all_rows, errors = [], []
         for label, fn in (('B4', _b4_rows), ('VNDLY', _vndly_rows)):
@@ -775,12 +886,16 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             r['margin_pct'] = None
             rate, hrs = r.get('bill_rate'), r.get('hours_per_week')
             r['value_13wk'] = round(rate * hrs * 13, 2) if rate and hrs else None
+            r['filled_by'], r['revenue'] = _filled_by_and_revenue(r)
 
             if not r.get('closed_on'):
                 key = f"{r['source_system']}/{r['group']}"
                 undated[key] = undated.get(key, 0) + 1
                 continue
-            if r['closed_on'] >= cutoff.isoformat():
+            # Bounded at both ends now. A lower bound alone let anything
+            # closed after the window -- including this partial week -- into a
+            # view labelled as last week's.
+            if win_from.isoformat() <= r['closed_on'] <= win_to.isoformat():
                 rows.append(r)
 
         rows.sort(key=lambda r: r.get('closed_on') or '', reverse=True)
@@ -803,7 +918,10 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             'rows': rows,
             'marketShare': market_share,
             'coverage': {
-                'windowDays': abs(lookback),
+                'windowDays': (win_to - win_from).days + 1,
+                'windowFrom': win_from.isoformat(),
+                'windowTo': win_to.isoformat(),
+                'windowLabel': win_label,
                 'counts': counts,
                 # Rows excluded because the source records no close date.
                 # Heavily skewed to B4 losses, so capture rate computed from

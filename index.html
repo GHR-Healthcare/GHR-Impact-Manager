@@ -5692,6 +5692,30 @@
        * moving. It always says which it is showing, because "GHR hold 85%"
        * means something quite different across 109 RN seats than across 3.
        */
+      /*
+       * FILLED BY and MARKET SHARE for a Closed row.
+       *
+       * filled_by and the sign of revenue are decided server-side so both
+       * instances agree; these only handle presentation. The vendor name on an
+       * affiliate win follows Redact Vendor Info, like every other place an
+       * outside agency is named.
+       */
+      closedFilledBy(r) {
+        const name = r.filled_by || '—';
+        const ours = View.stageAgencyLabel(r) === 'GHR';
+        if (ours || !window.store.state.redactMode) return name;
+        // 'None' and 'Excluded' are outcomes, not vendors, so nothing to mask.
+        return (name === 'None' || name === 'Excluded' || name === '—') ? name : 'Affiliate vendor';
+      },
+
+      // GHR's share of comparable live demand behind this row, from the same
+      // rollup the detail pane draws. Null where there is nothing to compare
+      // against, so the cell shows a dash rather than a confident 0%.
+      closedSharePct(r) {
+        const d = View.closedMarketShare(r);
+        return d ? d.ghrPct : null;
+      },
+
       closedMarketShare(r) {
         const ms = window.store.state.closedMeta?.marketShare;
         if (!ms || !ms.byAccount) return null;
@@ -6297,20 +6321,24 @@
 
       closed() {
         const s = window.store.state;
+        const isNonMspClosedCols = s.dataSource === 'non_msp';
+        // Columns follow the reference. RATE RANK is deliberately absent: the
+        // prototype's came from a mock `rank` field and its comparable median
+        // was `days * 0.82 + 4`, so there is nothing real behind either yet.
+        // MARKET SHARE is MSP-only -- non-MSP has a single vendor, so the
+        // column would read 100% on every row.
         const closedCols = [
-          { label: 'Clinician',    key: 'clinician' },
-          { label: 'Facility',     key: 'facility' },
-          { label: 'Role',         key: 'role' },
-          { label: 'Source',       key: 'source_system', align: 'center' },
-          // Sorts and filters on what is actually on screen. Keyed on the
-          // raw vendor instead, someone could type a vendor name into the
-          // Agency filter while Redact Vendor Info was on and infer the
-          // masked value from which rows matched.
-          { label: 'Agency',          key: r => View.stageAgencyLabel(r), align: 'center' },
-          { label: 'Closed',       key: 'closed_on',     align: 'center' },
-          { label: 'Outcome',      key: 'group',         align: 'center' },
-          { label: 'Reason',       key: 'outcome_reason' },
-          { label: '13-Wk Value',  key: 'value_13wk',    align: 'right' },
+          { label: 'ID',            key: 'id' },
+          { label: 'Category',      key: 'category' },
+          { label: 'System / Facility / Specialty', key: 'facility' },
+          { label: 'Outcome',       key: 'group',         align: 'center' },
+          { label: 'Filled By',     key: 'filled_by' },
+          ...(isNonMspClosedCols ? [] : [
+            { label: 'Market Share', key: r => View.closedSharePct(r), align: 'center' },
+          ]),
+          { label: 'Days To Close', key: 'days_to_close', align: 'center' },
+          { label: 'Revenue',       key: 'revenue',       align: 'right' },
+          { label: 'Owner',         key: 'account_manager' },
         ];
         const rows = View.stageApply('closed',
           (s.closedRows || []).filter(View.stageFilter), closedCols);
@@ -6320,62 +6348,102 @@
         const top = Object.entries(byGroup).sort((a, b) => b[1] - a[1])[0];
         const windowDays = s.closedMeta?.coverage?.windowDays;
         const value = rows.reduce((a, r) => a + (Number(r.value_13wk) || 0), 0);
+        // The feedback asked for GHR metrics here rather than Top Outcome and
+        // Outcome Types, which named a bucket without saying how much was won.
+        // Revenue is summed off the same signed value the table shows, so the
+        // tiles and the rows can never disagree.
         const nonMspKpi = s.dataSource === 'non_msp';
-        const covKpi = s.closedMeta?.coverage || {};
+        const gc = (k) => rows.filter(r => r.group === k).length;
+        const wins = nonMspKpi ? gc('FILLED') : gc('GHR WON');
+        const avWins = gc('AFFILIATE WON');
+        const missed = nonMspKpi ? gc('UNFILLED') : gc('MISSED');
+        const decided = wins + avWins + missed;
+        const captured = rows.reduce((a, r) => a + (Number(r.revenue) || 0), 0);
+        const fmtK = v => (v || v === 0)
+          ? (v < 0 ? '-' : '+') + '$' + (Math.abs(v) >= 1000
+              ? (Math.abs(v) / 1000).toFixed(1) + 'k'
+              : Math.abs(v).toFixed(0))
+          : '—';
         View.renderKpiCards([
-          { label: windowDays ? `Closed (${windowDays}d)` : 'Closed In Window', val: rows.length, icon: 'check-circle', color: 'blue' },
-          // Fill rate and velocity are what the non-MSP meeting acts on;
-          // "top outcome" is a label, not a number anyone can move.
-          nonMspKpi
-            ? { label: 'Fill Rate', val: covKpi.fillRatePct != null ? covKpi.fillRatePct + '%' : '—',
-                icon: 'target', color: 'indigo' }
-            : { label: 'Top Outcome', val: top ? top[0] : '—', icon: 'pie-chart', color: 'indigo' },
-          // Median, not mean: same-day bookings dominate and a long tail drags
-          // the average well above where most fills actually land.
-          nonMspKpi
-            ? { label: 'Median Days To Fill',
-                val: covKpi.medianDaysToFill != null ? covKpi.medianDaysToFill + 'd' : '—',
-                icon: 'clock', color: 'purple' }
-            : { label: 'Outcome Types', val: Object.keys(byGroup).length, icon: 'layers', color: 'purple' },
-          { label: 'Ended Early', val: rows.filter(r => /terminat|resign|cancel/i.test(r.group || '')).length,
-            icon: 'alert-triangle', color: 'red' },
-          { label: 'Avg Tenure', val: (() => {
-              // Only rows with both ends of the span — a partial one would drag
-              // the average toward zero rather than being left out.
-              const spans = rows.map(r => {
-                const a = Utils.toDateOrNull(r.start_date), b = Utils.toDateOrNull(r.closed_on);
-                return (a && b) ? Math.round((b - a) / 86400000) : null;
-              }).filter(v => v != null && v >= 0);
-              return spans.length ? Math.round(spans.reduce((x, y) => x + y, 0) / spans.length) + 'd' : '—';
-            })(), icon: 'calendar', color: 'slate' },
-          { label: '13-Week Value', val: value ? money(value) : '—', icon: 'dollar-sign', color: 'emerald' },
+          { label: windowDays ? `Total Closed (${windowDays}d)` : 'Total Closed',
+            val: rows.length, icon: 'check-circle', color: 'blue' },
+          { label: nonMspKpi ? 'Filled' : 'GHR Wins', val: wins, icon: 'award', color: 'emerald' },
+          { label: nonMspKpi ? 'Fill Rate' : 'GHR Win %',
+            val: decided ? Math.round((wins / decided) * 100) + '%' : '—',
+            icon: 'target', color: 'indigo' },
+          ...(nonMspKpi ? [] : [
+            { label: 'Affiliate Wins', val: avWins, icon: 'users', color: 'purple' },
+          ]),
+          { label: nonMspKpi ? 'Unfilled' : 'Missed', val: missed, icon: 'alert-triangle', color: 'red' },
+          { label: 'Revenue Captured', val: fmtK(captured), icon: 'dollar-sign', color: 'emerald' },
         ]);
 
-        // Rows expand to the market-share pane, matching Extensions and
-        // Onboarding. Only where there is something to open: on non-MSP every
-        // seat is GHR, so a vendor split would be a single 100% slice.
+        // Grouped like the reference: outcome buckets in a fixed order, each
+        // with a header row carrying its count and the positions behind it.
+        // The old table was a flat list, which left the question the stage
+        // exists to answer -- how much did we win this week -- to be worked
+        // out by reading every row.
         const closedExpandable = s.dataSource !== 'non_msp';
-        const body = rows.map(r => {
-          const open = closedExpandable && s.expandedClosed.has(r.id);
-          const row = `
-          <tr class="hover:bg-slate-50 border-b border-slate-100 ${closedExpandable ? 'cursor-pointer' : ''}"
-              ${closedExpandable ? `onclick="store.dispatch('TOGGLE_CLOSED_ROW','${r.id}')"` : ''}>
-            <td class="px-3 py-2 font-medium text-slate-700 whitespace-nowrap">${
-              closedExpandable ? `<span class="text-slate-400 mr-1">${open ? '&#9660;' : '&#9654;'}</span>` : ''
-            }${View.stageWorker(r)}</td>
-            <td class="px-3 py-2 text-slate-500">${r.facility || '—'}</td>
-            <td class="px-3 py-2 text-slate-500">${r.role || '—'}</td>
-            <td class="px-3 py-2 text-center">${View.stageBadge(r.source_system || r.source || '—', 'info')}</td>
-            <td class="px-3 py-2 text-center">${View.stageAgency(r)}</td>
-            <td class="px-3 py-2 text-center text-slate-600">${r.closed_on || '—'}</td>
-            <td class="px-3 py-2 text-center">${r.group ? View.stageBadge(r.group, 'low') : '—'}</td>
-            <td class="px-3 py-2 text-slate-500">${r.outcome_reason || '—'}</td>
-            <td class="px-3 py-2 text-right text-slate-600">${money(r.value_13wk)}</td>
-          </tr>`;
-          return open
-            ? row + `<tr><td colspan="${closedCols.length}" class="p-0">${View.closedDetail(r)}</td></tr>`
-            : row;
-        }).join('');
+        const CLOSED_GROUPS = closedExpandable
+          ? [['GHR WON', 'Filled · GHR'], ['AFFILIATE WON', 'Filled · Affiliate Network'],
+             ['MISSED', 'Unfilled · Expired'], ['CANCELED', 'Canceled & Declined']]
+          : [['FILLED', 'Filled'], ['UNFILLED', 'Unfilled'], ['CANCELED', 'Canceled & Declined']];
+        // Signed, unlike the plain `money` already in this scope: on Closed the
+        // sign is the point. A GHR win is revenue earned, an affiliate win or
+        // an unfilled seat is revenue lost.
+        const signedMoney = v => (v || v === 0)
+          ? (v < 0 ? '-' : '+') + '$' + Math.abs(Number(v)).toLocaleString(undefined, { maximumFractionDigits: 0 })
+          : '—';
+        const grouped = {};
+        rows.forEach(r => { (grouped[r.group] = grouped[r.group] || []).push(r); });
+
+        let body = '';
+        CLOSED_GROUPS.forEach(([key, label]) => {
+          const list = grouped[key] || [];
+          if (!list.length) return;
+          const val = list.reduce((a, r) => a + (Number(r.revenue) || 0), 0);
+          body += `
+            <tr class="bg-slate-50 border-y border-slate-200">
+              <td colspan="${closedCols.length}" class="px-3 py-2">
+                <span class="text-[11px] font-bold uppercase tracking-wide text-slate-600">${label}</span>
+                <span class="ml-2 px-1.5 py-0.5 rounded-full bg-slate-200 text-slate-700 text-[10px] font-bold">${list.length}</span>
+                <span class="ml-2 text-[10px] text-slate-500">${list.length} position${list.length === 1 ? '' : 's'}${
+                  val ? ` · ${signedMoney(val)}` : ''}</span>
+              </td></tr>`;
+          list.forEach(r => {
+            const open = closedExpandable && s.expandedClosed.has(r.id);
+            const share = View.closedSharePct(r);
+            body += `
+              <tr class="hover:bg-slate-50 border-b border-slate-100 ${closedExpandable ? 'cursor-pointer' : ''}"
+                  ${closedExpandable ? `onclick="store.dispatch('TOGGLE_CLOSED_ROW','${r.id}')"` : ''}>
+                <td class="px-3 py-2 whitespace-nowrap">
+                  <span class="px-1.5 py-0.5 rounded border border-slate-200 bg-white text-[10px] font-mono text-slate-600">${r.id || '—'}</span>
+                  ${closedExpandable ? `<span class="ml-1 text-slate-400">${open ? '&#9660;' : '&#9654;'}</span>` : ''}
+                </td>
+                <td class="px-3 py-2 font-semibold text-slate-700">${r.category || '—'}</td>
+                <td class="px-3 py-2">
+                  <div class="text-[10px] uppercase tracking-wide text-slate-400">${View.esc(r.health_system || '—')}</div>
+                  <div class="font-bold text-sm text-slate-700">${View.esc(r.facility || '—')}</div>
+                  <div class="text-[10px] uppercase tracking-wide text-blue-600">${View.esc(r.role || r.specialty || '')}</div>
+                </td>
+                <td class="px-3 py-2 text-center">
+                  ${r.group ? View.stageBadge(r.group, 'low') : '—'}
+                  ${r.outcome_reason ? `<div class="text-[10px] text-slate-400 mt-0.5">${View.esc(r.outcome_reason)}</div>` : ''}
+                </td>
+                <td class="px-3 py-2 font-medium text-slate-700">${View.esc(View.closedFilledBy(r))}</td>
+                ${closedExpandable ? `<td class="px-3 py-2 text-center font-semibold ${
+                  share == null ? 'text-slate-300' : 'text-blue-600'}">${share == null ? '—' : share + '%'}</td>` : ''}
+                <td class="px-3 py-2 text-center text-slate-700">${r.days_to_close == null ? '—' : r.days_to_close}</td>
+                <td class="px-3 py-2 text-right font-semibold ${
+                  (Number(r.revenue) || 0) < 0 ? 'text-red-600' : (r.revenue ? 'text-emerald-700' : 'text-slate-400')
+                }">${signedMoney(r.revenue)}</td>
+                <td class="px-3 py-2 text-slate-600">${View.esc(r.account_manager || '—')}</td>
+              </tr>`;
+            if (open) {
+              body += `<tr><td colspan="${closedCols.length}" class="p-0">${View.closedDetail(r)}</td></tr>`;
+            }
+          });
+        });
 
         const el = $('closedContent');
         const isNonMspClosed = s.dataSource === 'non_msp';
@@ -6422,9 +6490,17 @@
           ]);
         }
         if (el) el.innerHTML = View.stageShell('closed', 'Closed',
-          isNonMspClosed
-            ? 'Historical orders and how they resolved — fill rate and time to fill across Bullhorn and Symplr'
-            : 'Assignments that ended, grouped by why — reasons canonicalised across VNDLY spelling variants',
+          (() => {
+            // Say which range is on screen. The default is now the previous
+            // completed week rather than a rolling seven days, and a weekly
+            // number that does not name its week invites the wrong reading.
+            const c = s.closedMeta?.coverage || {};
+            const range = (c.windowFrom && c.windowTo) ? ` · ${c.windowFrom} to ${c.windowTo}` : '';
+            const label = c.windowLabel ? c.windowLabel.replace(/^./, ch => ch.toUpperCase()) : '';
+            return isNonMspClosed
+              ? `Historical orders and how they resolved — fill rate and time to fill${range}`
+              : `Weekly account outcomes — capture, revenue and market share. ${label}${range}`;
+          })(),
           body, closedCols, closedIntel);
         lucide.createIcons();
       },
