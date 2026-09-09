@@ -29,6 +29,18 @@ VNDLY gets neither, and says so rather than showing a blank: no identifier reach
 
 Also: the Extensions group header spanned 8 columns against a 12-column table, and KPI cards silently dropped any `sub` line they were given.
 
+### 2.9.0 - The row-detail panes: real rates, real funnel math, one definition of declined
+
+Three feedback items — Rate, Pipeline and Placements — were all about the job row-detail panes.
+
+**The rate was never missing from the data, only from the query.** The Rate pane ranked a job against other *open jobs* at the facility, with a comment explaining that "active placements carry no rate in the stats feed". They carry no rate because every one of the six assignment queries in `GetStatsData` left its source's rate column unselected. B4 has `Awarded_Rate`, VNDLY `[Bill Rate]`, Bullhorn `clientBillRate` — populated on 100% of active MSP assignments (741 B4, 328 VNDLY) and 97% of non-MSP (1,844 of 1,901). Rate Rank now ranks against placed rates, falling back to open jobs only where a facility has fewer than three placements, and the note says which basis was used.
+
+That also lets the Placements pane do the GHR-versus-affiliate rate comparison its own footnote had been claiming for. There are 199 affiliate B4 seats and 76 VNDLY carrying rates, so the comparison has substance. Rates stay visible under redaction: it hides vendor *identity*, and a rate is not an identity.
+
+**The funnel was counting the wrong thing.** Stages were bucketed by *furthest stage reached*, so "Submitted" meant "submitted and went no further" — a job with 10 submissions of which 4 interviewed showed Submitted 6, and no conversion rate could be read between the rows. Each stage now counts everyone who reached at least that far, with step-to-step conversion. Depth is only claimed where it is recorded: a post-offer decline demonstrably reached Offer and counts at every stage, while a plain decline carries no record of how far it got and counts only as a submission rather than being credited with an interview it may never have had.
+
+**"Declined" meant two different things in the same row.** `c.isDeclined` is the source flag and never moves when someone records a decline in the app, while `interviewStage()` honours that override. The pipeline counted declines through the stage and the candidate list filtered on the flag, so the Declined count and the Declined list could disagree — clicking a count of five could show three. A single `Utils.isDeclinedNow()` now answers it, used by the list, the pipeline, the candidate row styling, the aged-submission KPI, the hot-jobs email and the decline analysis. The count is also clickable now, which is what surfaced the mismatch.
+
 ### 2.8.0 - Onboarding compliance, blocker and next action
 
 The feedback asked Onboarding for a compliance status, a blocker and an action owner. None of it was in the app; most of it was in Bullhorn.

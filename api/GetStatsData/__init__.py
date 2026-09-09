@@ -43,6 +43,15 @@ def _apply_service_line(row_dict):
     if raw:
         row_dict['profession'] = normalize_credential(raw)
         row_dict['service_line'] = credential_service_line(raw)
+    # The response is dumped with default=str, which would send a Decimal rate
+    # as the string "85.00". That survives Number() but not arithmetic done
+    # before it, so the rate is made a real number here -- every assignment
+    # query routes through this function.
+    if row_dict.get('bill_rate') is not None:
+        try:
+            row_dict['bill_rate'] = float(row_dict['bill_rate'])
+        except (TypeError, ValueError):
+            row_dict['bill_rate'] = None
     return row_dict
 
 
@@ -75,6 +84,11 @@ def _bullhorn_stats_data():
                 -- the same field position.
                 p.customText1 AS specialty,
                 p.customText1 AS credential_raw,
+                -- The assignment pane exists "for rate and vendor comparison"
+                -- and had no rate to compare: every one of these queries left
+                -- its source's rate column unselected, so the pane's own
+                -- footnote promised something it could not show.
+                TRY_CAST(p.clientBillRate AS DECIMAL(10,2)) AS bill_rate,
                 -- Division lives on the client (see GetTrendData note).
                 cc.customTextBlock1 AS division,
                 NULL AS region,
@@ -151,6 +165,8 @@ def _symplr_stats_data():
                 ({sys_case}) AS system,
                 lt.specialty AS specialty,
                 lt.nursetype AS credential_raw,
+                -- lt_order has no rate column; reported as absent, not zero.
+                NULL AS bill_rate,
                 ({division_case}) AS division,
                 pc.state AS region,
                 CAST(lt.date_start AS DATE) AS startDate,
@@ -286,6 +302,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                     Facility AS facility,
                     Health_System AS system,
                     Care_Type AS specialty,
+                    TRY_CAST(Awarded_Rate AS DECIMAL(10,2)) AS bill_rate,
                     Start_Date AS startDate,
                     End_Date AS endDate,
                     Contract_Status AS status
@@ -324,6 +341,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                     Facility AS facility,
                     Health_System AS system,
                     Care_Type AS specialty,
+                    TRY_CAST(Awarded_Rate AS DECIMAL(10,2)) AS bill_rate,
                     Start_Date AS startDate,
                     End_Date AS endDate,
                     Contract_Status AS status
@@ -361,6 +379,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                     [Default Work Site Name] AS facility,
                     [Health System] AS system,
                     [Job Title] AS specialty,
+                    TRY_CAST([Bill Rate] AS DECIMAL(10,2)) AS bill_rate,
                     [Start Date] AS startDate,
                     [End Date] AS endDate,
                     [Current Status] AS status
@@ -395,6 +414,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                     [Default Work Site Name] AS facility,
                     [Health System] AS system,
                     [Job Title] AS specialty,
+                    TRY_CAST([Bill Rate] AS DECIMAL(10,2)) AS bill_rate,
                     [Start Date] AS startDate,
                     [End Date] AS endDate,
                     [Current Status] AS status
