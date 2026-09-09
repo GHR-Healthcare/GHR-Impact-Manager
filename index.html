@@ -7475,6 +7475,128 @@
           </div>`;
       },
 
+      /* Pending row detail -- the reference's three panels: Clinician Status,
+       * Pipeline Mix, Next Action.
+       *
+       * Pending rows are submissions, so a "stage age" is the days since the
+       * submission was made and the blocker is whatever the source recorded as
+       * holding it: a decline reason, requested time off, or nothing. The
+       * reference's Next Action panel names an assigned owner from a rules
+       * engine; the submission feeds carry no owner, so that tile says so
+       * rather than naming someone at random. The action itself is read off
+       * the submission's own state, which is real.
+       */
+      // Other submissions against the same seat -- same facility and position.
+      // Used for Pipeline Mix, so "who else is in on this" is a real count
+      // rather than a mock ratio.
+      pendingPeers(r) {
+        const rows = window.store.state.pendingData?.submissions || [];
+        const fac = String(r.facility || '').toLowerCase();
+        const pos = String(r.position_type || r.care_type || '').toLowerCase();
+        if (!fac || !pos) return [];
+        return rows.filter(x => String(x.facility || '').toLowerCase() === fac
+          && String(x.position_type || x.care_type || '').toLowerCase() === pos);
+      },
+
+      pendingStageAge(r) {
+        const d = r.submission_date ? new Date(r.submission_date) : null;
+        if (!d || isNaN(d)) return null;
+        return Math.max(0, Math.round((Date.now() - d.getTime()) / 86400000));
+      },
+
+      pendingBlocker(r) {
+        const st = String(r.status || '').toLowerCase();
+        if (r.hospital_decline_reason) return `Client declined: ${r.hospital_decline_reason}`;
+        if (r.offer_decline_reason) return `Offer declined: ${r.offer_decline_reason}`;
+        if (r.rto && String(r.rto).trim() && String(r.rto).trim() !== '—') return `Requested time off: ${r.rto}`;
+        if (st.includes('offer')) return 'Awaiting a decision on the offer';
+        if (st.includes('submit')) return 'Awaiting client review';
+        return 'Nothing recorded against this submission';
+      },
+
+      pendingNextAction(r) {
+        const st = String(r.status || '').toLowerCase();
+        if (r.hospital_decline_reason || r.offer_decline_reason) return 'Record the loss reason and resubmit if the seat is still open';
+        if (st.includes('offer')) return 'Chase the offer decision';
+        if (r.ready_to_onboard_date) return 'Move to onboarding and confirm the start';
+        if (st.includes('submit')) return 'Follow up with the client for review';
+        return 'Confirm the submission status in the source system';
+      },
+
+      pendingDetail(r, colCount, peers) {
+        const age = View.pendingStageAge(r);
+        const src = r.is_ghr ? 'GHR' : 'Affiliate';
+        const mine = (peers || []).filter(x => x.is_ghr).length;
+        const theirs = (peers || []).length - mine;
+        const total = mine + theirs;
+        const pct = total ? Math.round(mine / total * 100) : null;
+        const none = '<span class="text-slate-300 font-normal">—</span>';
+        const panel = inner => `<section class="bg-white border border-slate-200 rounded-lg p-3.5">${inner}</section>`;
+        const nonMsp = window.store.state.dataSource === 'non_msp';
+
+        return `
+          <tr data-detail-for="${r.__key}">
+            <td colspan="${colCount}" class="p-0">
+              <div class="p-4 bg-slate-50 border-t border-slate-100">
+                <div class="grid grid-cols-1 xl:grid-cols-3 gap-3">
+                  ${panel(`
+                    ${View.panelHead('Submission feed')}
+                    <h5 class="text-xs font-bold uppercase tracking-wide text-slate-600">Clinician Status</h5>
+                    <p class="text-[11px] text-slate-500 mt-0.5 mb-3">Stage, age and blockers, synchronised automatically.</p>
+                    <div class="grid grid-cols-2 gap-2">
+                      ${View.panelTile('Clinician', View.esc(r.worker_name || r.full_name || '—'))}
+                      ${View.panelTile('Source', src)}
+                      ${View.panelTile('Stage', View.esc(r.status || '—'))}
+                      ${View.panelTile('Stage Age', age == null ? none : `${age} days`,
+                                       r.submission_date ? 'since submission' : 'no submission date')}
+                    </div>
+                    <div class="mt-2 border-l-[3px] border-blue-500 bg-blue-50 rounded px-2.5 py-2 text-[11px] text-slate-700">
+                      ${View.esc(View.pendingBlocker(r))}
+                    </div>`)}
+                  ${panel(`
+                    ${View.panelHead('VMS pipeline')}
+                    <h5 class="text-xs font-bold uppercase tracking-wide text-slate-600">Pipeline Mix</h5>
+                    <p class="text-[11px] text-slate-500 mt-0.5 mb-3">
+                      Who else is submitted against this seat.
+                    </p>
+                    ${total ? `
+                      <div class="flex items-center gap-3 mb-2">
+                        <div class="flex-1 h-2.5 bg-slate-100 rounded-full overflow-hidden flex">
+                          <div class="bg-blue-600 h-full" style="width:${pct}%"></div>
+                          <div class="bg-orange-500 h-full" style="width:${100 - pct}%"></div>
+                        </div>
+                        <span class="text-xs font-bold text-slate-700">${pct}%</span>
+                      </div>
+                      <div class="grid grid-cols-2 gap-2">
+                        ${View.panelTile('GHR Submitted', mine)}
+                        ${View.panelTile(nonMsp ? 'Other' : 'Affiliate Submitted', theirs)}
+                      </div>`
+                    : `<p class="text-xs text-slate-400 italic">No other submissions recorded against this seat.</p>`}
+                    ${r.revenue ? `<div class="mt-2 text-[11px] text-slate-600">13-week value:
+                      <b>$${Number(r.revenue).toLocaleString(undefined,{maximumFractionDigits:0})}</b></div>` : ''}`)}
+                  ${panel(`
+                    ${View.panelHead('Read from the submission state')}
+                    <h5 class="text-xs font-bold uppercase tracking-wide text-slate-600">Next Action</h5>
+                    <div class="bg-slate-50/70 border border-slate-200 rounded px-2.5 py-2 mt-2">
+                      <div class="text-[10px] font-bold text-slate-600">Assigned Owner</div>
+                      <div class="text-[11px] text-slate-500 mt-0.5 italic">
+                        The submission feeds carry no owner, so none is named here.
+                      </div>
+                    </div>
+                    <div class="bg-slate-50/70 border border-slate-200 rounded px-2.5 py-2 mt-2">
+                      <div class="text-[10px] font-bold text-slate-600">Action</div>
+                      <div class="text-[11px] text-slate-700 mt-0.5">${View.esc(View.pendingNextAction(r))}</div>
+                    </div>
+                    <div class="grid grid-cols-2 gap-2 mt-2">
+                      ${View.panelTile('Source Status', View.esc(r.status || '—'))}
+                      ${View.panelTile('Source', View.esc(r.source_system || '—'))}
+                    </div>`)}
+                </div>
+              </div>
+            </td>
+          </tr>`;
+      },
+
       onboardingDetail(r) {
         const e = View.onboardingEdit(r);
         const slip = View.onboardingSlip(r);
@@ -12686,8 +12808,17 @@
           const agencyBadge = isGhr
             ? '<span class="inline-block px-2 py-0.5 rounded text-[10px] font-bold bg-blue-100 text-blue-800">GHR</span>'
             : '<span class="inline-block px-2 py-0.5 rounded text-[10px] font-bold bg-purple-100 text-purple-800">Affiliate</span>';
-          return `<tr class="hover:bg-slate-50 border-b border-slate-100">
-            <td class="px-3 py-2 text-xs text-slate-500">${r.source_system}</td>
+          // A submission has no id of its own in every feed, so the row key is
+          // built from what does identify it: source, worker and seat.
+          const key = [r.source_system, r.worker_name || r.full_name, r.facility,
+                       r.position_type || r.care_type, r.submission_date]
+                      .map(x => String(x || '')).join('~').replace(/[^A-Za-z0-9~\- ]/g, '');
+          r.__key = key;
+          const open = window.store.state.expandedPending.has(key);
+          return `<tr data-row-key="${key}" class="hover:bg-slate-50 border-b border-slate-100 cursor-pointer"
+                      onclick="store.dispatch('TOGGLE_PENDING_ROW','${key}')">
+            <td class="px-3 py-2 text-xs text-slate-500">
+              <span class="text-slate-400 mr-1" data-chev>${open ? '&#9660;' : '&#9654;'}</span>${r.source_system}</td>
             <td class="px-3 py-2 text-xs">${agencyBadge}</td>
             <td class="px-3 py-2 text-xs font-medium text-slate-700">${r.healthSystem || '—'}</td>
             <td class="px-3 py-2 text-xs text-slate-600">${r.facility || '—'}</td>
@@ -12697,7 +12828,7 @@
             <td class="px-3 py-2 text-xs text-slate-500">${fmtDate(r.submission_date)}</td>
             <td class="px-3 py-2 text-xs text-slate-500">${fmtDate(r.offer_date)}</td>
             <td class="px-3 py-2 text-xs text-slate-500">${r.rto || '—'}</td>
-          </tr>`;
+          </tr>${open ? View.pendingDetail(r, cols.length, View.pendingPeers(r)) : ''}`;
         };
 
         // Global filter helpers
@@ -13137,8 +13268,10 @@
         perDiemGHROnly: true,
         // Extension Search bar (Extensions tab only).
         extFilter: { endFrom: '', endTo: '', status: 'All' },
-        filters: { systems: new Set(), facilities: new Set(), categories: new Set(), serviceLines: new Set(), specialties: new Set(), ageMin: null, ageMax: null, permOnly: false, legendBands: new Set(), searchId: '' },        filterSelection: {
-          systems: new Set(), facilities: new Set(), categories: new Set(), serviceLines: new Set(), specialties: new Set(),          // Non-MSP filter dimensions — populated from the API's division/region/customText fields.
+        filters: { systems: new Set(), facilities: new Set(), categories: new Set(), serviceLines: new Set(), specialties: new Set(), ageMin: null, ageMax: null, permOnly: false, legendBands: new Set(), searchId: '' },
+        filterSelection: {
+          systems: new Set(), facilities: new Set(), categories: new Set(), serviceLines: new Set(), specialties: new Set(),
+          // Non-MSP filter dimensions — populated from the API's division/region/customText fields.
           // On MSP these stay empty; the UI hides the controls. Once the merged dashboard ships,
           // MSP records will carry the same shape and these become live there too.
           divisions: new Set(), teams: new Set(), professions: new Set(), regions: new Set(),
@@ -13155,6 +13288,7 @@
         expandedExtensions: new Set(),
         expandedOnboarding: new Set(),
         expandedClosed: new Set(),
+        expandedPending: new Set(),
         // Analysis strips default open; collapsed state is per stage view.
         intelOpen: {},
         onboardingRows: [], onboardingMeta: null, onboardingLoaded: false, onboardingError: null,
@@ -13471,6 +13605,13 @@
                   window.showToast?.('Could not save: ' + (e.message || e), 'error');
                 }
               })();
+              break;
+            }
+
+            case 'TOGGLE_PENDING_ROW': {
+              if (s.expandedPending.has(payload)) s.expandedPending.delete(payload);
+              else s.expandedPending.add(payload);
+              View.pending();
               break;
             }
 
