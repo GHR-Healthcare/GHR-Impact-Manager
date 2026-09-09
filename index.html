@@ -6980,6 +6980,59 @@
                 <div class="text-[9px] text-slate-400 mt-0.5">${View.esc(rr.scope)}</div>`;
       },
 
+      /* Who has the ball on this extension, and what has to happen next.
+       *
+       * Derived from state that is already recorded rather than asked for
+       * twice: the System Match verdict, the client decision, and which of the
+       * three checkpoints is the first still open. Each checkpoint already
+       * declares its owner, so the owner of the first incomplete one IS the
+       * person holding it.
+       *
+       * A system exception outranks the checklist -- while the VMS and the ATS
+       * disagree about the seat, nothing downstream of that is trustworthy, so
+       * reconciling comes first whatever the checkboxes say.
+       */
+      extensionBall(r) {
+        const e = View.extensionEdit(r);
+        const m = r.match || {};
+        const bad = (m.counts && m.counts.bad) || 0;
+        const pm = r.account_manager || null;
+        const rec = r.recruiter || null;
+
+        if (bad) {
+          const fields = (m.fields || []).filter(f => f.tone === 'bad').map(f => f.field).join(' and ');
+          return { owner: 'PM', who: pm,
+                   action: `Reconcile ${fields || 'the mismatch'} between ${r.source_system} and ${m.system || 'the ATS'}` };
+        }
+        if (e.decision === 'Declined' || e.decision === 'Backfill Required') {
+          return { owner: 'PM', who: pm, action: 'Raise the backfill before this seat ends' };
+        }
+        const step = View.EXT_STEPS.find(st => !e.steps[st.key]);
+        if (step) {
+          const isPm = step.owner === 'pm';
+          return { owner: isPm ? 'PM' : 'Recruiter', who: isPm ? pm : rec, action: step.blurb };
+        }
+        // Every team checkpoint is done, so the ball is no longer ours.
+        const accepted = m.state === 'linked'
+          ? !!(r.match_original_end && r.match_end_date && r.match_end_date > r.match_original_end)
+          : !!r.is_extension;
+        return accepted
+          ? { owner: 'System', who: null, action: 'Extension confirmed in the source systems' }
+          : { owner: 'Client', who: r.hiring_manager || null,
+              action: 'Extension sent — awaiting acceptance' };
+      },
+
+      extensionBallCell(r) {
+        const b = View.extensionBall(r);
+        const tone = { PM: 'bg-blue-100 text-blue-700', Recruiter: 'bg-purple-100 text-purple-700',
+                       Client: 'bg-amber-100 text-amber-800', System: 'bg-emerald-100 text-emerald-700' }[b.owner]
+                     || 'bg-slate-100 text-slate-600';
+        return `
+          <span class="px-1.5 py-0.5 rounded text-[9px] font-bold ${tone}">${b.owner}</span>
+          ${b.who ? `<span class="text-[10px] text-slate-500 ml-1">${View.esc(b.who)}</span>` : ''}
+          <div class="text-[10px] text-blue-700 mt-0.5 leading-snug">${View.esc(b.action)}</div>`;
+      },
+
       extensionDetail(r) {
         const e = View.extensionEdit(r);
         const meta = window.store.state.workspaceState?.extension?.[r.id];
@@ -7100,6 +7153,9 @@
           { label: 'Client Decision', key: r => View.extensionEdit(r).decision, align: 'center' },
           { label: 'PM',              key: 'account_manager' },
           { label: 'Recruiter',       key: 'recruiter' },
+          // "Who has the ball" and "what next", from the IT notes. Sorted and
+          // filtered on the owner, which is the question people scan for.
+          { label: 'Next Action',     key: r => View.extensionBall(r).owner },
           { label: 'Urgency',         key: 'urgency',       align: 'center' },
           { label: '13-Wk Value',     key: 'extension_value_13wk', align: 'right' },
         ];
@@ -7182,6 +7238,7 @@
                 <td class="px-3 py-2 text-slate-500">${r.recruiter
                   ? View.esc(r.recruiter)
                   : '<span class="text-slate-300 italic text-[10px]">not in data</span>'}</td>
+                <td class="px-3 py-2">${View.extensionBallCell(r)}</td>
                 <td class="px-3 py-2 text-center">${View.stageBadge(r.urgency
                   ? r.urgency.charAt(0).toUpperCase() + r.urgency.slice(1)
                   : '—', r.urgency || 'low')}</td>
@@ -7786,6 +7843,33 @@
         const captureRate = nonMspKpi
           ? (wins + missed ? Math.round(wins / (wins + missed) * 100) : null)
           : (wins + avWins ? Math.round(wins / (wins + avWins) * 100) : null);
+        /* ---- The IT-notes KPI set, kept for a straight swap ----
+         *
+         * Two specs disagree about this row. Dan's prototype (live below) is
+         * revenue-led: three revenue periods, capture rate, days to close,
+         * revenue missed. The IT notes asked for a count-led row -- "how many
+         * did we win" before "what was it worth". Dan's was chosen, but the
+         * decision could flip, or the two could be combined into eight cards,
+         * so the alternative stays here rather than living only in git.
+         *
+         * Every value it needs is still computed above (rows, wins, avWins,
+         * missed, decided, captured, windowDays), so restoring is a swap of
+         * the two blocks, and combining is a matter of concatenating them.
+         *
+         *   View.renderKpiCards([
+         *     { label: windowDays ? `Total Closed (${windowDays}d)` : 'Total Closed',
+         *       val: rows.length, icon: 'check-circle', color: 'blue' },
+         *     { label: nonMspKpi ? 'Filled' : 'GHR Wins', val: wins, icon: 'award', color: 'emerald' },
+         *     { label: nonMspKpi ? 'Fill Rate' : 'GHR Win %',
+         *       val: decided ? Math.round((wins / decided) * 100) + '%' : '—',
+         *       icon: 'target', color: 'indigo' },
+         *     ...(nonMspKpi ? [] : [
+         *       { label: 'Affiliate Wins', val: avWins, icon: 'users', color: 'purple' },
+         *     ]),
+         *     { label: nonMspKpi ? 'Unfilled' : 'Missed', val: missed, icon: 'alert-triangle', color: 'red' },
+         *     { label: 'Revenue Captured', val: fmtK(captured), icon: 'dollar-sign', color: 'emerald' },
+         *   ]);
+         */
         View.renderKpiCards([
           { label: 'Weekly Revenue Captured', val: fmtK(capturedPos),
             sub: windowDays ? `closed outcomes · ${windowDays}d window` : 'closed outcomes',
