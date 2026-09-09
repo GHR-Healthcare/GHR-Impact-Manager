@@ -29,6 +29,20 @@ VNDLY gets neither, and says so rather than showing a blank: no identifier reach
 
 Also: the Extensions group header spanned 8 columns against a 12-column table, and KPI cards silently dropped any `sub` line they were given.
 
+### 2.8.0 - Onboarding compliance, blocker and next action
+
+The feedback asked Onboarding for a compliance status, a blocker and an action owner. None of it was in the app; most of it was in Bullhorn.
+
+`BH_PLACEMENT_RAW` (and `View_Placement` on the mirror) carry a full credentialling set: `onboardingStatus`, `totalRequirements`, `incompleteRequirements`, `requirementCompleted`, `expiringCredentials`. MSP reaches them through the same warehouse crosswalk System Match uses; non-MSP reads them off the placement directly. Coverage on seats starting in the window is good on both sides — a status on 80% of the 435 MSP seats and 83% of 1,040 non-MSP, a requirement count on 90% and 99%, something outstanding on 76% and 71%.
+
+**`requirementCompleted` is a percentage, despite the count-like name** — total 59, requirementCompleted 95, incomplete 3, and 3 of 59 outstanding is indeed 95% done. The field actually called `onboardingPercentComplete` is populated on every row of both the warehouse copy and the mirror and is **always 0**, so reading the obvious one would have shown every clinician at 0% complete.
+
+The verdict combines the packet status with what is outstanding, because neither alone is the answer: a seat can read "Initiated" with nothing left to do, or "Completed" with an expiring credential. It is computed server-side so both instances agree.
+
+**No action owner was invented.** Bullhorn has a `credentialSpecialistUserID` field and it is null on every row of both the warehouse copy and the mirror, so there is no compliance owner to name. Instead the recorded owner keeps the ball and gains a next action read off the seat's actual state — clear the outstanding requirements, renew the expiring credential, record why the start moved. The recruiter is named alongside where known (86% MSP, 100% non-MSP). VNDLY and Symplr track no credentialling at all and read "not tracked" rather than "clear": an unknown packet is not a finished one.
+
+Also fixed: detail and group rows were spanning hand-written column counts that had gone stale — Extensions' group header spanned 8 of 12 columns and Onboarding's detail 9 of 11. Each stage now records its own width as it renders, which also handles Closed correctly, where Market Share is MSP-only and the column count differs between instances.
+
 ### 2.7.0 - Rate Rank shipped, and the tie bug that nearly went with it
 
 `GetRateIntel` had been built and never called: the endpoint shipped, nothing fetched it, and Closed still had no RATE RANK. It is now wired, and the column is live — the last reference column that was missing.

@@ -107,9 +107,40 @@ def _b4_rows(cursor, lookback, lookahead, include_affiliate):
             o.Account_Manager                           AS account_manager,
             TRY_CAST(o.Awarded_Rate AS DECIMAL(10,2))   AS bill_rate,
             TRY_CAST(o.Pay_Rate AS DECIMAL(10,2))       AS pay_rate,
-            TRY_CAST(o.Hours_per_Peek AS DECIMAL(10,2)) AS hours_per_week
+            TRY_CAST(o.Hours_per_Peek AS DECIMAL(10,2)) AS hours_per_week,
+            -- COMPLIANCE. B4 records no credentialling state at all, but the
+            -- seat's Bullhorn placement does, and the warehouse crosswalk
+            -- reaches it -- the same bridge GetExtensions uses for System
+            -- Match. On placements starting in this window the coverage is
+            -- good: onboardingStatus on 82%, a requirement count on 99%.
+            bh.compliance_status                        AS compliance_status,
+            bh.requirements_total                       AS requirements_total,
+            bh.requirements_incomplete                  AS requirements_incomplete,
+            bh.requirements_pct                         AS requirements_pct,
+            bh.expiring_credentials                     AS expiring_credentials,
+            bh.recruiter                                AS recruiter
         FROM dhc.B4HealthOrder o WITH (NOLOCK)
         LEFT JOIN hist h ON h.cid = LTRIM(RTRIM(o.Contract_ID))
+        OUTER APPLY (
+            SELECT TOP 1
+                NULLIF(LTRIM(RTRIM(bp.onboardingStatus)), '') AS compliance_status,
+                bp.totalRequirements                          AS requirements_total,
+                bp.incompleteRequirements                     AS requirements_incomplete,
+                -- requirementCompleted is a PERCENT despite the count-like
+                -- name: total 59, requirementCompleted 95, incomplete 3 --
+                -- 3 of 59 outstanding is 95% done. The field actually named
+                -- onboardingPercentComplete is populated on every row and is
+                -- always 0, so reading the obvious one would show every
+                -- clinician at 0% complete.
+                bp.requirementCompleted                       AS requirements_pct,
+                bp.expiringCredentials                        AS expiring_credentials,
+                NULLIF(LTRIM(RTRIM(bp.customText12)), '')      AS recruiter
+            FROM dbo.BH_PLACEMENT_RAW_TO_B4HealthOrder l WITH (NOLOCK)
+            INNER JOIN dbo.BH_PLACEMENT_RAW bp WITH (NOLOCK)
+                    ON bp.placementID = l.placementID
+            WHERE LTRIM(RTRIM(l.Contract_ID)) = LTRIM(RTRIM(o.Contract_ID))
+            ORDER BY bp.dateBegin DESC, l.RUN_ID DESC
+        ) bh
         WHERE o.Start_Date BETWEEN DATEADD(DAY, ?, CAST(GETDATE() AS DATE))
                                AND DATEADD(DAY, ?, CAST(GETDATE() AS DATE))
             {agency_filter}
@@ -215,7 +246,17 @@ def _vndly_rows(cursor, lookback, lookahead, include_affiliate):
             -- agree on 717 of the 732 where both exist. The jobs value is only
             -- a fallback for the handful with no [Work Week].
             COALESCE(TRY_CAST(w.[Work Week] AS DECIMAL(10,2)),
-                     j.hours_per_week)                   AS hours_per_week
+                     j.hours_per_week)                   AS hours_per_week,
+            -- No compliance on VNDLY. The credentialling state lives on the
+            -- Bullhorn placement, which B4 reaches through the warehouse
+            -- crosswalk and VNDLY has no path to -- the same gap that leaves
+            -- VNDLY without a System Match on Extensions.
+            NULL                                         AS compliance_status,
+            NULL                                         AS requirements_total,
+            NULL                                         AS requirements_incomplete,
+            NULL                                         AS requirements_pct,
+            NULL                                         AS expiring_credentials,
+            NULL                                         AS recruiter
         FROM dbo.STAGING_VNDLY_WORKORDERS w WITH (NOLOCK)
         LEFT JOIN mods m ON m.wo = w.WOSystemKey
         LEFT JOIN jobs j ON j.wo_id = w.[Work Order Id] AND j.hs = w.[Health System]
@@ -262,6 +303,20 @@ def _bullhorn_onb_rows(cursor, app_conn, lookback, lookahead):
             'GHR'                                         AS source,
             'GHR'                                         AS agency,
             p.status                                      AS contract_status,
+            -- COMPLIANCE, under the same names the MSP branch reaches through
+            -- the crosswalk, so one column set serves both instances.
+            -- Measured on the mirror over this window: a status on 83% of
+            -- 1,040 seats, a requirement count on 99%, something outstanding
+            -- on 71%.
+            NULLIF(LTRIM(RTRIM(p.onboardingStatus)), '')  AS compliance_status,
+            p.totalRequirements                           AS requirements_total,
+            p.incompleteRequirements                      AS requirements_incomplete,
+            -- A percent, despite the count-like name. onboardingPercentComplete
+            -- is the field that sounds right and is 0 on every row of both the
+            -- warehouse copy and the mirror.
+            p.requirementCompleted                        AS requirements_pct,
+            p.expiringCredentials                         AS expiring_credentials,
+            NULLIF(LTRIM(RTRIM(p.customText12)), '')      AS recruiter,
             p.onboardingStatus                            AS onboarding_status,
             CAST(p.dateBegin AS DATE)                     AS current_start,
             -- The oldest recorded previous value is the start everyone first
@@ -362,6 +417,14 @@ def _symplr_onb_rows(cursor, app_conn, lookback, lookahead):
             'GHR'                                         AS source,
             'GHR'                                         AS agency,
             lt.status                                     AS contract_status,
+            -- Symplr tracks no credentialling state, so these are absent
+            -- rather than reported as clear.
+            NULL                                          AS compliance_status,
+            NULL                                          AS requirements_total,
+            NULL                                          AS requirements_incomplete,
+            NULL                                          AS requirements_pct,
+            NULL                                          AS expiring_credentials,
+            NULL                                          AS recruiter,
             NULL                                          AS onboarding_status,
             CAST(lt.date_start AS DATE)                   AS current_start,
             CAST(lt.date_start AS DATE)                   AS planned_start,
@@ -435,6 +498,60 @@ def _non_msp_rows(lookback, lookahead):
     return rows, errors
 
 
+# Compliance verdict for a seat, from the Bullhorn credentialling counters.
+#
+# `onboardingStatus` says whether the packet was started and finished;
+# `incompleteRequirements` says what is actually outstanding. They disagree
+# often enough that neither alone is the answer -- a seat can read "Initiated"
+# with nothing left to do, or "Completed" with an expiring credential -- so the
+# verdict combines them and the blocker names the reason.
+#
+# Coverage on seats starting in this window: a status on 84% of the MSP side
+# and 83% of non-MSP, a requirement count on 90% and 99%.
+def _compliance(row):
+    status = (row.get('compliance_status') or '').strip()
+    total = row.get('requirements_total')
+    left = row.get('requirements_incomplete')
+    pct = row.get('requirements_pct')
+    expiring = row.get('expiring_credentials') or 0
+
+    if not status and total is None:
+        return {'state': 'unknown', 'label': 'Not tracked', 'tone': 'low',
+                'blocker': None, 'pct': None}
+
+    left = int(left) if left is not None else None
+    pct = int(pct) if pct is not None else None
+
+    if status.lower() == 'cancelled':
+        return {'state': 'cancelled', 'label': 'Cancelled', 'tone': 'bad',
+                'blocker': 'Onboarding cancelled', 'pct': pct}
+
+    blocker = None
+    if left:
+        blocker = f"{left} requirement{'s' if left != 1 else ''} outstanding"
+    if expiring:
+        exp = f"{int(expiring)} credential{'s' if int(expiring) != 1 else ''} expiring"
+        blocker = f'{blocker}, {exp}' if blocker else exp
+
+    if left:
+        # Deep in the packet with a lot left is a different conversation from
+        # one or two items outstanding, so the tone splits on how much is done.
+        tone = 'bad' if (pct is None or pct < 80) else 'medium'
+        return {'state': 'blocked', 'label': f'{left} outstanding', 'tone': tone,
+                'blocker': blocker, 'pct': pct}
+    if expiring:
+        return {'state': 'expiring', 'label': 'Expiring', 'tone': 'medium',
+                'blocker': blocker, 'pct': pct}
+    if status.lower() == 'completed' or pct == 100:
+        return {'state': 'clear', 'label': 'Clear', 'tone': 'good',
+                'blocker': None, 'pct': pct}
+    if status:
+        return {'state': 'in_progress', 'label': status, 'tone': 'medium',
+                'blocker': None, 'pct': pct}
+    return {'state': 'unknown', 'label': 'Not tracked', 'tone': 'low',
+            'blocker': None, 'pct': pct}
+
+
 def _finalize(rows):
     out = []
     for r in rows:
@@ -448,6 +565,30 @@ def _finalize(rows):
         bill, pay = r.get('bill_rate'), r.get('pay_rate')
         r['agency_receipt_pct'] = round(pay / bill * 100, 1) if bill and pay and bill > 0 else None
         r['margin_pct'] = None
+        for k in ('requirements_total', 'requirements_incomplete',
+                  'requirements_pct', 'expiring_credentials'):
+            if r.get(k) is not None:
+                r[k] = int(r[k])
+        r['compliance'] = _compliance(r)
+        # "Who has the ball, and what next" -- the feedback's own framing. The
+        # action is read off the seat's actual state; the owner is the person
+        # the source already records. No ownership is invented: Bullhorn has a
+        # credentialSpecialistUserID field and it is null on every row of both
+        # the warehouse copy and the mirror, so there is no compliance owner to
+        # name and the recorded owner keeps the ball.
+        c = r['compliance']
+        if c['state'] == 'cancelled':
+            r['next_action'] = 'Confirm the cancellation and release the seat'
+        elif c['state'] == 'blocked':
+            r['next_action'] = f"Clear {c['blocker']}"
+        elif c['state'] == 'expiring':
+            r['next_action'] = f"Renew: {c['blocker']}"
+        elif r.get('days_delayed'):
+            r['next_action'] = 'Record why the start moved and confirm the new date'
+        elif c['state'] == 'clear':
+            r['next_action'] = 'Confirm the start with the client'
+        else:
+            r['next_action'] = None
 
         # VNDLY writes the same reason several ways ('Terminated - attendance'
         # vs 'Terminated-attendance'), which would split one reason across two
