@@ -885,7 +885,7 @@
     const $ = (id) => document.getElementById(id);
 
     // App version - loaded from environment variable via API, with fallback
-    let APP_VERSION = '2.8.0';
+    let APP_VERSION = '2.9.0';
 
     const API_BASE_URL = '/api';
     
@@ -2690,6 +2690,23 @@
       interviewStage(jobId, c) {
         const saved = window.store.state.workspaceState?.interview?.[Utils.interviewKey(jobId, c)]?.state;
         return saved?.stage || Utils.interviewDerivedStage(c);
+      },
+
+      /* Is this candidate declined AS THE APP NOW UNDERSTANDS IT?
+       *
+       * `c.isDeclined` is the source flag and never moves when someone records
+       * a decline in the app, while interviewStage() honours that override. The
+       * two were used in different places -- the pipeline counted declines
+       * through the stage, the candidate list filtered on the flag -- so the
+       * Declined count and the Declined list could disagree, and clicking a
+       * count of five could show three. Both now ask this.
+       */
+      isDeclinedNow(jobId, c) {
+        const st = Utils.interviewStage(jobId, c);
+        if (st === 'Declined' || st === 'Post-Offer Decline') return true;
+        // A recorded stage that is not a decline overrides a stale source flag.
+        const saved = window.store.state.workspaceState?.interview?.[Utils.interviewKey(jobId, c)]?.state;
+        return saved?.stage ? false : !!c.isDeclined;
       },
 
       marginFor(id, job) {
@@ -5181,7 +5198,8 @@
         if (expanded) {
           const view = s.rowSubView[job.id] || 'active';
           const detailTab = s.rowDetailTab[job.id] || 'levers';
-          const cands = job.candidates.filter(c => view === 'active' ? !c.isDeclined : c.isDeclined);
+          const cands = job.candidates.filter(c =>
+            view === 'active' ? !Utils.isDeclinedNow(job.id, c) : Utils.isDeclinedNow(job.id, c));
 
           // --- LEVER SORTING LOGIC (Columnar Flow with Next Step Spanning Bottom) ---
           
@@ -5318,9 +5336,14 @@
                       }
 
                       // Center Content: Status / Reason / Alerts
+                      // Declined on the same basis the list is filtered by, so
+                      // a decline recorded in the app reads as one here rather
+                      // than falling through to the active-candidate prompts.
+                      const declinedNow = Utils.isDeclinedNow(job.id, c);
                       let centerContent = '';
-                      if (c.isDeclined) {
-                          centerContent = `<div class="text-red-700 font-bold truncate" title="${c.declineType}">${c.declineType}</div>`;
+                      if (declinedNow) {
+                          const dType = c.declineType || Utils.interviewStage(job.id, c);
+                          centerContent = `<div class="text-red-700 font-bold truncate" title="${dType}">${dType}</div>`;
                           if (c.declineReason) centerContent += `<div class="text-slate-500 truncate italic" title="${c.declineReason}">${c.declineReason}</div>`;
                       } else {
                           // Active Candidate Prompts
@@ -5357,12 +5380,12 @@
                       let rightContent = `<div class="font-mono text-slate-500 text-[10px]">Sub: ${subDateStr}</div>`;
                       if(c.date) rightContent += `<div class="font-bold text-slate-700">${daysAgo}d ago</div>`;
                       
-                      if (c.isDeclined && c.declineDate) {
+                      if (declinedNow && c.declineDate) {
                           rightContent += `<div class="text-red-400 text-[9px] mt-0.5">Dec: ${Utils.fmtDate(c.declineDate)}</div>`;
                       }
 
                       // Determine if candidate is actionable (active tab, not already declined/removed)
-                      const isActionable = view === 'active' && !c.isDeclined && !c.removedFromQueue;
+                      const isActionable = view === 'active' && !declinedNow && !c.removedFromQueue;
                       const clickHandler = isActionable 
                         ? `onclick="window.store.dispatch('OPEN_MODAL',{type:'candidate_action',jobId:'${job.id}',candidateIndex:${originalIndex}})"` 
                         : '';
@@ -5432,6 +5455,52 @@
           </div>`;
       },
 
+      /* Peer rates for a job, preferring what has actually been placed at the
+       * facility over what is merely posted there. Specialty-matched when the
+       * job carries a structured specialty, facility-only otherwise, and the
+       * note says which -- an over-broad peer set must not read as a precise
+       * one. Falls back to open-job rates when the facility has too few
+       * placements to rank against.
+       */
+      PLACED_PEER_MIN: 3,
+
+      placedPeers(job) {
+        const s = window.store.state;
+        const jobSpec = Utils.cleanFilterText(job.specialtyName || '');
+        const rowsAll = (s.statsData?.onAssignment || [])
+          .filter(r => r.facility === job.facility && Number(r.bill_rate) > 0);
+        const specMatched = jobSpec
+          ? rowsAll.filter(r => Utils.cleanFilterText(r.specialty || '') === jobSpec)
+          : [];
+        const rows = specMatched.length >= View.PLACED_PEER_MIN ? specMatched : rowsAll;
+        const spec = rows === specMatched;
+
+        if (rows.length >= View.PLACED_PEER_MIN) {
+          const ghrRates = rows.filter(r => Utils.isGhrAgency(r.agency)).map(r => Number(r.bill_rate));
+          const affRates = rows.filter(r => !Utils.isGhrAgency(r.agency)).map(r => Number(r.bill_rate));
+          return {
+            basis: 'placed',
+            rates: rows.map(r => Number(r.bill_rate)),
+            ghrRates, affRates,
+            note: `Against ${rows.length} placed rate${rows.length === 1 ? '' : 's'} at `
+                + `${View.esc(job.facility || 'this facility')}`
+                + (spec ? ` for ${View.esc(job.specialtyName)}` : ' (facility only — no structured specialty on this job)'),
+          };
+        }
+        // Not enough placements here to rank against, so fall back to demand
+        // and say so rather than ranking against two rows.
+        const open = (s.jobs || [])
+          .filter(j => j.facility === job.facility && Number(j.billRate) > 0)
+          .map(j => Number(j.billRate));
+        return {
+          basis: 'open',
+          rates: open, ghrRates: [], affRates: [],
+          note: `Against ${open.length} other open job${open.length === 1 ? '' : 's'} at `
+              + `${View.esc(job.facility || 'this facility')} — fewer than ${View.PLACED_PEER_MIN} `
+              + `placed rates here, so this ranks demand rather than placed rates.`,
+        };
+      },
+
       detailRatePane(job) {
         const money = v => (v || v === 0) ? '$' + Number(v).toFixed(2) : '—';
         const bill = Number(job.billRate) || 0;
@@ -5456,19 +5525,32 @@
             <div class="mt-4 pt-3 border-t border-slate-200">
               <div class="text-[10px] font-semibold uppercase tracking-wide text-slate-400 mb-1">Rate Rank</div>
               ${(() => {
-                // Peer set is other OPEN JOBS at the same facility. Placements
-                // would be the better comparison, but statsData.onAssignment
-                // carries no rate field — so this ranks demand, not placements,
-                // and the note says so rather than implying otherwise.
-                const peers = (window.store.state.jobs || [])
-                  .filter(j => j.facility === job.facility && Number(j.billRate) > 0)
-                  .map(j => Number(j.billRate));
-                return View.rankStripSvg(peers, Number(job.billRate), { width: 240 }) +
-                  `<div class="text-[9px] text-slate-400 mt-1 leading-snug">
-                     Against other open jobs at ${job.facility || 'this facility'}
-                     &mdash; active placements carry no rate in the stats feed,
-                     so this ranks demand rather than placed rates.
-                   </div>`;
+                /* Ranked against PLACED rates at this facility, which is the
+                 * comparison that was wanted all along. It used to rank against
+                 * other open jobs because the stats feed carried no rate --
+                 * except that every one of its assignment queries simply left
+                 * the source's rate column unselected. B4 has Awarded_Rate,
+                 * VNDLY [Bill Rate], Bullhorn clientBillRate, and all three are
+                 * populated on 100% of active assignments. Open jobs remain the
+                 * fallback where a facility has too few placements to rank
+                 * against, and the note says which basis was used.
+                 */
+                const p = View.placedPeers(job);
+                const bill = Number(job.billRate);
+                const strip = View.rankStripSvg(p.rates, bill, { width: 240 });
+                const money2 = v => (v || v === 0) ? '$' + Number(v).toFixed(0) : '—';
+                const avg = a => a.length ? a.reduce((x, y) => x + y, 0) / a.length : null;
+                const gAvg = avg(p.ghrRates), aAvg = avg(p.affRates);
+                return strip + `
+                  ${p.basis === 'placed' && (gAvg != null || aAvg != null) ? `
+                    <div class="flex flex-wrap gap-2 mt-2">
+                      ${gAvg != null ? `<span class="text-[10px] bg-blue-50 border border-blue-200 text-blue-700 rounded px-1.5 py-0.5 font-semibold">GHR placed avg ${money2(gAvg)} · ${p.ghrRates.length}</span>` : ''}
+                      ${aAvg != null ? `<span class="text-[10px] bg-purple-50 border border-purple-200 text-purple-700 rounded px-1.5 py-0.5 font-semibold">Affiliate placed avg ${money2(aAvg)} · ${p.affRates.length}</span>` : ''}
+                      ${gAvg != null && aAvg != null ? `<span class="text-[10px] rounded px-1.5 py-0.5 font-semibold border ${
+                        gAvg <= aAvg ? 'bg-emerald-50 border-emerald-200 text-emerald-700' : 'bg-amber-50 border-amber-200 text-amber-700'
+                      }">GHR ${gAvg <= aAvg ? 'under' : 'over'} by ${money2(Math.abs(gAvg - aAvg))}</span>` : ''}
+                    </div>` : ''}
+                  <div class="text-[9px] text-slate-400 mt-1 leading-snug">${p.note}</div>`;
               })()}
             </div>
             <p class="text-[10px] text-slate-400 mt-3 leading-snug">
@@ -5503,16 +5585,43 @@
               || st === 'Interview Complete') return 'Interview';
           return 'Submitted';
         };
-        const active = cands.filter(c => bucket(c) !== 'Declined');
-        const declined = cands.filter(c => bucket(c) === 'Declined');
+        const active = cands.filter(c => !Utils.isDeclinedNow(job.id, c));
+        const declined = cands.filter(c => Utils.isDeclinedNow(job.id, c));
 
+        /* A funnel counts everyone who REACHED a stage, not everyone who
+         * stopped there. Bucketing by furthest stage made "Submitted" mean
+         * "submitted and went no further", so a job with 10 submissions, 4 of
+         * which interviewed, showed Submitted 6 -- and no conversion rate
+         * between the stages could be read off it.
+         *
+         * Depth is only known as far as the recorded stage goes. A
+         * 'Post-Offer Decline' demonstrably reached Offer, so it counts at
+         * every stage; a plain 'Declined' carries no record of how far it got
+         * and counts only as a submission rather than being credited with an
+         * interview it may never have had.
+         */
+        const rankOf = c => {
+          const st = stageOf(c);
+          if (st === 'Offer Accepted' || st === 'Offer Pending'
+              || st === 'Post-Offer Decline') return 2;
+          if (st === 'Interview Requested' || st === 'Interview Scheduled'
+              || st === 'Interview Complete') return 1;
+          return 0;
+        };
         const STAGES = ['Submitted', 'Interview', 'Offer'];
-        const rows = STAGES.map(label => {
-          const inStage = active.filter(c => bucket(c) === label);
-          const ghr = inStage.filter(isGhr).length;
-          const aff = inStage.length - ghr;
-          return { label, ghr, aff, total: inStage.length,
-                   share: inStage.length ? Math.round((ghr / inStage.length) * 100) : 0 };
+        const rows = STAGES.map((label, i) => {
+          // Everyone who got at least this far, declines included -- the
+          // funnel describes what happened, not who is still live.
+          const reached = cands.filter(c => rankOf(c) >= i);
+          const ghr = reached.filter(isGhr).length;
+          const aff = reached.length - ghr;
+          return { label, ghr, aff, total: reached.length,
+                   share: reached.length ? Math.round((ghr / reached.length) * 100) : 0 };
+        });
+        // Step-to-step conversion, which is the number the funnel exists for.
+        rows.forEach((r, i) => {
+          const prev = i > 0 ? rows[i - 1].total : null;
+          r.conv = (prev && prev > 0) ? Math.round((r.total / prev) * 100) : null;
         });
 
         const totalGhr = active.filter(isGhr).length;
@@ -5531,8 +5640,9 @@
                     <th class="py-1.5 px-2 text-left font-semibold">Stage</th>
                     <th class="py-1.5 px-2 text-right font-semibold">GHR</th>
                     <th class="py-1.5 px-2 text-right font-semibold">Affiliate</th>
-                    <th class="py-1.5 px-2 text-right font-semibold">Total</th>
+                    <th class="py-1.5 px-2 text-right font-semibold">Reached</th>
                     <th class="py-1.5 px-2 text-right font-semibold">GHR Share</th>
+                    <th class="py-1.5 px-2 text-right font-semibold" title="Share of the previous stage that advanced to this one">Conv.</th>
                   </tr>
                 </thead>
                 <tbody class="divide-y divide-slate-100">
@@ -5540,9 +5650,28 @@
                       <td class="py-1.5 px-2 font-medium text-slate-700">${r.label}</td>
                       ${cell(r.ghr)}${cell(r.aff)}${cell(r.total)}
                       <td class="py-1.5 px-2 text-right font-bold ${r.total ? 'text-emerald-600' : 'text-slate-300'}">${r.total ? r.share + '%' : '—'}</td>
+                      <td class="py-1.5 px-2 text-right font-semibold ${
+                        r.conv == null ? 'text-slate-300' : r.conv >= 50 ? 'text-emerald-600' : 'text-amber-600'
+                      }">${r.conv == null ? '—' : r.conv + '%'}</td>
                     </tr>`).join('')}
+                  ${declined.length ? `<tr class="bg-slate-50/60">
+                      <td class="py-1.5 px-2 font-medium text-slate-600">
+                        <button onclick="event.stopPropagation();store.dispatch('SET_SUB_VIEW',{id:'${job.id}',view:'declined'})"
+                                class="text-red-600 hover:text-red-700 underline decoration-dotted font-semibold"
+                                title="Show the declined candidates for this job">Declined</button>
+                      </td>
+                      ${cell(decGhr)}${cell(decAff)}${cell(declined.length)}
+                      <td class="py-1.5 px-2 text-right text-slate-300">—</td>
+                      <td class="py-1.5 px-2 text-right text-slate-300">—</td>
+                    </tr>` : ''}
                 </tbody>
               </table>
+              <p class="text-[10px] text-slate-400 mt-2 leading-snug">
+                Each row counts everyone who reached that stage, declines included, so Conv. reads as
+                the share of the previous stage that advanced. A post-offer decline demonstrably
+                reached Offer and counts at every stage; a plain decline carries no record of how far
+                it got and counts only as a submission.
+              </p>
 
               <h5 class="text-[10px] uppercase tracking-wide text-slate-500 font-semibold mt-4 mb-2 flex items-center gap-3">
                 GHR Share by Stage
@@ -5622,15 +5751,37 @@
         // no worker_name or is_ghr on them, which is what this pane read before.
         const ghr = rows.filter(r => Utils.isGhrAgency(r.agency)).length;
         const fmtDate = d => Utils.fmtDate(d, { month: 'short', day: 'numeric' }) || '—';
+        // Rates now arrive on assignment rows, so the vendor comparison this
+        // pane always claimed to be for can actually be made. Averages are
+        // taken only over rows that carry a rate, and the count is shown, so a
+        // thin comparison is not mistaken for a full one.
+        const rated = a => a.map(r => Number(r.bill_rate)).filter(v => isFinite(v) && v > 0);
+        const gRates = rated(rows.filter(r => Utils.isGhrAgency(r.agency)));
+        const aRates = rated(rows.filter(r => !Utils.isGhrAgency(r.agency)));
+        const avg = a => a.length ? a.reduce((x, y) => x + y, 0) / a.length : null;
+        const gAvg = avg(gRates), aAvg = avg(aRates);
+        const money0 = v => (v || v === 0) ? '$' + Number(v).toFixed(0) : '—';
+        const gap = (gAvg != null && aAvg != null) ? gAvg - aAvg : null;
         return `
           <div class="fade-in">
             <h4 class="font-bold mb-3 text-sm uppercase text-slate-500">Active Placements</h4>
             <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
-              ${View.detailStat('Active At Facility', rows.length)}
-              ${View.detailStat('GHR', ghr)}
-              ${View.detailStat('Affiliate', rows.length - ghr)}
+              ${View.detailStat('Active At Facility', rows.length,
+                  `${ghr} GHR · ${rows.length - ghr} affiliate`)}
               ${View.detailStat('GHR Share', rows.length ? Math.round((ghr / rows.length) * 100) + '%' : '—')}
+              ${View.detailStat('GHR Avg Rate', money0(gAvg),
+                  gRates.length ? `${gRates.length} rated` : 'no rate on these rows')}
+              ${View.detailStat('Affiliate Avg Rate', money0(aAvg),
+                  aRates.length ? `${aRates.length} rated` : 'no affiliate rate here')}
             </div>
+            ${gap != null ? `
+              <div class="mb-4 text-xs rounded-lg border px-3 py-2 ${
+                gap <= 0 ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
+                         : 'bg-amber-50 border-amber-200 text-amber-800'}">
+                GHR bills <b>${money0(Math.abs(gap))}/hr ${gap <= 0 ? 'below' : 'above'}</b>
+                the affiliate average on active seats here
+                (${money0(gAvg)} vs ${money0(aAvg)}).
+              </div>` : ''}
             ${rows.length ? `
               <div class="bg-white border border-slate-200 rounded-lg divide-y divide-slate-100 max-h-56 overflow-y-auto">
                 ${rows.map(r => `
@@ -5640,6 +5791,8 @@
                       (s.redactMode && !Utils.isGhrAgency(r.agency))
                         ? Utils.redactName(r.candidate_name || '')
                         : (r.candidate_name || 'Unknown')}</span>
+                    <span class="font-semibold text-slate-600 tabular-nums w-14 text-right">${
+                      Number(r.bill_rate) > 0 ? '$' + Number(r.bill_rate).toFixed(0) : '—'}</span>
                     <span class="text-slate-400">${fmtDate(r.startDate)} &rarr; ${fmtDate(r.endDate)}</span>
                   </div>`).join('')}
               </div>`
@@ -7546,7 +7699,7 @@
           ghr += j.ghrSubs; av += j.avSubs;
           const rules = CONSTANTS.AGING_RULES[j.system] || CONSTANTS.AGING_RULES.default;
           if (j.daysPast >= rules.thresholds.red) critical++;
-          (j.candidates || []).forEach(c => { if (!c.isDeclined && c.date) { pendingDaysSum += Utils.calcDays(c.date); pendingCount++; } });
+          (j.candidates || []).forEach(c => { if (!Utils.isDeclinedNow(j.id, c) && c.date) { pendingDaysSum += Utils.calcDays(c.date); pendingCount++; } });
         });
 
         const avgPending = pendingCount ? Math.round(pendingDaysSum / pendingCount) : 0;
@@ -13528,7 +13681,7 @@
                       
                       grouped[sys][fac].forEach(j => {
                           // Get active submissions for this job
-                          const activeSubs = j.candidates.filter(c => !c.isDeclined);
+                          const activeSubs = j.candidates.filter(c => !Utils.isDeclinedNow(j.id, c));
                           
                           const ghrSubs = [];
                           const agencySubs = [];
@@ -13580,7 +13733,7 @@
             case 'ANALYZE_DECLINES': {
               const job = s.jobs.find(x => x.id === payload.id);
               if (!job) break;
-              const declined = job.candidates.filter(c => c.isDeclined);
+              const declined = job.candidates.filter(c => Utils.isDeclinedNow(job.id, c));
               
               if (declined.length === 0) { 
                   // Fallback if user clicks analyze but no data (should be guarded by UI but safe to keep)
