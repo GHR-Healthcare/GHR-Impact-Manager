@@ -6469,6 +6469,54 @@
        * the body and scrolls an inner container, the prototype scrolls the page
        * -- so the nearest scrollable ancestor is found rather than assumed.
        */
+      /* Expanding a row inserts one <tr>; collapsing removes it.
+       *
+       * It used to re-render the whole table. Assigning innerHTML on the
+       * scrolling container resets its scrollTop, so opening a row threw you
+       * back to the top and you had to hunt for where you were. Compensating
+       * for that after the fact was fragile -- the reliable fix is not to
+       * destroy the table in the first place.
+       *
+       * The expanded set still lives in state, so a genuine re-render (a
+       * filter change, a save) reproduces open rows correctly.
+       */
+      STAGE_EXPANDED_SET: { closed: 'expandedClosed', extensions: 'expandedExtensions', onboarding: 'expandedOnboarding' },
+      STAGE_ROWS_KEY: { closed: 'closedRows', extensions: 'extensionsRows', onboarding: 'onboardingRows' },
+
+      stageDetailRow(view, r) {
+        if (view === 'closed') {
+          return `<tr data-detail-for="${r.id}"><td colspan="${View.stageColCount.closed}" class="p-0">${View.closedDetail(r)}</td></tr>`;
+        }
+        if (view === 'extensions') return View.extensionDetail(r);
+        return View.onboardingDetail(r);
+      },
+
+      toggleStageRow(view, id) {
+        const s = window.store.state;
+        const setKey = View.STAGE_EXPANDED_SET[view];
+        const open = s[setKey].has(String(id)) || s[setKey].has(id);
+        const tr = document.querySelector(`tr[data-row-key="${String(id).replace(/"/g, '\\"')}"]`);
+        const detail = document.querySelector(`tr[data-detail-for="${String(id).replace(/"/g, '\\"')}"]`);
+
+        if (open) {
+          s[setKey].delete(id); s[setKey].delete(String(id));
+          if (detail) detail.remove(); else View[view]();
+        } else {
+          s[setKey].add(id);
+          const row = (s[View.STAGE_ROWS_KEY[view]] || []).find(x => String(x.id) === String(id));
+          if (tr && row) {
+            tr.insertAdjacentHTML('afterend', View.stageDetailRow(view, row));
+            lucide.createIcons();
+          } else {
+            View[view]();   // row not on screen (filtered out) -- fall back
+            return;
+          }
+        }
+        // Flip the chevron in place rather than redrawing the row for a glyph.
+        const chev = tr && tr.querySelector('[data-chev]');
+        if (chev) chev.innerHTML = open ? '&#9654;' : '&#9660;';
+      },
+
       anchoredRerender(rowKey, render) {
         const sel = `[data-row-key="${String(rowKey).replace(/"/g, '\\"')}"]`;
         const before = document.querySelector(sel)?.getBoundingClientRect().top ?? null;
@@ -6819,7 +6867,7 @@
           ? !!(r.match_original_end && r.match_end_date && r.match_end_date > r.match_original_end)
           : !!r.is_extension;
         return `
-          <tr class="bg-slate-50">
+          <tr class="bg-slate-50" data-detail-for="${r.id}">
             <td colspan="${View.stageColCount.extensions}" class="px-4 py-4 border-b border-slate-200">
               <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
                 ${View.systemMatchPanel(r)}
@@ -6976,7 +7024,7 @@
             const e = View.extensionEdit(r);
             body += `
               <tr data-row-key="${r.id}" class="hover:bg-slate-50 border-b border-slate-100 cursor-pointer" onclick="store.dispatch('TOGGLE_EXTENSION_ROW','${r.id}')">
-                <td class="px-3 py-2 text-slate-400">${open ? '&#9660;' : '&#9654;'}</td>
+                <td class="px-3 py-2 text-slate-400" data-chev>${open ? '&#9660;' : '&#9654;'}</td>
                 <td class="px-3 py-2 whitespace-nowrap">
                   <span class="px-1.5 py-0.5 rounded border border-slate-200 bg-white text-[10px] font-mono text-slate-600">${r.id || '—'}</span>
                 </td>
@@ -7127,7 +7175,7 @@
             <div class="text-sm font-bold text-slate-800 mt-0.5">${value}</div>
           </div>`;
         return `
-          <tr class="bg-slate-50">
+          <tr class="bg-slate-50" data-detail-for="${r.id}">
             <td colspan="${View.stageColCount.onboarding}" class="px-4 py-4 border-b border-slate-200">
               <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
                 <div>
@@ -7270,7 +7318,7 @@
             const slip = View.onboardingSlip(r);
             body += `
               <tr data-row-key="${r.id}" class="hover:bg-slate-50 border-b border-slate-100 cursor-pointer" onclick="store.dispatch('TOGGLE_ONBOARDING_ROW','${r.id}')">
-                <td class="px-3 py-2 text-slate-400">${open ? '&#9660;' : '&#9654;'}</td>
+                <td class="px-3 py-2 text-slate-400" data-chev>${open ? '&#9660;' : '&#9654;'}</td>
                 <td class="px-3 py-2 whitespace-nowrap">
                   <span class="px-1.5 py-0.5 rounded border border-slate-200 bg-white text-[10px] font-mono text-slate-600">${r.id || '—'}</span>
                 </td>
@@ -7446,7 +7494,7 @@
                   ${closedExpandable ? `onclick="store.dispatch('TOGGLE_CLOSED_ROW','${r.id}')"` : ''}>
                 <td class="px-3 py-2 whitespace-nowrap">
                   <span class="px-1.5 py-0.5 rounded border border-slate-200 bg-white text-[10px] font-mono text-slate-600">${r.id || '—'}</span>
-                  ${closedExpandable ? `<span class="ml-1 text-slate-400">${open ? '&#9660;' : '&#9654;'}</span>` : ''}
+                  ${closedExpandable ? `<span class="ml-1 text-slate-400" data-chev>${open ? '&#9660;' : '&#9654;'}</span>` : ''}
                 </td>
                 <td class="px-3 py-2 font-semibold text-slate-700">${r.category || '—'}</td>
                 <td class="px-3 py-2">
@@ -7469,7 +7517,7 @@
                 <td class="px-3 py-2 text-slate-600">${View.esc(r.account_manager || '—')}</td>
               </tr>`;
             if (open) {
-              body += `<tr><td colspan="${closedCols.length}" class="p-0">${View.closedDetail(r)}</td></tr>`;
+              body += View.stageDetailRow('closed', r);
             }
           });
         });
@@ -13077,18 +13125,16 @@
             }
 
             case 'TOGGLE_CLOSED_ROW': {
-              if (s.expandedClosed.has(payload)) s.expandedClosed.delete(payload);
-              else s.expandedClosed.add(payload);
-              // Keeps the clicked row under the cursor instead of jumping.
-              View.anchoredRerender(payload, () => View.closed());
+              // Inserts or removes one detail row; never re-renders the
+              // table, so the scroll position cannot be lost.
+              View.toggleStageRow('closed', payload);
               break;
             }
 
             case 'TOGGLE_ONBOARDING_ROW': {
-              if (s.expandedOnboarding.has(payload)) s.expandedOnboarding.delete(payload);
-              else s.expandedOnboarding.add(payload);
-              // Keeps the clicked row under the cursor instead of jumping.
-              View.anchoredRerender(payload, () => View.onboarding());
+              // Inserts or removes one detail row; never re-renders the
+              // table, so the scroll position cannot be lost.
+              View.toggleStageRow('onboarding', payload);
               break;
             }
 
@@ -13138,10 +13184,9 @@
             }
 
             case 'TOGGLE_EXTENSION_ROW': {
-              if (s.expandedExtensions.has(payload)) s.expandedExtensions.delete(payload);
-              else s.expandedExtensions.add(payload);
-              // Keeps the clicked row under the cursor instead of jumping.
-              View.anchoredRerender(payload, () => View.extensions());
+              // Inserts or removes one detail row; never re-renders the
+              // table, so the scroll position cannot be lost.
+              View.toggleStageRow('extensions', payload);
               break;
             }
 
