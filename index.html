@@ -6503,6 +6503,26 @@
         return 'NO DECISION';
       },
 
+      /* Urgency as the reference means it, which is coarser than the DAYS LEFT
+       * colouring and a different question.
+       *
+       * extensionUrgency() there is High when the system-match summary is red
+       * or 14 days or fewer remain, Medium to 30 days, Low beyond. The four
+       * day bands (<=7, 8-14, 15-21, 22+) drive the circle on DAYS LEFT; this
+       * drives the URGENCY column and the High Urgency KPI. A seat whose two
+       * systems disagree is urgent however long it has left, which is why the
+       * mismatch count feeds in here.
+       */
+      extensionUrgencyLabel(r) {
+        const bad = (r.match && r.match.counts && r.match.counts.bad) || 0;
+        const d = r.days_left;
+        if (bad > 0) return 'High';
+        if (d == null) return 'Low';
+        if (d <= 14) return 'High';
+        if (d <= 30) return 'Medium';
+        return 'Low';
+      },
+
       extensionDecisionBadge(d) {
         const tone = d === 'Approved' ? 'good'
           : (d === 'Declined' || d === 'Backfill Required') ? 'bad'
