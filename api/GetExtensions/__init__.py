@@ -103,8 +103,67 @@ def _b4_rows(cursor, horizon, include_affiliate):
             NULL                                        AS extension_note,
             NULL                                        AS extension_by,
             -- B4 has no modifications feed, so no decision signal exists here.
-            'Not tracked in B4'                         AS decision_state
+            'Not tracked in B4'                         AS decision_state,
+            -- System Match. B4 is the VMS the client works in; Bullhorn is the
+            -- ATS delivery works in, and BH_PLACEMENT_RAW_TO_B4HealthOrder is
+            -- the warehouse's own crosswalk between them. 287 of the 313 live
+            -- GHR seats in the 45-day window resolve to a Bullhorn placement
+            -- (92%), and 46 of the linked pairs disagree on the end date --
+            -- which is the exception this panel exists to surface.
+            'Bullhorn'                                  AS match_system,
+            CAST(bh.match_id AS NVARCHAR(50))           AS match_id,
+            bh.match_start_date                         AS match_start_date,
+            bh.match_end_date                           AS match_end_date,
+            bh.match_status                             AS match_status,
+            bh.match_clinician                          AS match_clinician,
+            bh.Recruiter                                AS recruiter,
+            -- IsExtension does NOT mean "this seat has been extended" -- it
+            -- means the placement IS an extension of a prior assignment.
+            -- Verified against the chain rule (same clinician + same client,
+            -- prior placement ending within 14 days of this one's start):
+            -- 7,545 of 8,745 flagged placements chain (86%) against 8.7% of
+            -- unflagged ones. A pushed-out end date is the separate signal,
+            -- and the two agree on only 871 records, which is why both ship.
+            bh.match_is_extension                       AS match_is_extension,
+            bh.match_original_end                       AS match_original_end,
+            -- B4 carries no original end date; the parent-contract chain in
+            -- parent_ref is the only extension evidence on this source.
+            CAST(NULL AS DATE)                          AS original_end_date
         FROM dhc.B4HealthOrder o WITH (NOLOCK)
+        -- The crosswalk maps keys and nothing else. Its own status and date
+        -- columns are a snapshot frozen at load time and must not be compared
+        -- against: 3,002 of its 4,179 newest rows (72%) disagree with the live
+        -- placement status and 1,257 (30%) with the live end date. Reading them
+        -- as facts manufactured 78 phantom end-date mismatches and made 270
+        -- working seats look stuck in "Pending Start" -- live, 272 of 287 read
+        -- "Approved". So the ID comes from here and every compared value comes
+        -- from PLACEMENT_DIM.
+        --
+        -- It also carries one row per load run rather than per pair: 8,015 rows
+        -- over 4,331 distinct (contract, placement) pairs, so joining it raw
+        -- would fan every order out ~1.9x. 140 contracts legitimately map to
+        -- more than one placement (a seat refilled or continued into a new
+        -- record); the live one is the latest-ending.
+        OUTER APPLY (
+            SELECT TOP 1
+                pd.Source_Placement_ID                   AS match_id,
+                CAST(pd.DateBegin AS DATE)               AS match_start_date,
+                CAST(pd.DateEnd AS DATE)                 AS match_end_date,
+                NULLIF(LTRIM(RTRIM(pd.Status)), '')      AS match_status,
+                NULLIF(LTRIM(RTRIM(ISNULL(l.firstName, '') + ' '
+                                 + ISNULL(l.lastName, ''))), '') AS match_clinician,
+                pd.IsExtension                           AS match_is_extension,
+                CAST(pd.DateOriginalEnd AS DATE)         AS match_original_end,
+                -- Recruiter is not on the B4 order at all: it belongs to the
+                -- ATS record. Populated on 85% of PLACEMENT_DIM, which beats a
+                -- column of dashes.
+                NULLIF(LTRIM(RTRIM(pd.Recruiter)), '')   AS Recruiter
+            FROM dbo.BH_PLACEMENT_RAW_TO_B4HealthOrder l WITH (NOLOCK)
+            INNER JOIN dbo.PLACEMENT_DIM pd WITH (NOLOCK)
+                    ON pd.Source_Placement_ID = l.placementID
+            WHERE LTRIM(RTRIM(l.Contract_ID)) = LTRIM(RTRIM(o.Contract_ID))
+            ORDER BY pd.DateEnd DESC, l.RUN_ID DESC
+        ) bh
         WHERE o.End_Date BETWEEN CAST(GETDATE() AS DATE)
                              AND DATEADD(DAY, ?, CAST(GETDATE() AS DATE))
             AND o.Contract_Status NOT IN ({status_list})
@@ -195,7 +254,30 @@ def _vndly_rows(cursor, horizon, include_affiliate):
                  WHEN x.mentions_offer = 1               THEN 'Offered'
                  WHEN TRY_CAST(w.[End Date] AS DATE) > TRY_CAST(w.[Original End Date] AS DATE)
                                                          THEN 'Extended'
-                 ELSE 'Activity recorded' END            AS decision_state
+                 ELSE 'Activity recorded' END            AS decision_state,
+            -- No System Match on VNDLY: there is no identifier path from a
+            -- VNDLY work order to a Bullhorn placement. PLACEMENT_DIM.VMSReqID
+            -- looked like the bridge but is a B4 contract number -- 5,068 of
+            -- its 5,069 values resolve to B4HealthOrder and none to a work
+            -- order. STAGING_VNDLY_CONTRACTOR_XREF.[Client Contractor] looked
+            -- like a Bullhorn candidate ID and is the client's own contractor
+            -- number: zero of 283 match a Bullhorn candidate. Reported as
+            -- unlinked rather than compared against a guess.
+            NULL                                         AS match_system,
+            NULL                                         AS match_id,
+            NULL                                         AS match_start_date,
+            NULL                                         AS match_end_date,
+            NULL                                         AS match_status,
+            NULL                                         AS match_clinician,
+            -- Recruiter lives on the ATS record, which is only reachable
+            -- through the crosswalk B4 has and VNDLY does not.
+            NULL                                         AS recruiter,
+            NULL                                         AS match_is_extension,
+            CAST(NULL AS DATE)                           AS match_original_end,
+            -- VNDLY is the one MSP source that states the seat's original end
+            -- date outright, so an in-place extension is a fact here rather
+            -- than an inference.
+            TRY_CAST(w.[Original End Date] AS DATE)      AS original_end_date
         FROM dbo.STAGING_VNDLY_WORKORDERS w WITH (NOLOCK)
         LEFT JOIN ext_mods x ON x.wo = w.WOSystemKey
         -- STAGING_VNDLY_JOBS holds 664 rows across only 387 distinct [Job Id],
@@ -282,6 +364,24 @@ def _bullhorn_ext_rows(cursor, app_conn, horizon):
             -- modifications stream to derive intent from, so the decision is
             -- whatever the meeting records in the app.
             'Not tracked in Bullhorn'                     AS decision_state,
+            -- Non-MSP runs on a single system of record, so there is no second
+            -- system to match against. The panel shows this seat's own change
+            -- history instead, which is stronger evidence than a comparison
+            -- would be: EditHistoryPlacement records every dateEnd move with
+            -- its old and new value and the user who made it.
+            NULL                                          AS match_system,
+            NULL                                          AS match_id,
+            NULL                                          AS match_start_date,
+            NULL                                          AS match_end_date,
+            NULL                                          AS match_status,
+            NULL                                          AS match_clinician,
+            -- customText12 is Recruiter and customText11 Account Manager on
+            -- View_Placement -- the mapping GetContractsComparison already
+            -- runs on. ownerID above is the record owner, not the recruiter.
+            NULLIF(LTRIM(RTRIM(p.customText12)), '')      AS recruiter,
+            NULL                                          AS match_is_extension,
+            CAST(NULL AS DATE)                            AS match_original_end,
+            CAST(NULL AS DATE)                            AS original_end_date,
             jo.state                                      AS region
         FROM dbo.View_Placement p WITH (NOLOCK)
         LEFT JOIN dbo.View_Candidate cnd WITH (NOLOCK) ON cnd.candidateID = p.candidateID
@@ -403,6 +503,20 @@ def _symplr_ext_rows(cursor, app_conn, horizon):
             NULL                                          AS extension_note,
             NULL                                          AS extension_by,
             'Not tracked in Symplr'                       AS decision_state,
+            -- Symplr is its own system of record with no counterpart and no
+            -- audit trail, so neither a match nor a change history exists.
+            NULL                                          AS match_system,
+            NULL                                          AS match_id,
+            NULL                                          AS match_start_date,
+            NULL                                          AS match_end_date,
+            NULL                                          AS match_status,
+            NULL                                          AS match_clinician,
+            -- lt_order carries the booker (BookedByUserID, used above for the
+            -- account manager) but no separate recruiter.
+            NULL                                          AS recruiter,
+            NULL                                          AS match_is_extension,
+            CAST(NULL AS DATE)                            AS match_original_end,
+            CAST(NULL AS DATE)                            AS original_end_date,
             pc.state                                      AS region
         FROM dbo.lt_order lt WITH (NOLOCK)
         LEFT JOIN dbo.profile_client pc ON lt.clientid = pc.recordid
@@ -462,10 +576,102 @@ def _apply_credentials(rows):
     return rows
 
 
+# Bullhorn placement statuses that mean the seat is over. If the ATS says one
+# of these while the VMS still carries the order as live, that is the exception
+# worth a person's attention -- 10 of the 313 live GHR seats in the current
+# window (8 Completed, 1 Cancellation, 1 Termination).
+ATS_ENDED_STATUSES = {'completed', 'cancellation', 'termination', 'cancelled'}
+
+# Field comparison tones, matching the stage legend: green confirmed, red
+# system mismatch, amber timing warning, grey not yet started.
+MATCH_TONES = ('good', 'bad', 'medium', 'low')
+
+
+def _last_name(name):
+    """Surname only. First names differ freely between the two systems
+    (nicknames, middle initials), surnames do not -- measured across the live
+    window, 285 of 287 linked seats agree on surname and 2 do not."""
+    parts = [p for p in (name or '').replace(',', ' ').split() if p]
+    return parts[-1].lower() if parts else ''
+
+
+def _match_panel(row):
+    """System Match: the same fact as recorded in the VMS and in the ATS.
+
+    Only fields that are genuinely the same fact are compared. Status is not
+    one of them -- B4's Contract_Status describes the requisition ('Closed And
+    Awarded' on every live seat) while Bullhorn's describes the placement
+    lifecycle, so a string compare would flag all 287 linked seats as
+    mismatched. The lifecycle check below asks the answerable question instead:
+    does one system think this seat is over while the other runs it?
+    """
+    vms = row.get('source_system') or 'VMS'
+    ats = row.get('match_system')
+    owner = row.get('account_manager') or 'Unassigned'
+
+    if not ats or not row.get('match_id'):
+        # Nothing to compare against. The two cases are different and the UI
+        # says which: non-MSP genuinely has one system of record, while a VNDLY
+        # seat has a second system that simply cannot be joined to it.
+        state = 'single_system' if row.get('source_system') in ('Bullhorn', 'Symplr') else 'unlinked'
+        return {'system': None, 'state': state, 'id': None, 'fields': [],
+                'counts': {'good': 0, 'bad': 0, 'medium': 0, 'low': 0}}
+
+    fields = []
+
+    def add(name, tone, label, note, left, right, field_owner=None):
+        fields.append({'field': name, 'tone': tone, 'label': label, 'note': note,
+                       'vms': left, 'ats': right, 'owner': field_owner or owner})
+
+    v_end, a_end = row.get('end_date'), row.get('match_end_date')
+    if v_end and a_end:
+        if v_end == a_end:
+            add('End Date', 'good', 'Confirmed', 'systems match', v_end, a_end)
+        else:
+            add('End Date', 'bad', 'Mismatch', f'{v_end} vs {a_end}', v_end, a_end)
+    else:
+        add('End Date', 'low', 'Not Set', 'missing on one side', v_end or '--', a_end or '--')
+
+    v_start, a_start = row.get('start_date'), row.get('match_start_date')
+    if v_start and a_start:
+        if v_start == a_start:
+            add('Start Date', 'good', 'Confirmed', 'systems match', v_start, a_start)
+        else:
+            add('Start Date', 'bad', 'Mismatch', f'{v_start} vs {a_start}', v_start, a_start)
+    else:
+        add('Start Date', 'low', 'Not Set', 'missing on one side', v_start or '--', a_start or '--')
+
+    v_who, a_who = row.get('clinician'), row.get('match_clinician')
+    if v_who and a_who:
+        if _last_name(v_who) == _last_name(a_who):
+            add('Clinician', 'good', 'Confirmed', 'same worker', v_who, a_who)
+        else:
+            add('Clinician', 'bad', 'Mismatch', 'different worker on record', v_who, a_who)
+    else:
+        add('Clinician', 'low', 'Not Set', 'missing on one side', v_who or '--', a_who or '--')
+
+    a_status = (row.get('match_status') or '').strip()
+    if not a_status:
+        add('Lifecycle', 'low', 'Not Set', 'no ATS status', 'Live', '--')
+    elif a_status.lower() in ATS_ENDED_STATUSES:
+        add('Lifecycle', 'bad', 'Ended in ATS',
+            f'{ats} closed this seat while {vms} still runs it', 'Live', a_status)
+    else:
+        add('Lifecycle', 'good', 'Both Live', 'neither system has closed the seat', 'Live', a_status)
+
+    counts = {t: sum(1 for f in fields if f['tone'] == t) for t in MATCH_TONES}
+    return {'system': ats, 'state': 'linked', 'id': row.get('match_id'),
+            'fields': fields, 'counts': counts}
+
+
 def _serialize(rows):
     out = []
     for r in rows:
-        for k in ('start_date', 'end_date'):
+        # Dates are normalised to ISO strings before the match runs, so the
+        # comparison is string-vs-string on both sides and can't drift the way
+        # a date/datetime mix would.
+        for k in ('start_date', 'end_date', 'match_start_date', 'match_end_date',
+                  'match_original_end', 'original_end_date'):
             if r.get(k) is not None:
                 r[k] = r[k].isoformat() if hasattr(r[k], 'isoformat') else str(r[k])
         for k in ('bill_rate', 'pay_rate', 'hours_per_week'):
@@ -482,6 +688,14 @@ def _serialize(rows):
         # than assuming a standard week when hours aren't known.
         r['extension_value_13wk'] = round(rate * hrs * 13, 2) if rate and hrs else None
         r['urgency'] = _urgency(r.get('days_left'))
+        r['match'] = _match_panel(r)
+        # `is_extension` on the row is per-source evidence that this seat has
+        # been extended before (a B4 parent chain, a VNDLY date past its
+        # original, a Bullhorn dateEnd edit). `match_is_extension` is the
+        # different question the warehouse answers -- whether the placement is
+        # itself the continuation of a prior assignment -- so the two are kept
+        # apart rather than OR'd into one misleading flag.
+        r['seat_is_continuation'] = bool(r.pop('match_is_extension', None))
         out.append(r)
     return out
 

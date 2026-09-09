@@ -874,7 +874,7 @@
     const $ = (id) => document.getElementById(id);
 
     // App version - loaded from environment variable via API, with fallback
-    let APP_VERSION = '2.4.0';
+    let APP_VERSION = '2.6.0';
 
     const API_BASE_URL = '/api';
     
@@ -5865,6 +5865,30 @@
        * moving. It always says which it is showing, because "GHR hold 85%"
        * means something quite different across 109 RN seats than across 3.
        */
+      /*
+       * FILLED BY and MARKET SHARE for a Closed row.
+       *
+       * filled_by and the sign of revenue are decided server-side so both
+       * instances agree; these only handle presentation. The vendor name on an
+       * affiliate win follows Redact Vendor Info, like every other place an
+       * outside agency is named.
+       */
+      closedFilledBy(r) {
+        const name = r.filled_by || '—';
+        const ours = View.stageAgencyLabel(r) === 'GHR';
+        if (ours || !window.store.state.redactMode) return name;
+        // 'None' and 'Excluded' are outcomes, not vendors, so nothing to mask.
+        return (name === 'None' || name === 'Excluded' || name === '—') ? name : 'Affiliate vendor';
+      },
+
+      // GHR's share of comparable live demand behind this row, from the same
+      // rollup the detail pane draws. Null where there is nothing to compare
+      // against, so the cell shows a dash rather than a confident 0%.
+      closedSharePct(r) {
+        const d = View.closedMarketShare(r);
+        return d ? d.ghrPct : null;
+      },
+
       closedMarketShare(r) {
         const ms = window.store.state.closedMeta?.marketShare;
         if (!ms || !ms.byAccount) return null;
@@ -6095,17 +6119,236 @@
         return View.stageBadge(d, tone);
       },
 
+      /* ---- System Match: the same fact, as each system records it ----
+       * B4 is the VMS the client works in and Bullhorn the ATS delivery works
+       * in, so a seat exists twice and the two copies drift. The warehouse
+       * crosswalk joins them; every compared value is then read live from
+       * PLACEMENT_DIM, never from the crosswalk itself, whose own status and
+       * date columns are frozen at load time (72% of them disagree with the
+       * live status, 30% with the live end date -- reading them as facts
+       * invented 78 phantom mismatches).
+       *
+       * Only fields that are the same fact are compared. Status is not one:
+       * B4's Contract_Status describes the requisition and reads 'Closed And
+       * Awarded' on every live seat, while Bullhorn's describes the placement
+       * lifecycle, so comparing the strings would flag all 287 linked seats.
+       * The Lifecycle row asks the answerable question instead -- has one
+       * system closed a seat the other still runs?
+       */
+      MATCH_DOT: { good: 'bg-emerald-500', bad: 'bg-red-500', medium: 'bg-amber-500', low: 'bg-slate-300' },
+
+      matchSummary(r) {
+        const m = r.match || {};
+        if (m.state === 'single_system') {
+          return { label: 'Single System', tone: 'low', sort: '3',
+                   note: `${r.source_system || 'This book'} is the only system of record` };
+        }
+        if (m.state === 'unlinked' || !m.system) {
+          return { label: 'Not Linked', tone: 'medium', sort: '2',
+                   note: 'No Bullhorn record joins to this seat' };
+        }
+        const c = m.counts || {};
+        const bad = (m.fields || []).filter(f => f.tone === 'bad');
+        if (c.bad) {
+          return { label: `${c.bad} Mismatch${c.bad > 1 ? 'es' : ''}`, tone: 'bad', sort: '0',
+                   note: bad.map(f => f.field).join(', ') + ' differ' };
+        }
+        if (c.medium) return { label: 'Warning', tone: 'medium', sort: '1', note: 'timing to review' };
+        if (c.low)    return { label: 'Partial', tone: 'low', sort: '2',
+                               note: `${c.low} field${c.low > 1 ? 's' : ''} not set in both` };
+        return { label: 'In Sync', tone: 'good', sort: '4', note: `matches ${m.system}` };
+      },
+
+      matchCell(r) {
+        const sm = View.matchSummary(r);
+        return `${View.stageBadge(sm.label, sm.tone)}
+                <div class="text-[10px] text-slate-400 mt-0.5">${View.esc(sm.note)}</div>`;
+      },
+
+      // Extension window bar: how much of the 45-day decision window is left.
+      matchWindowBar(r) {
+        const d = r.days_left;
+        if (d == null) return '';
+        const pct = Math.max(6, Math.min(100, Math.round(d / 45 * 100)));
+        const fill = d <= 7 ? 'bg-red-700' : d <= 14 ? 'bg-red-500'
+                   : d <= 21 ? 'bg-amber-500' : 'bg-emerald-500';
+        return `
+          <div class="mt-3">
+            <div class="text-[10px] font-bold uppercase tracking-wide text-slate-500 mb-1">
+              Extension Window &middot; ${d} day${d === 1 ? '' : 's'} left
+            </div>
+            <div class="h-2 bg-slate-200 rounded-full overflow-hidden">
+              <div class="h-full ${fill} rounded-full" style="width:${pct}%"></div>
+            </div>
+            <div class="flex justify-between text-[9px] text-slate-400 mt-1">
+              <span>Contract end</span><span>45-day window</span>
+            </div>
+          </div>`;
+      },
+
+      // With no second system there is nothing to reconcile, so the panel
+      // shows the seat's own audit trail instead -- which on Bullhorn is
+      // stronger evidence than a comparison: EditHistoryPlacement records
+      // every dateEnd move with its old value, new value and author.
+      matchHistoryPanel(r) {
+        const events = Number(r.extension_events) || 0;
+        const rows = events
+          ? `<div class="bg-white border border-slate-200 rounded-lg px-3 py-2">
+               <div class="text-[9px] uppercase tracking-wide text-slate-400 font-semibold">Latest change</div>
+               <div class="text-xs font-semibold text-slate-700 mt-0.5">${View.esc(r.extension_note || 'End date moved')}</div>
+               <div class="text-[10px] text-slate-400 mt-0.5">${
+                 [r.last_extension_at ? String(r.last_extension_at).slice(0, 10) : null,
+                  r.extension_by ? 'by ' + View.esc(r.extension_by) : null]
+                   .filter(Boolean).join(' &middot; ') || 'no detail recorded'}</div>
+             </div>`
+          : `<p class="text-xs text-slate-400 italic">No end-date change has been recorded on this seat.</p>`;
+        return `
+          <div class="grid grid-cols-2 gap-2 mb-3">
+            <div class="bg-white border border-slate-200 rounded-lg px-3 py-2">
+              <div class="text-[9px] uppercase tracking-wide text-slate-400 font-semibold">End-Date Changes</div>
+              <div class="text-sm font-bold text-slate-800 mt-0.5">${events || '0'}</div>
+            </div>
+            <div class="bg-white border border-slate-200 rounded-lg px-3 py-2">
+              <div class="text-[9px] uppercase tracking-wide text-slate-400 font-semibold">Previously Extended</div>
+              <div class="text-sm font-bold text-slate-800 mt-0.5">${r.is_extension ? 'Yes' : 'No'}</div>
+            </div>
+          </div>
+          ${rows}`;
+      },
+
+      systemMatchPanel(r) {
+        const m = r.match || {};
+        const sm = View.matchSummary(r);
+        const vms = r.source_system || 'VMS';
+        let inner;
+
+        if (m.state === 'linked' && (m.fields || []).length) {
+          const c = m.counts || {};
+          const tile = (lab, n, cls) => `
+            <div class="bg-white border border-slate-200 rounded-lg px-2.5 py-2">
+              <div class="text-[9px] uppercase tracking-wide text-slate-400 font-semibold">${lab}</div>
+              <div class="text-sm font-bold ${cls} mt-0.5">${n}</div>
+            </div>`;
+          inner = `
+            <div class="overflow-x-auto">
+              <table class="w-full text-xs">
+                <thead>
+                  <tr class="text-[9px] uppercase tracking-wide text-slate-400 border-b border-slate-200">
+                    <th class="text-left py-1.5 pr-2 font-semibold">Field</th>
+                    <th class="text-left py-1.5 pr-2 font-semibold">Status</th>
+                    <th class="text-left py-1.5 pr-2 font-semibold">${View.esc(vms)}</th>
+                    <th class="text-left py-1.5 pr-2 font-semibold">${View.esc(m.system)}</th>
+                    <th class="text-left py-1.5 font-semibold">Owner</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${m.fields.map(f => `
+                    <tr class="border-b border-slate-100">
+                      <td class="py-1.5 pr-2 font-semibold text-slate-700 whitespace-nowrap">${View.esc(f.field)}</td>
+                      <td class="py-1.5 pr-2 whitespace-nowrap">
+                        <span class="inline-flex items-center gap-1.5">
+                          <span class="w-2 h-2 rounded-full ${View.MATCH_DOT[f.tone] || View.MATCH_DOT.low}"></span>
+                          <span class="text-slate-600">${View.esc(f.label)}</span>
+                        </span>
+                        <div class="text-[9px] text-slate-400 pl-3.5">${View.esc(f.note)}</div>
+                      </td>
+                      <td class="py-1.5 pr-2 text-slate-600">${View.esc(f.vms == null ? '—' : String(f.vms))}</td>
+                      <td class="py-1.5 pr-2 text-slate-600">${View.esc(f.ats == null ? '—' : String(f.ats))}</td>
+                      <td class="py-1.5 text-slate-500 whitespace-nowrap">${View.esc(f.owner || '—')}</td>
+                    </tr>`).join('')}
+                </tbody>
+              </table>
+            </div>
+            <div class="grid grid-cols-4 gap-2 mt-3">
+              ${tile('In Sync', c.good || 0, 'text-emerald-600')}
+              ${tile('Mismatches', c.bad || 0, c.bad ? 'text-red-600' : 'text-slate-800')}
+              ${tile('Warnings', c.medium || 0, c.medium ? 'text-amber-600' : 'text-slate-800')}
+              ${tile('Not Started', c.low || 0, 'text-slate-500')}
+            </div>
+            ${View.matchWindowBar(r)}
+            <p class="text-[10px] text-slate-400 mt-3 leading-snug">
+              Green = confirmed in both. Red = the systems disagree. Grey = not set on one side.
+              Values are read live from each system; the crosswalk supplies only the link between them.
+            </p>`;
+        } else if (m.state === 'single_system') {
+          inner = `
+            <p class="text-[11px] text-slate-500 mb-3 leading-snug">
+              ${View.esc(vms)} is the only system of record for this book, so there is no second
+              copy of the seat to reconcile. Its recorded history is shown instead.
+            </p>
+            ${View.matchHistoryPanel(r)}
+            ${View.matchWindowBar(r)}`;
+        } else {
+          inner = `
+            <p class="text-[11px] text-slate-500 mb-3 leading-snug">
+              ${View.esc(sm.note)}. ${vms === 'VNDLY'
+                ? 'No identifier links a VNDLY work order to a Bullhorn placement &mdash; VMSReqID is a B4 contract number and the contractor cross-reference carries the client&rsquo;s own worker code, so neither reaches the ATS.'
+                : 'The seat has no counterpart record to compare against.'}
+            </p>
+            ${View.matchHistoryPanel(r)}
+            ${View.matchWindowBar(r)}`;
+        }
+
+        return `
+          <div>
+            <div class="flex items-center justify-between gap-2 mb-1 pb-2 border-b border-slate-100">
+              <h5 class="text-xs font-bold uppercase tracking-wide text-slate-500">System Match</h5>
+              <span class="inline-flex items-center gap-1.5 text-[9px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-full px-2 py-0.5">
+                <span class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
+                ${m.system ? View.esc(vms + ' + ' + m.system) : View.esc(vms)}
+              </span>
+            </div>
+            <p class="text-[10px] text-slate-400 mb-3">
+              Compares what each system records for this seat and flags the differences. It does not create a next step.
+            </p>
+            ${inner}
+          </div>`;
+      },
+
       extensionDetail(r) {
         const e = View.extensionEdit(r);
         const meta = window.store.state.workspaceState?.extension?.[r.id];
         const pm = r.account_manager || '—';
+        // Recruiter now arrives on the row: on MSP through the Bullhorn
+        // crosswalk (named on all 287 linked seats), on non-MSP from the
+        // placement's own recruiter field. VNDLY has no path to it and shows
+        // that rather than mislabelling the step PM.
+        const rec = r.recruiter || null;
+        const recLabel = rec
+          ? `Recruiter · ${View.esc(rec)}`
+          : `Recruiter · <span class="italic text-slate-300" title="No recruiter is recorded for this seat">not in data</span>`;
+        const tile = (lab, val) => `
+          <div class="bg-white border border-slate-200 rounded-lg px-2.5 py-2">
+            <div class="text-[9px] uppercase tracking-wide text-slate-400 font-semibold">${lab}</div>
+            <div class="text-xs font-bold text-slate-800 mt-0.5 truncate">${val}</div>
+          </div>`;
+        // Acceptance is system-confirmed, never a checkbox. On a linked seat
+        // the systems agreeing that the end date moved past the original IS
+        // the acceptance; elsewhere it is the source's own extension evidence.
+        const accepted = r.match && r.match.state === 'linked'
+          ? !!(r.match_original_end && r.match_end_date && r.match_end_date > r.match_original_end)
+          : !!r.is_extension;
         return `
           <tr class="bg-slate-50">
-            <td colspan="8" class="px-4 py-4 border-b border-slate-200">
+            <td colspan="12" class="px-4 py-4 border-b border-slate-200">
               <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                ${View.systemMatchPanel(r)}
                 <div>
-                  <h5 class="text-xs font-bold uppercase tracking-wide text-slate-500 mb-1">Extension Progress</h5>
-                  <p class="text-[10px] text-slate-400 mb-3">Team owns the client, RTO and send checkpoints. Acceptance stays system-confirmed.</p>
+                  <div class="flex items-center justify-between gap-2 mb-1 pb-2 border-b border-slate-100">
+                    <h5 class="text-xs font-bold uppercase tracking-wide text-slate-500">Extension Progress</h5>
+                    <span class="text-[9px] font-bold text-slate-500 bg-slate-100 border border-slate-200 rounded-full px-2 py-0.5">
+                      Team-owned workflow
+                    </span>
+                  </div>
+                  <p class="text-[10px] text-slate-400 mb-3">
+                    The team owns the client, RTO and send checkpoints. Acceptance stays system-confirmed.
+                  </p>
+                  <div class="grid grid-cols-4 gap-2 mb-3">
+                    ${tile('PM', View.esc(pm))}
+                    ${tile('Recruiter', rec ? View.esc(rec) : '<span class="text-slate-300 italic">—</span>')}
+                    ${tile('Days Left', r.days_left != null ? r.days_left : '—')}
+                    ${tile('Urgency', r.urgency ? r.urgency.charAt(0).toUpperCase() + r.urgency.slice(1) : '—')}
+                  </div>
                   <div class="space-y-1.5">
                     ${View.EXT_STEPS.map(st => `
                       <label class="flex items-start gap-2 bg-white border border-slate-200 rounded-lg px-3 py-2 cursor-pointer hover:border-slate-300">
@@ -6115,46 +6358,45 @@
                           <span class="block text-[10px] text-slate-400">${st.blurb}</span>
                         </span>
                         <span class="text-[10px] text-slate-400 whitespace-nowrap">${
-                          st.owner === 'pm'
-                            ? `PM · ${pm}`
-                            // No recruiter name exists on the MSP side: B4 and
-                            // VNDLY carry an account manager and the client's
-                            // hiring manager, neither of which is a GHR
-                            // recruiter. The step is still real and checkable;
-                            // only the attribution is missing, and saying so
-                            // beats relabelling it PM.
-                            : `Recruiter · <span class="italic text-slate-300" title="Not recorded in B4 or VNDLY">not in data</span>`
-                        }</span>
+                          st.owner === 'pm' ? `PM · ${View.esc(pm)}` : recLabel}</span>
                       </label>`).join('')}
                     <div class="flex items-start gap-2 bg-slate-100 border border-slate-200 rounded-lg px-3 py-2">
-                      <span class="mt-0.5 text-slate-400">${r.is_extension ? '✓' : '○'}</span>
+                      <span class="mt-0.5 ${accepted ? 'text-emerald-600' : 'text-slate-400'}">${accepted ? '&#10003;' : '&#9675;'}</span>
                       <span class="flex-1">
                         <span class="block text-xs font-semibold text-slate-600">Extension Accepted</span>
-                        <span class="block text-[10px] text-slate-400">Confirmed from the source systems — not editable.</span>
+                        <span class="block text-[10px] text-slate-400">${
+                          r.match && r.match.state === 'linked'
+                            ? 'Confirmed when both systems carry an end date past the original — not editable.'
+                            : 'Confirmed from the source system — not editable.'}</span>
                       </span>
                       <span class="text-[10px] text-slate-400">System</span>
                     </div>
                   </div>
-                </div>
-                <div>
-                  <h5 class="text-xs font-bold uppercase tracking-wide text-slate-500 mb-3">Decision</h5>
-                  <label class="block text-[10px] font-semibold text-slate-500 uppercase tracking-wide mb-1">Client Decision</label>
-                  <select class="ext-decision w-full bg-white border border-slate-300 rounded-md px-3 py-2 text-sm mb-3" data-id="${r.id}">
-                    ${View.EXT_DECISIONS.map(d => `<option ${e.decision === d ? 'selected' : ''}>${d}</option>`).join('')}
-                  </select>
-                  <label class="block text-[10px] font-semibold text-slate-500 uppercase tracking-wide mb-1">Shared Notes</label>
-                  <textarea class="ext-notes w-full bg-white border border-slate-300 rounded-md px-3 py-2 text-xs h-20"
-                            data-id="${r.id}" placeholder="Client or extension context…">${e.notes}</textarea>
-                  <div class="flex items-center gap-3 mt-3">
-                    <button onclick="store.dispatch('SAVE_EXTENSION','${r.id}')"
-                            class="px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-md text-xs font-semibold shadow-sm">
-                      Save Extension Update
-                    </button>
-                    ${meta?.updatedBy ? `<span class="text-[10px] text-slate-400">Last saved by ${meta.updatedBy}${
-                      meta.updatedAt ? ' · ' + new Date(meta.updatedAt).toLocaleString() : ''}</span>` : ''}
+                  <div class="mt-3 pt-3 border-t border-slate-100">
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div>
+                        <label class="block text-[10px] font-semibold text-slate-500 uppercase tracking-wide mb-1">Client Decision</label>
+                        <select class="ext-decision w-full bg-white border border-slate-300 rounded-md px-3 py-2 text-sm" data-id="${r.id}">
+                          ${View.EXT_DECISIONS.map(d => `<option ${e.decision === d ? 'selected' : ''}>${d}</option>`).join('')}
+                        </select>
+                      </div>
+                      <div>
+                        <label class="block text-[10px] font-semibold text-slate-500 uppercase tracking-wide mb-1">Shared Notes</label>
+                        <textarea class="ext-notes w-full bg-white border border-slate-300 rounded-md px-3 py-2 text-xs h-[38px]"
+                                  data-id="${r.id}" placeholder="Client or extension context…">${e.notes}</textarea>
+                      </div>
+                    </div>
+                    <div class="flex items-center gap-3 mt-3">
+                      <button onclick="store.dispatch('SAVE_EXTENSION','${r.id}')"
+                              class="px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-md text-xs font-semibold shadow-sm">
+                        Save Extension Update
+                      </button>
+                      ${meta?.updatedBy ? `<span class="text-[10px] text-slate-400">Last saved by ${meta.updatedBy}${
+                        meta.updatedAt ? ' · ' + new Date(meta.updatedAt).toLocaleString() : ''}</span>` : ''}
+                    </div>
                   </div>
                   <p class="text-[10px] text-slate-400 mt-3 leading-snug">
-                    Linked backfill isn&rsquo;t shown &mdash; nothing in B4 or VNDLY ties an ending seat to its replacement job.
+                    Linked backfill isn&rsquo;t shown &mdash; nothing in the source systems ties an ending seat to its replacement job.
                   </p>
                 </div>
               </div>
@@ -6165,19 +6407,25 @@
 
       extensions() {
         const s = window.store.state;
+        // The reference's full ten columns, plus 13-Wk Value. SYSTEM MATCH and
+        // RECRUITER were the two that used to be missing; both now ship from
+        // the API. The seat's Bullhorn placement is reached through the
+        // warehouse crosswalk (BH_PLACEMENT_RAW_TO_B4HealthOrder), which
+        // resolves 287 of the 313 live B4 seats and carries a recruiter name on
+        // every one of them. VNDLY has no such path and says so rather than
+        // showing a blank.
         const extCols = [
           { label: '' },
+          { label: 'Assignment ID',   key: 'id' },
+          { label: 'Assignment',      key: 'facility' },
           { label: 'Clinician',       key: 'clinician' },
-          { label: 'Source',          key: 'source_system', align: 'center' },
-          // Sorts and filters on what is actually on screen. Keyed on the
-          // raw vendor instead, someone could type a vendor name into the
-          // Agency filter while Redact Vendor Info was on and infer the
-          // masked value from which rows matched.
-          { label: 'Agency',          key: r => View.stageAgencyLabel(r), align: 'center' },
-          { label: 'Ends',            key: 'end_date',      align: 'center' },
-          { label: 'Days Left',       key: 'days_left',     align: 'center' },
+          { label: 'End Date',        key: 'end_date',      align: 'center' },
+          { label: 'Days Left',       key: 'days_left',     align: 'center', sub: 'To Contract End' },
+          { label: 'System Match',    key: r => View.matchSummary(r).sort },
           { label: 'Client Decision', key: r => View.extensionEdit(r).decision, align: 'center' },
           { label: 'PM',              key: 'account_manager' },
+          { label: 'Recruiter',       key: 'recruiter' },
+          { label: 'Urgency',         key: 'urgency',       align: 'center' },
           { label: '13-Wk Value',     key: 'extension_value_13wk', align: 'right' },
         ];
         const all = (s.extensionsRows || []).filter(View.stageFilter);
@@ -6188,11 +6436,16 @@
         const events = rows.reduce((a, r) => a + (Number(r.extension_events || r.ext_events) || 0), 0);
         const value = rows.reduce((a, r) => a + (Number(r.extension_value_13wk) || 0), 0);
         const undecided = rows.filter(r => View.extensionGroup(r) === 'NO DECISION').length;
+        // Seats whose two systems disagree. Replaces the old raw event count,
+        // which only said that something had been edited -- this says a seat
+        // needs reconciling before the extension can be trusted.
+        const mismatched = rows.filter(r => (r.match?.counts?.bad || 0) > 0).length;
         View.renderKpiCards([
           { label: 'Seats In Window', val: rows.length, icon: 'repeat', color: 'blue' },
           { label: 'Expiring ≤14 Days', val: expiring, icon: 'alert-triangle', color: 'red' },
           { label: 'No Decision Yet', val: undecided, icon: 'help-circle', color: 'amber' },
-          { label: 'Extension Events', val: events, icon: 'activity', color: 'indigo' },
+          { label: 'System Mismatches', val: mismatched, icon: 'git-compare', color: 'indigo',
+            sub: events ? `${events} recorded change${events === 1 ? '' : 's'}` : null },
           { label: 'Already Extended', val: rows.filter(r => r.is_extension).length, icon: 'refresh-cw', color: 'purple' },
           { label: '13-Week Value', val: value ? money(value) : '—', icon: 'dollar-sign', color: 'emerald' },
         ]);
@@ -6210,7 +6463,7 @@
           if (!list.length) return;
           const gv = list.reduce((a, r) => a + (Number(r.extension_value_13wk) || 0), 0);
           body += `<tr class="bg-slate-200">
-              <td colspan="8" class="px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-600">
+              <td colspan="${extCols.length}" class="px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-600">
                 ${g} <span class="text-slate-400 font-semibold ml-1">${list.length}</span>
                 ${gv ? `<span class="text-slate-400 font-normal ml-2">${money(gv)} contract value</span>` : ''}
               </td></tr>`;
@@ -6220,16 +6473,29 @@
             body += `
               <tr class="hover:bg-slate-50 border-b border-slate-100 cursor-pointer" onclick="store.dispatch('TOGGLE_EXTENSION_ROW','${r.id}')">
                 <td class="px-3 py-2 text-slate-400">${open ? '&#9660;' : '&#9654;'}</td>
+                <td class="px-3 py-2 whitespace-nowrap">
+                  <span class="px-1.5 py-0.5 rounded border border-slate-200 bg-white text-[10px] font-mono text-slate-600">${r.id || '—'}</span>
+                </td>
+                <td class="px-3 py-2">
+                  <div class="text-[10px] uppercase tracking-wide text-slate-400">${View.esc(r.health_system || '—')}</div>
+                  <div class="font-bold text-sm text-slate-700">${View.esc(r.facility || '—')}</div>
+                  <div class="text-[10px] uppercase tracking-wide text-blue-600">${View.esc(r.role || r.care_type || '')}</div>
+                </td>
                 <td class="px-3 py-2">
                   <div class="font-medium text-slate-700">${View.stageWorker(r)}</div>
-                  <div class="text-[10px] text-slate-400">${r.facility || '—'} · ${r.role || r.care_type || '—'}</div>
+                  <div class="text-[10px] mt-0.5">${View.stageAgency(r)}</div>
                 </td>
-                <td class="px-3 py-2 text-center">${View.stageBadge(r.source_system || r.source || '—', 'info')}</td>
-                <td class="px-3 py-2 text-center">${View.stageAgency(r)}</td>
                 <td class="px-3 py-2 text-center text-slate-600">${r.end_date || '—'}</td>
                 <td class="px-3 py-2 text-center">${r.days_left != null ? View.stageBadge(r.days_left + 'd', r.urgency || 'low') : '—'}</td>
+                <td class="px-3 py-2">${View.matchCell(r)}</td>
                 <td class="px-3 py-2 text-center">${View.extensionDecisionBadge(e.decision)}</td>
-                <td class="px-3 py-2 text-slate-500">${r.account_manager || '—'}</td>
+                <td class="px-3 py-2 text-slate-500">${View.esc(r.account_manager || '—')}</td>
+                <td class="px-3 py-2 text-slate-500">${r.recruiter
+                  ? View.esc(r.recruiter)
+                  : '<span class="text-slate-300 italic text-[10px]">not in data</span>'}</td>
+                <td class="px-3 py-2 text-center">${View.stageBadge(r.urgency
+                  ? r.urgency.charAt(0).toUpperCase() + r.urgency.slice(1)
+                  : '—', r.urgency || 'low')}</td>
                 <td class="px-3 py-2 text-right text-slate-600">${money(r.extension_value_13wk)}</td>
               </tr>`;
             if (open) body += View.extensionDetail(r);
@@ -6377,21 +6643,21 @@
 
       onboarding() {
         const s = window.store.state;
+        // Reference columns: START ID, CLINICIAN, ASSIGNMENT, SOURCE, STATUS,
+        // CURRENT START, MOVES, DAYS DELAYED, DELAY REASON, OWNER. Source and
+        // Agency ride under Clinician the way Extensions does, so the row
+        // reads the same on both tabs.
         const onbCols = [
           { label: '' },
+          { label: 'Start ID',      key: 'id' },
+          { label: 'Assignment',    key: 'facility' },
           { label: 'Clinician',     key: 'clinician' },
-          { label: 'Source',        key: 'source_system', align: 'center' },
-          // Sorts and filters on what is actually on screen. Keyed on the
-          // raw vendor instead, someone could type a vendor name into the
-          // Agency filter while Redact Vendor Info was on and infer the
-          // masked value from which rows matched.
-          { label: 'Agency',          key: r => View.stageAgencyLabel(r), align: 'center' },
           { label: 'Status',        key: r => View.onboardingGroup(r), align: 'center' },
-          { label: 'Current Start', key: 'current_start',  align: 'center' },
-          { label: 'Moves',         key: 'move_count',     align: 'center' },
-          { label: 'Moved',         key: r => View.onboardingSlip(r), align: 'center' },
-          { label: 'Delay Reason',  key: r => View.onboardingEdit(r).context || r.delay_reason || '' },
-          { label: 'PM',            key: 'account_manager' },
+          { label: 'Current Start', key: 'current_start', align: 'center' },
+          { label: 'Moves',         key: 'move_count',    align: 'center' },
+          { label: 'Days Delayed',  key: 'days_delayed',  align: 'center' },
+          { label: 'Delay Reason',  key: 'delay_reason' },
+          { label: 'Owner',         key: 'account_manager' },
         ];
         const rows = View.stageApply('onboarding',
           (s.onboardingRows || []).filter(View.stageFilter), onbCols);
@@ -6433,12 +6699,18 @@
             body += `
               <tr class="hover:bg-slate-50 border-b border-slate-100 cursor-pointer" onclick="store.dispatch('TOGGLE_ONBOARDING_ROW','${r.id}')">
                 <td class="px-3 py-2 text-slate-400">${open ? '&#9660;' : '&#9654;'}</td>
+                <td class="px-3 py-2 whitespace-nowrap">
+                  <span class="px-1.5 py-0.5 rounded border border-slate-200 bg-white text-[10px] font-mono text-slate-600">${r.id || '—'}</span>
+                </td>
+                <td class="px-3 py-2">
+                  <div class="text-[10px] uppercase tracking-wide text-slate-400">${View.esc(r.health_system || '—')}</div>
+                  <div class="font-bold text-sm text-slate-700">${View.esc(r.facility || '—')}</div>
+                  <div class="text-[10px] uppercase tracking-wide text-blue-600">${View.esc(r.role || '')}</div>
+                </td>
                 <td class="px-3 py-2">
                   <div class="font-medium text-slate-700">${View.stageWorker(r)}</div>
-                  <div class="text-[10px] text-slate-400">${r.facility || '—'} · ${r.role || '—'}</div>
+                  <div class="text-[10px] mt-0.5">${View.stageAgency(r)}</div>
                 </td>
-                <td class="px-3 py-2 text-center">${View.stageBadge(r.source_system || r.source || '—', 'info')}</td>
-                <td class="px-3 py-2 text-center">${View.stageAgency(r)}</td>
                 <td class="px-3 py-2 text-center">${View.stageBadge(g, tone[g] || 'low')}</td>
                 <td class="px-3 py-2 text-center text-slate-600">${r.current_start || '—'}</td>
                 <td class="px-3 py-2 text-center text-slate-600">${
@@ -6470,20 +6742,24 @@
 
       closed() {
         const s = window.store.state;
+        const isNonMspClosedCols = s.dataSource === 'non_msp';
+        // Columns follow the reference. RATE RANK is deliberately absent: the
+        // prototype's came from a mock `rank` field and its comparable median
+        // was `days * 0.82 + 4`, so there is nothing real behind either yet.
+        // MARKET SHARE is MSP-only -- non-MSP has a single vendor, so the
+        // column would read 100% on every row.
         const closedCols = [
-          { label: 'Clinician',    key: 'clinician' },
-          { label: 'Facility',     key: 'facility' },
-          { label: 'Role',         key: 'role' },
-          { label: 'Source',       key: 'source_system', align: 'center' },
-          // Sorts and filters on what is actually on screen. Keyed on the
-          // raw vendor instead, someone could type a vendor name into the
-          // Agency filter while Redact Vendor Info was on and infer the
-          // masked value from which rows matched.
-          { label: 'Agency',          key: r => View.stageAgencyLabel(r), align: 'center' },
-          { label: 'Closed',       key: 'closed_on',     align: 'center' },
-          { label: 'Outcome',      key: 'group',         align: 'center' },
-          { label: 'Reason',       key: 'outcome_reason' },
-          { label: '13-Wk Value',  key: 'value_13wk',    align: 'right' },
+          { label: 'ID',            key: 'id' },
+          { label: 'Category',      key: 'category' },
+          { label: 'System / Facility / Specialty', key: 'facility' },
+          { label: 'Outcome',       key: 'group',         align: 'center' },
+          { label: 'Filled By',     key: 'filled_by' },
+          ...(isNonMspClosedCols ? [] : [
+            { label: 'Market Share', key: r => View.closedSharePct(r), align: 'center' },
+          ]),
+          { label: 'Days To Close', key: 'days_to_close', align: 'center' },
+          { label: 'Revenue',       key: 'revenue',       align: 'right' },
+          { label: 'Owner',         key: 'account_manager' },
         ];
         const rows = View.stageApply('closed',
           (s.closedRows || []).filter(View.stageFilter), closedCols);
@@ -6493,62 +6769,102 @@
         const top = Object.entries(byGroup).sort((a, b) => b[1] - a[1])[0];
         const windowDays = s.closedMeta?.coverage?.windowDays;
         const value = rows.reduce((a, r) => a + (Number(r.value_13wk) || 0), 0);
+        // The feedback asked for GHR metrics here rather than Top Outcome and
+        // Outcome Types, which named a bucket without saying how much was won.
+        // Revenue is summed off the same signed value the table shows, so the
+        // tiles and the rows can never disagree.
         const nonMspKpi = s.dataSource === 'non_msp';
-        const covKpi = s.closedMeta?.coverage || {};
+        const gc = (k) => rows.filter(r => r.group === k).length;
+        const wins = nonMspKpi ? gc('FILLED') : gc('GHR WON');
+        const avWins = gc('AFFILIATE WON');
+        const missed = nonMspKpi ? gc('UNFILLED') : gc('MISSED');
+        const decided = wins + avWins + missed;
+        const captured = rows.reduce((a, r) => a + (Number(r.revenue) || 0), 0);
+        const fmtK = v => (v || v === 0)
+          ? (v < 0 ? '-' : '+') + '$' + (Math.abs(v) >= 1000
+              ? (Math.abs(v) / 1000).toFixed(1) + 'k'
+              : Math.abs(v).toFixed(0))
+          : '—';
         View.renderKpiCards([
-          { label: windowDays ? `Closed (${windowDays}d)` : 'Closed In Window', val: rows.length, icon: 'check-circle', color: 'blue' },
-          // Fill rate and velocity are what the non-MSP meeting acts on;
-          // "top outcome" is a label, not a number anyone can move.
-          nonMspKpi
-            ? { label: 'Fill Rate', val: covKpi.fillRatePct != null ? covKpi.fillRatePct + '%' : '—',
-                icon: 'target', color: 'indigo' }
-            : { label: 'Top Outcome', val: top ? top[0] : '—', icon: 'pie-chart', color: 'indigo' },
-          // Median, not mean: same-day bookings dominate and a long tail drags
-          // the average well above where most fills actually land.
-          nonMspKpi
-            ? { label: 'Median Days To Fill',
-                val: covKpi.medianDaysToFill != null ? covKpi.medianDaysToFill + 'd' : '—',
-                icon: 'clock', color: 'purple' }
-            : { label: 'Outcome Types', val: Object.keys(byGroup).length, icon: 'layers', color: 'purple' },
-          { label: 'Ended Early', val: rows.filter(r => /terminat|resign|cancel/i.test(r.group || '')).length,
-            icon: 'alert-triangle', color: 'red' },
-          { label: 'Avg Tenure', val: (() => {
-              // Only rows with both ends of the span — a partial one would drag
-              // the average toward zero rather than being left out.
-              const spans = rows.map(r => {
-                const a = Utils.toDateOrNull(r.start_date), b = Utils.toDateOrNull(r.closed_on);
-                return (a && b) ? Math.round((b - a) / 86400000) : null;
-              }).filter(v => v != null && v >= 0);
-              return spans.length ? Math.round(spans.reduce((x, y) => x + y, 0) / spans.length) + 'd' : '—';
-            })(), icon: 'calendar', color: 'slate' },
-          { label: '13-Week Value', val: value ? money(value) : '—', icon: 'dollar-sign', color: 'emerald' },
+          { label: windowDays ? `Total Closed (${windowDays}d)` : 'Total Closed',
+            val: rows.length, icon: 'check-circle', color: 'blue' },
+          { label: nonMspKpi ? 'Filled' : 'GHR Wins', val: wins, icon: 'award', color: 'emerald' },
+          { label: nonMspKpi ? 'Fill Rate' : 'GHR Win %',
+            val: decided ? Math.round((wins / decided) * 100) + '%' : '—',
+            icon: 'target', color: 'indigo' },
+          ...(nonMspKpi ? [] : [
+            { label: 'Affiliate Wins', val: avWins, icon: 'users', color: 'purple' },
+          ]),
+          { label: nonMspKpi ? 'Unfilled' : 'Missed', val: missed, icon: 'alert-triangle', color: 'red' },
+          { label: 'Revenue Captured', val: fmtK(captured), icon: 'dollar-sign', color: 'emerald' },
         ]);
 
-        // Rows expand to the market-share pane, matching Extensions and
-        // Onboarding. Only where there is something to open: on non-MSP every
-        // seat is GHR, so a vendor split would be a single 100% slice.
+        // Grouped like the reference: outcome buckets in a fixed order, each
+        // with a header row carrying its count and the positions behind it.
+        // The old table was a flat list, which left the question the stage
+        // exists to answer -- how much did we win this week -- to be worked
+        // out by reading every row.
         const closedExpandable = s.dataSource !== 'non_msp';
-        const body = rows.map(r => {
-          const open = closedExpandable && s.expandedClosed.has(r.id);
-          const row = `
-          <tr class="hover:bg-slate-50 border-b border-slate-100 ${closedExpandable ? 'cursor-pointer' : ''}"
-              ${closedExpandable ? `onclick="store.dispatch('TOGGLE_CLOSED_ROW','${r.id}')"` : ''}>
-            <td class="px-3 py-2 font-medium text-slate-700 whitespace-nowrap">${
-              closedExpandable ? `<span class="text-slate-400 mr-1">${open ? '&#9660;' : '&#9654;'}</span>` : ''
-            }${View.stageWorker(r)}</td>
-            <td class="px-3 py-2 text-slate-500">${r.facility || '—'}</td>
-            <td class="px-3 py-2 text-slate-500">${r.role || '—'}</td>
-            <td class="px-3 py-2 text-center">${View.stageBadge(r.source_system || r.source || '—', 'info')}</td>
-            <td class="px-3 py-2 text-center">${View.stageAgency(r)}</td>
-            <td class="px-3 py-2 text-center text-slate-600">${r.closed_on || '—'}</td>
-            <td class="px-3 py-2 text-center">${r.group ? View.stageBadge(r.group, 'low') : '—'}</td>
-            <td class="px-3 py-2 text-slate-500">${r.outcome_reason || '—'}</td>
-            <td class="px-3 py-2 text-right text-slate-600">${money(r.value_13wk)}</td>
-          </tr>`;
-          return open
-            ? row + `<tr><td colspan="${closedCols.length}" class="p-0">${View.closedDetail(r)}</td></tr>`
-            : row;
-        }).join('');
+        const CLOSED_GROUPS = closedExpandable
+          ? [['GHR WON', 'Filled · GHR'], ['AFFILIATE WON', 'Filled · Affiliate Network'],
+             ['MISSED', 'Unfilled · Expired'], ['CANCELED', 'Canceled & Declined']]
+          : [['FILLED', 'Filled'], ['UNFILLED', 'Unfilled'], ['CANCELED', 'Canceled & Declined']];
+        // Signed, unlike the plain `money` already in this scope: on Closed the
+        // sign is the point. A GHR win is revenue earned, an affiliate win or
+        // an unfilled seat is revenue lost.
+        const signedMoney = v => (v || v === 0)
+          ? (v < 0 ? '-' : '+') + '$' + Math.abs(Number(v)).toLocaleString(undefined, { maximumFractionDigits: 0 })
+          : '—';
+        const grouped = {};
+        rows.forEach(r => { (grouped[r.group] = grouped[r.group] || []).push(r); });
+
+        let body = '';
+        CLOSED_GROUPS.forEach(([key, label]) => {
+          const list = grouped[key] || [];
+          if (!list.length) return;
+          const val = list.reduce((a, r) => a + (Number(r.revenue) || 0), 0);
+          body += `
+            <tr class="bg-slate-50 border-y border-slate-200">
+              <td colspan="${closedCols.length}" class="px-3 py-2">
+                <span class="text-[11px] font-bold uppercase tracking-wide text-slate-600">${label}</span>
+                <span class="ml-2 px-1.5 py-0.5 rounded-full bg-slate-200 text-slate-700 text-[10px] font-bold">${list.length}</span>
+                <span class="ml-2 text-[10px] text-slate-500">${list.length} position${list.length === 1 ? '' : 's'}${
+                  val ? ` · ${signedMoney(val)}` : ''}</span>
+              </td></tr>`;
+          list.forEach(r => {
+            const open = closedExpandable && s.expandedClosed.has(r.id);
+            const share = View.closedSharePct(r);
+            body += `
+              <tr class="hover:bg-slate-50 border-b border-slate-100 ${closedExpandable ? 'cursor-pointer' : ''}"
+                  ${closedExpandable ? `onclick="store.dispatch('TOGGLE_CLOSED_ROW','${r.id}')"` : ''}>
+                <td class="px-3 py-2 whitespace-nowrap">
+                  <span class="px-1.5 py-0.5 rounded border border-slate-200 bg-white text-[10px] font-mono text-slate-600">${r.id || '—'}</span>
+                  ${closedExpandable ? `<span class="ml-1 text-slate-400">${open ? '&#9660;' : '&#9654;'}</span>` : ''}
+                </td>
+                <td class="px-3 py-2 font-semibold text-slate-700">${r.category || '—'}</td>
+                <td class="px-3 py-2">
+                  <div class="text-[10px] uppercase tracking-wide text-slate-400">${View.esc(r.health_system || '—')}</div>
+                  <div class="font-bold text-sm text-slate-700">${View.esc(r.facility || '—')}</div>
+                  <div class="text-[10px] uppercase tracking-wide text-blue-600">${View.esc(r.role || r.specialty || '')}</div>
+                </td>
+                <td class="px-3 py-2 text-center">
+                  ${r.group ? View.stageBadge(r.group, 'low') : '—'}
+                  ${r.outcome_reason ? `<div class="text-[10px] text-slate-400 mt-0.5">${View.esc(r.outcome_reason)}</div>` : ''}
+                </td>
+                <td class="px-3 py-2 font-medium text-slate-700">${View.esc(View.closedFilledBy(r))}</td>
+                ${closedExpandable ? `<td class="px-3 py-2 text-center font-semibold ${
+                  share == null ? 'text-slate-300' : 'text-blue-600'}">${share == null ? '—' : share + '%'}</td>` : ''}
+                <td class="px-3 py-2 text-center text-slate-700">${r.days_to_close == null ? '—' : r.days_to_close}</td>
+                <td class="px-3 py-2 text-right font-semibold ${
+                  (Number(r.revenue) || 0) < 0 ? 'text-red-600' : (r.revenue ? 'text-emerald-700' : 'text-slate-400')
+                }">${signedMoney(r.revenue)}</td>
+                <td class="px-3 py-2 text-slate-600">${View.esc(r.account_manager || '—')}</td>
+              </tr>`;
+            if (open) {
+              body += `<tr><td colspan="${closedCols.length}" class="p-0">${View.closedDetail(r)}</td></tr>`;
+            }
+          });
+        });
 
         const el = $('closedContent');
         const isNonMspClosed = s.dataSource === 'non_msp';
@@ -6595,9 +6911,17 @@
           ]);
         }
         if (el) el.innerHTML = View.stageShell('closed', 'Closed',
-          isNonMspClosed
-            ? 'Historical orders and how they resolved — fill rate and time to fill across Bullhorn and Symplr'
-            : 'Assignments that ended, grouped by why — reasons canonicalised across VNDLY spelling variants',
+          (() => {
+            // Say which range is on screen. The default is now the previous
+            // completed week rather than a rolling seven days, and a weekly
+            // number that does not name its week invites the wrong reading.
+            const c = s.closedMeta?.coverage || {};
+            const range = (c.windowFrom && c.windowTo) ? ` · ${c.windowFrom} to ${c.windowTo}` : '';
+            const label = c.windowLabel ? c.windowLabel.replace(/^./, ch => ch.toUpperCase()) : '';
+            return isNonMspClosed
+              ? `Historical orders and how they resolved — fill rate and time to fill${range}`
+              : `Weekly account outcomes — capture, revenue and market share. ${label}${range}`;
+          })(),
           body, closedCols, closedIntel);
         lucide.createIcons();
       },
@@ -6988,6 +7312,7 @@
               <i data-lucide="${c.icon}" class="w-3 h-3 sm:w-4 sm:h-4 text-${c.color}-500 shrink-0"></i>
             </div>
             <div class="text-base sm:text-2xl font-bold text-slate-800">${c.val}</div>
+            ${c.sub ? `<div class="text-[9px] sm:text-[11px] text-slate-400 mt-0.5 leading-tight">${c.sub}</div>` : ''}
           </div>
         `).join('');
         lucide.createIcons();

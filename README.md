@@ -2,6 +2,71 @@
 
 ## Version History
 
+### 2.6.0 - System Match, Recruiter, and what `IsExtension` actually means
+
+The two columns Extensions was missing both shipped. Both needed the same thing: a way to find a seat's counterpart record in the other system.
+
+**`PLACEMENT_DIM.IsExtension` does not mean what its name suggests.** It marks a placement that *is* an extension of a prior assignment, not one that *has been* extended. Checked against the chain rule the feedback describes — same clinician, same client, a prior placement ending within 14 days of this one's start — 7,545 of the 8,745 flagged placements chain (86%), against 8.7% of the unflagged ones. That is also why the flag and the date signal barely overlap: only 871 records both carry `IsExtension` and show `DateEnd > DateOriginalEnd`, because a flagged placement is a *new record* whose own end date has not moved. They answer different questions, so both ship: `seat_is_continuation` for the chain and `is_extension` for a pushed-out end date.
+
+Neither is the Extensions tab's driver. The tab lists active seats approaching contract end; the flags supply the seat's history.
+
+**System Match** compares the same fact as the VMS and the ATS each record it. `BH_PLACEMENT_RAW_TO_B4HealthOrder` links a B4 contract to a Bullhorn placement and resolves 287 of the 313 live GHR seats in the 45-day window (92%).
+
+The crosswalk is used for the link and nothing else. Its own status and date columns are a snapshot frozen at load time: 3,002 of its 4,179 newest rows (72%) disagree with the live placement status and 1,257 (30%) with the live end date. Reading them as facts produced 78 phantom end-date mismatches and made 270 working seats look stuck in "Pending Start" — live, 272 of the 287 read "Approved". Every compared value is now read from `PLACEMENT_DIM`.
+
+Only fields that are genuinely the same fact are compared. Status is not one of them: B4's `Contract_Status` describes the requisition and reads "Closed And Awarded" on every live seat, while Bullhorn's describes the placement lifecycle, so comparing the strings would flag all 287 as mismatched. The Lifecycle row asks the answerable question instead — has one system closed a seat the other still runs?
+
+| Field | Mismatches (of 287 linked) |
+|---|---|
+| End Date | 36 |
+| Start Date | 17 |
+| Clinician | 2 |
+| Lifecycle — ended in ATS, live in VMS | 10 |
+
+**Recruiter** is reached through the same crosswalk and is named on all 287 linked seats.
+
+VNDLY gets neither, and says so rather than showing a blank: no identifier reaches from a VNDLY work order to a Bullhorn placement. `VMSReqID` looked like the bridge and is a B4 contract number (5,068 of its 5,069 values resolve to B4, none to a work order); `STAGING_VNDLY_CONTRACTOR_XREF.[Client Contractor]` looked like a Bullhorn candidate ID and is the client's own contractor number (zero of 283 match). Non-MSP has one system of record, so the panel shows the seat's own audit trail instead — `EditHistoryPlacement` records every end-date move with its old value, new value and author, which is stronger evidence than a comparison would be.
+
+Also: the Extensions group header spanned 8 columns against a 12-column table, and KPI cards silently dropped any `sub` line they were given.
+
+### Extensions and Onboarding realigned to the reference
+
+Both tabs now carry the reference's columns and its three-line assignment block — system eyebrow, facility, specialty — with Source and Agency moved under the clinician so a row reads the same on every stage tab.
+
+| | Reference | Now |
+|---|---|---|
+| Extensions | 10 columns | 10, plus 13-Wk Value |
+| Onboarding | 10 columns | 10 |
+| Closed | 10 columns | 9, less Rate Rank |
+
+**Rate Rank** on Closed is the one reference column still absent, pending the Rate pane wiring.
+
+**2.5.0** - Rate intelligence: real ranking from the rate trend tables
+
+The prototype's Rate pane could not have shipped — its `rateRank` came from a mock field and its comparable median was `days * 0.82 + 4`. The feedback said to leave Rate out until market data was validated. It turns out the data was already in `ghrdhc`.
+
+`BH_BILL_RATE_TRENDS_OUTLIERS_FACT` holds the full population despite its name: 35.07M rated rows across 288,348 job orders, of which only 7% carry `bt_Outlier`. The flag marks which rates are outliers; it does not filter the table. Two filters are mandatory — `Group_Context` and `Sensitivity_Level` — because each job order appears once per grouping context (six) and per sensitivity level (ten), so without them every job counts dozens of times and a rank's denominator is meaningless.
+
+**The endpoint ships peer rates, not ranks.** Filters in this app are client-side; they narrow loaded rows and never refetch. A rank computed server-side would be locked to one scope and would stop agreeing with the System picker the moment anyone used it. With the peers in hand the client ranks within whatever the active filters leave, so the ranking follows the System picker — and facility, category and division — with no extra control and no refetch. 21,824 rows over 90 days across 657 accounts.
+
+Ranking is **category-first**, and the ladder never leaves the category — taking the tightest rung that clears a three-peer floor:
+
+| Scope | Coverage |
+|---|---|
+| account + category + profession + specialty | 35% |
+| account + category + profession | 62% |
+| category + profession + specialty (all accounts) | 94% |
+
+What would have been "book-wide" is the third rung: all accounts *within* the category, never a comparison across categories. That matters because Travel is 20,588 jobs against Local's 1,108 and pays structurally more, so ranking a Local req against Travel peers would mark every Local req underpaid however well it is priced. Category comes from `employmentType` (Travel / Local / Remote / PRN), which lines up with the CATEGORY column on Closed.
+
+The same reasoning rules out service line as a ranking tier, despite its 68% coverage: an RN at $95 and a CNA at $35 are both Nursing, so the CNA would rank last regardless of pricing.
+
+Below ten peers the display is a percentile rather than an ordinal. "#1 of 3" and "#1 of 149" read as equally strong claims and are not.
+
+A $20–400/hr sanity bound is enforced. One RN Case Management req carried $1,100/hr — a weekly figure in an hourly field — which alone lifted its group's average from about $90 to $144 and made every other req in that group look far below market. `bt_Outlier` did not catch it; inside the bound only 97 of 21,824 rows are flagged, so the bound is doing nearly all the work.
+
+Weeks are Sunday-based, matching the `DATEFIRST 7` the app pins elsewhere and the Saturday period ends in the rate trend tables.
+
 **2.4.0** - Legend filter buttons on non-MSP, and the source badge tells the truth
 
 **The source badge said B4 on the non-MSP side.** It tested `sourceSystem === 'VNDLY'` and labelled everything else `B4`, so Bullhorn and Symplr rows both claimed to come from a system that supplies none of that instance's data. All four sources now have their own badge — **B4**, **V**, **BH**, **SY** — and an unrecognised value shows its own initials rather than being relabelled. The `|| 'B4'` default on the row mapping went too; every query on both sides selects `source_system` explicitly, so it was only ever a guard, and a guard that lies is worse than none.
