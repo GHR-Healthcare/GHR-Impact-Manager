@@ -12883,7 +12883,8 @@
                       (moved ? ` — moved ${moved > 0 ? '+' : ''}${moved}d` : ''));
                   }
                   window.showToast?.('Start update saved.', 'success');
-                  View.onboarding();
+                  // Anchored: an auto-save must not move the row being edited.
+                  View.anchoredRerender(id, () => View.onboarding());
                 } catch (e) {
                   console.warn('Onboarding save failed:', e);
                   window.showToast?.('Could not save: ' + (e.message || e), 'error');
@@ -12933,7 +12934,8 @@
                     window.store.dispatch('LOG_MEETING_ACTION', `Extension decision “${decision}” for ${who}`);
                   }
                   window.showToast?.('Extension updated.', 'success');
-                  View.extensions();
+                  // Anchored: an auto-save must not move the row being edited.
+                  View.anchoredRerender(id, () => View.extensions());
                 } catch (e) {
                   console.warn('Extension save failed:', e);
                   window.showToast?.('Could not save: ' + (e.message || e), 'error');
