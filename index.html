@@ -874,7 +874,7 @@
     const $ = (id) => document.getElementById(id);
 
     // App version - loaded from environment variable via API, with fallback
-    let APP_VERSION = '2.3.9';
+    let APP_VERSION = '2.4.0';
 
     const API_BASE_URL = '/api';
     
@@ -1998,7 +1998,12 @@
             const job = {
                 id: String(row.position_id || row.id || row.req_id || ''),
                 positionId: String(row.position_id || row.req_id || ''),
-                sourceSystem: row.source_system || 'B4',  // B4 or VNDLY
+                // Every query on both sides selects source_system explicitly
+                // (B4, VNDLY, Bullhorn, Symplr), so this is only a guard. It
+                // used to default to 'B4', which on the non-MSP side named a
+                // system that supplies none of its data; blank lets the badge
+                // say it does not know instead of saying something false.
+                sourceSystem: row.source_system || '',
                 system: String(row.program || row.system || ''),
                 program: String(row.program || row.system || ''),
                 // Clinical service line, kept apart from `program`. On non-MSP
@@ -5008,8 +5013,21 @@
         const isHot = job.levers && job.levers.hotJob && job.levers.hotJob.done;
         const totalDeclines = job.ghrDeclines + job.avDeclines;
 
-        const sourceColor = job.sourceSystem === 'VNDLY' ? 'bg-purple-100 text-purple-700' : 'bg-blue-100 text-blue-700';
-        const sourceLabel = job.sourceSystem === 'VNDLY' ? 'V' : 'B4';
+        // Four systems feed this list, not two. The old test was VNDLY-or-else,
+        // so Bullhorn and Symplr rows both rendered a 'B4' badge -- on the
+        // non-MSP side, where no B4 data exists at all. Unknown values show
+        // their own first character rather than being relabelled as B4.
+        const SOURCE_BADGE = {
+          B4:       { label: 'B4', cls: 'bg-blue-100 text-blue-700' },
+          VNDLY:    { label: 'V',  cls: 'bg-purple-100 text-purple-700' },
+          Bullhorn: { label: 'BH', cls: 'bg-emerald-100 text-emerald-700' },
+          Symplr:   { label: 'SY', cls: 'bg-amber-100 text-amber-800' },
+        };
+        const srcKey = job.sourceSystem || '';
+        const srcBadge = SOURCE_BADGE[srcKey]
+          || { label: (srcKey || '?').slice(0, 2).toUpperCase(), cls: 'bg-slate-100 text-slate-600' };
+        const sourceColor = srcBadge.cls;
+        const sourceLabel = srcBadge.label;
         
         let html = `
           <div class="grid grid-cols-12 p-4 items-center hover:bg-slate-50 cursor-pointer group transition-colors" onclick="window.store.dispatch('TOGGLE_ROW','${job.id}')">
@@ -5017,7 +5035,7 @@
               <button onclick="event.stopPropagation(); window.store.dispatch('TOGGLE_HOT_JOB','${job.id}')" class="shrink-0 transition-transform hover:scale-110">
                 <i data-lucide="flame" class="w-4 h-4 ${isHot ? 'hot-job-active' : 'text-slate-300 hover:text-orange-400'}"></i>
               </button>
-              <span class="px-1 py-0.5 rounded text-[9px] font-bold ${sourceColor}" title="${job.sourceSystem || 'B4'}">${sourceLabel}</span>
+              <span class="px-1 py-0.5 rounded text-[9px] font-bold ${sourceColor}" title="${job.sourceSystem || 'Unknown source'}">${sourceLabel}</span>
               <span class="px-1.5 py-0.5 rounded text-xs font-bold ${colorClass} truncate">${job.id}</span>
             </div>
             <div class="col-span-1 text-xs font-medium text-slate-700 truncate overflow-hidden" title="${job.program}">${job.program}</div>
@@ -7017,18 +7035,36 @@
           { key: 'delayed', label: 'Delayed',     dot: 'bg-[#EF4444]', pred: r => View.onboardingGroup(r) === 'DELAYED START' },
           { key: 'cancel',  label: 'Cancelled',   dot: 'bg-red-800',   pred: r => View.onboardingGroup(r) === 'CANCELED' },
         ],
-        closed: [
-          { key: 'lifecycle', label: 'Ran To Term',  dot: 'bg-[#22C55E]', pred: r => /lifecycle|complete/i.test(r.group || '') },
-          { key: 'ended',     label: 'Ended Early',  dot: 'bg-[#EF4444]', pred: r => /terminat|resign/i.test(r.group || '') },
-          { key: 'cancelled', label: 'Cancelled',    dot: 'bg-red-800',   pred: r => /cancel/i.test(r.group || '') },
-          { key: 'admin',     label: 'Administrative', dot: 'bg-slate-400', pred: r => /admin/i.test(r.group || '') },
+        // Closed bands differ by instance because the outcome vocabulary does.
+        //
+        // This was one list testing for 'lifecycle|complete', 'terminat|resign'
+        // and 'admin', none of which any endpoint has ever produced -- three of
+        // the four bands could not match a row on either side.
+        closed_msp: [
+          { key: 'ghrwon', label: 'GHR Won',       dot: 'bg-[#22C55E]', pred: r => r.group === 'GHR WON' },
+          { key: 'avwon',  label: 'Affiliate Won', dot: 'bg-[#a855f7]', pred: r => r.group === 'AFFILIATE WON' },
+          { key: 'missed', label: 'Missed',        dot: 'bg-[#EF4444]', pred: r => r.group === 'MISSED' },
+          { key: 'cxl',    label: 'Cancelled',     dot: 'bg-red-800',   pred: r => r.group === 'CANCELED' },
+        ],
+        closed_non_msp: [
+          { key: 'filled',   label: 'Filled',    dot: 'bg-[#22C55E]', pred: r => r.group === 'FILLED' },
+          { key: 'unfilled', label: 'Unfilled',  dot: 'bg-[#EF4444]', pred: r => r.group === 'UNFILLED' },
+          { key: 'cxl',      label: 'Cancelled', dot: 'bg-red-800',   pred: r => r.group === 'CANCELED' },
         ],
       },
 
       legendBands() {
         // Priority Jobs is Open Jobs filtered, so it shares its bands.
         const v = window.store.state.view;
-        return View.LEGEND_BANDS[v === 'hotjobs' ? 'list' : v] || null;
+        const key = v === 'hotjobs' ? 'list' : v;
+        // Closed reports a different outcome vocabulary per instance -- won
+        // against affiliates on MSP, filled or not on non-MSP.
+        if (key === 'closed') {
+          return View.LEGEND_BANDS[
+            window.store.state.dataSource === 'non_msp' ? 'closed_non_msp' : 'closed_msp'
+          ] || null;
+        }
+        return View.LEGEND_BANDS[key] || null;
       },
 
       // OR across selected bands. Returns true when nothing is selected.
