@@ -29,6 +29,14 @@ VNDLY gets neither, and says so rather than showing a blank: no identifier reach
 
 Also: the Extensions group header spanned 8 columns against a 12-column table, and KPI cards silently dropped any `sub` line they were given.
 
+### 2.11.0 - Explainable headcount movement
+
+Headcount per week is a set of distinct workers on assignment, so a change between two weeks is the difference between two sets — who appeared and who dropped out. The size of the swing was already on screen; the names behind it were not, which is what made a fall of six impossible to act on. Each headcount cell now carries the change from the previous column, and hovering it names who started and who ended.
+
+The comparison runs across the **displayed** weeks, not the built series. The activity and completeness gates drop weeks out of the middle, so comparing each week to its neighbour in the full series would show a change that does not reconcile with the two numbers either side of it. Checked against the identity it relies on — |A| − |B| = |A∖B| − |B∖A| — over 5,000 random series: the annotation always equals the difference between the two headcounts shown.
+
+Clinician names appear here. Redaction hides vendor-side identity and these are GHR's own workers, so they show; the tooltip caps the list so a swing of forty does not become an unreadable wall.
+
 ### 2.10.0 - Non-MSP: Division narrows System, and the VMS fee surfaces
 
 **Division did not narrow System, and the reason was one unasked question.** The Systems dropdown builds its options from open jobs *and* from assignments, so a system that is filled but has no open order stays selectable. Open jobs were checked against the whole non-MSP hierarchy; assignments were checked only against category and facility. So choosing a Division left behind every system whose sole presence was an assignment in some other division. Assignments carry `division`, `team` and `profession` like everything else and are now asked the same questions.

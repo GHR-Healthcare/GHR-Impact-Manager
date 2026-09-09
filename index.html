@@ -908,7 +908,7 @@
     const $ = (id) => document.getElementById(id);
 
     // App version - loaded from environment variable via API, with fallback
-    let APP_VERSION = '2.10.0';
+    let APP_VERSION = '2.11.0';
 
     const API_BASE_URL = '/api';
     
@@ -8699,8 +8699,10 @@
 
             const fillRate = contractedHC > 0 ? (activeHC / contractedHC * 100) : null;
 
-            return { week: w, activeHC, activesWorked, pctWorked, totalShifts, shiftsPerNurse, contractedHC, fillRate };
+            return { week: w, activeHC, activesWorked, pctWorked, totalShifts,
+                     shiftsPerNurse, contractedHC, fillRate, activeWorkers };
           });
+
         });
 
         // Filter weeks by:
@@ -8836,6 +8838,44 @@
         // Per-system data tables
         activeGroups.forEach(({ key, label, healthSystem: gSys, facility: gFac }) => {
           const sysMetrics = activeWeekIndices.map(i => metrics[key][i]);
+          /* Explainable movement.
+           *
+           * Headcount is a set of distinct workers per week, so a change
+           * between two weeks is the difference between two sets -- who
+           * appeared and who dropped out. The size of the change was already
+           * visible; the names behind it were not, which is what made a fall of
+           * six impossible to act on.
+           *
+           * Computed across the DISPLAYED weeks, not the built series. The
+           * activity and completeness gates drop weeks from the middle, so
+           * comparing each week to its neighbour in the full series would
+           * produce a +5/-3 that does not reconcile with the two numbers
+           * actually shown either side of it.
+           *
+           * Written onto a parallel array rather than the metric objects, which
+           * are shared with the drill-down and the tiles.
+           */
+          const movement = sysMetrics.map((m, ci) => {
+            const prev = ci > 0 ? sysMetrics[ci - 1] : null;
+            if (!prev || !m?.activeWorkers || !prev.activeWorkers) return null;
+            const started = [...m.activeWorkers].filter(w => !prev.activeWorkers.has(w));
+            const ended = [...prev.activeWorkers].filter(w => !m.activeWorkers.has(w));
+            return { started, ended, net: started.length - ended.length };
+          });
+          // Names are the point of this, but they are clinician names: the
+          // redact button hides vendor-side identity, and these are GHR's own
+          // workers, so they show. The tooltip caps the list so a swing of
+          // forty does not produce an unreadable wall.
+          const movementTip = mv => {
+            if (!mv) return '';
+            const cap = 8;
+            const list = (arr, verb) => arr.length
+              ? `${verb} (${arr.length}): ` + arr.slice(0, cap).join(', ')
+                + (arr.length > cap ? `, +${arr.length - cap} more` : '')
+              : '';
+            return [list(mv.started, 'Started'), list(mv.ended, 'Ended')]
+              .filter(Boolean).join('\n') || 'No change in who is on assignment';
+          };
           const encodedKey = encodeURIComponent(key).replace(/'/g, '%27');
 
           html += `
@@ -8853,11 +8893,21 @@
                   </thead>
                   <tbody>
                     <tr class="border-b border-slate-100">
-                      <td class="py-1.5 px-2 font-medium text-slate-600 sticky left-0 bg-white">Total Active Headcount</td>
+                      <td class="py-1.5 px-2 font-medium text-slate-600 sticky left-0 bg-white"
+                          title="Distinct workers on assignment in the week. The figure beneath each count is the change from the previous column — hover it to see who started and who ended.">
+                        Total Active Headcount
+                        <span class="block text-[9px] font-normal text-slate-400 leading-none mt-0.5">change vs previous &middot; hover for names</span>
+                      </td>
                       ${sysMetrics.map((m, ci) => {
                         const wi = activeWeekIndices[ci];
+                        const mv = movement[ci];
+                        const delta = mv && mv.net !== 0
+                          ? `<div class="text-[9px] leading-none mt-0.5 ${mv.net > 0 ? 'text-emerald-600' : 'text-red-600'}">${
+                              mv.net > 0 ? '+' : ''}${mv.net}</div>`
+                          : (mv ? `<div class="text-[9px] leading-none mt-0.5 text-slate-300">&mdash;</div>` : '');
+                        const tip = mv ? ` title="${View.esc(movementTip(mv))}"` : '';
                         return m.activeHC > 0
-                          ? `<td class="text-center py-1.5 px-2 text-blue-600 underline cursor-pointer hover:bg-blue-50" onclick="window.showPDDrilldown('${encodedKey}',${wi},'activeHC')">${m.activeHC}</td>`
+                          ? `<td class="text-center py-1.5 px-2 text-blue-600 cursor-pointer hover:bg-blue-50"${tip} onclick="window.showPDDrilldown('${encodedKey}',${wi},'activeHC')"><span class="underline">${m.activeHC}</span>${delta}</td>`
                           : `<td class="text-center py-1.5 px-2 text-slate-300">-</td>`;
                       }).join('')}
                     </tr>
