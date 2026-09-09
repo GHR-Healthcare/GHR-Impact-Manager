@@ -4981,12 +4981,20 @@
        * unchanged so Open Jobs can render as a table like every other tab
        * while keeping this exactly as it was.
        */
+      /* The expanded job detail: the Levers / Rate / Pipeline / Placements
+       * tab strip and the submission log.
+       *
+       * Taken from the prototype build, where this was already wired. On main
+       * the three panes were defined and never called -- rowDetailTab sat in
+       * state with no reducer and no markup -- so non-MSP, which deploys from
+       * main, had no tabbed detail at all. Both sides now render the same one.
+       */
       jobDetailHtml(job) {
         const s = window.store.state;
         let html = '';
-        // Was computed in buildRowHtml's head before this block was lifted out.
         const totalDeclines = job.ghrDeclines + job.avDeclines;
         const view = s.rowSubView[job.id] || 'active';
+        const detailTab = s.rowDetailTab[job.id] || 'levers';
         const cands = job.candidates.filter(c =>
           view === 'active' ? !Utils.isDeclinedNow(job.id, c) : Utils.isDeclinedNow(job.id, c));
 
@@ -5028,9 +5036,44 @@
 
         // -------------------------------------------
 
+        // Row-detail sub-tabs. Levers is the existing panel and stays the
+        // default; Rate / Pipeline / Placements are new. Same pill idiom as
+        // the Trend tab's Group By control so the app reads as one piece.
+        // Comparable placements at the same facility. Matching on facility
+        // plus specialty: assignment rows carry a care type / specialty while
+        // a job carries a title, so compare against the job's STRUCTURED
+        // specialty when one exists and otherwise fall back to facility only
+        // — an over-broad list beats a pane that is always empty, which is
+        // what comparing a job title to a care type produced.
+        const jobSpec = Utils.cleanFilterText(job.specialtyName || '');
+        const activePlacements = (s.statsData?.onAssignment || []).filter(r => {
+          if (!r.facility || !job.facility || r.facility !== job.facility) return false;
+          if (!jobSpec) return true;
+          return Utils.cleanFilterText(r.specialty || '') === jobSpec;
+        });
+        const detailTabs = [
+          ['levers', 'Levers', null],
+          ['rate', 'Rate', null],
+          ['pipeline', 'Pipeline', job.ghrSubs + job.avSubs],
+          ['placements', 'Placements', activePlacements.length],
+        ];
+        const detailTabStrip = `
+          <div class="flex items-center gap-1.5 mb-5">
+            ${detailTabs.map(([key, label, count]) => {
+              const on = detailTab === key;
+              return `<button onclick="event.stopPropagation();window.store.dispatch('SET_DETAIL_TAB',{id:'${job.id}',tab:'${key}'})"
+                      class="px-3 py-1.5 rounded-full text-xs font-semibold border transition-colors flex items-center gap-1.5 ${
+                        on ? 'bg-blue-50 border-blue-300 text-blue-700'
+                           : 'bg-white border-slate-200 text-slate-500 hover:text-slate-700 hover:border-slate-300'}">
+                      ${label}${count != null ? `<span class="${on ? 'text-blue-400' : 'text-slate-400'} font-medium">${count}</span>` : ''}
+                    </button>`;
+            }).join('')}
+          </div>`;
+
         html += `
           <div class="bg-slate-50 p-6 border-b shadow-inner cursor-auto fade-in" onclick="event.stopPropagation()">
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
+            ${detailTabStrip}
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-8 ${detailTab === 'levers' ? '' : 'hidden'}">
               <div>
                 <h4 class="font-bold mb-3 text-sm uppercase text-slate-500">Impact Levers</h4>
                 
@@ -5062,7 +5105,7 @@
                   ${cands.length === 0 ? '<div class="p-4 text-center text-slate-400 italic">No candidates found</div>' : cands.map((c) => {
                     const originalIndex = job.candidates.indexOf(c);
                     const daysAgo = c.date ? Utils.calcDays(c.date) : '-';
-                    const subDateStr = c.date ? c.date.toLocaleDateString() : 'N/A';
+                    const subDateStr = c.date ? Utils.fmtDate(c.date) : 'N/A';
                     
                     const agLower = (c.agency || '').toLowerCase();
                     // GHR or Planet Healthcare = internal, but not "The Planet Group"
@@ -5114,12 +5157,28 @@
                         if(c.reqReason) centerContent += `<div class="text-slate-400 italic truncate" title="${c.reqReason}">Req: ${c.reqReason}</div>`;
                     }
 
+                    // Manual interview stage, internal submissions only. The row itself
+                    // opens the candidate-action modal, so the select stops propagation —
+                    // otherwise picking a stage would also open a modal.
+                    if (isInternal) {
+                      const stage = Utils.interviewStage(job.id, c);
+                      const overridden = !!s.workspaceState?.interview?.[Utils.interviewKey(job.id, c)];
+                      centerContent += `<div class="mt-1 flex items-center gap-1" onclick="event.stopPropagation()">
+                          <select class="text-[10px] border border-slate-300 rounded px-1 py-0.5 bg-white"
+                                  onchange="event.stopPropagation();window.store.dispatch('SAVE_INTERVIEW',{jobId:'${job.id}',name:${JSON.stringify(c.name || '')},stage:this.value})">
+                            ${Utils.INTERVIEW_STAGES.map(o => `<option ${o === stage ? 'selected' : ''}>${o}</option>`).join('')}
+                          </select>
+                          <span class="text-[9px] ${overridden ? 'text-blue-500 font-semibold' : 'text-slate-300'}"
+                                title="${overridden ? 'Manually set' : 'Derived from the source dates'}">${overridden ? 'manual' : 'auto'}</span>
+                        </div>`;
+                    }
+
                     // Right Content: Dates
                     let rightContent = `<div class="font-mono text-slate-500 text-[10px]">Sub: ${subDateStr}</div>`;
                     if(c.date) rightContent += `<div class="font-bold text-slate-700">${daysAgo}d ago</div>`;
                     
                     if (declinedNow && c.declineDate) {
-                        rightContent += `<div class="text-red-400 text-[9px] mt-0.5">Dec: ${c.declineDate.toLocaleDateString()}</div>`;
+                        rightContent += `<div class="text-red-400 text-[9px] mt-0.5">Dec: ${Utils.fmtDate(c.declineDate)}</div>`;
                     }
 
                     // Determine if candidate is actionable (active tab, not already declined/removed)
@@ -5171,6 +5230,9 @@
 
               </div>
             </div>
+            ${detailTab === 'rate' ? View.detailRatePane(job) : ''}
+            ${detailTab === 'pipeline' ? View.detailPipelinePane(job) : ''}
+            ${detailTab === 'placements' ? View.detailPlacementsPane(job, activePlacements) : ''}
           </div>
         `;
         return html;
@@ -13623,6 +13685,16 @@
 
             case 'SET_SUB_VIEW': {
               s.rowSubView[payload.id] = payload.view;
+              View.rowUpdate(payload.id);
+              break;
+            }
+
+            // Levers / Rate / Pipeline / Placements. The state key existed here
+            // with no reducer and no markup, so the three panes were dead code
+            // on this branch -- and non-MSP, which deploys from main, had no
+            // tabbed job detail at all.
+            case 'SET_DETAIL_TAB': {
+              s.rowDetailTab[payload.id] = payload.tab;
               View.rowUpdate(payload.id);
               break;
             }
