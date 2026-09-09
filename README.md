@@ -10,7 +10,17 @@ The prototype's Rate pane could not have shipped — its `rateRank` came from a 
 
 **The endpoint ships peer rates, not ranks.** Filters in this app are client-side; they narrow loaded rows and never refetch. A rank computed server-side would be locked to one scope and would stop agreeing with the System picker the moment anyone used it. With the peers in hand the client ranks within whatever the active filters leave, so the ranking follows the System picker — and facility, category and division — with no extra control and no refetch. 21,824 rows over 90 days across 657 accounts.
 
-Ranking rules: minimum 3 peers, and a fallback ladder taking the tightest grouping that clears it — account + profession + specialty, then account + profession, then book-wide — each labelling its own scope. Coverage measured within a health system: 23% at profession+specialty with a 5-peer floor, 40% at 3 peers, and 66% at profession level. Service line reaches 68% but is not used for ranking, because an RN at $95 and a CNA at $35 are both Nursing and the CNA would always rank last regardless of pricing.
+Ranking is **category-first**, and the ladder never leaves the category — taking the tightest rung that clears a three-peer floor:
+
+| Scope | Coverage |
+|---|---|
+| account + category + profession + specialty | 35% |
+| account + category + profession | 62% |
+| category + profession + specialty (all accounts) | 94% |
+
+What would have been "book-wide" is the third rung: all accounts *within* the category, never a comparison across categories. That matters because Travel is 20,588 jobs against Local's 1,108 and pays structurally more, so ranking a Local req against Travel peers would mark every Local req underpaid however well it is priced. Category comes from `employmentType` (Travel / Local / Remote / PRN), which lines up with the CATEGORY column on Closed.
+
+The same reasoning rules out service line as a ranking tier, despite its 68% coverage: an RN at $95 and a CNA at $35 are both Nursing, so the CNA would rank last regardless of pricing.
 
 Below ten peers the display is a percentile rather than an ordinal. "#1 of 3" and "#1 of 149" read as equally strong claims and are not.
 

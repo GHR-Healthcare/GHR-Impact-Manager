@@ -41,6 +41,16 @@ def _peer_rows(cursor):
     grain: the same job order appears once per grouping context (six of them)
     and once per sensitivity level (ten), so without them every job counts
     dozens of times and the "of N" in a rank is meaningless.
+
+    Ranking is category-first, and the ladder never leaves the category:
+
+        account + category + profession + specialty   35% of jobs
+        account + category + profession               62%
+        category + profession + specialty             94%
+
+    measured over 90 days at a three-peer floor. What used to be called
+    "book-wide" is the third rung -- all accounts *within* the category --
+    rather than a comparison across categories.
     """
     cursor.execute(f'''
         SELECT DISTINCT
@@ -48,6 +58,13 @@ def _peer_rows(cursor):
             o.Profession                                   AS profession,
             o.Specialty                                    AS specialty,
             CAST(o.clientBillRate AS DECIMAL(9,2))         AS rate,
+            -- Category. Travel / Local / Remote / PRN, lining up with the
+            -- CATEGORY column on Closed (B4 Program, VNDLY Labor Type).
+            -- Ranking never crosses it: Travel is 20,312 jobs against Local's
+            -- 1,069 and pays structurally more, so ranking a Local req against
+            -- Travel peers would mark every Local req underpaid however well
+            -- it is priced -- the same failure as comparing a CNA to an RN.
+            NULLIF(LTRIM(RTRIM(o.employmentType)), '')     AS category,
             ISNULL(NULLIF(LTRIM(RTRIM(c.ParentAccount)), ''), c.FacilityName) AS account,
             -- Week start, Sunday-based, matching the DATEFIRST 7 the app pins
             -- for every other week bucket and the Saturday period ends in the
@@ -75,6 +92,7 @@ def _peer_rows(cursor):
             'profession': normalize_credential(raw) or (raw or ''),
             'serviceLine': credential_service_line(raw),
             'specialty': (r.get('specialty') or '').strip(),
+            'category': (r.get('category') or '').strip(),
             'account': (r.get('account') or '').strip(),
             'week': r['week_start'].isoformat() if hasattr(r['week_start'], 'isoformat') else str(r['week_start']),
             'rate': float(r['rate']) if r['rate'] is not None else None,
@@ -117,6 +135,13 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                 # guessing at thresholds the server chose.
                 'minPeers': 3,
                 'ordinalThreshold': 10,
+                # Tightest first; the client takes the first rung clearing
+                # minPeers and labels the rank with that rung's scope.
+                'scopeLadder': [
+                    ['account', 'category', 'profession', 'specialty'],
+                    ['account', 'category', 'profession'],
+                    ['category', 'profession', 'specialty'],
+                ],
                 'dataSource': 'non_msp' if is_non_msp() else 'msp',
             },
         }
