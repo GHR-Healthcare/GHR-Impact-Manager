@@ -1220,53 +1220,6 @@
 
     // DATABASE FUNCTIONS
     
-    /**
-     * Generate test data for demo/testing purposes
-     */
-    function generateTestData() {
-        const facilities = [
-            'Memorial Hospital', 'St. Mary\'s Medical Center', 'Community General', 
-            'Regional Healthcare', 'University Medical Center', 'City Hospital',
-            'Northside Medical', 'Southview Hospital', 'Eastside Regional'
-        ];
-        const specialties = [
-            'Emergency Room', 'ICU', 'Med/Surg', 'Telemetry', 'Operating Room',
-            'Labor & Delivery', 'PACU', 'Cardiac Cath Lab', 'Oncology'
-        ];
-        const systems = ['Travel Nursing', 'Per Diem', 'Local Contract', 'Perm Placement'];
-        
-        const testJobs = [];
-        const today = new Date();
-        
-        for (let i = 1; i <= 25; i++) {
-            const daysAgo = Math.floor(Math.random() * 60);
-            const dateAdded = new Date(today);
-            dateAdded.setDate(dateAdded.getDate() - daysAgo);
-            
-            const system = systems[Math.floor(Math.random() * systems.length)];
-            const billRate = (70 + Math.random() * 60).toFixed(2);
-            const margin = (15 + Math.random() * 20).toFixed(1);
-            
-            testJobs.push({
-                position_id: `REQ-${1000 + i}`,
-                req_id: `REQ-${1000 + i}`,
-                facility_name: facilities[Math.floor(Math.random() * facilities.length)],
-                specialty_name: specialties[Math.floor(Math.random() * specialties.length)],
-                program: system,
-                system: system,
-                date_added: dateAdded.toISOString(),
-                created_date: dateAdded.toISOString(),
-                bill_rate: `$${billRate}/hr`,
-                hiring_manager: 'John Smith',
-                manager: 'John Smith',
-                status: 'Open - Actively Recruiting',
-                notes: 'Open - Actively Recruiting',
-                margin: parseFloat(margin)
-            });
-        }
-        
-        return testJobs;
-    }
     
     /**
      * Load contracts comparison data + reviewed row keys (lazy)
@@ -6414,6 +6367,40 @@
        */
       MATCH_DOT: { good: 'bg-emerald-500', bad: 'bg-red-500', medium: 'bg-amber-500', low: 'bg-slate-300' },
 
+      /* Re-render a stage view without losing the reader's place.
+       *
+       * Expanding a row replaces the whole table's innerHTML, so the browser
+       * dropped the scroll position and the row you had just clicked jumped
+       * somewhere else on the page -- you had to hunt for it again. The fix is
+       * to measure where the clicked row sits on screen, re-render, measure
+       * again, and shift the scroller by the difference so that row stays
+       * exactly where it was under the cursor.
+       *
+       * The scroller differs between the two layouts -- the original MSP pins
+       * the body and scrolls an inner container, the prototype scrolls the page
+       * -- so the nearest scrollable ancestor is found rather than assumed.
+       */
+      anchoredRerender(rowKey, render) {
+        const sel = `[data-row-key="${String(rowKey).replace(/"/g, '\\"')}"]`;
+        const before = document.querySelector(sel)?.getBoundingClientRect().top ?? null;
+        render();
+        if (before == null) return;
+        const el = document.querySelector(sel);
+        if (!el) return;
+        const delta = el.getBoundingClientRect().top - before;
+        if (!delta) return;
+        let node = el.parentElement;
+        while (node && node !== document.body) {
+          const oy = getComputedStyle(node).overflowY;
+          if ((oy === 'auto' || oy === 'scroll') && node.scrollHeight > node.clientHeight) {
+            node.scrollTop += delta;
+            return;
+          }
+          node = node.parentElement;
+        }
+        (document.scrollingElement || document.documentElement).scrollTop += delta;
+      },
+
       matchSummary(r) {
         const m = r.match || {};
         if (m.state === 'single_system') {
@@ -6851,18 +6838,31 @@
         const events = rows.reduce((a, r) => a + (Number(r.extension_events || r.ext_events) || 0), 0);
         const value = rows.reduce((a, r) => a + (Number(r.extension_value_13wk) || 0), 0);
         const undecided = rows.filter(r => View.extensionGroup(r) === 'NO DECISION').length;
-        // Seats whose two systems disagree. Replaces the old raw event count,
-        // which only said that something had been edited -- this says a seat
-        // needs reconciling before the extension can be trusted.
-        const mismatched = rows.filter(r => (r.match?.counts?.bad || 0) > 0).length;
+        /* KPI row, to the reference's viewConfig.extensions spec.
+         *
+         * "System Exceptions" is a real count here rather than a label: it is
+         * the seats whose VMS and ATS records disagree, which System Match
+         * computes. Urgency follows the reference's own extensionUrgency() --
+         * High when a system exception exists or 14 days or fewer remain,
+         * Medium to 30 days, Low beyond -- which is a coarser question than the
+         * four-band day colouring on the DAYS LEFT circle, and a different one.
+         */
+        const grpCount = g => rows.filter(r => View.extensionGroup(r) === g).length;
+        const exceptions = rows.filter(r => (r.match?.counts?.bad || 0) > 0).length;
+        const highUrgency = rows.filter(r => View.extensionUrgencyLabel(r) === 'High').length;
         View.renderKpiCards([
-          { label: 'Seats In Window', val: rows.length, icon: 'repeat', color: 'blue' },
-          { label: 'Expiring ≤14 Days', val: expiring, icon: 'alert-triangle', color: 'red' },
-          { label: 'No Decision Yet', val: undecided, icon: 'help-circle', color: 'amber' },
-          { label: 'System Mismatches', val: mismatched, icon: 'git-compare', color: 'indigo',
-            sub: events ? `${events} recorded change${events === 1 ? '' : 's'}` : null },
-          { label: 'Already Extended', val: rows.filter(r => r.is_extension).length, icon: 'refresh-cw', color: 'purple' },
-          { label: '13-Week Value', val: value ? money(value) : '—', icon: 'dollar-sign', color: 'emerald' },
+          { label: 'GHR Ending in 45 Days', val: rows.length, sub: 'delivery view',
+            icon: 'repeat', color: 'blue' },
+          { label: 'No Decision', val: grpCount('NO DECISION'), sub: 'client direction missing',
+            icon: 'help-circle', color: 'red' },
+          { label: 'Pending Acceptance', val: grpCount('PENDING ACCEPTANCE'), sub: 'GHR clinician',
+            icon: 'clock', color: 'amber' },
+          { label: 'Approved', val: grpCount('APPROVED'), sub: null,
+            icon: 'check-circle', color: 'emerald' },
+          { label: 'High Urgency', val: highUrgency, sub: '≤14 days or system exception',
+            icon: 'alert-triangle', color: 'red' },
+          { label: 'System Exceptions', val: exceptions, sub: 'VMS and ATS disagree',
+            icon: 'git-compare', color: 'purple' },
         ]);
 
         // Group by workflow state, in the reference's order.
@@ -6886,7 +6886,7 @@
             const open = s.expandedExtensions.has(r.id);
             const e = View.extensionEdit(r);
             body += `
-              <tr class="hover:bg-slate-50 border-b border-slate-100 cursor-pointer" onclick="store.dispatch('TOGGLE_EXTENSION_ROW','${r.id}')">
+              <tr data-row-key="${r.id}" class="hover:bg-slate-50 border-b border-slate-100 cursor-pointer" onclick="store.dispatch('TOGGLE_EXTENSION_ROW','${r.id}')">
                 <td class="px-3 py-2 text-slate-400">${open ? '&#9660;' : '&#9654;'}</td>
                 <td class="px-3 py-2 whitespace-nowrap">
                   <span class="px-1.5 py-0.5 rounded border border-slate-200 bg-white text-[10px] font-mono text-slate-600">${r.id || '—'}</span>
@@ -7126,16 +7126,38 @@
         const cancelled = rows.filter(r => View.onboardingGroup(r) === 'CANCELED').length;
         const moved = rows.filter(r => View.onboardingSlip(r)).length;
         const soon = rows.filter(r => r.days_until_start != null && r.days_until_start >= 0 && r.days_until_start <= 7).length;
+        /* KPI row, to the reference's viewConfig.onboarding spec: scheduled
+         * starts, delayed starts, repeat movers, average and total delay, and
+         * cancellations. Delay days come from onboardingSlip(), which is null
+         * where a source records no movement history -- those seats are left
+         * out of the averages rather than counted as zero-day delays, which
+         * would drag the average toward nothing.
+         */
+        const grpCountO = g => rows.filter(r => View.onboardingGroup(r) === g).length;
+        const slips = rows.map(r => View.onboardingSlip(r))
+          .filter(v => v != null && isFinite(v) && v > 0);
+        const totalDelay = slips.reduce((a, b) => a + b, 0);
+        const repeatMovers = rows.filter(r => (Number(r.move_count) || 0) >= 2).length;
+        const scheduledSoon = rows.filter(r => {
+          if (!r.current_start) return false;
+          const d = Math.round((new Date(r.current_start) - new Date()) / 86400000);
+          return d >= 0 && d <= 14;
+        }).length;
         View.renderKpiCards([
-          { label: 'Starts In Window', val: rows.length, icon: 'user-check', color: 'blue' },
-          { label: 'Delayed', val: delayed, icon: 'clock', color: 'amber' },
-          { label: 'Moved Since Review', val: moved, icon: 'alert-triangle', color: 'red' },
-          { label: 'Cancelled', val: cancelled, icon: 'x-circle', color: 'slate' },
-          { label: 'Starting ≤7 Days', val: soon, icon: 'calendar', color: 'emerald' },
-          { label: '13-Week Value', val: (() => {
-              const v = rows.reduce((a, r) => a + (Number(r.value_13wk) || 0), 0);
-              return v ? '$' + v.toLocaleString(undefined, { maximumFractionDigits: 0 }) : '—';
-            })(), icon: 'dollar-sign', color: 'indigo' },
+          { label: 'Scheduled Starts', val: scheduledSoon, sub: 'next 14 days',
+            icon: 'calendar', color: 'blue' },
+          { label: 'Delayed Starts', val: grpCountO('DELAYED START'), sub: null,
+            icon: 'alert-triangle', color: 'amber' },
+          { label: 'Moved 2+ Times', val: repeatMovers, sub: 'repeat changes',
+            icon: 'repeat', color: 'purple' },
+          { label: 'Avg Days Delayed',
+            val: slips.length ? (totalDelay / slips.length).toFixed(1) : '—',
+            sub: slips.length ? `${slips.length} moved starts` : 'no movement recorded',
+            icon: 'clock', color: 'amber' },
+          { label: 'Total Days Delayed', val: totalDelay || '—', sub: 'current cohort',
+            icon: 'trending-down', color: 'red' },
+          { label: 'Cancellations', val: grpCountO('CANCELED'), sub: null,
+            icon: 'x-circle', color: 'red' },
         ]);
 
         const tone = { 'ON TRACK': 'good', 'DELAYED START': 'medium', 'START DATE CHANGED': 'high', 'CANCELED': 'bad' };
@@ -7158,7 +7180,7 @@
             const e = View.onboardingEdit(r);
             const slip = View.onboardingSlip(r);
             body += `
-              <tr class="hover:bg-slate-50 border-b border-slate-100 cursor-pointer" onclick="store.dispatch('TOGGLE_ONBOARDING_ROW','${r.id}')">
+              <tr data-row-key="${r.id}" class="hover:bg-slate-50 border-b border-slate-100 cursor-pointer" onclick="store.dispatch('TOGGLE_ONBOARDING_ROW','${r.id}')">
                 <td class="px-3 py-2 text-slate-400">${open ? '&#9660;' : '&#9654;'}</td>
                 <td class="px-3 py-2 whitespace-nowrap">
                   <span class="px-1.5 py-0.5 rounded border border-slate-200 bg-white text-[10px] font-mono text-slate-600">${r.id || '—'}</span>
@@ -7256,18 +7278,43 @@
               ? (Math.abs(v) / 1000).toFixed(1) + 'k'
               : Math.abs(v).toFixed(0))
           : '—';
+        /* KPI row, to the reference's viewConfig.results spec: three revenue
+         * periods, capture rate, average days to close, revenue missed.
+         *
+         * Monthly and annualised are the weekly figure scaled (x4.33, x52),
+         * exactly as the reference's revenuePeriods() does -- they are the
+         * run-rate implied by this window, not separately measured months, and
+         * the sub-label says so rather than letting them read as actuals.
+         *
+         * Non-MSP has no affiliate, so Capture Rate would be 100% by
+         * construction; it shows Fill Rate there, the question that book
+         * actually asks.
+         */
+        const capturedPos = rows.reduce((a, r) => a + Math.max(0, Number(r.revenue) || 0), 0);
+        const missedRev = Math.abs(rows.reduce((a, r) => a + Math.min(0, Number(r.revenue) || 0), 0));
+        const dtc = rows.map(r => Number(r.days_to_close)).filter(v => isFinite(v) && v >= 0);
+        const avgDaysToClose = dtc.length
+          ? Math.round(dtc.reduce((a, b) => a + b, 0) / dtc.length) : null;
+        const captureRate = nonMspKpi
+          ? (wins + missed ? Math.round(wins / (wins + missed) * 100) : null)
+          : (wins + avWins ? Math.round(wins / (wins + avWins) * 100) : null);
         View.renderKpiCards([
-          { label: windowDays ? `Total Closed (${windowDays}d)` : 'Total Closed',
-            val: rows.length, icon: 'check-circle', color: 'blue' },
-          { label: nonMspKpi ? 'Filled' : 'GHR Wins', val: wins, icon: 'award', color: 'emerald' },
-          { label: nonMspKpi ? 'Fill Rate' : 'GHR Win %',
-            val: decided ? Math.round((wins / decided) * 100) + '%' : '—',
-            icon: 'target', color: 'indigo' },
-          ...(nonMspKpi ? [] : [
-            { label: 'Affiliate Wins', val: avWins, icon: 'users', color: 'purple' },
-          ]),
-          { label: nonMspKpi ? 'Unfilled' : 'Missed', val: missed, icon: 'alert-triangle', color: 'red' },
-          { label: 'Revenue Captured', val: fmtK(captured), icon: 'dollar-sign', color: 'emerald' },
+          { label: 'Weekly Revenue Captured', val: fmtK(capturedPos),
+            sub: windowDays ? `closed outcomes · ${windowDays}d window` : 'closed outcomes',
+            icon: 'dollar-sign', color: 'emerald' },
+          { label: 'Monthly Revenue Captured', val: fmtK(capturedPos * 4.33),
+            sub: 'rolling equivalent', icon: 'calendar', color: 'emerald' },
+          { label: 'Annualized Revenue Captured', val: fmtK(capturedPos * 52),
+            sub: 'run-rate equivalent', icon: 'trending-up', color: 'emerald' },
+          { label: nonMspKpi ? 'Fill Rate' : 'Capture Rate',
+            val: captureRate == null ? '—' : captureRate + '%',
+            sub: nonMspKpi ? 'filled of decided' : 'GHR share of agency starts',
+            icon: 'target', color: 'blue' },
+          { label: 'Avg Days to Close', val: avgDaysToClose == null ? '—' : avgDaysToClose,
+            sub: dtc.length ? `${dtc.length} dated` : 'no dated closes', icon: 'clock', color: 'purple' },
+          { label: 'Revenue Missed', val: fmtK(missedRev),
+            sub: nonMspKpi ? 'unfilled / declined' : 'affiliate / decline / unfilled',
+            icon: 'alert-triangle', color: 'red' },
         ]);
 
         // Grouped like the reference: outcome buckets in a fixed order, each
@@ -7306,7 +7353,7 @@
             const open = closedExpandable && s.expandedClosed.has(r.id);
             const share = View.closedSharePct(r);
             body += `
-              <tr class="hover:bg-slate-50 border-b border-slate-100 ${closedExpandable ? 'cursor-pointer' : ''}"
+              <tr data-row-key="${r.id}" class="hover:bg-slate-50 border-b border-slate-100 ${closedExpandable ? 'cursor-pointer' : ''}"
                   ${closedExpandable ? `onclick="store.dispatch('TOGGLE_CLOSED_ROW','${r.id}')"` : ''}>
                 <td class="px-3 py-2 whitespace-nowrap">
                   <span class="px-1.5 py-0.5 rounded border border-slate-200 bg-white text-[10px] font-mono text-slate-600">${r.id || '—'}</span>
@@ -7342,46 +7389,14 @@
         const isNonMspClosed = s.dataSource === 'non_msp';
         const cov = s.closedMeta?.coverage || {};
 
-        // The two sides ask different questions of the same stage. MSP asks
-        // who won the seat against affiliate agencies -- the reference's
-        // accountCapturePie. Non-MSP is GHR's direct book with no vendor
-        // panel, so capture has no meaning there and fill rate is the
-        // headline instead. One chart each; the loss breakdown it used to sit
-        // beside is in the table's Reason column already.
-        let closedIntel;
-        if (isNonMspClosed) {
-          const fillSeg = [
-            { label: 'Filled',   value: rows.filter(r => r.group === 'FILLED').length,   color: '#22C55E' },
-            { label: 'Unfilled', value: rows.filter(r => r.group === 'UNFILLED').length, color: '#EF4444' },
-          ];
-          const denom = fillSeg[0].value + fillSeg[1].value;
-          const comp = cov.competitive || {};
-
-          closedIntel = View.intelStrip('closed', [
-            View.intelPanel('Fill Rate',
-              View.donutSvg(fillSeg, {
-                centerLabel: denom ? Math.round((fillSeg[0].value / denom) * 100) + '%' : '—',
-                centerSub: 'filled' }),
-              View.chartLegend(fillSeg),
-              `Of ${denom} real opportunities. Cancelled orders are excluded — they stopped existing rather than going unfilled` +
-              (cov.unfilledWithoutReason ? `. ${cov.unfilledWithoutReason} unfilled carry no reason and count against the rate, so this is a floor` : '') + '.'),
-          ]);
-        } else {
-          const capSeg = [
-            { label: 'GHR',       value: rows.filter(r => Utils.isGhrAgency(r.agency)).length,  color: '#3b82f6' },
-            { label: 'Affiliate', value: rows.filter(r => !Utils.isGhrAgency(r.agency)).length, color: '#a855f7' },
-          ];
-          // Account Capture is the one chart with a basis in the reference —
-          // accountCapturePie(m.capture), "Closed Market Share / Agency starts",
-          // GHR vs Affiliates, on Closed. Kept for that reason. "Why It Ended"
-          // had no counterpart and is gone; the grouped table already says it.
-          closedIntel = View.intelStrip('closed', [
-            View.intelPanel('Account Capture',
-              View.donutSvg(capSeg, { centerLabel: rows.length ? Math.round((capSeg[0].value / rows.length) * 100) + '%' : '—', centerSub: 'GHR' }),
-              View.chartLegend(capSeg),
-              'GHR share of everything that closed in this window. NOTE: share of SEATS, not of billings — say which you want.'),
-          ]);
-        }
+        /* No analysis strip on Closed. The reference has none: renderResults
+         * goes straight from its column head() to the table, and its one
+         * capture donut (accountCapturePie) is called only from
+         * buildStageOverview -- the IMPACT meeting's stage overview, not the
+         * tab. A donut was sitting above this table on the strength of that
+         * function existing, which is not the same as it belonging here.
+         */
+        const closedIntel = null;
         if (el) el.innerHTML = View.stageShell('closed', 'Closed',
           (() => {
             // Say which range is on screen. The default is now the previous
@@ -12960,14 +12975,16 @@
             case 'TOGGLE_CLOSED_ROW': {
               if (s.expandedClosed.has(payload)) s.expandedClosed.delete(payload);
               else s.expandedClosed.add(payload);
-              View.closed();
+              // Keeps the clicked row under the cursor instead of jumping.
+              View.anchoredRerender(payload, () => View.closed());
               break;
             }
 
             case 'TOGGLE_ONBOARDING_ROW': {
               if (s.expandedOnboarding.has(payload)) s.expandedOnboarding.delete(payload);
               else s.expandedOnboarding.add(payload);
-              View.onboarding();
+              // Keeps the clicked row under the cursor instead of jumping.
+              View.anchoredRerender(payload, () => View.onboarding());
               break;
             }
 
@@ -13018,7 +13035,8 @@
             case 'TOGGLE_EXTENSION_ROW': {
               if (s.expandedExtensions.has(payload)) s.expandedExtensions.delete(payload);
               else s.expandedExtensions.add(payload);
-              View.extensions();
+              // Keeps the clicked row under the cursor instead of jumping.
+              View.anchoredRerender(payload, () => View.extensions());
               break;
             }
 
