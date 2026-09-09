@@ -642,38 +642,12 @@
         <i data-lucide="move-horizontal" class="w-4 h-4"></i>
         <span>Swipe left/right to see all columns</span>
       </div>
-      <!-- Single scroll container for header + body -->
-      <div class="overflow-x-auto flex-1 overflow-y-visible md:overflow-y-auto">
-        <div class="min-w-[900px]">
-          <div class="grid grid-cols-12 bg-slate-100 p-4 font-bold text-slate-600 border-b border-slate-200 text-sm uppercase tracking-wider sticky top-0 z-20 shrink-0" id="tableHeader">
-            <div class="col-span-1 cursor-pointer hover:text-blue-600 flex items-center" onclick="store.dispatch('SORT','id')">ID <i data-lucide="arrow-up-down" class="ml-1 w-3 h-3 opacity-50"></i></div>
-            <div class="col-span-1 cursor-pointer hover:text-blue-600 flex items-center truncate" onclick="store.dispatch('SORT','program')">Category <i data-lucide="arrow-up-down" class="ml-1 w-3 h-3 opacity-50"></i></div>
-            <div class="col-span-3 cursor-pointer hover:text-blue-600 flex items-center" onclick="store.dispatch('SORT','facility')">System / Facility / Specialty <i data-lucide="arrow-up-down" class="ml-1 w-3 h-3 opacity-50"></i></div>
-            <div class="col-span-1 text-center cursor-pointer hover:text-blue-600 flex flex-col justify-center items-center" onclick="store.dispatch('SORT','numPositions')">
-              <div class="flex items-center"># <i data-lucide="arrow-up-down" class="ml-1 w-3 h-3 opacity-50"></i></div>
-              <div class="text-[9px] text-slate-400 font-normal">Pos</div>
-            </div>
-            <div class="col-span-1 text-center cursor-pointer hover:text-blue-600 flex justify-center items-center" onclick="store.dispatch('SORT','billRate')">Bill Rate <i data-lucide="arrow-up-down" class="ml-1 w-3 h-3 opacity-50"></i></div>
-            <div class="col-span-1 text-center cursor-pointer hover:text-blue-600 flex justify-center items-center" onclick="store.dispatch('SORT','daysPast')">Days <i data-lucide="arrow-up-down" class="ml-1 w-3 h-3 opacity-50"></i></div>
-            <div class="col-span-1 text-center cursor-pointer hover:text-blue-600 flex justify-center items-center" onclick="store.dispatch('SORT','margin')">Margin <i data-lucide="arrow-up-down" class="ml-1 w-3 h-3 opacity-50"></i></div>
-            <div class="col-span-1 text-center cursor-pointer hover:text-blue-600 flex justify-center items-center" onclick="store.dispatch('SORT','impact')">Impact <i data-lucide="arrow-up-down" class="ml-1 w-3 h-3 opacity-50"></i></div>
-            <div class="col-span-1 text-center cursor-pointer hover:text-blue-600 flex flex-col justify-center items-center" onclick="store.dispatch('SORT','ghrSubs')">
-              <div class="flex items-center">Active <i data-lucide="arrow-up-down" class="ml-1 w-3 h-3 opacity-50"></i></div>
-              <div class="text-[9px] text-slate-400 font-normal" id="hdrActiveSplit">GHR / Agency</div>
-            </div>
-            <div class="col-span-1 text-center cursor-pointer hover:text-blue-600 flex flex-col justify-center items-center" onclick="store.dispatch('SORT','ghrDeclines')">
-              <div class="flex items-center">Declines <i data-lucide="arrow-up-down" class="ml-1 w-3 h-3 opacity-50"></i></div>
-              <div class="text-[9px] text-slate-400 font-normal" id="hdrDeclinesSplit">GHR / Agency</div>
-            </div>
-          </div>
-          <div id="jobsContainer" class="divide-y divide-slate-100 min-h-0 relative">
-            <div class="absolute inset-0 flex flex-col items-center justify-center text-slate-400">
-              <i data-lucide="loader" class="w-12 h-12 mb-2 opacity-50 animate-spin"></i>
-              <p>Loading data...</p>
-            </div>
-          </div>
-        </div>
-      </div>
+      <!-- Open Jobs renders through the same stage table as Closed, Extensions
+           and Onboarding, so the four tabs read as one surface and Open Jobs
+           gains their sortable headers and per-column filters. The hand-built
+           grid-cols-12 header and its SORT dispatches lived here; the shell
+           draws its own header from the column set now. -->
+      <div id="listContent" class="flex-1 min-h-0"></div>
     </div>
 
     <div id="hotJobsViewWrapper" class="hidden flex flex-col h-full overflow-hidden bg-slate-50">
@@ -1623,6 +1597,7 @@
 
             // Load into app
             window.store.state.jobs = processedJobs;
+            window.store.state.listLoaded = true;
             window.store.state.filename = "Database (Live)";
             window.store.dispatch('REFRESH_UI');
 
@@ -4719,33 +4694,54 @@
 
       list() {
         const s = window.store.state;
-        const list = this.getFilteredJobs(s).sort((a, b) => {
-          const k = s.sort.key;
-          let valA = a[k], valB = b[k];
-          if (k === 'billRate' || k === 'margin') { valA = parseFloat(valA); valB = parseFloat(valB); }
-          if (k === 'impact') { valA = Utils.calculateImpactPercent(a.levers); valB = Utils.calculateImpactPercent(b.levers); }
-          if (valA < valB) return s.sort.dir === 'asc' ? -1 : 1;
-          if (valA > valB) return s.sort.dir === 'asc' ? 1 : -1;
-          return 0;
+        /* Open Jobs, through the same stage table as the other three tabs.
+         *
+         * It used to render a div per job into #jobsContainer under a
+         * hand-built grid-cols-12 header with its own SORT dispatches. That is
+         * why it read as a different surface: no per-column filters, a
+         * separate sort mechanism, different header chrome. The columns are the
+         * reference's ten for Open Jobs, and stageApply gives the same sorting
+         * and column filtering the stage tabs have.
+         */
+        const openCols = [
+          { label: 'ID',            key: 'id' },
+          { label: 'Category',      key: 'program' },
+          { label: 'System / Facility / Specialty', key: 'facility' },
+          { label: '#',             key: 'numPositions', align: 'center', sub: 'Pos' },
+          { label: 'Bill Rate',     key: r => parseFloat(String(r.billRate).replace(/[^0-9.]/g, '')) || null, align: 'center' },
+          { label: 'Days',          key: 'daysPast', align: 'center' },
+          { label: 'Margin',        key: r => parseFloat(r.margin), align: 'center' },
+          { label: 'Impact',        key: r => Utils.calculateImpactPercent(r.levers), align: 'center' },
+          { label: 'Active',        key: r => (Number(r.ghrSubs) || 0) + (Number(r.avSubs) || 0),
+            align: 'center', sub: s.dataSource === 'non_msp' ? 'GHR' : 'GHR / Agency' },
+          { label: 'Declines',      key: r => (Number(r.ghrDeclines) || 0) + (Number(r.avDeclines) || 0),
+            align: 'center', sub: s.dataSource === 'non_msp' ? 'GHR' : 'GHR / Agency' },
+        ];
+        View.stageColCount.list = openCols.length;
+
+        const rows = View.stageApply('list', this.getFilteredJobs(s), openCols);
+        this.kpis(rows);
+
+        let body = '';
+        rows.forEach(job => {
+          const open = s.expandedRows.has(job.id);
+          body += `
+            <tr data-row-key="${job.id}" id="row-${job.id}"
+                class="hover:bg-slate-50 border-b border-slate-100 cursor-pointer group"
+                onclick="window.store.dispatch('TOGGLE_ROW','${job.id}')">
+              ${View.jobRowCells(job)}
+            </tr>`;
+          if (open) body += View.stageDetailRow('list', job);
         });
 
-        this.kpis(list);
-
-        const container = $('jobsContainer');
-        if (!container) return;
-
-        if (list.length === 0 && s.jobs.length > 0) { container.innerHTML = '<div class="p-8 text-center text-slate-400">No jobs match filters</div>'; return; }
-        if (list.length === 0) { container.innerHTML = '<div class="absolute inset-0 flex flex-col items-center justify-center text-slate-400"><i data-lucide="inbox" class="w-12 h-12 mb-2 opacity-50"></i><p>No data loaded. Click "Load from Database" to begin.</p></div>'; return; }
-
-        Utils.renderChunks(list, container, (job) => {
-          const div = document.createElement('div');
-          div.id = `row-${job.id}`;
-          div.innerHTML = this.buildRowHtml(job);
-          return div;
-        }, 50, () => lucide.createIcons());
-
-        this.legend();
+        const el = $('listContent');
+        if (!el) return;
+        el.innerHTML = View.stageShell('list', 'Open Jobs',
+          'Open requisitions with pipeline activity, Impact levers and the submission log',
+          body, openCols, null);
+        lucide.createIcons();
       },
+
 
       hotJobs() {
         const s = window.store.state;
@@ -4973,12 +4969,26 @@
         lucide.createIcons();
       },
 
+      /* Redraw one Open Jobs row in place.
+       *
+       * It used to replace the row's innerHTML with buildRowHtml(), which
+       * produced a 12-column div. Open Jobs is a table now, so the cells and
+       * the detail are refreshed separately -- both are needed, because a lever
+       * changes the Impact figure in the row as well as the panel below it.
+       * Everything that edits a job (levers, margin, next step, interview,
+       * decline) routes through here, so this is the single place that has to
+       * know the row's shape.
+       */
       rowUpdate(id) {
         const job = window.store.state.jobs.find(j => j.id === id);
         if (!job) return;
-        const row = $(`row-${id}`);
-        if (!row) return;
-        row.innerHTML = this.buildRowHtml(job);
+        const sel = String(id).replace(/"/g, '\\"');
+        const tr = document.querySelector(`tr[data-row-key="${sel}"]`);
+        if (tr) tr.innerHTML = View.jobRowCells(job);
+        const detail = document.querySelector(`tr[data-detail-for="${sel}"]`);
+        if (detail && window.store.state.expandedRows.has(job.id)) {
+          detail.outerHTML = View.stageDetailRow('list', job);
+        }
         lucide.createIcons();
       },
 
@@ -5244,102 +5254,106 @@
         return html;
       },
 
-      buildRowHtml(job) {
+      /* One Open Jobs row, as the cells of the shared stage table.
+       *
+       * Every cell keeps exactly what the old grid row showed -- the hot-job
+       * flame, the source badge, the aged-days bubble, the relationship and
+       * incumbent badges, the click-through on margin and on declines. Only
+       * the container changed: a hand-built 12-column div grid became <td>s,
+       * so Open Jobs reads like Closed, Extensions and Onboarding and picks up
+       * their sortable headers and per-column filters.
+       */
+      /* Which system a row came from. Shared by the Open Jobs row and the
+       * stage tables: B4 and VNDLY are the MSP books, Bullhorn and Symplr the
+       * non-MSP ones, so a non-MSP row can never legitimately show "B4".
+       */
+      SOURCE_BADGE: {
+        B4:       { label: 'B4', cls: 'bg-blue-100 text-blue-700' },
+        VNDLY:    { label: 'V',  cls: 'bg-purple-100 text-purple-700' },
+        Bullhorn: { label: 'BH', cls: 'bg-emerald-100 text-emerald-700' },
+        Symplr:   { label: 'SY', cls: 'bg-amber-100 text-amber-800' },
+      },
+
+      jobRowCells(job) {
         const s = window.store.state;
-        const expanded = s.expandedRows.has(job.id);
         const impact = Utils.calculateImpactPercent(job.levers);
         const isPerm = String(job.program).toLowerCase().includes('perm');
-
-        const colorClass = isPerm ? 'border border-slate-500 text-slate-700 bg-white' : Utils.getAgingColorClasses(job.daysPast, job.system);
+        const colorClass = isPerm ? 'border border-slate-500 text-slate-700 bg-white'
+                                  : Utils.getAgingColorClasses(job.daysPast, job.system);
         const color = isPerm ? '' : colorClass.split(' ')[0];
         const bubbleText = isPerm ? 'text-slate-700' : (color.includes('slate') ? 'text-slate-800' : 'text-white');
         const bubbleClasses = isPerm ? 'border border-slate-500 bg-white' : `${color}`;
-
         const abbrSpecialty = Utils.abbreviate(job.specialty);
         const cleanSpec = abbrSpecialty.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
         const cleanUnit = (job.unit || '').replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
-        const showUnit = job.unit && cleanUnit !== cleanSpec && !cleanUnit.includes(cleanSpec) && !cleanSpec.includes(cleanUnit);
-
+        const showUnit = job.unit && cleanUnit !== cleanSpec
+                      && !cleanUnit.includes(cleanSpec) && !cleanSpec.includes(cleanUnit);
         const isHot = job.levers && job.levers.hotJob && job.levers.hotJob.done;
         const totalDeclines = job.ghrDeclines + job.avDeclines;
-
-        // Four systems feed this list, not two. The old test was VNDLY-or-else,
-        // so Bullhorn and Symplr rows both rendered a 'B4' badge -- on the
-        // non-MSP side, where no B4 data exists at all. Unknown values show
-        // their own first character rather than being relabelled as B4.
-        const SOURCE_BADGE = {
-          B4:       { label: 'B4', cls: 'bg-blue-100 text-blue-700' },
-          VNDLY:    { label: 'V',  cls: 'bg-purple-100 text-purple-700' },
-          Bullhorn: { label: 'BH', cls: 'bg-emerald-100 text-emerald-700' },
-          Symplr:   { label: 'SY', cls: 'bg-amber-100 text-amber-800' },
-        };
         const srcKey = job.sourceSystem || '';
-        const srcBadge = SOURCE_BADGE[srcKey]
+        const srcBadge = View.SOURCE_BADGE[srcKey]
           || { label: (srcKey || '?').slice(0, 2).toUpperCase(), cls: 'bg-slate-100 text-slate-600' };
-        const sourceColor = srcBadge.cls;
-        const sourceLabel = srcBadge.label;
-        
-        let html = `
-          <div class="grid grid-cols-12 p-4 items-center hover:bg-slate-50 cursor-pointer group transition-colors" onclick="window.store.dispatch('TOGGLE_ROW','${job.id}')">
-            <div class="col-span-1 flex items-center gap-1 overflow-hidden">
-              <button onclick="event.stopPropagation(); window.store.dispatch('TOGGLE_HOT_JOB','${job.id}')" class="shrink-0 transition-transform hover:scale-110">
+        const nonMsp = s.dataSource === 'non_msp';
+        const eyebrow = `${job.healthSystem || ''}${job.healthSystem && job.requisitionReason ? ' - ' : ''}${
+          job.requisitionReason || (job.healthSystem ? '' : 'No Reason Given')}`;
+        const rel = (() => {
+          // Relationship + incumbent: do we own this programme, or are we
+          // bidding through someone else's? Rendered only when configured.
+          const r = Utils.systemRelationship(job.healthSystem);
+          if (!r) return '';
+          const tone = r.relationship === 'MSP' ? 'bg-emerald-100 text-emerald-700 border-emerald-200'
+                     : r.relationship === 'Direct' ? 'bg-blue-100 text-blue-700 border-blue-200'
+                     : r.relationship === '3rd Party' ? 'bg-amber-100 text-amber-800 border-amber-200'
+                     : 'bg-slate-100 text-slate-600 border-slate-200';
+          const inc = r.incumbent
+            ? `<span class="text-[10px] text-slate-500 truncate">via ${View.esc(r.incumbent)}</span>` : '';
+          const chip = r.relationship
+            ? `<span class="px-1.5 py-0.5 rounded border text-[9px] font-bold uppercase tracking-wide ${tone}">${View.esc(r.relationship)}</span>` : '';
+          return `<div class="flex items-center gap-1.5 mt-0.5 min-w-0">${chip}${inc}</div>`;
+        })();
+        const specLine = `${abbrSpecialty}${showUnit ? ` &bull; ${job.unit}` : ''}${
+          job.costCenter ? ` &bull; ${job.costCenter}` : ''}${
+          job.startTime && job.endTime ? ` &bull; ${job.startTime}-${job.endTime}`
+            : (job.shift && job.shift !== 'N/A' ? ` &bull; ${job.shift}` : '')}`;
+
+        return `
+          <td class="px-3 py-2">
+            <div class="flex items-center gap-1 overflow-hidden">
+              <button onclick="event.stopPropagation(); window.store.dispatch('TOGGLE_HOT_JOB','${job.id}')"
+                      class="shrink-0 transition-transform hover:scale-110" title="Mark as a hot job">
                 <i data-lucide="flame" class="w-4 h-4 ${isHot ? 'hot-job-active' : 'text-slate-300 hover:text-orange-400'}"></i>
               </button>
-              <span class="px-1 py-0.5 rounded text-[9px] font-bold ${sourceColor}" title="${job.sourceSystem || 'Unknown source'}">${sourceLabel}</span>
+              <span class="px-1 py-0.5 rounded text-[9px] font-bold ${srcBadge.cls}"
+                    title="${View.esc(job.sourceSystem || 'Unknown source')}">${srcBadge.label}</span>
               <span class="px-1.5 py-0.5 rounded text-xs font-bold ${colorClass} truncate">${job.id}</span>
+              <span class="ml-0.5 text-slate-400" data-chev>&#9654;</span>
             </div>
-            <div class="col-span-1 text-xs font-medium text-slate-700 truncate overflow-hidden" title="${job.program}">${job.program}</div>
-            <div class="col-span-3 pr-4 pl-2">
-              <div class="text-[10px] uppercase font-bold text-slate-400 truncate" title="${job.healthSystem}${job.healthSystem && job.requisitionReason ? ' - ' : ''}${job.requisitionReason || (job.healthSystem ? '' : 'No Reason Given')}">${job.healthSystem}${job.healthSystem && job.requisitionReason ? ' - ' : ''}${job.requisitionReason || (job.healthSystem ? '' : 'No Reason Given')}</div>
-              <div class="font-bold text-sm truncate">${job.facility}</div>
-              ${(() => {
-                // Relationship + incumbent, the first thing asked of a job:
-                // do we own this program, or are we bidding through someone
-                // else's? Rendered only when configured.
-                const r = Utils.systemRelationship(job.healthSystem);
-                if (!r) return '';
-                const tone = r.relationship === 'MSP' ? 'bg-emerald-100 text-emerald-700 border-emerald-200'
-                           : r.relationship === 'Direct' ? 'bg-blue-100 text-blue-700 border-blue-200'
-                           : r.relationship === '3rd Party' ? 'bg-amber-100 text-amber-800 border-amber-200'
-                           : 'bg-slate-100 text-slate-600 border-slate-200';
-                const inc = r.incumbent
-                  ? `<span class="text-[10px] text-slate-500 truncate">via ${View.esc(r.incumbent)}</span>` : '';
-                const rel = r.relationship
-                  ? `<span class="px-1.5 py-0.5 rounded border text-[9px] font-bold uppercase tracking-wide ${tone}">${View.esc(r.relationship)}</span>` : '';
-                return `<div class="flex items-center gap-1.5 mt-0.5 min-w-0">${rel}${inc}</div>`;
-              })()}
-              <div class="text-xs text-slate-500 truncate" title="${job.shiftTime ? `${job.shiftTime}${job.shift && job.shift !== 'N/A' ? ` (${job.shift})` : ''}` : (job.shift || '')}">
-                ${abbrSpecialty}${showUnit ? ` • ${job.unit}` : ''}${job.costCenter ? ` • ${job.costCenter}` : ''}${job.startTime && job.endTime ? ` • ${job.startTime}-${job.endTime}` : (job.shift && job.shift !== 'N/A' ? ` • ${job.shift}` : '')}
-              </div>
-            </div>
-            <div class="col-span-1 text-center font-bold text-slate-700 text-sm">${job.numPositions || 1}</div>
-            <div class="col-span-1 text-center font-bold text-xs ${job.billRateEstimated ? 'text-amber-600' : 'text-slate-700'}" title="${job.billRateEstimated ? 'Estimated (using suggested/max rate)' : ''}">${job.billRate}${job.billRateEstimated ? '*' : ''}</div>
-            <div class="col-span-1 text-center">
-              <span class="inline-flex font-bold text-xs ${bubbleClasses} ${bubbleText} rounded-full w-8 h-8 items-center justify-center mx-auto">${job.daysPast}</span>
-            </div>
-            <div class="col-span-1 text-center font-bold text-slate-700 hover:text-blue-600 z-10"
-                 onclick="event.stopPropagation(); window.store.dispatch('OPEN_MODAL',{type:'margin',jobId:'${job.id}',val:'${job.margin}'})">${job.margin}%</div>
-            <div class="col-span-1 text-center font-bold text-slate-700">${impact}%</div>
-            <div class="col-span-1 text-center font-medium text-slate-700">${
-              window.store.state.dataSource === 'non_msp'
-                ? `<span class="text-blue-600">${job.ghrSubs}</span>`
-                : `<span class="text-blue-600">${job.ghrSubs}</span> <span class="text-slate-300">/</span> <span class="text-blue-600">${job.avSubs}</span>`
-            }</div>
-            <div class="col-span-1 text-center font-medium text-slate-700 ${totalDeclines > 0 ? 'cursor-help hover:bg-slate-100 rounded transition-colors group-declines' : ''}"
-                 onclick="${totalDeclines > 0 ? `event.stopPropagation(); window.store.dispatch('ANALYZE_DECLINES',{id:'${job.id}'})` : ''}"
-                 title="${totalDeclines > 0 ? 'Click to Analyze' : ''}">
-                 ${window.store.state.dataSource === 'non_msp'
-                    ? `<span class="text-red-500">${job.ghrDeclines}</span>`
-                    : `<span class="text-red-500">${job.ghrDeclines}</span> <span class="text-slate-300">/</span> <span class="text-red-500">${job.avDeclines}</span>`}
-                 ${totalDeclines > 0 ? '<i data-lucide="pie-chart" class="w-3 h-3 text-slate-400 inline ml-1 opacity-0 group-hover:opacity-100 group-[.group-declines]:opacity-50"></i>' : ''}
-            </div>
-          </div>
-        `;
-
-        // The detail was lifted into jobDetailHtml so Open Jobs can render as
-        // a table; reattached here so this path behaves exactly as before.
-        if (expanded) html += View.jobDetailHtml(job);
-        return html;
+          </td>
+          <td class="px-3 py-2 text-xs font-medium text-slate-700 truncate" title="${View.esc(job.program || '')}">${View.esc(job.program || '')}</td>
+          <td class="px-3 py-2">
+            <div class="text-[10px] uppercase font-bold text-slate-400 truncate" title="${View.esc(eyebrow)}">${View.esc(eyebrow)}</div>
+            <div class="font-bold text-sm text-slate-700 truncate">${View.esc(job.facility || '')}</div>
+            ${rel}
+            <div class="text-xs text-slate-500 truncate">${specLine}</div>
+          </td>
+          <td class="px-3 py-2 text-center font-bold text-slate-700 text-sm">${job.numPositions || 1}</td>
+          <td class="px-3 py-2 text-center font-bold text-xs ${job.billRateEstimated ? 'text-amber-600' : 'text-slate-700'}"
+              title="${job.billRateEstimated ? 'Estimated (using suggested/max rate)' : ''}">${job.billRate}${job.billRateEstimated ? '*' : ''}</td>
+          <td class="px-3 py-2 text-center">
+            <span class="inline-flex font-bold text-xs ${bubbleClasses} ${bubbleText} rounded-full w-8 h-8 items-center justify-center mx-auto">${job.daysPast}</span>
+          </td>
+          <td class="px-3 py-2 text-center font-bold text-slate-700 hover:text-blue-600 cursor-pointer"
+              onclick="event.stopPropagation(); window.store.dispatch('OPEN_MODAL',{type:'margin',jobId:'${job.id}',val:'${job.margin}'})">${job.margin}%</td>
+          <td class="px-3 py-2 text-center font-bold text-slate-700">${impact}%</td>
+          <td class="px-3 py-2 text-center font-medium text-slate-700">${
+            nonMsp ? `<span class="text-blue-600">${job.ghrSubs}</span>`
+                   : `<span class="text-blue-600">${job.ghrSubs}</span> <span class="text-slate-300">/</span> <span class="text-blue-600">${job.avSubs}</span>`}</td>
+          <td class="px-3 py-2 text-center font-medium text-slate-700 ${totalDeclines > 0 ? 'cursor-help hover:bg-slate-100 group-declines' : ''}"
+              onclick="${totalDeclines > 0 ? `event.stopPropagation(); window.store.dispatch('ANALYZE_DECLINES',{id:'${job.id}'})` : ''}"
+              title="${totalDeclines > 0 ? 'Click to analyse the declines on this job' : ''}">
+            ${nonMsp ? `<span class="text-red-500">${job.ghrDeclines}</span>`
+                     : `<span class="text-red-500">${job.ghrDeclines}</span> <span class="text-slate-300">/</span> <span class="text-red-500">${job.avDeclines}</span>`}
+          </td>`;
       },
 
 
@@ -5842,7 +5856,12 @@
        * so it stays put while rows scroll under it — matching the List tab,
        * whose grid header has always been sticky.
        */
-      stageSort: {},
+      /* Open Jobs opened sorted by days-open, longest first, before it moved
+       * onto the stage table. stageApply only sorts when a column is chosen,
+       * so that default is seeded here rather than lost -- the oldest
+       * requisition is the one that needs looking at.
+       */
+      stageSort: { list: { label: 'Days', dir: 'desc' } },
       stageColFilter: {},
 
       stageColValue(col, r) {
@@ -6578,10 +6597,13 @@
        * The expanded set still lives in state, so a genuine re-render (a
        * filter change, a save) reproduces open rows correctly.
        */
-      STAGE_EXPANDED_SET: { closed: 'expandedClosed', extensions: 'expandedExtensions', onboarding: 'expandedOnboarding' },
-      STAGE_ROWS_KEY: { closed: 'closedRows', extensions: 'extensionsRows', onboarding: 'onboardingRows' },
+      STAGE_EXPANDED_SET: { closed: 'expandedClosed', extensions: 'expandedExtensions', onboarding: 'expandedOnboarding', list: 'expandedRows' },
+      STAGE_ROWS_KEY: { closed: 'closedRows', extensions: 'extensionsRows', onboarding: 'onboardingRows', list: 'jobs' },
 
       stageDetailRow(view, r) {
+        if (view === 'list') {
+          return `<tr data-detail-for="${r.id}"><td colspan="${View.stageColCount.list}" class="p-0">${View.jobDetailHtml(r)}</td></tr>`;
+        }
         if (view === 'closed') {
           return `<tr data-detail-for="${r.id}"><td colspan="${View.stageColCount.closed}" class="p-0">${View.closedDetail(r)}</td></tr>`;
         }
@@ -12894,6 +12916,10 @@
         extensionsRows: [], extensionsMeta: null, extensionsLoaded: false, extensionsError: null,
         onboardingRows: [], onboardingMeta: null, onboardingLoaded: false, onboardingError: null,
         closedRows: [], closedMeta: null, closedLoaded: false, closedError: null,
+        // stageShell gates every stage table on a <key>Loaded flag. Open Jobs
+        // now renders through the same shell, so it needs one too -- set when
+        // the positions come back, or the table would spin forever.
+        listLoaded: false, listError: null,
         // Peer bill rates behind RATE RANK, plus the coverage block that says
         // how they may be used (minimum peers, scope ladder, lookback).
         rateRows: [], rateMeta: null, rateLoaded: false, rateError: null,
@@ -12919,7 +12945,6 @@
         view: 'list',
         expandedRows: new Set(),
         rowSubView: {},
-        sort: { key: 'daysPast', dir: 'desc' },
         modal: { open: false, type: null, jobId: null, key: null, val: null, candidateIndex: null },
         sessionLog: [],
         filename: 'Updated_Positions',
@@ -13641,19 +13666,14 @@
               break;
             }
 
-            case 'SORT': {
-              if (s.sort.key === payload) s.sort.dir = s.sort.dir === 'asc' ? 'desc' : 'asc';
-              else { s.sort.key = payload; s.sort.dir = 'desc'; }
-              View.main();
-              break;
-            }
 
             case 'TOGGLE_ROW': {
               const id = payload;
-              if (s.expandedRows.has(id)) s.expandedRows.delete(id);
-              else s.expandedRows.add(id);
               if (!s.rowSubView[id]) s.rowSubView[id] = 'active';
-              View.rowUpdate(id);
+              if (!s.rowDetailTab[id]) s.rowDetailTab[id] = 'levers';
+              // The same surgical insert/remove the stage tabs use, so opening
+              // a job cannot lose the scroll position either.
+              View.toggleStageRow('list', id);
               break;
             }
 
