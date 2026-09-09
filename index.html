@@ -121,10 +121,22 @@
   </style>
 </head>
 
-<body class="bg-slate-50 text-slate-800 min-h-screen w-full p-2 sm:p-6 flex flex-col overflow-x-hidden overflow-y-auto md:h-screen md:overflow-hidden">
+<!-- pb-16/pb-20 keeps the standing revenue bar from covering the last row.
+     The desktop viewport pinning below is main's; the prototype drops it. -->
+<body class="bg-slate-50 text-slate-800 min-h-screen w-full p-2 sm:p-6 pb-16 sm:pb-20 flex flex-col overflow-x-hidden overflow-y-auto md:h-screen md:overflow-hidden">
 
   <!-- TOAST CONTAINER -->
   <div id="toastContainer" class="fixed top-4 right-4 z-[60] flex flex-col gap-2"></div>
+
+  <!-- Standing revenue bar, from the reference footer. Won and Missed come
+       from the Closed rows' signed revenue (a GHR win is positive, an
+       affiliate win or unfilled seat negative -- decided server-side so both
+       instances agree). Open Exposure is the 13-week value of seats still
+       open. All three follow the active filters, like everything else. -->
+  <footer id="revenueBar"
+          class="fixed left-0 right-0 bottom-0 z-40 h-14 bg-white border-t border-slate-200 px-4 sm:px-6
+                 flex items-center justify-between gap-4 shadow-[0_-1px_2px_rgba(15,34,66,.05)]">
+  </footer>
 
   <!-- LOADING OVERLAY -->
   <div id="loadingOverlay" class="hidden fixed inset-0 bg-white/50 z-[100] flex flex-col items-center justify-center">
@@ -896,7 +908,7 @@
     const $ = (id) => document.getElementById(id);
 
     // App version - loaded from environment variable via API, with fallback
-    let APP_VERSION = '2.6.0';
+    let APP_VERSION = '2.6.1';
 
     const API_BASE_URL = '/api';
     
@@ -2042,6 +2054,14 @@
                 billRate: cleanBillRate(row.bill_rate || ''),
                 billRateEstimated: row.bill_rate_estimated === 1 || row.bill_rate_estimated === true,
                 shift: String(row.time_type || row.shift_hours || row.shift || 'N/A'),
+                // Kept as a number as well as folded into the `shift` label:
+                // exposure is rate x hours x weeks, and the label can't be
+                // multiplied. Null where the source has no weekly figure, so a
+                // seat is left out of the total rather than assuming a week.
+                shiftHours: (() => {
+                  const h = Number(row.shift_hours);
+                  return isFinite(h) && h > 0 ? h : null;
+                })(),
                 shiftTime: row.start_time && row.end_time ? calculateShiftLength(row.start_time, row.end_time) : String(row.shift_time || ''),
                 startTime: String(row.start_time || ''),
                 endTime: String(row.end_time || ''),
@@ -4574,7 +4594,76 @@
         else if (v === 'closed') this.closed();
         else if (v === 'extensions') this.extensions();
         else if (v === 'onboarding') this.onboarding();
+        View.revenueBar();
         lucide.createIcons();
+      },
+
+      /* ---- Standing revenue bar ----
+       * The reference's footer: what the account has won, what it has missed,
+       * and what is still on the table. Won and Missed read the Closed rows'
+       * signed revenue, which the API decides (a GHR win positive, an
+       * affiliate win or an unfilled seat negative, a cancellation zero) so
+       * both instances agree without the client re-deriving the rule.
+       *
+       * Open Exposure is 13 weeks of bill rate x weekly hours across seats
+       * still open. Seats whose source carries no weekly hours are counted in
+       * neither the money nor the seat count and are reported as excluded --
+       * the same discipline extension_value_13wk uses. Assuming a standard
+       * week would invent precision the source does not have, and quietly
+       * dropping them would overstate coverage.
+       */
+      revenueBar() {
+        const el = $('revenueBar');
+        if (!el) return;
+        const s = window.store.state;
+        const money = v => '$' + Math.round(Math.abs(v)).toLocaleString();
+
+        const closed = (s.closedRows || []).filter(View.stageFilter);
+        const wonRows    = closed.filter(r => (Number(r.revenue) || 0) > 0);
+        const missedRows = closed.filter(r => (Number(r.revenue) || 0) < 0);
+        const won    = wonRows.reduce((a, r) => a + Number(r.revenue), 0);
+        const missed = missedRows.reduce((a, r) => a + Number(r.revenue), 0);
+
+        // GetPositions returns open demand only -- every branch filters to it
+        // at source (Bullhorn open statuses, `lt.status = 'open'`,
+        // `[Job Status] = 'Active'`) -- so the filtered jobs ARE the open
+        // seats. No `filled` flag exists on a job to test.
+        const open = View.getFilteredJobs(s);
+        let exposure = 0, priced = 0, unpriced = 0;
+        open.forEach(j => {
+          const rate = parseFloat(String(j.billRate).replace(/[^0-9.]/g, ''));
+          const hrs  = Number(j.shiftHours);
+          const seats = Number(j.numPositions) || 1;
+          if (isFinite(rate) && rate > 0 && isFinite(hrs) && hrs > 0) {
+            exposure += rate * hrs * 13 * seats;
+            priced += seats;
+          } else {
+            unpriced += seats;
+          }
+        });
+
+        const cell = (label, value, cls, sub) => `
+          <div class="min-w-0">
+            <div class="text-[9px] sm:text-[10px] font-extrabold uppercase tracking-wider text-slate-400 leading-none">${label}</div>
+            <div class="text-xs sm:text-base font-extrabold ${cls} mt-1 leading-none truncate">${value}</div>
+            ${sub ? `<div class="text-[9px] text-slate-400 mt-0.5 leading-none truncate">${sub}</div>` : ''}
+          </div>`;
+
+        const loaded = s.closedLoaded;
+        el.innerHTML = `
+          <div class="flex items-center gap-5 sm:gap-8 min-w-0">
+            ${cell('Revenue Won', loaded ? money(won) : '—', 'text-emerald-600',
+                   loaded ? `${wonRows.length} outcome${wonRows.length === 1 ? '' : 's'}` : 'Closed not loaded')}
+            ${cell('Revenue Missed', loaded ? money(missed) : '—', 'text-red-600',
+                   loaded ? `${missedRows.length} outcome${missedRows.length === 1 ? '' : 's'}` : 'Closed not loaded')}
+            ${cell('Open Exposure', exposure ? money(exposure) : '—', 'text-slate-800',
+                   priced
+                     ? `${priced} seat${priced === 1 ? '' : 's'}${unpriced ? ` · ${unpriced} without hours` : ''}`
+                     : (open.length ? `${open.length} open, none priced` : 'No open seats'))}
+          </div>
+          <div class="hidden md:block text-[11px] font-bold text-slate-500 whitespace-nowrap">
+            GHR Impact Manager &middot; Account Performance Workspace
+          </div>`;
       },
 
       getFilteredJobs(s) {
