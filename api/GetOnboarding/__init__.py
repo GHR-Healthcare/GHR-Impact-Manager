@@ -2,6 +2,7 @@ import azure.functions as func
 import pyodbc
 import os
 import json
+from datetime import date
 from shared_code.auth import require_allowed_domain
 from shared_code.data_source import (
     is_non_msp, get_bullhorn_conn, get_symplr_conn, get_appdb_conn,
@@ -317,6 +318,7 @@ def _bullhorn_onb_rows(cursor, app_conn, lookback, lookahead):
             p.requirementCompleted                        AS requirements_pct,
             p.expiringCredentials                         AS expiring_credentials,
             NULLIF(LTRIM(RTRIM(p.customText12)), '')      AS recruiter,
+            mv.moves_raw                                  AS moves_raw,
             p.onboardingStatus                            AS onboarding_status,
             CAST(p.dateBegin AS DATE)                     AS current_start,
             -- The oldest recorded previous value is the start everyone first
@@ -357,6 +359,40 @@ def _bullhorn_onb_rows(cursor, app_conn, lookback, lookahead):
             WHERE e.placementID = p.placementID AND e.columnName = 'dateBegin'
               AND e.isDeleted = 0
         ) h
+        -- MOVEMENT HISTORY. The count above says how often the start moved;
+        -- this says when, from what to what, and who did it -- which is what
+        -- makes a slipping start actionable rather than merely counted. The
+        -- audit trail already holds every dateBegin edit, so the series is a
+        -- fact here rather than an inference. Capped at the twelve most recent
+        -- so one pathological seat cannot bloat the payload.
+        OUTER APPLY (
+            -- One pipe-delimited line per move, aggregated newest-last. The
+            -- line is built at NVARCHAR(200) inside the derived table: doing
+            -- the concatenation inline made SQL Server evaluate it at a
+            -- narrower type and truncate.
+            SELECT STRING_AGG(m.line, CHAR(10))
+                   WITHIN GROUP (ORDER BY m.edited_on ASC) AS moves_raw
+            FROM (
+                SELECT TOP 12
+                       CAST(e2.dateAdded AS DATE) AS edited_on,
+                       -- NVARCHAR(MAX) deliberately: STRING_AGG returns
+                       -- nvarchar(4000) unless its input is max, and truncates.
+                       CONVERT(NVARCHAR(MAX),
+                         CONVERT(NVARCHAR(10), CAST(e2.dateAdded AS DATE), 23) + '|' +
+                         ISNULL(CONVERT(NVARCHAR(10), TRY_CAST(e2.oldValue AS date), 23), '') + '|' +
+                         ISNULL(CONVERT(NVARCHAR(10), TRY_CAST(e2.newValue AS date), 23), '') + '|' +
+                         LEFT(LTRIM(RTRIM(ISNULL(eu.firstName, '') + ' '
+                                        + ISNULL(eu.lastName, ''))), 60)) AS line
+                FROM dbo.EditHistoryPlacement e2 WITH (NOLOCK)
+                LEFT JOIN dbo.View_CorporateUser eu WITH (NOLOCK)
+                       ON eu.corporateUserID = e2.updatingUserID
+                WHERE e2.placementID = p.placementID AND e2.columnName = 'dateBegin'
+                  AND e2.isDeleted = 0
+                  AND TRY_CAST(e2.oldValue AS date) IS NOT NULL
+                  AND TRY_CAST(e2.newValue AS date) IS NOT NULL
+                ORDER BY e2.dateAdded DESC
+            ) m
+        ) mv
         -- The planned start is the value the *first* edit replaced, ordered by
         -- when the edit happened. MIN(oldValue) is a different question -- the
         -- earliest date ever proposed -- and the two diverge whenever a start
@@ -569,6 +605,25 @@ def _finalize(rows):
                   'requirements_pct', 'expiring_credentials'):
             if r.get(k) is not None:
                 r[k] = int(r[k])
+        # MOVEMENT HISTORY. The audit trail arrives as pipe-delimited lines,
+        # oldest first: edited_on|from|to|by. Parsed here so the client renders
+        # a list rather than doing string work per row per paint. A move whose
+        # dates are identical is dropped -- an edit that set the start to what
+        # it already was is not a movement, and showing it would inflate a
+        # count people are asked to act on.
+        raw = r.pop('moves_raw', None)
+        moves = []
+        for line in (raw or '').split('\n'):
+            parts = line.split('|')
+            if len(parts) < 3 or not parts[1] or not parts[2] or parts[1] == parts[2]:
+                continue
+            moves.append({
+                'on': parts[0], 'from': parts[1], 'to': parts[2],
+                'by': (parts[3].strip() if len(parts) > 3 else '') or None,
+                'days': (lambda a, b: (b - a).days)(
+                    date.fromisoformat(parts[1]), date.fromisoformat(parts[2])),
+            })
+        r['moves'] = moves
         r['compliance'] = _compliance(r)
         # "Who has the ball, and what next" -- the feedback's own framing. The
         # action is read off the seat's actual state; the owner is the person

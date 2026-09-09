@@ -7400,6 +7400,79 @@
                 ? `<div class="text-[10px] text-slate-400 mt-0.5">${pct}% complete</div>` : '')}`;
       },
 
+      /* Movement History -- the reference's third onboarding panel.
+       *
+       * Not "how many times did this move" (the row already says that) but
+       * when, from what to what, and by how much. The audit trail carries
+       * every dateBegin edit, so this is recorded fact rather than inference;
+       * an edit that set the start to the value it already held is dropped
+       * server-side, since it is not a movement and would inflate a count
+       * people are asked to act on.
+       *
+       * Only Bullhorn keeps a per-edit trail. B4 and VNDLY report a count and
+       * the endpoints of the slip, so those seats say the history is not
+       * available rather than showing an empty timeline that reads as "never
+       * moved".
+       */
+      onboardingMovement(r) {
+        const moves = Array.isArray(r.moves) ? r.moves : null;
+        const slip = View.onboardingSlip(r);
+        const net = slip == null ? null : slip;
+        const summary = `
+          <div class="grid grid-cols-2 gap-2 mt-3">
+            ${View.panelTile('Total Moves', r.move_count == null
+                ? '<span class="text-slate-300 font-normal">not tracked</span>' : r.move_count)}
+            ${View.panelTile('Net Slip', net == null
+                ? '<span class="text-slate-300 font-normal">&mdash;</span>'
+                : `<span class="${net > 0 ? 'text-red-600' : net < 0 ? 'text-emerald-600' : ''}">${
+                    net > 0 ? '+' : ''}${net} day${Math.abs(net) === 1 ? '' : 's'}</span>`)}
+          </div>`;
+
+        let body;
+        if (moves && moves.length) {
+          body = `<div class="space-y-1.5">${moves.map(m => `
+            <div class="flex items-start gap-2.5">
+              <span class="text-[10px] font-mono text-slate-400 w-[68px] shrink-0 pt-0.5">${View.esc(m.on)}</span>
+              <span class="w-2 h-2 rounded-full mt-1 shrink-0 ${
+                m.days > 0 ? 'bg-red-500' : m.days < 0 ? 'bg-emerald-500' : 'bg-slate-300'}"></span>
+              <span class="min-w-0">
+                <span class="block text-xs font-semibold text-slate-700">
+                  ${View.esc(m.from)} &rarr; ${View.esc(m.to)}
+                  <span class="ml-1 font-bold ${m.days > 0 ? 'text-red-600' : 'text-emerald-600'}">${
+                    m.days > 0 ? '+' : ''}${m.days}d</span>
+                </span>
+                ${m.by ? `<span class="block text-[10px] text-slate-400">by ${View.esc(m.by)}</span>` : ''}
+              </span>
+            </div>`).join('')}</div>`;
+        } else if (moves) {
+          body = `<p class="text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 rounded px-2 py-1.5">
+                    No start-date movement recorded.</p>`;
+        } else {
+          body = `<p class="text-xs text-slate-400 italic">
+                    ${View.esc(r.source_system || 'This source')} records how often a start moved, but not each
+                    change, so the individual moves cannot be listed here.</p>`;
+        }
+
+        const e = View.onboardingEdit(r);
+        const cat = e.delayCategory && e.delayCategory !== 'None' ? e.delayCategory : (r.delay_category || null);
+        const ctx = e.context || r.delay_reason || null;
+        return `
+          <div>
+            ${View.panelHead('Start-date history')}
+            <h5 class="text-xs font-bold uppercase tracking-wide text-slate-500">Movement History</h5>
+            <p class="text-[11px] text-slate-500 mt-0.5 mb-2">
+              How often the start has moved, by how much, and why.
+            </p>
+            ${cat ? `<span class="inline-block px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 text-slate-600 mb-2">${View.esc(cat)}</span>` : ''}
+            ${ctx ? `<div class="bg-slate-50/70 border border-slate-200 rounded px-2.5 py-2 mb-2">
+                       <div class="text-[10px] font-bold text-slate-600">Current Delay Context</div>
+                       <div class="text-[11px] text-slate-600 mt-0.5">${View.esc(ctx)}</div>
+                     </div>` : ''}
+            ${body}
+            ${summary}
+          </div>`;
+      },
+
       onboardingDetail(r) {
         const e = View.onboardingEdit(r);
         const slip = View.onboardingSlip(r);
@@ -7413,7 +7486,7 @@
         return `
           <tr class="bg-slate-50" data-detail-for="${r.id}">
             <td colspan="${View.stageColCount.onboarding}" class="px-4 py-4 border-b border-slate-200">
-              <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
                 <div>
                   <h5 class="text-xs font-bold uppercase tracking-wide text-slate-500 mb-1">Start Status</h5>
                   <p class="text-[10px] text-slate-400 mb-3">From the source systems. Not editable here.</p>
