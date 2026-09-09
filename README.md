@@ -2,6 +2,24 @@
 
 ## Version History
 
+### Extensions and Onboarding realigned to the reference
+
+Both tabs now carry the reference's columns and its three-line assignment block — system eyebrow, facility, specialty — with Source and Agency moved under the clinician so a row reads the same on every stage tab.
+
+| | Reference | Now |
+|---|---|---|
+| Extensions | 10 columns | 10, less Recruiter and System Match |
+| Onboarding | 10 columns | 10 |
+| Closed | 10 columns | 9, less Rate Rank |
+
+Three of the reference's columns are deliberately absent, all for the same reason — the data does not exist yet rather than being hard to render:
+
+- **System Match** reconciles the VMS against Bullhorn for the same seat. Neither book can identify its counterpart today.
+- **Recruiter** lives on the Bullhorn placement; B4 and VNDLY carry Account, Hiring and Resource Manager, and no recruiter at all.
+- **Rate Rank** on Closed, pending the rate work above.
+
+The first two both wait on extension identification — same clinician, same facility, consecutive assignment — which the feedback names as the highest priority and which is upstream of the headcount distortion in Trends.
+
 **2.5.0** - Rate intelligence: real ranking from the rate trend tables
 
 The prototype's Rate pane could not have shipped — its `rateRank` came from a mock field and its comparable median was `days * 0.82 + 4`. The feedback said to leave Rate out until market data was validated. It turns out the data was already in `ghrdhc`.
