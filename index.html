@@ -885,7 +885,7 @@
     const $ = (id) => document.getElementById(id);
 
     // App version - loaded from environment variable via API, with fallback
-    let APP_VERSION = '2.7.0';
+    let APP_VERSION = '2.8.0';
 
     const API_BASE_URL = '/api';
     
@@ -6559,7 +6559,7 @@
           : !!r.is_extension;
         return `
           <tr class="bg-slate-50">
-            <td colspan="12" class="px-4 py-4 border-b border-slate-200">
+            <td colspan="${View.stageColCount.extensions}" class="px-4 py-4 border-b border-slate-200">
               <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
                 ${View.systemMatchPanel(r)}
                 <div>
@@ -6658,6 +6658,7 @@
           { label: '13-Wk Value',     key: 'extension_value_13wk', align: 'right' },
         ];
         const all = (s.extensionsRows || []).filter(View.stageFilter);
+        View.stageColCount.extensions = extCols.length;
         const rows = View.stageApply('extensions',
           all.filter(View.extSearchMatch), extCols);
         const money = v => (v || v === 0) ? '$' + Number(v).toLocaleString(undefined, { maximumFractionDigits: 0 }) : '—';
@@ -6800,6 +6801,47 @@
           : `<span class="text-sky-600">${Math.abs(d)}d earlier</span>`;
       },
 
+      /* ---- Compliance ----
+       * Credentialling state for the seat, from Bullhorn. MSP reaches it
+       * through the same warehouse crosswalk System Match uses; non-MSP reads
+       * it off the placement directly. VNDLY and Symplr have no path to it and
+       * read "not tracked" rather than "clear" -- an unknown packet is not a
+       * finished one.
+       *
+       * The verdict is computed server-side so both instances agree, and it
+       * combines the packet status with what is actually outstanding: a seat
+       * can read "Initiated" with nothing left to do, or "Completed" with an
+       * expiring credential.
+       */
+      /* Detail and group rows must span the whole table, but they are built in
+       * different functions from the column arrays that define its width. The
+       * counts used to be written in by hand and went stale the moment a
+       * column was added -- Extensions' group header spanned 8 of 12 and
+       * Onboarding's detail 9 of 11. Each stage records its own width as it
+       * renders, and the rows that span it read that instead.
+       */
+      stageColCount: { extensions: 1, onboarding: 1, closed: 1 },
+
+      COMPLIANCE_ORDER: { blocked: 0, cancelled: 1, expiring: 2, in_progress: 3, clear: 4, unknown: 5 },
+
+      complianceSort(r) {
+        const c = r.compliance || {};
+        // Worst first, then by how much is outstanding.
+        return (View.COMPLIANCE_ORDER[c.state] ?? 9) * 1000
+             - Math.min(999, Number(r.requirements_incomplete) || 0);
+      },
+
+      complianceCell(r) {
+        const c = r.compliance;
+        if (!c) return '<span class="text-slate-300 text-[10px] italic">—</span>';
+        const pct = c.pct == null ? null : c.pct;
+        return `${View.stageBadge(c.label, c.tone)}
+          ${c.blocker
+            ? `<div class="text-[10px] text-slate-500 mt-0.5">${View.esc(c.blocker)}</div>`
+            : (pct != null && c.state !== 'unknown'
+                ? `<div class="text-[10px] text-slate-400 mt-0.5">${pct}% complete</div>` : '')}`;
+      },
+
       onboardingDetail(r) {
         const e = View.onboardingEdit(r);
         const slip = View.onboardingSlip(r);
@@ -6812,7 +6854,7 @@
           </div>`;
         return `
           <tr class="bg-slate-50">
-            <td colspan="9" class="px-4 py-4 border-b border-slate-200">
+            <td colspan="${View.stageColCount.onboarding}" class="px-4 py-4 border-b border-slate-200">
               <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
                 <div>
                   <h5 class="text-xs font-bold uppercase tracking-wide text-slate-500 mb-1">Start Status</h5>
@@ -6882,12 +6924,17 @@
           { label: 'Assignment',    key: 'facility' },
           { label: 'Clinician',     key: 'clinician' },
           { label: 'Status',        key: r => View.onboardingGroup(r), align: 'center' },
+          // From the IT feedback rather than the reference. Bullhorn's
+          // credentialling counters reach MSP through the warehouse crosswalk
+          // and non-MSP directly; sorts worst-first so blocked seats surface.
+          { label: 'Compliance',    key: r => View.complianceSort(r) },
           { label: 'Current Start', key: 'current_start', align: 'center' },
           { label: 'Moves',         key: 'move_count',    align: 'center' },
           { label: 'Days Delayed',  key: 'days_delayed',  align: 'center' },
           { label: 'Delay Reason',  key: 'delay_reason' },
           { label: 'Owner',         key: 'account_manager' },
         ];
+        View.stageColCount.onboarding = onbCols.length;
         const rows = View.stageApply('onboarding',
           (s.onboardingRows || []).filter(View.stageFilter), onbCols);
         const delayed = rows.filter(r => View.onboardingGroup(r) === 'DELAYED START').length;
@@ -6917,7 +6964,7 @@
           if (!list.length) return;
           const mv = list.reduce((a, r) => a + (Number(r.move_count) || 0), 0);
           body += `<tr class="bg-slate-200">
-              <td colspan="9" class="px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-600">
+              <td colspan="${onbCols.length}" class="px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-600">
                 ${g} <span class="text-slate-400 font-semibold ml-1">${list.length}</span>
                 ${mv ? `<span class="text-slate-400 font-normal ml-2">${mv} start-date move${mv === 1 ? '' : 's'}</span>` : ''}
               </td></tr>`;
@@ -6941,6 +6988,7 @@
                   <div class="text-[10px] mt-0.5">${View.stageAgency(r)}</div>
                 </td>
                 <td class="px-3 py-2 text-center">${View.stageBadge(g, tone[g] || 'low')}</td>
+                <td class="px-3 py-2">${View.complianceCell(r)}</td>
                 <td class="px-3 py-2 text-center text-slate-600">${r.current_start || '—'}</td>
                 <td class="px-3 py-2 text-center text-slate-600">${
                   r.move_count == null
@@ -6953,7 +7001,11 @@
                   <div class="text-slate-700">${e.delayCategory !== 'None' ? e.delayCategory : (r.delay_category || '—')}</div>
                   <div class="text-[10px] text-slate-400 truncate max-w-[16rem]">${e.context || r.delay_reason || ''}</div>
                 </td>
-                <td class="px-3 py-2 text-slate-500">${r.account_manager || '—'}</td>
+                <td class="px-3 py-2 text-slate-500">
+                  <div>${View.esc(r.account_manager || '—')}</div>
+                  ${r.recruiter ? `<div class="text-[10px] text-slate-400">Recruiter · ${View.esc(r.recruiter)}</div>` : ''}
+                  ${r.next_action ? `<div class="text-[10px] text-blue-600 mt-0.5">${View.esc(r.next_action)}</div>` : ''}
+                </td>
               </tr>`;
             if (open) body += View.onboardingDetail(r);
           });
@@ -6994,6 +7046,7 @@
           { label: 'Revenue',       key: 'revenue',       align: 'right' },
           { label: 'Owner',         key: 'account_manager' },
         ];
+        View.stageColCount.closed = closedCols.length;
         const rows = View.stageApply('closed',
           (s.closedRows || []).filter(View.stageFilter), closedCols);
         const money = v => (v || v === 0) ? '$' + Number(v).toLocaleString(undefined, { maximumFractionDigits: 0 }) : '—';
