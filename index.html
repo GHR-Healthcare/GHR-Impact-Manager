@@ -1791,6 +1791,10 @@
                 // always returned both, capture rate being GHR against
                 // affiliate. Non-MSP has no panel, so the flag stays off there.
                 const av = window.store.state.dataSource === 'non_msp' ? '' : '?includeAffiliate=1';
+            // The revenue bar reads Closed; the flag is set at the load site
+            // so the condition lives in exactly one place. This build loads
+            // the stage data unconditionally, so the bar always applies here.
+            window.store.state.stageDataEnabled = true;
             const stageLoads = [
               { key: 'extensions', route: `extensions-data${av}`, pick: d => Array.isArray(d) ? d : (d.rows || []) },
               { key: 'onboarding', route: `onboarding-data${av}`, pick: d => Array.isArray(d) ? d : (d.rows || []) },
@@ -1830,8 +1834,7 @@
                 window.store.state.workspaceState = (ws && !ws.error) ? ws : {};
               }
             } catch (e) {
-              console.warn('Error loading workspace state:', e);
-            }
+              console.warn('Error loading workspace state:', e);            }
 
             // Load pending submissions data (GHR only)
             try {
@@ -4704,6 +4707,19 @@
         const el = $('revenueBar');
         if (!el) return;
         const s = window.store.state;
+        /* Revenue Won and Missed come from Closed, which the original MSP does
+         * not load -- its stage tabs are prototype-only. Shown there, the bar
+         * stood permanently empty. It is hidden instead, and the body padding
+         * that reserves room for it comes off with it so the pinned desktop
+         * layout does not lose 64px to a bar that is not there.
+         */
+        if (!s.stageDataEnabled) {
+          el.hidden = true;
+          document.body.classList.remove('pb-16', 'sm:pb-20');
+          return;
+        }
+        el.hidden = false;
+        document.body.classList.add('pb-16', 'sm:pb-20');
         const money = v => '$' + Math.round(Math.abs(v)).toLocaleString();
 
         const closed = (s.closedRows || []).filter(View.stageFilter);
@@ -5076,6 +5092,268 @@
         lucide.createIcons();
       },
 
+      /* The expanded job detail: Impact levers, the submission log and the
+       * Rate / Pipeline / Placements panes. Lifted out of buildRowHtml
+       * unchanged so Open Jobs can render as a table like every other tab
+       * while keeping this exactly as it was.
+       */
+      /* The expanded job detail: the Levers / Rate / Pipeline / Placements
+       * tab strip and the submission log.
+       *
+       * Taken from the prototype build, where this was already wired. On main
+       * the three panes were defined and never called -- rowDetailTab sat in
+       * state with no reducer and no markup -- so non-MSP, which deploys from
+       * main, had no tabbed detail at all. Both sides now render the same one.
+       */
+      jobDetailHtml(job) {
+        const s = window.store.state;
+        let html = '';
+        const totalDeclines = job.ghrDeclines + job.avDeclines;
+        const view = s.rowSubView[job.id] || 'active';
+        const detailTab = s.rowDetailTab[job.id] || 'levers';
+        const cands = job.candidates.filter(c =>
+          view === 'active' ? !Utils.isDeclinedNow(job.id, c) : Utils.isDeclinedNow(job.id, c));
+
+        // --- LEVER SORTING LOGIC (Columnar Flow with Next Step Spanning Bottom) ---
+        
+        // Define Tier groups
+        const LEVER_GROUPS = [
+            { name: "Tier 1. Program Management Levers", keys: ['adjStartPeriod', 'flex48', 'autoOffer', 'relaxRequirements'] },
+            { name: "Tier 2. Recruitment Levers", keys: ['additionalRecruiter', 'hotJob', 'recruiterIncentive', 'payAdj'] },
+            { name: "Tier 3. Final Levers", keys: ['openToAVs', 'billRateIncrease'] }
+        ];
+
+        let leverGridHtml = '';
+        
+        LEVER_GROUPS.forEach(group => {
+            leverGridHtml += `
+              <div class="mb-4 last:mb-0">
+                  <h5 class="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2 border-b border-slate-100 pb-1">${group.name}</h5>
+                  <div class="grid grid-cols-2 gap-2">
+                      ${group.keys.map(k => {
+                          const v = job.levers[k] || { done: false };
+                          return `
+                              <div class="border p-2 rounded bg-white flex items-center gap-2 ${v.done ? 'border-indigo-500 bg-indigo-50' : 'hover:border-slate-300'} cursor-pointer"
+                                   onclick="${v.done ? `window.store.dispatch('TOGGLE_LEVER_OFF',{id:'${job.id}',key:'${k}'})` : `window.store.dispatch('OPEN_MODAL',{type:'lever',jobId:'${job.id}',key:'${k}'})`}">
+                                  <div class="w-4 h-4 shrink-0 border rounded flex items-center justify-center ${v.done ? 'bg-indigo-600 border-indigo-600' : 'border-slate-300'}">
+                                      ${v.done ? '<i data-lucide="check" class="text-white w-3 h-3"></i>' : ''}
+                                  </div>
+                                  <div class="flex flex-col min-w-0">
+                                      <span class="text-xs font-medium text-slate-700 leading-tight">${CONSTANTS.LEVER_LABELS[k]}</span>
+                                      ${v.done ? `<span class="text-[9px] text-slate-500 font-medium mt-0.5 block truncate">${v.user || ''}</span>` : ''}
+                                  </div>
+                              </div>
+                          `;
+                      }).join('')}
+                  </div>
+              </div>
+            `;
+        });
+
+        // -------------------------------------------
+
+        // Row-detail sub-tabs. Levers is the existing panel and stays the
+        // default; Rate / Pipeline / Placements are new. Same pill idiom as
+        // the Trend tab's Group By control so the app reads as one piece.
+        // Comparable placements at the same facility. Matching on facility
+        // plus specialty: assignment rows carry a care type / specialty while
+        // a job carries a title, so compare against the job's STRUCTURED
+        // specialty when one exists and otherwise fall back to facility only
+        // — an over-broad list beats a pane that is always empty, which is
+        // what comparing a job title to a care type produced.
+        const jobSpec = Utils.cleanFilterText(job.specialtyName || '');
+        const activePlacements = (s.statsData?.onAssignment || []).filter(r => {
+          if (!r.facility || !job.facility || r.facility !== job.facility) return false;
+          if (!jobSpec) return true;
+          return Utils.cleanFilterText(r.specialty || '') === jobSpec;
+        });
+        const detailTabs = [
+          ['levers', 'Levers', null],
+          ['rate', 'Rate', null],
+          ['pipeline', 'Pipeline', job.ghrSubs + job.avSubs],
+          ['placements', 'Placements', activePlacements.length],
+        ];
+        const detailTabStrip = `
+          <div class="flex items-center gap-1.5 mb-5">
+            ${detailTabs.map(([key, label, count]) => {
+              const on = detailTab === key;
+              return `<button onclick="event.stopPropagation();window.store.dispatch('SET_DETAIL_TAB',{id:'${job.id}',tab:'${key}'})"
+                      class="px-3 py-1.5 rounded-full text-xs font-semibold border transition-colors flex items-center gap-1.5 ${
+                        on ? 'bg-blue-50 border-blue-300 text-blue-700'
+                           : 'bg-white border-slate-200 text-slate-500 hover:text-slate-700 hover:border-slate-300'}">
+                      ${label}${count != null ? `<span class="${on ? 'text-blue-400' : 'text-slate-400'} font-medium">${count}</span>` : ''}
+                    </button>`;
+            }).join('')}
+          </div>`;
+
+        html += `
+          <div class="bg-slate-50 p-6 border-b shadow-inner cursor-auto fade-in" onclick="event.stopPropagation()">
+            ${detailTabStrip}
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-8 ${detailTab === 'levers' ? '' : 'hidden'}">
+              <div>
+                <h4 class="font-bold mb-3 text-sm uppercase text-slate-500">Impact Levers</h4>
+                
+                <div class="space-y-2">
+                  ${leverGridHtml}
+                </div>
+                
+                ${job.avOpenDate ? `<div class="mt-4 text-xs bg-purple-50 p-2 border border-purple-200 rounded text-purple-800 flex items-center gap-2"><i data-lucide="calendar" class="w-3 h-3"></i> <strong>AV Opened:</strong> ${job.avOpenDate}</div>` : ''}
+              </div>
+
+              <div>
+                <div class="flex justify-between items-center mb-2">
+                  <div class="flex items-center gap-2">
+                      <h4 class="font-bold text-sm uppercase text-slate-500">Submission Log</h4>
+                      ${totalDeclines > 0 ? `
+                      <button onclick="event.stopPropagation(); window.store.dispatch('ANALYZE_DECLINES',{id:'${job.id}'})" class="text-[10px] bg-white border border-slate-300 hover:bg-slate-50 text-slate-600 px-2 py-0.5 rounded flex items-center gap-1 transition-colors shadow-sm" title="Analyze Decline Reasons">
+                          <i data-lucide="pie-chart" class="w-3 h-3"></i> Analyze
+                      </button>` : ''}
+                  </div>
+                  <div class="flex bg-white border rounded p-0.5">
+                    <button class="px-3 py-0.5 text-xs font-bold rounded ${view==='active' ? 'bg-blue-100 text-blue-700' : 'text-slate-400'}"
+                            onclick="window.store.dispatch('SET_SUB_VIEW',{id:'${job.id}',view:'active'})">Active</button>
+                    <button class="px-3 py-0.5 text-xs font-bold rounded ${view==='declined' ? 'bg-red-100 text-red-700' : 'text-slate-400'}"
+                            onclick="window.store.dispatch('SET_SUB_VIEW',{id:'${job.id}',view:'declined'})">Declined</button>
+                  </div>
+                </div>
+
+                <div class="bg-white border rounded h-56 overflow-y-auto p-0 text-xs mb-3">
+                  ${cands.length === 0 ? '<div class="p-4 text-center text-slate-400 italic">No candidates found</div>' : cands.map((c) => {
+                    const originalIndex = job.candidates.indexOf(c);
+                    const daysAgo = c.date ? Utils.calcDays(c.date) : '-';
+                    const subDateStr = c.date ? Utils.fmtDate(c.date) : 'N/A';
+                    
+                    const agLower = (c.agency || '').toLowerCase();
+                    // GHR or Planet Healthcare = internal, but not "The Planet Group"
+                    const isGHR = agLower.includes('ghr');
+                    const isPlanetHealthcare = agLower.includes('planet healthcare');
+                    const isInternal = isGHR || isPlanetHealthcare;
+
+                    // Redaction Logic: Only redact if NOT internal/partner
+                    const displayName = (s.redactMode && !isInternal) ? Utils.redactName(c.name) : c.name;
+                    const displayAgency = (s.redactMode && !isInternal) ? 'Vendor' : c.agency;
+
+                    // Styling Logic
+                    let rowBgClass = 'hover:bg-slate-50 border-transparent';
+                    let nameColorClass = 'text-slate-800';
+                    let badgeClass = 'text-slate-400';
+
+                    if (isGHR) {
+                        rowBgClass = 'bg-blue-50/40 hover:bg-blue-50 border-blue-100';
+                        nameColorClass = 'text-blue-900';
+                        badgeClass = 'text-blue-500 font-bold';
+                    } else if (isPlanetHealthcare) {
+                        rowBgClass = 'bg-purple-50/40 hover:bg-purple-50 border-purple-100';
+                        nameColorClass = 'text-purple-900';
+                        badgeClass = 'text-purple-500 font-bold';
+                    }
+
+                    // Center Content: Status / Reason / Alerts
+                    // Declined on the same basis the list is filtered by, so
+                    // a decline recorded in the app reads as one here rather
+                    // than falling through to the active-candidate prompts.
+                    const declinedNow = Utils.isDeclinedNow(job.id, c);
+                    let centerContent = '';
+                    if (declinedNow) {
+                        const dType = c.declineType || Utils.interviewStage(job.id, c);
+                        centerContent = `<div class="text-red-700 font-bold truncate" title="${dType}">${dType}</div>`;
+                        if (c.declineReason) centerContent += `<div class="text-slate-500 truncate italic" title="${c.declineReason}">${c.declineReason}</div>`;
+                    } else {
+                        // Active Candidate Prompts
+                        if (c.offerDate) {
+                            centerContent = `<div class="text-green-600 font-bold bg-green-50 px-1 rounded inline-block">Offer Pending</div>`;
+                        } else if (c.interviewDate) {
+                            centerContent = `<div class="text-blue-600 font-bold bg-blue-50 px-2 py-0.5 rounded inline-block">📅 Interview: ${c.interviewDate}</div>`;
+                        } else if (c.removedFromQueue) {
+                            centerContent = `<div class="text-slate-500 font-bold bg-slate-100 px-2 py-0.5 rounded inline-block line-through">Removed: ${c.declineReason || 'N/A'}</div>`;
+                        } else {
+                            const alertColor = c.alert ? (c.alert.level === 'green' ? 'text-emerald-600' : (c.alert.level === 'yellow' ? 'text-amber-600' : 'text-red-600')) : 'text-slate-500';
+                            centerContent = `<div class="${alertColor} font-bold uppercase tracking-wide truncate" title="${c.alert ? c.alert.text : 'Pending'}">${c.alert ? c.alert.text : 'Pending'}</div>`;
+                        }
+                        if(c.reqReason) centerContent += `<div class="text-slate-400 italic truncate" title="${c.reqReason}">Req: ${c.reqReason}</div>`;
+                    }
+
+                    // Manual interview stage, internal submissions only. The row itself
+                    // opens the candidate-action modal, so the select stops propagation —
+                    // otherwise picking a stage would also open a modal.
+                    if (isInternal) {
+                      const stage = Utils.interviewStage(job.id, c);
+                      const overridden = !!s.workspaceState?.interview?.[Utils.interviewKey(job.id, c)];
+                      centerContent += `<div class="mt-1 flex items-center gap-1" onclick="event.stopPropagation()">
+                          <select class="text-[10px] border border-slate-300 rounded px-1 py-0.5 bg-white"
+                                  onchange="event.stopPropagation();window.store.dispatch('SAVE_INTERVIEW',{jobId:'${job.id}',name:${JSON.stringify(c.name || '')},stage:this.value})">
+                            ${Utils.INTERVIEW_STAGES.map(o => `<option ${o === stage ? 'selected' : ''}>${o}</option>`).join('')}
+                          </select>
+                          <span class="text-[9px] ${overridden ? 'text-blue-500 font-semibold' : 'text-slate-300'}"
+                                title="${overridden ? 'Manually set' : 'Derived from the source dates'}">${overridden ? 'manual' : 'auto'}</span>
+                        </div>`;
+                    }
+
+                    // Right Content: Dates
+                    let rightContent = `<div class="font-mono text-slate-500 text-[10px]">Sub: ${subDateStr}</div>`;
+                    if(c.date) rightContent += `<div class="font-bold text-slate-700">${daysAgo}d ago</div>`;
+                    
+                    if (declinedNow && c.declineDate) {
+                        rightContent += `<div class="text-red-400 text-[9px] mt-0.5">Dec: ${Utils.fmtDate(c.declineDate)}</div>`;
+                    }
+
+                    // Determine if candidate is actionable (active tab, not already declined/removed)
+                    const isActionable = view === 'active' && !declinedNow && !c.removedFromQueue;
+                    const clickHandler = isActionable 
+                      ? `onclick="window.store.dispatch('OPEN_MODAL',{type:'candidate_action',jobId:'${job.id}',candidateIndex:${originalIndex}})"` 
+                      : '';
+                    const cursorClass = isActionable ? 'cursor-pointer' : 'cursor-default';
+
+                    return `
+                      <div class="px-3 py-2 border-b last:border-0 transition-colors grid grid-cols-12 gap-2 items-center ${rowBgClass} ${cursorClass}"
+                           ${clickHandler}>
+                        
+                        <!-- Left: Name & Agency -->
+                        <div class="col-span-4 min-w-0">
+                          <div class="font-bold ${nameColorClass} truncate" title="${displayName}">${displayName}</div>
+                          <div class="text-[10px] uppercase tracking-wider ${badgeClass} truncate" title="${displayAgency}">${displayAgency}</div>
+                        </div>
+                        
+                        <!-- Center: Status & Notes -->
+                        <div class="col-span-5 min-w-0">
+                          ${centerContent}
+                        </div>
+
+                        <!-- Right: Dates -->
+                        <div class="col-span-3 text-right">
+                          ${rightContent}
+                        </div>
+                      </div>
+                    `;
+                  }).join('')}
+                </div>
+
+                <!-- Next Steps (Moved Here) -->
+                <div class="border border-slate-200 border-dashed p-3 rounded bg-slate-50/50 flex flex-col gap-2">
+                   <div class="flex gap-2">
+                     <button class="flex-1 bg-white border border-slate-300 text-slate-600 hover:bg-slate-50 px-2 py-1.5 rounded text-xs font-bold flex items-center justify-center gap-2 transition-colors shadow-sm"
+                            onclick="window.store.dispatch('OPEN_MODAL',{type:'next_step',jobId:'${job.id}'})">
+                      <i data-lucide="message-square" class="w-3 h-3"></i> ${job.nextStep ? 'Update Next Step' : 'Add Next Step'}
+                     </button>
+                     <button class="bg-white border border-slate-300 text-slate-500 hover:bg-slate-50 hover:text-slate-700 px-2 py-1.5 rounded text-xs font-medium flex items-center justify-center gap-1 transition-colors shadow-sm"
+                            onclick="window.store.dispatch('OPEN_MODAL',{type:'next_step_history',jobId:'${job.id}'})"
+                            title="View next step history">
+                      <i data-lucide="history" class="w-3 h-3"></i> History
+                     </button>
+                   </div>
+                   ${job.nextStep ? `<div class="text-[10px] text-yellow-800 bg-yellow-50 p-2 rounded border border-yellow-100 leading-snug break-words whitespace-pre-wrap">${job.nextStep.text} <em class="block mt-1 text-slate-400 font-normal not-italic">(${job.nextStep.user || 'Unknown'})</em></div>` : ''}
+                </div>
+
+              </div>
+            </div>
+            ${detailTab === 'rate' ? View.detailRatePane(job) : ''}
+            ${detailTab === 'pipeline' ? View.detailPipelinePane(job) : ''}
+            ${detailTab === 'placements' ? View.detailPlacementsPane(job, activePlacements) : ''}
+          </div>
+        `;
+        return html;
+      },
+
       buildRowHtml(job) {
         const s = window.store.state;
         const expanded = s.expandedRows.has(job.id);
@@ -5168,258 +5446,13 @@
           </div>
         `;
 
-        if (expanded) {
-          const view = s.rowSubView[job.id] || 'active';
-          const detailTab = s.rowDetailTab[job.id] || 'levers';
-          const cands = job.candidates.filter(c =>
-            view === 'active' ? !Utils.isDeclinedNow(job.id, c) : Utils.isDeclinedNow(job.id, c));
-
-          // --- LEVER SORTING LOGIC (Columnar Flow with Next Step Spanning Bottom) ---
-          
-          // Define Tier groups
-          const LEVER_GROUPS = [
-              { name: "Tier 1. Program Management Levers", keys: ['adjStartPeriod', 'flex48', 'autoOffer', 'relaxRequirements'] },
-              { name: "Tier 2. Recruitment Levers", keys: ['additionalRecruiter', 'hotJob', 'recruiterIncentive', 'payAdj'] },
-              { name: "Tier 3. Final Levers", keys: ['openToAVs', 'billRateIncrease'] }
-          ];
-
-          let leverGridHtml = '';
-          
-          LEVER_GROUPS.forEach(group => {
-              leverGridHtml += `
-                <div class="mb-4 last:mb-0">
-                    <h5 class="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2 border-b border-slate-100 pb-1">${group.name}</h5>
-                    <div class="grid grid-cols-2 gap-2">
-                        ${group.keys.map(k => {
-                            const v = job.levers[k] || { done: false };
-                            return `
-                                <div class="border p-2 rounded bg-white flex items-center gap-2 ${v.done ? 'border-indigo-500 bg-indigo-50' : 'hover:border-slate-300'} cursor-pointer"
-                                     onclick="${v.done ? `window.store.dispatch('TOGGLE_LEVER_OFF',{id:'${job.id}',key:'${k}'})` : `window.store.dispatch('OPEN_MODAL',{type:'lever',jobId:'${job.id}',key:'${k}'})`}">
-                                    <div class="w-4 h-4 shrink-0 border rounded flex items-center justify-center ${v.done ? 'bg-indigo-600 border-indigo-600' : 'border-slate-300'}">
-                                        ${v.done ? '<i data-lucide="check" class="text-white w-3 h-3"></i>' : ''}
-                                    </div>
-                                    <div class="flex flex-col min-w-0">
-                                        <span class="text-xs font-medium text-slate-700 leading-tight">${CONSTANTS.LEVER_LABELS[k]}</span>
-                                        ${v.done ? `<span class="text-[9px] text-slate-500 font-medium mt-0.5 block truncate">${v.user || ''}</span>` : ''}
-                                    </div>
-                                </div>
-                            `;
-                        }).join('')}
-                    </div>
-                </div>
-              `;
-          });
-
-          // -------------------------------------------
-
-          // Row-detail sub-tabs. Levers is the existing panel and stays the
-          // default; Rate / Pipeline / Placements are new. Same pill idiom as
-          // the Trend tab's Group By control so the app reads as one piece.
-          // Comparable placements at the same facility. Matching on facility
-          // plus specialty: assignment rows carry a care type / specialty while
-          // a job carries a title, so compare against the job's STRUCTURED
-          // specialty when one exists and otherwise fall back to facility only
-          // — an over-broad list beats a pane that is always empty, which is
-          // what comparing a job title to a care type produced.
-          const jobSpec = Utils.cleanFilterText(job.specialtyName || '');
-          const activePlacements = (s.statsData?.onAssignment || []).filter(r => {
-            if (!r.facility || !job.facility || r.facility !== job.facility) return false;
-            if (!jobSpec) return true;
-            return Utils.cleanFilterText(r.specialty || '') === jobSpec;
-          });
-          const detailTabs = [
-            ['levers', 'Levers', null],
-            ['rate', 'Rate', null],
-            ['pipeline', 'Pipeline', job.ghrSubs + job.avSubs],
-            ['placements', 'Placements', activePlacements.length],
-          ];
-          const detailTabStrip = `
-            <div class="flex items-center gap-1.5 mb-5">
-              ${detailTabs.map(([key, label, count]) => {
-                const on = detailTab === key;
-                return `<button onclick="event.stopPropagation();window.store.dispatch('SET_DETAIL_TAB',{id:'${job.id}',tab:'${key}'})"
-                        class="px-3 py-1.5 rounded-full text-xs font-semibold border transition-colors flex items-center gap-1.5 ${
-                          on ? 'bg-blue-50 border-blue-300 text-blue-700'
-                             : 'bg-white border-slate-200 text-slate-500 hover:text-slate-700 hover:border-slate-300'}">
-                        ${label}${count != null ? `<span class="${on ? 'text-blue-400' : 'text-slate-400'} font-medium">${count}</span>` : ''}
-                      </button>`;
-              }).join('')}
-            </div>`;
-
-          html += `
-            <div class="bg-slate-50 p-6 border-b shadow-inner cursor-auto fade-in" onclick="event.stopPropagation()">
-              ${detailTabStrip}
-              <div class="grid grid-cols-1 md:grid-cols-2 gap-8 ${detailTab === 'levers' ? '' : 'hidden'}">
-                <div>
-                  <h4 class="font-bold mb-3 text-sm uppercase text-slate-500">Impact Levers</h4>
-                  
-                  <div class="space-y-2">
-                    ${leverGridHtml}
-                  </div>
-                  
-                  ${job.avOpenDate ? `<div class="mt-4 text-xs bg-purple-50 p-2 border border-purple-200 rounded text-purple-800 flex items-center gap-2"><i data-lucide="calendar" class="w-3 h-3"></i> <strong>AV Opened:</strong> ${job.avOpenDate}</div>` : ''}
-                </div>
-
-                <div>
-                  <div class="flex justify-between items-center mb-2">
-                    <div class="flex items-center gap-2">
-                        <h4 class="font-bold text-sm uppercase text-slate-500">Submission Log</h4>
-                        ${totalDeclines > 0 ? `
-                        <button onclick="event.stopPropagation(); window.store.dispatch('ANALYZE_DECLINES',{id:'${job.id}'})" class="text-[10px] bg-white border border-slate-300 hover:bg-slate-50 text-slate-600 px-2 py-0.5 rounded flex items-center gap-1 transition-colors shadow-sm" title="Analyze Decline Reasons">
-                            <i data-lucide="pie-chart" class="w-3 h-3"></i> Analyze
-                        </button>` : ''}
-                    </div>
-                    <div class="flex bg-white border rounded p-0.5">
-                      <button class="px-3 py-0.5 text-xs font-bold rounded ${view==='active' ? 'bg-blue-100 text-blue-700' : 'text-slate-400'}"
-                              onclick="window.store.dispatch('SET_SUB_VIEW',{id:'${job.id}',view:'active'})">Active</button>
-                      <button class="px-3 py-0.5 text-xs font-bold rounded ${view==='declined' ? 'bg-red-100 text-red-700' : 'text-slate-400'}"
-                              onclick="window.store.dispatch('SET_SUB_VIEW',{id:'${job.id}',view:'declined'})">Declined</button>
-                    </div>
-                  </div>
-
-                  <div class="bg-white border rounded h-56 overflow-y-auto p-0 text-xs mb-3">
-                    ${cands.length === 0 ? '<div class="p-4 text-center text-slate-400 italic">No candidates found</div>' : cands.map((c) => {
-                      const originalIndex = job.candidates.indexOf(c);
-                      const daysAgo = c.date ? Utils.calcDays(c.date) : '-';
-                      const subDateStr = c.date ? Utils.fmtDate(c.date) : 'N/A';
-                      
-                      const agLower = (c.agency || '').toLowerCase();
-                      // GHR or Planet Healthcare = internal, but not "The Planet Group"
-                      const isGHR = agLower.includes('ghr');
-                      const isPlanetHealthcare = agLower.includes('planet healthcare');
-                      const isInternal = isGHR || isPlanetHealthcare;
-
-                      // Redaction Logic: Only redact if NOT internal/partner
-                      const displayName = (s.redactMode && !isInternal) ? Utils.redactName(c.name) : c.name;
-                      const displayAgency = (s.redactMode && !isInternal) ? 'Vendor' : c.agency;
-
-                      // Styling Logic
-                      let rowBgClass = 'hover:bg-slate-50 border-transparent';
-                      let nameColorClass = 'text-slate-800';
-                      let badgeClass = 'text-slate-400';
-
-                      if (isGHR) {
-                          rowBgClass = 'bg-blue-50/40 hover:bg-blue-50 border-blue-100';
-                          nameColorClass = 'text-blue-900';
-                          badgeClass = 'text-blue-500 font-bold';
-                      } else if (isPlanetHealthcare) {
-                          rowBgClass = 'bg-purple-50/40 hover:bg-purple-50 border-purple-100';
-                          nameColorClass = 'text-purple-900';
-                          badgeClass = 'text-purple-500 font-bold';
-                      }
-
-                      // Center Content: Status / Reason / Alerts
-                      // Declined on the same basis the list is filtered by, so
-                      // a decline recorded in the app reads as one here rather
-                      // than falling through to the active-candidate prompts.
-                      const declinedNow = Utils.isDeclinedNow(job.id, c);
-                      let centerContent = '';
-                      if (declinedNow) {
-                          const dType = c.declineType || Utils.interviewStage(job.id, c);
-                          centerContent = `<div class="text-red-700 font-bold truncate" title="${dType}">${dType}</div>`;
-                          if (c.declineReason) centerContent += `<div class="text-slate-500 truncate italic" title="${c.declineReason}">${c.declineReason}</div>`;
-                      } else {
-                          // Active Candidate Prompts
-                          if (c.offerDate) {
-                              centerContent = `<div class="text-green-600 font-bold bg-green-50 px-1 rounded inline-block">Offer Pending</div>`;
-                          } else if (c.interviewDate) {
-                              centerContent = `<div class="text-blue-600 font-bold bg-blue-50 px-2 py-0.5 rounded inline-block">📅 Interview: ${c.interviewDate}</div>`;
-                          } else if (c.removedFromQueue) {
-                              centerContent = `<div class="text-slate-500 font-bold bg-slate-100 px-2 py-0.5 rounded inline-block line-through">Removed: ${c.declineReason || 'N/A'}</div>`;
-                          } else {
-                              const alertColor = c.alert ? (c.alert.level === 'green' ? 'text-emerald-600' : (c.alert.level === 'yellow' ? 'text-amber-600' : 'text-red-600')) : 'text-slate-500';
-                              centerContent = `<div class="${alertColor} font-bold uppercase tracking-wide truncate" title="${c.alert ? c.alert.text : 'Pending'}">${c.alert ? c.alert.text : 'Pending'}</div>`;
-                          }
-                          if(c.reqReason) centerContent += `<div class="text-slate-400 italic truncate" title="${c.reqReason}">Req: ${c.reqReason}</div>`;
-                      }
-
-                      // Manual interview stage, internal submissions only. The row itself
-                      // opens the candidate-action modal, so the select stops propagation —
-                      // otherwise picking a stage would also open a modal.
-                      if (isInternal) {
-                        const stage = Utils.interviewStage(job.id, c);
-                        const overridden = !!s.workspaceState?.interview?.[Utils.interviewKey(job.id, c)];
-                        centerContent += `<div class="mt-1 flex items-center gap-1" onclick="event.stopPropagation()">
-                            <select class="text-[10px] border border-slate-300 rounded px-1 py-0.5 bg-white"
-                                    onchange="event.stopPropagation();window.store.dispatch('SAVE_INTERVIEW',{jobId:'${job.id}',name:${JSON.stringify(c.name || '')},stage:this.value})">
-                              ${Utils.INTERVIEW_STAGES.map(o => `<option ${o === stage ? 'selected' : ''}>${o}</option>`).join('')}
-                            </select>
-                            <span class="text-[9px] ${overridden ? 'text-blue-500 font-semibold' : 'text-slate-300'}"
-                                  title="${overridden ? 'Manually set' : 'Derived from the source dates'}">${overridden ? 'manual' : 'auto'}</span>
-                          </div>`;
-                      }
-
-                      // Right Content: Dates
-                      let rightContent = `<div class="font-mono text-slate-500 text-[10px]">Sub: ${subDateStr}</div>`;
-                      if(c.date) rightContent += `<div class="font-bold text-slate-700">${daysAgo}d ago</div>`;
-                      
-                      if (declinedNow && c.declineDate) {
-                          rightContent += `<div class="text-red-400 text-[9px] mt-0.5">Dec: ${Utils.fmtDate(c.declineDate)}</div>`;
-                      }
-
-                      // Determine if candidate is actionable (active tab, not already declined/removed)
-                      const isActionable = view === 'active' && !declinedNow && !c.removedFromQueue;
-                      const clickHandler = isActionable 
-                        ? `onclick="window.store.dispatch('OPEN_MODAL',{type:'candidate_action',jobId:'${job.id}',candidateIndex:${originalIndex}})"` 
-                        : '';
-                      const cursorClass = isActionable ? 'cursor-pointer' : 'cursor-default';
-
-                      return `
-                        <div class="px-3 py-2 border-b last:border-0 transition-colors grid grid-cols-12 gap-2 items-center ${rowBgClass} ${cursorClass}"
-                             ${clickHandler}>
-                          
-                          <!-- Left: Name & Agency -->
-                          <div class="col-span-4 min-w-0">
-                            <div class="font-bold ${nameColorClass} truncate" title="${displayName}">${displayName}</div>
-                            <div class="text-[10px] uppercase tracking-wider ${badgeClass} truncate" title="${displayAgency}">${displayAgency}</div>
-                          </div>
-                          
-                          <!-- Center: Status & Notes -->
-                          <div class="col-span-5 min-w-0">
-                            ${centerContent}
-                          </div>
-
-                          <!-- Right: Dates -->
-                          <div class="col-span-3 text-right">
-                            ${rightContent}
-                          </div>
-                        </div>
-                      `;
-                    }).join('')}
-                  </div>
-
-                  <!-- Next Steps (Moved Here) -->
-                  <div class="border border-slate-200 border-dashed p-3 rounded bg-slate-50/50 flex flex-col gap-2">
-                     <div class="flex gap-2">
-                       <button class="flex-1 bg-white border border-slate-300 text-slate-600 hover:bg-slate-50 px-2 py-1.5 rounded text-xs font-bold flex items-center justify-center gap-2 transition-colors shadow-sm"
-                              onclick="window.store.dispatch('OPEN_MODAL',{type:'next_step',jobId:'${job.id}'})">
-                        <i data-lucide="message-square" class="w-3 h-3"></i> ${job.nextStep ? 'Update Next Step' : 'Add Next Step'}
-                       </button>
-                       <button class="bg-white border border-slate-300 text-slate-500 hover:bg-slate-50 hover:text-slate-700 px-2 py-1.5 rounded text-xs font-medium flex items-center justify-center gap-1 transition-colors shadow-sm"
-                              onclick="window.store.dispatch('OPEN_MODAL',{type:'next_step_history',jobId:'${job.id}'})"
-                              title="View next step history">
-                        <i data-lucide="history" class="w-3 h-3"></i> History
-                       </button>
-                     </div>
-                     ${job.nextStep ? `<div class="text-[10px] text-yellow-800 bg-yellow-50 p-2 rounded border border-yellow-100 leading-snug break-words whitespace-pre-wrap">${job.nextStep.text} <em class="block mt-1 text-slate-400 font-normal not-italic">(${job.nextStep.user || 'Unknown'})</em></div>` : ''}
-                  </div>
-
-                </div>
-              </div>
-              ${detailTab === 'rate' ? View.detailRatePane(job) : ''}
-              ${detailTab === 'pipeline' ? View.detailPipelinePane(job) : ''}
-              ${detailTab === 'placements' ? View.detailPlacementsPane(job, activePlacements) : ''}
-            </div>
-          `;
-        }
-
+        // The detail was lifted into jobDetailHtml so Open Jobs can render as
+        // a table; reattached here so this path behaves exactly as before.
+        if (expanded) html += View.jobDetailHtml(job);
         return html;
       },
 
-      /*
-       * Row-detail panes for the Rate / Pipeline / Placements sub-tabs.
-       * Levers stays inline above — it was already there.
-       */
+
       detailStat(label, value, note) {
         return `<div class="bg-white border border-slate-200 rounded-lg px-3 py-2.5">
             <div class="text-[9px] uppercase tracking-wide text-slate-400 font-semibold">${label}</div>
@@ -12944,8 +12977,7 @@
         perDiemGHROnly: true,
         // Extension Search bar (Extensions tab only).
         extFilter: { endFrom: '', endTo: '', status: 'All' },
-        filters: { systems: new Set(), facilities: new Set(), categories: new Set(), serviceLines: new Set(), specialties: new Set(), ageMin: null, ageMax: null, permOnly: false, legendBands: new Set(), searchId: '' },
-        filterSelection: {
+        filters: { systems: new Set(), facilities: new Set(), categories: new Set(), serviceLines: new Set(), specialties: new Set(), ageMin: null, ageMax: null, permOnly: false, legendBands: new Set(), searchId: '' },        filterSelection: {
           systems: new Set(), facilities: new Set(), categories: new Set(), serviceLines: new Set(), specialties: new Set(),
           // Non-MSP filter dimensions — populated from the API's division/region/customText fields.
           // On MSP these stay empty; the UI hides the controls. Once the merged dashboard ships,
@@ -12968,6 +13000,9 @@
         intelOpen: {},
         onboardingRows: [], onboardingMeta: null, onboardingLoaded: false, onboardingError: null,
         closedRows: [], closedMeta: null, closedLoaded: false, closedError: null,
+        // True only where Closed / Extensions / Onboarding are loaded, which
+        // gates the revenue bar. Always true on this build.
+        stageDataEnabled: false,
         // Peer bill rates behind RATE RANK, plus the coverage block that says
         // how they may be used (minimum peers, scope ladder, lookback).
         rateRows: [], rateMeta: null, rateLoaded: false, rateError: null,
@@ -13774,6 +13809,10 @@
               break;
             }
 
+            // Levers / Rate / Pipeline / Placements. The state key existed here
+            // with no reducer and no markup, so the three panes were dead code
+            // on this branch -- and non-MSP, which deploys from main, had no
+            // tabbed job detail at all.
             case 'SET_DETAIL_TAB': {
               s.rowDetailTab[payload.id] = payload.tab;
               View.rowUpdate(payload.id);
