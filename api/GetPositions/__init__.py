@@ -123,6 +123,19 @@ def _bullhorn_positions_data():
             NULL AS min_hours,
             CAST(jo.startDate AS DATE) AS open_start_date,
             jo.employmentType AS time_type,
+            -- VMS FEE. Bullhorn's FieldMaps decodes Job Posting
+            -- correlatedCustomFloat3 as "VMS Fee %" -- the cut a third party's
+            -- VMS takes when GHR works through someone else's programme, which
+            -- is the non-MSP case the Relationship badge already calls
+            -- "3rd Party". It has no MSP counterpart: there GHR runs the
+            -- programme and the bill/pay split is the fee, already carried as
+            -- agency_receipt_pct.
+            --
+            -- Populated on 41,454 of 513,198 job orders (8.1%), averaging
+            -- 4.88% and ranging 0.5-25, but on only 2.6% of the last 180 days.
+            -- Null where unset rather than shown as a zero fee, which would
+            -- read as "this VMS takes nothing".
+            NULLIF(TRY_CAST(jo.correlatedCustomFloat3 AS DECIMAL(6,2)), 0) AS vms_fee_pct,
             NULL AS start_time,
             NULL AS end_time,
             jo.status AS status,
