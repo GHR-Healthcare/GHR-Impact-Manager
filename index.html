@@ -700,11 +700,11 @@
 
           <div id="leverInputContainer" class="hidden mb-4">
             <label class="block text-xs font-bold text-slate-500 mb-1">Assign To / Tag (Required)</label>
-            <input type="text" id="leverTagInput" class="w-full border border-slate-300 rounded p-2 text-sm focus:outline-none focus:border-blue-500 bg-slate-50" placeholder="Select a team member below..." readonly />
+            <input type="text" id="leverTagInput" class="w-full border border-slate-300 rounded p-2 text-sm focus:outline-none focus:border-blue-500 bg-slate-50" placeholder="Search for a team member below..." readonly />
           </div>
 
           <div id="commonTagContainer" class="hidden mb-4">
-            <span class="text-[10px] uppercase font-bold text-slate-400">Quick Tag Team:</span>
+            <span class="text-[10px] uppercase font-bold text-slate-400">Search People:</span>
             <div class="flex flex-wrap gap-1 mt-1" id="tagContainer"></div>
           </div>
 
@@ -859,7 +859,7 @@
     const $ = (id) => document.getElementById(id);
 
     // App version - loaded from environment variable via API, with fallback
-    let APP_VERSION = '2.12.0';
+    let APP_VERSION = '2.13.0';
 
     const API_BASE_URL = '/api';
     
@@ -1101,33 +1101,6 @@
       // three paths in sync when a new system transitions.
       TRANSITIONED_SYSTEMS: new Set(['RUMC', 'Holy Redeemer', 'Cooper']),
       
-      TEAM_MEMBERS: [
-        { name: "Alyssa Comita", email: "acomita@ghrhealthcare.com" },
-        { name: "Alyssa Depte", email: "adepte@ghrhealthcare.com" },
-        { name: "Amy Comer", email: "acomer@ghresources.com" },
-        { name: "Ashley Rosati", email: "arosati@ghrhealthcare.com" },
-        { name: "Cody Burch", email: "cburch@ghrhealthcare.com" },
-        { name: "Cyndi Domine", email: "cdomine@ghrhealthcare.com" },
-        { name: "Cynthia Westphal", email: "cwestphal@ghrhealthcare.com" },
-        { name: "Daniel Matteson", email: "dmatteson@ghrhealthcare.com" },
-        { name: "David Blatt", email: "dblatt@ghresources.com" },
-        { name: "Ed Willis", email: "ewillis@ghrhealthcare.com" },
-        { name: "Emily Peer", email: "epeer@ghresources.com" },
-        { name: "Jake Gehman", email: "jgehman@ghrhealthcare.com" },
-        { name: "Jen Dierkes", email: "jdirekes@ghresources.com" },
-        { name: "Jennifer O’Neill", email: "jONeill@ghrhealthcare.com" },
-        { name: "Jerry Klasik", email: "jklasik@ghresources.com" },
-        { name: "Karla Farrell", email: "kfarrell@ghrhealthcare.com" },
-        { name: "Liam O'Keefe", email: "lokeefe@ghrhealthcare.com" },
-        { name: "Mallory Harpe", email: "mharpe@ghresources.com" },
-        { name: "Matthew Kyle", email: "mkyle@ghrhealthcare.com" },
-        { name: "Monty Mckentry", email: "mmckentry@ghrhealthcare.com" },
-        { name: "Peter Mecouch", email: "pmecouch@ghrhealthcare.com" },
-        { name: "Rachel Baker", email: "rbaker@ghrhealthcare.com" },
-        { name: "Robin Wine", email: "rwine@ghrhealthcare.com" },
-        { name: "Tania Fornelos", email: "tfornelos@ghrhealthcare.com" },
-        { name: "Tina Davidson", email: "tdavidson@ghrhealthcare.com" }
-      ],
 
       // Key fix: Reordered subDate to top to prevent "Candidate" key from stealing "Candidate Submission" column
       COLUMN_MAP: {
@@ -2103,6 +2076,9 @@
                         job.levers[change.data.leverKey] = {
                             done: change.data.done === true,
                             user: change.data.done ? change.data.user : '',
+                            // Older rows predate the assignee email; absent is
+                            // fine, the name still renders.
+                            userEmail: change.data.done ? (change.data.userEmail || '') : '',
                             time: change.data.done ? change.data.time : ''
                         };
                     }
@@ -4454,47 +4430,47 @@
       },
 
       /*
-       * Quick-attach people picker.
-       *
-       * MSP keeps the hardcoded CONSTANTS.TEAM_MEMBERS chips — that list is the
-       * MSP pod and is short enough to click through.
-       *
-       * Non-MSP is a different org, so those names are wrong there. Instead of
-       * maintaining a second hardcoded list, search Microsoft Graph as the user
-       * types (same /api/search-users endpoint + debounce the PM-mapping picker
-       * already uses) and attach whoever they pick.
+       * People picker. Searches Microsoft Graph as the user types (the
+       * /api/search-users endpoint, same debounce as the PM-mapping picker)
+       * on both instances.
        */
-      applyTagSelection(mode, name) {
+      /* The display name goes in the visible (readonly) field and the email
+       * rides along on a data attribute, so the record can carry a stable
+       * identity while the UI still shows a person's name. */
+      applyTagSelection(mode, name, email) {
         if (mode === 'next_step') {
           const el = document.getElementById('nextStepText');
           if (el) el.value += `@${name} `;
         } else if (mode === 'lever') {
           const el = document.getElementById('leverTagInput');
-          if (el) el.value = name;
+          if (el) {
+            el.value = name;
+            el.dataset.email = email || '';
+          }
         }
       },
 
+      /* Graph search on both instances. The MSP side used to render chips from
+       * a hardcoded team list (since removed), which is why assignees were
+       * stored as bare display names — the chip passed only m.name and dropped
+       * the email sitting right next to it. That list had also drifted: five
+       * addresses were on @ghresources.com rather than @ghrhealthcare.com and
+       * one had the surname misspelt, so it could not be trusted as an identity
+       * source. Graph is authoritative and self-correcting, and one code path
+       * means MSP and non-MSP now record an assignee the same way.
+       */
       renderTags(mode) {
         const container = $('tagContainer');
         if (!container) return;
-
-        if (window.store.state.dataSource === 'non_msp') {
-          container.innerHTML = `
-            <div class="relative w-full">
-              <input type="text" id="tagUserSearch" autocomplete="off"
-                     placeholder="Search people…"
-                     oninput="View.searchTagUsers('${mode}', this.value)"
-                     onblur="setTimeout(()=>document.getElementById('tagUserDropdown')?.classList.add('hidden'), 200)"
-                     class="w-full border border-slate-300 rounded px-2 py-1 text-[11px] focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none">
-              <div id="tagUserDropdown" class="hidden absolute z-50 left-0 right-0 top-full mt-0.5 bg-white border border-slate-200 rounded shadow-lg max-h-40 overflow-y-auto text-[11px]"></div>
-            </div>`;
-          return;
-        }
-
-        container.innerHTML = CONSTANTS.TEAM_MEMBERS.map(m => {
-          const safeName = m.name.replace(/'/g, "\\'");
-          return `<span class="inline-block bg-slate-100 hover:bg-blue-100 text-slate-700 text-[10px] px-2 py-1 rounded cursor-pointer border border-slate-200 transition-colors" onclick="View.applyTagSelection('${mode}','${safeName}')">${m.name}</span>`;
-        }).join('');
+        container.innerHTML = `
+          <div class="relative w-full">
+            <input type="text" id="tagUserSearch" autocomplete="off"
+                   placeholder="Search people…"
+                   oninput="View.searchTagUsers('${mode}', this.value)"
+                   onblur="setTimeout(()=>document.getElementById('tagUserDropdown')?.classList.add('hidden'), 200)"
+                   class="w-full border border-slate-300 rounded px-2 py-1 text-[11px] focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none">
+            <div id="tagUserDropdown" class="hidden absolute z-50 left-0 right-0 top-full mt-0.5 bg-white border border-slate-200 rounded shadow-lg max-h-40 overflow-y-auto text-[11px]"></div>
+          </div>`;
       },
 
       searchTagUsers(mode, query) {
@@ -4515,8 +4491,9 @@
             }
             dropdown.innerHTML = users.map(u => {
               const nm = String(u.displayName || u.mail || '').replace(/'/g, "\\'");
+              const em = String(u.mail || '').replace(/'/g, "\\'");
               return `<div class="px-2 py-1.5 hover:bg-blue-50 cursor-pointer"
-                           onmousedown="View.applyTagSelection('${mode}','${nm}');document.getElementById('tagUserSearch').value='';document.getElementById('tagUserDropdown').classList.add('hidden')">
+                           onmousedown="View.applyTagSelection('${mode}','${nm}','${em}');document.getElementById('tagUserSearch').value='';document.getElementById('tagUserDropdown').classList.add('hidden')">
                         <div class="font-medium text-slate-700">${u.displayName || ''}</div>
                         <div class="text-slate-400 text-[10px]">${u.mail || ''}</div>
                       </div>`;
@@ -14367,6 +14344,11 @@
               if (!job.history) job.history = [];
 
               const tag = $('leverTagInput')?.value || '';
+              // Stable identity for the assignee. Display names collide and get
+              // re-spelled; the email is what lets these records be grouped by
+              // person later. Empty only if the field was populated by
+              // something other than a Graph pick.
+              const tagEmail = $('leverTagInput')?.dataset.email || '';
               const pushLog = (type, desc, tagVal) => {
                 const item = { jobId: job.id, type, desc, tag: tagVal || null, time: new Date().toLocaleString() };
                 // Defensive: logging is a side effect of the action, never a
@@ -14385,7 +14367,7 @@
 
               if (s.modal.type === 'lever') {
                 if (!tag) { window.showToast("Please tag a team member.", 'error'); return; }
-                job.levers[s.modal.key] = { done: true, user: tag, time: new Date().toLocaleDateString() };
+                job.levers[s.modal.key] = { done: true, user: tag, userEmail: tagEmail, time: new Date().toLocaleDateString() };
                 pushLog('Action', CONSTANTS.LEVER_LABELS[s.modal.key], tag);
                 
                 // Save to database
@@ -14393,6 +14375,7 @@
                   leverKey: s.modal.key,
                   done: true,
                   user: tag,
+                  userEmail: tagEmail,
                   time: new Date().toLocaleDateString()
                 });
 
@@ -14409,7 +14392,8 @@
                   // Save to database
                   recordChange(job.id, 'margin_update', {
                     margin: job.margin,
-                    user: tag
+                    user: tag,
+                    userEmail: tagEmail
                   });
                 }
 
@@ -14431,7 +14415,7 @@
                 if (!date) { window.showToast("Please select a date.", 'error'); return; }
                 job.avOpenDate = date;
                 // Also update the Lever state to Done
-                job.levers.openToAVs = { done: true, user: tag, time: date };
+                job.levers.openToAVs = { done: true, user: tag, userEmail: tagEmail, time: date };
                 pushLog('Opened to AVs', `Effective ${date}`, tag);
                 
                 // Save to database
@@ -14442,6 +14426,7 @@
                   leverKey: 'openToAVs',
                   done: true,
                   user: tag,
+                  userEmail: tagEmail,
                   time: date
                 });
 

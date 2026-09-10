@@ -2,6 +2,18 @@
 
 ## Version History
 
+### 2.13.0 - One people picker, and assignees get a stable identity
+
+The lever/margin tag is *who the action is assigned to*, recorded separately from who performed it (`changes.user_name`, which is the Azure AD email and is 100% consistent across all 4,649 rows). The assignee was the inconsistent half: of 2,030 lever completions, **1,115 carried a display name and 915 an email**, so the same person appears twice and the records can't be grouped by assignee.
+
+Both code paths already had the email and dropped it. MSP rendered chips from a hardcoded team list and passed only `m.name`; the Graph dropdown showed `u.mail` but passed `displayName || mail`.
+
+That list had also drifted — five addresses on `@ghresources.com` rather than `@ghrhealthcare.com`, and one with the surname misspelt (`jdirekes`) — so it could not serve as an identity source. Rather than repair it, MSP now uses the same Graph search non-MSP already had: one code path, an authoritative source, and no second list to maintain.
+
+A selection now carries both — the display name in the visible field, the email on a data attribute — and `lever_update`, `margin_update` and the open-to-AVs lever all persist `userEmail` beside `user`. `change_data` is free-form JSON so no API change was needed. Rows written before this carry no email; the replay path defaults it to empty and still renders the name.
+
+The tradeoff: MSP loses one-click chips for type-to-search.
+
 ### 2.6.0 - System Match, Recruiter, and what `IsExtension` actually means
 
 The two columns Extensions was missing both shipped. Both needed the same thing: a way to find a seat's counterpart record in the other system.
