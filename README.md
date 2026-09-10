@@ -2,6 +2,12 @@
 
 ## Version History
 
+### 2.12.2 - Reviewed contracts were all attributed to one person
+
+`window.USER_EMAIL` is read once, when marking a contract row reviewed, and is **never assigned anywhere in the file**. So the `|| 'mjones@ghrhealthcare.com'` fallback fired every time, and `reviewed_by` would have recorded that one address no matter who clicked. Now uses `getCurrentUser()` — the Azure AD email that every other mutation already records.
+
+Caught before it mattered: `impactmgr.reviewed_contracts_rows` is still empty, so no rows carry the wrong name.
+
 ### 2.12.1 - Category filter: "All Allied" was dropping 88% of allied
 
 Reported from the field: filtering the tracker to Allied gave figures far below the unfiltered totals, while the unfiltered totals looked right.

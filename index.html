@@ -882,7 +882,7 @@
     const $ = (id) => document.getElementById(id);
 
     // App version - loaded from environment variable via API, with fallback
-    let APP_VERSION = '2.12.1';
+    let APP_VERSION = '2.12.2';
 
     const API_BASE_URL = '/api';
     
@@ -1258,7 +1258,11 @@
         else s.reviewedContractsKeys.delete(key);
         if (s.view === 'contracts') window.store.dispatch('REFRESH_UI');
         try {
-            const userEmail = (window.USER_EMAIL || 'mjones@ghrhealthcare.com');
+            // window.USER_EMAIL was never assigned anywhere, so the fallback
+            // always fired and every reviewed-contract row was attributed to
+            // one hardcoded address regardless of who clicked. getCurrentUser()
+            // is the Azure AD email, which is what every other mutation records.
+            const userEmail = getCurrentUser();
             await fetch(`${API_BASE_URL}/reviewed-contracts`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
