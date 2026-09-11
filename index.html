@@ -7177,23 +7177,46 @@
         const usePage = !node || node === document.body;
         const scroller = usePage ? (document.scrollingElement || document.documentElement) : node;
 
-        // Measure after layout has settled -- icons render after the insert
-        // and change the detail's height.
-        requestAnimationFrame(() => {
-          const rowR = row.getBoundingClientRect();
-          const detR = detail ? detail.getBoundingClientRect() : rowR;
-          const top = Math.min(rowR.top, detR.top);
-          const blockH = Math.max(rowR.bottom, detR.bottom) - top;
-
+        /* Measure only once layout has actually settled.
+         *
+         * One rAF was not enough: lucide.createIcons() runs immediately before
+         * this and swaps every <i data-lucide> for an SVG, which changes the
+         * detail's height AFTER the first frame. Measuring then gave a detail
+         * barely taller than the row, so the pair looked short enough to
+         * centre -- and the panel grew downward past the fold once the icons
+         * landed. Two frames put the measurement after that reflow.
+         */
+        const settled = fn => requestAnimationFrame(() => requestAnimationFrame(fn));
+        settled(() => {
           const viewTop = usePage ? 0 : scroller.getBoundingClientRect().top;
           const viewH = usePage ? window.innerHeight : scroller.clientHeight;
           const head = scroller.querySelector ? scroller.querySelector('thead') : null;
           const headH = head ? head.getBoundingClientRect().height : 0;
           const usable = Math.max(0, viewH - headH);
+          const viewStart = viewTop + headH;
+
+          /* The dropdown is the thing worth seeing, so it gets the space.
+           *
+           * Preference order: show the row and its panel together if the pair
+           * fits, otherwise centre the panel alone and let the row scroll off,
+           * and if the panel is taller than the viewport put its top just
+           * under the header so it reads from the beginning. Centring the pair
+           * whatever its height was what clipped the bottom of the panel.
+           */
+          const rowR = row.getBoundingClientRect();
+          const detR = detail ? detail.getBoundingClientRect() : null;
+          let top, blockH;
+          if (detR && (detR.bottom - rowR.top) <= usable) {
+            top = rowR.top; blockH = detR.bottom - rowR.top;      // row + panel
+          } else if (detR) {
+            top = detR.top; blockH = detR.height;                 // panel alone
+          } else {
+            top = rowR.top; blockH = rowR.height;
+          }
 
           const target = blockH <= usable
-            ? viewTop + headH + (usable - blockH) / 2      // centred
-            : viewTop + headH + 8;                          // too tall: top-aligned
+            ? viewStart + (usable - blockH) / 2
+            : viewStart + 8;
           const delta = top - target;
           if (Math.abs(delta) < 4) return;
           const smooth = !window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
