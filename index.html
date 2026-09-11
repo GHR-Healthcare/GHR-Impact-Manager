@@ -1611,6 +1611,18 @@
                         });
                     }
                     
+                    // Recently-ended seats get the identical treatment -- the
+                    // Placements pane reads them alongside the active rows, so a
+                    // raw ISO string next to a Date object would compare wrong.
+                    if (statsData.recentlyEnded) {
+                        statsData.recentlyEnded.forEach(r => {
+                            r.startDate = r.startDate ? new Date(r.startDate) : null;
+                            r.endDate = r.endDate ? new Date(r.endDate) : null;
+                            if (r.Agency && !r.agency) r.agency = r.Agency;
+                            r.healthSystem = Utils.getHealthSystem(r.facility, r.system);
+                        });
+                    }
+
                     // Convert date strings to Date objects and normalize for upcoming
                     if (statsData.upcoming) {
                         statsData.upcoming.forEach(r => {
@@ -1628,11 +1640,11 @@
                     window.store.dispatch('REFRESH_UI');
                 } else {
                     console.warn('Could not load stats data');
-                    window.store.state.statsData = { onAssignment: [], upcoming: [] };
+                    window.store.state.statsData = { onAssignment: [], upcoming: [], recentlyEnded: [] };
                 }
             } catch (statsError) {
                 console.warn('Error loading stats data:', statsError);
-                window.store.state.statsData = { onAssignment: [], upcoming: [] };
+                window.store.state.statsData = { onAssignment: [], upcoming: [], recentlyEnded: [] };
             }
 
             // Load financial data for the Financials tab
@@ -5592,16 +5604,27 @@
         // — an over-broad list beats a pane that is always empty, which is
         // what comparing a job title to a care type produced.
         const jobSpec = Utils.cleanFilterText(job.specialtyName || '');
-        const activePlacements = (s.statsData?.onAssignment || []).filter(r => {
+        // Same facility/specialty narrowing for both lists, so the historical
+        // rows are scoped exactly as the active ones are.
+        const atFacility = list => (list || []).filter(r => {
           if (!r.facility || !job.facility || r.facility !== job.facility) return false;
           if (!jobSpec) return true;
           return Utils.cleanFilterText(r.specialty || '') === jobSpec;
         });
+        const activePlacements = atFacility(s.statsData?.onAssignment);
+        // Seats that ended at this facility in the last 90 days. The pane used
+        // to show only what was live right now, so a facility that turned over
+        // last month read as untouched.
+        const endedPlacements = atFacility(s.statsData?.recentlyEnded);
+        const placementsScope = s.placementsScope || 'recent';
+        const placementsShown = placementsScope === 'active'
+          ? activePlacements
+          : activePlacements.concat(endedPlacements);
         const detailTabs = [
           ['levers', 'Levers', null],
           ['rate', 'Rate', null],
           ['pipeline', 'Pipeline', job.ghrSubs + job.avSubs],
-          ['placements', 'Placements', activePlacements.length],
+          ['placements', 'Placements', placementsShown.length],
         ];
         const detailTabStrip = `
           <div class="flex items-center gap-1.5 mb-5">
@@ -5807,7 +5830,10 @@
             </div>
             ${detailTab === 'rate' ? View.detailRatePane(job) : ''}
             ${detailTab === 'pipeline' ? View.detailPipelinePane(job) : ''}
-            ${detailTab === 'placements' ? View.detailPlacementsPane(job, activePlacements) : ''}
+            ${detailTab === 'placements'
+                ? View.detailPlacementsPane(job, placementsShown, {
+                    scope: placementsScope, active: activePlacements.length, ended: endedPlacements.length })
+                : ''}
           </div>
         `;
         return html;
@@ -6260,9 +6286,27 @@
           </div>`;
       },
 
-      detailPlacementsPane(job, placements) {
+      detailPlacementsPane(job, placements, scopeInfo) {
         const s = window.store.state;
-        const rows = placements || [];
+        // Compared as plain YYYY-MM-DD against today, so a seat ending today
+        // still counts as active and no timezone can shift the boundary.
+        const today = new Date().toISOString().slice(0, 10);
+        // endDate arrives as a Date on rows that went through the loader and as
+        // a plain ISO string on rows that did not (the sheet path). Normalise to
+        // YYYY-MM-DD either way: String(aDate) gives "Wed Sep 11 2026", which
+        // would compare as less than every ISO date and mark live seats ended.
+        const isoDay = v => !v ? '' : (v instanceof Date
+          ? (isNaN(v) ? '' : v.toISOString().slice(0, 10))
+          : String(v).slice(0, 10));
+        const isEnded = r => { const d = isoDay(r.endDate); return !!d && d < today; };
+        // Active first, then the ended ones most-recent first -- the history is
+        // context for what is live, not a flat list mixed in among it.
+        const rows = (placements || []).slice().sort((a, b) => {
+          const ae = isEnded(a) ? 1 : 0, be = isEnded(b) ? 1 : 0;
+          if (ae !== be) return ae - be;
+          return isoDay(b.endDate).localeCompare(isoDay(a.endDate));
+        });
+        const sc = scopeInfo || { scope: 'active', active: rows.length, ended: 0 };
         // Say which basis was used, so an over-broad list is not mistaken for a
         // specialty-matched one.
         const jobSpecNote = Utils.cleanFilterText(job.specialtyName || '')
@@ -6285,10 +6329,23 @@
         const gap = (gAvg != null && aAvg != null) ? gAvg - aAvg : null;
         return `
           <div class="fade-in">
-            <h4 class="font-bold mb-3 text-sm uppercase text-slate-500">Active Placements</h4>
+            <div class="flex flex-wrap items-center justify-between gap-2 mb-3">
+              <h4 class="font-bold text-sm uppercase text-slate-500">${
+                sc.scope === 'active' ? 'Active Placements' : 'Placements &middot; Last 90 Days'}</h4>
+              <div class="flex bg-white border border-slate-200 rounded-lg p-0.5">
+                ${[['recent', `Last 90d (${sc.active + sc.ended})`], ['active', `Active only (${sc.active})`]]
+                  .map(([key, label]) => `
+                    <button onclick="event.stopPropagation();window.store.dispatch('SET_PLACEMENTS_SCOPE','${key}')"
+                            class="px-2.5 py-1 text-[11px] font-bold rounded-md ${
+                              sc.scope === key ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-slate-600'}">
+                      ${label}
+                    </button>`).join('')}
+              </div>
+            </div>
             <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
-              ${View.detailStat('Active At Facility', rows.length,
-                  `${ghr} GHR · ${rows.length - ghr} affiliate`)}
+              ${View.detailStat(sc.scope === 'active' ? 'Active At Facility' : 'Seats At Facility', rows.length,
+                  `${ghr} GHR · ${rows.length - ghr} affiliate${
+                    sc.scope === 'active' ? '' : ` · ${sc.ended} ended`}`)}
               ${View.detailStat('GHR Share', rows.length ? Math.round((ghr / rows.length) * 100) + '%' : '—')}
               ${View.detailStat('GHR Avg Rate', money0(gAvg),
                   gRates.length ? `${gRates.length} rated` : 'no rate on these rows')}
@@ -6300,7 +6357,9 @@
                 gap <= 0 ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
                          : 'bg-amber-50 border-amber-200 text-amber-800'}">
                 GHR bills <b>${money0(Math.abs(gap))}/hr ${gap <= 0 ? 'below' : 'above'}</b>
-                the affiliate average on active seats here
+                the affiliate average on ${sc.scope === 'active'
+                  ? 'active seats here'
+                  : 'seats here over the last 90 days'}
                 (${money0(gAvg)} vs ${money0(aAvg)}).
               </div>` : ''}
             ${rows.length ? `
@@ -6314,14 +6373,22 @@
                         : (r.candidate_name || 'Unknown')}</span>
                     <span class="font-semibold text-slate-600 tabular-nums w-14 text-right">${
                       Number(r.bill_rate) > 0 ? '$' + Number(r.bill_rate).toFixed(0) : '—'}</span>
-                    <span class="text-slate-400">${fmtDate(r.startDate)} &rarr; ${fmtDate(r.endDate)}</span>
+                    <span class="text-slate-400 whitespace-nowrap">${fmtDate(r.startDate)} &rarr; ${fmtDate(r.endDate)}</span>
+                    ${isEnded(r)
+                      ? `<span class="px-1.5 py-0.5 rounded text-[9px] font-bold bg-slate-100 text-slate-500 whitespace-nowrap"
+                               title="${View.esc(r.status || 'Ended')}">Ended</span>`
+                      : '<span class="px-1.5 py-0.5 rounded text-[9px] font-bold bg-emerald-50 text-emerald-700">Active</span>'}
                   </div>`).join('')}
               </div>`
             : `<div class="bg-white border border-slate-200 rounded-lg p-6 text-center text-slate-400 text-xs">
-                 No active placements matching this facility and specialty.
+                 No ${sc.scope === 'active' ? 'active placements' : 'placements in the last 90 days'} matching this facility and specialty.
                </div>`}
             <p class="text-[10px] text-slate-400 mt-3">
-              Active assignments at this facility${jobSpecNote}, for rate and vendor comparison.
+              ${sc.scope === 'active'
+                ? `Active assignments at this facility${jobSpecNote}, for rate and vendor comparison.`
+                : `Assignments active now or ended in the last 90 days at this facility${jobSpecNote},
+                   for rate and vendor comparison. Ended seats are included so a facility that
+                   turned over recently does not read as untouched.`}
             </p>
           </div>`;
       },
@@ -14107,7 +14174,10 @@
     window.store = {
       state: {
         jobs: [],
-        statsData: { onAssignment: [], upcoming: [] },
+        statsData: { onAssignment: [], upcoming: [], recentlyEnded: [] },
+        // Placements pane window. Defaults to the 90-day view: active-only hid
+        // recent turnover at a facility entirely.
+        placementsScope: 'recent',
         financialData: [],
         financialFromMonth: null,
         financialToMonth: null,
@@ -14200,7 +14270,7 @@
           switch (action) {
             case 'LOAD_DATA': {
               s.jobs = payload.jobs || [];
-              s.statsData = payload.statsData || { onAssignment: [], upcoming: [] };
+              s.statsData = payload.statsData || { onAssignment: [], upcoming: [], recentlyEnded: [] };
 
               // Combine jobs AND statsData AND perDiemData for filter options
               const allAssignments = [...(s.statsData.onAssignment || []), ...(s.statsData.upcoming || [])];
@@ -14995,6 +15065,12 @@
             // with no reducer and no markup, so the three panes were dead code
             // on this branch -- and non-MSP, which deploys from main, had no
             // tabbed job detail at all.
+            case 'SET_PLACEMENTS_SCOPE': {
+              s.placementsScope = payload === 'active' ? 'active' : 'recent';
+              View.main();
+              break;
+            }
+
             case 'SET_DETAIL_TAB': {
               s.rowDetailTab[payload.id] = payload.tab;
               View.rowUpdate(payload.id);

@@ -26,6 +26,31 @@ from shared_code.symplr_systems import (
 # there is no pre-active funnel for non-MSP — future-dated 'Approved' /
 # 'Pending Start' / etc. are the pipeline. Completed/Termination are excluded
 # here because Stats is a snapshot of currently-in-play work, not history.
+# How far back the Placements pane looks by default. The pane only ever showed
+# seats live right now, so a facility that turned over last month looked
+# untouched. Historical rows ride alongside the active ones under their own key
+# -- onAssignment keeps its exact meaning, because the Contracts tab and the
+# headline counts read it and must not move.
+RECENT_END_DAYS = 90
+
+# What a seat's status reads once it has ended, per book. Measured 2026-09-11
+# over the trailing 90 days; the active-status lists match none of these, so a
+# date-only widening would have returned almost nothing.
+#
+#   Bullhorn  Completed 1147, Cancellation 313, Termination 146
+#   VNDLY     Ended by Job Close 151, Ended 147
+#   B4        Closed And Awarded 896 -- same status it carries while running
+#
+# Excluded deliberately: VNDLY's Rejected / Withdrawn / Offer Declined /
+# Applied and B4's Closed And Cancelled / Closed Not Awarded. Those are
+# pipeline outcomes on seats nobody ever worked, not placement history.
+BULLHORN_ENDED_SNAPSHOT_STATUSES = (
+    'Completed', 'Termination', 'Cancellation',
+)
+VNDLY_ENDED_SNAPSHOT_STATUSES = (
+    'Ended', 'Ended by Job Close',
+)
+
 BULLHORN_ACTIVE_SNAPSHOT_STATUSES = (
     'Approved', 'Pending Start', 'Cleared', 'Onboarding', 'Started',
 )
@@ -56,7 +81,7 @@ def _apply_service_line(row_dict):
 
 
 def _bullhorn_stats_data():
-    """Returns (on_assignment[], upcoming[]) for the Bullhorn book. Raises on error."""
+    """Returns (on_assignment[], upcoming[], recently_ended[]) for Bullhorn. Raises on error."""
     conn = get_bullhorn_conn()
     cursor = conn.cursor()
     app_conn = get_appdb_conn()
@@ -67,9 +92,13 @@ def _bullhorn_stats_data():
             app_conn.close()
     system_case = build_system_case_expr('p.clientCorporationID')
     scope_filter = build_scope_filter('p.clientCorporationID', client_ids=scope_ids)
-    status_list = ', '.join("'" + s + "'" for s in BULLHORN_ACTIVE_SNAPSHOT_STATUSES)
+    def _status_list(statuses):
+        return ', '.join("'" + s + "'" for s in statuses)
 
-    def _fetch_rows(date_clause):
+    status_list = _status_list(BULLHORN_ACTIVE_SNAPSHOT_STATUSES)
+
+    def _fetch_rows(date_clause, statuses=None):
+        status_list = _status_list(statuses) if statuses else _status_list(BULLHORN_ACTIVE_SNAPSHOT_STATUSES)
         cursor.execute(f'''
             SELECT
                 'Bullhorn' AS source_system,
@@ -118,8 +147,12 @@ def _bullhorn_stats_data():
 
     on_assignment = _fetch_rows("p.dateBegin <= GETDATE() AND (p.dateEnd IS NULL OR p.dateEnd >= GETDATE())")
     upcoming = _fetch_rows("p.dateBegin > GETDATE() AND p.dateBegin <= DATEADD(DAY, 30, GETDATE())")
+    recently_ended = _fetch_rows(
+        f"p.dateEnd < GETDATE() AND p.dateEnd >= DATEADD(DAY, -{RECENT_END_DAYS}, GETDATE())",
+        statuses=BULLHORN_ENDED_SNAPSHOT_STATUSES,
+    )
     conn.close()
-    return on_assignment, upcoming
+    return on_assignment, upcoming, recently_ended
 
 
 def _symplr_stats_data():
@@ -229,32 +262,41 @@ def _symplr_stats_data():
         _fetch_lt_rows("lt.date_start > GETDATE() AND lt.date_start <= DATEADD(DAY, 30, GETDATE())")
         + _fetch_order_rows("o.jobdatestart > GETDATE() AND o.jobdatestart <= DATEADD(DAY, 30, GETDATE())")
     )
+    # No status change needed here: a Symplr shift stays 'filled' after it ends,
+    # unlike Bullhorn and VNDLY, which restate the seat once it closes.
+    recently_ended = (
+        _fetch_lt_rows(f"lt.date_end < GETDATE() AND lt.date_end >= DATEADD(DAY, -{RECENT_END_DAYS}, GETDATE())")
+        + _fetch_order_rows(f"o.jobdateend < GETDATE() AND o.jobdateend >= DATEADD(DAY, -{RECENT_END_DAYS}, GETDATE())")
+    )
     conn.close()
-    return on_assignment, upcoming
+    return on_assignment, upcoming, recently_ended
 
 
 def _non_msp_stats(req: func.HttpRequest) -> func.HttpResponse:
     """Run Bullhorn + Symplr stats queries independently, union the results."""
     on_assignment = []
     upcoming = []
+    recently_ended = []
     errors = []
     try:
-        a, b = _bullhorn_stats_data()
-        on_assignment.extend(a); upcoming.extend(b)
+        a, b, c = _bullhorn_stats_data()
+        on_assignment.extend(a); upcoming.extend(b); recently_ended.extend(c)
     except Exception as e:
         print(f"Bullhorn stats error: {e}")
         import traceback; traceback.print_exc()
         errors.append(f"bullhorn: {e}")
     try:
-        a, b = _symplr_stats_data()
-        on_assignment.extend(a); upcoming.extend(b)
+        a, b, c = _symplr_stats_data()
+        on_assignment.extend(a); upcoming.extend(b); recently_ended.extend(c)
     except Exception as e:
         print(f"Symplr stats error: {e}")
         import traceback; traceback.print_exc()
         errors.append(f"symplr: {e}")
-    print(f"non-MSP stats: {len(on_assignment)} active, {len(upcoming)} upcoming (errors: {errors or 'none'})")
+    print(f"non-MSP stats: {len(on_assignment)} active, {len(upcoming)} upcoming, "
+          f"{len(recently_ended)} recently ended (errors: {errors or 'none'})")
     return func.HttpResponse(
-        json.dumps({'onAssignment': on_assignment, 'upcoming': upcoming}, default=str),
+        json.dumps({'onAssignment': on_assignment, 'upcoming': upcoming,
+                    'recentlyEnded': recently_ended}, default=str),
         mimetype="application/json",
         status_code=200,
     )
@@ -288,6 +330,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
         cursor = conn.cursor()
         on_assignment = []
         upcoming = []
+        recently_ended = []
         
         # ============================================================
         # B4Health - Active Assignments
@@ -438,14 +481,77 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
         
         conn.close()
         
+        # ---- Recently ended, the Placements pane's 90-day history ----
+        # B4 keeps 'Closed And Awarded' after a contract ends, so this is the
+        # active query with the date window turned around. VNDLY restates the
+        # work order, so it matches its own ended statuses instead.
+        for label, sql in (
+            ('B4', f'''
+                SELECT
+                    'B4' AS source_system,
+                    Contract_ID AS position_id,
+                    CONCAT(First_Name, ' ', Last_Name) AS candidate_name,
+                    Agency AS agency,
+                    Facility AS facility,
+                    Health_System AS system,
+                    Care_Type AS specialty,
+                    TRY_CAST(Awarded_Rate AS DECIMAL(10,2)) AS bill_rate,
+                    Start_Date AS startDate,
+                    End_Date AS endDate,
+                    Contract_Status AS status
+                FROM dhc.B4HealthOrder
+                WHERE Contract_Status = 'Closed And Awarded'
+                    AND Start_Date IS NOT NULL
+                    AND End_Date < GETDATE()
+                    AND End_Date >= DATEADD(day, -{RECENT_END_DAYS}, GETDATE())
+                    AND Health_System NOT LIKE '%Richmond University%'
+                    AND Health_System NOT LIKE '%Redeemer%'
+                    AND Health_System <> 'Sunrise Senior Living Management (California)'
+            '''),
+            ('VNDLY', f'''
+                SELECT
+                    'VNDLY' AS source_system,
+                    CAST(WOSystemKey AS NVARCHAR(50)) AS position_id,
+                    LTRIM(RTRIM(ISNULL([Contractor First Name], '') + ' '
+                              + ISNULL([Contractor Last Name], ''))) AS candidate_name,
+                    [Vendor Name] AS agency,
+                    [Default Work Site Name] AS facility,
+                    [Health System] AS system,
+                    [Job Title] AS specialty,
+                    TRY_CAST([Bill Rate] AS DECIMAL(10,2)) AS bill_rate,
+                    [Start Date] AS startDate,
+                    [End Date] AS endDate,
+                    [Current Status] AS status
+                FROM dbo.STAGING_VNDLY_WORKORDERS
+                WHERE [Current Status] IN ({', '.join("'" + x + "'" for x in VNDLY_ENDED_SNAPSHOT_STATUSES)})
+                    AND [Start Date] IS NOT NULL
+                    AND TRY_CAST([End Date] AS DATE) < CAST(GETDATE() AS DATE)
+                    AND TRY_CAST([End Date] AS DATE) >= DATEADD(day, -{RECENT_END_DAYS}, CAST(GETDATE() AS DATE))
+            '''),
+        ):
+            try:
+                cursor.execute(sql)
+                columns = [column[0] for column in cursor.description]
+                for row in cursor.fetchall():
+                    row_dict = _apply_service_line(dict(zip(columns, row)))
+                    for k in ('startDate', 'endDate'):
+                        if row_dict.get(k):
+                            row_dict[k] = (row_dict[k].isoformat()
+                                           if hasattr(row_dict[k], 'isoformat') else str(row_dict[k]))
+                    recently_ended.append(row_dict)
+            except Exception as e:
+                print(f"Error loading {label} recently ended: {e}")
+
         b4_active = len([r for r in on_assignment if r.get('source_system') == 'B4'])
         vndly_active = len([r for r in on_assignment if r.get('source_system') == 'VNDLY'])
-        print(f"Returning {len(on_assignment)} active (B4: {b4_active}, VNDLY: {vndly_active}), {len(upcoming)} upcoming")
+        print(f"Returning {len(on_assignment)} active (B4: {b4_active}, VNDLY: {vndly_active}), "
+              f"{len(upcoming)} upcoming, {len(recently_ended)} recently ended")
         
         return func.HttpResponse(
             json.dumps({
                 'onAssignment': on_assignment,
-                'upcoming': upcoming
+                'upcoming': upcoming,
+                'recentlyEnded': recently_ended
             }, default=str),
             mimetype="application/json",
             status_code=200
@@ -456,7 +562,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
         import traceback
         traceback.print_exc()
         return func.HttpResponse(
-            json.dumps({'error': str(e), 'onAssignment': [], 'upcoming': []}),
+            json.dumps({'error': str(e), 'onAssignment': [], 'upcoming': [], 'recentlyEnded': []}),
             mimetype="application/json",
             status_code=500
         )

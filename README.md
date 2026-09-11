@@ -2,6 +2,22 @@
 
 ## Version History
 
+### 2.19.0 - Placements defaults to the last 90 days
+- The Placements pane showed only seats live at that moment, so a facility that
+  turned over last month read as untouched. It now defaults to a 90-day window --
+  active seats plus anything that ended in the last 90 days -- with an
+  "Active only" toggle to get the old view back
+- Ended rows are chipped as such, carry their source status on hover, and sort
+  after the active ones, most recent first
+- `recentlyEnded` is a new key on `stats-data`, deliberately separate from
+  `onAssignment`: the Contracts tab and the headline counts read that one, and
+  widening it would have moved numbers across the app
+- Status lists had to be measured, not assumed. Ended seats carry Completed /
+  Termination / Cancellation on Bullhorn and Ended / Ended by Job Close on VNDLY,
+  none of which appear in the active-status lists, so a date-only change would
+  have returned almost nothing. Pipeline outcomes on seats nobody worked
+  (Rejected, Withdrawn, Offer Declined, Closed Not Awarded) are excluded
+
 ### 2.18.3 - Rate & GM condensed into the record
 - Rate & GM was a full-width strip below the detail panels on Extensions and
   Onboarding; it now sits inside the record itself, beside the decision it informs
