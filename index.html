@@ -2787,8 +2787,15 @@
         if (!filterVal) return true;
         const p = String(program || '').toLowerCase();
         const f = String(filterVal || '').toLowerCase();
-        if (f === 'all nursing') return CONSTANTS.NURSING_KEYWORDS.some(k => p.includes(k));
-        if (f === 'all allied') return CONSTANTS.ALLIED_KEYWORDS.some(k => p.includes(k));
+        // Sentinels test the PROGRAM, which is a short controlled vocabulary
+        // ("Travel Nursing", "Local Contract Allied Health", "Per Diem
+        // (Allied)"...), not free specialty text. Checked against all 28
+        // distinct programs in B4 + VNDLY, 'nurs' and 'allied' classify every
+        // one correctly. The keyword lists are for specialty text and misfire
+        // here: ALLIED_KEYWORDS contains 'tech', so "Information Technology"
+        // was counted as Allied.
+        if (f === 'all nursing') return p.includes('nurs');
+        if (f === 'all allied') return p.includes('allied');
         return p === f;
       },
 
@@ -10409,13 +10416,31 @@
         // ALL nursing categories — Trend disagreed with every other tab under a
         // category filter. Now uses the same case-insensitive substring test the
         // rest of the app uses (matches "Travel Nursing" but not "Nursing").
+        // The "All Nursing" / "All Allied" sentinels have to be handled first.
+        // They are not category names, so the substring test below can never
+        // match them properly: against "All Allied", the only raw category that
+        // passed was the one literally called "Allied" — 105 of 852 allied rows
+        // (12%). "Local Contract Allied Health", "Allied Health", "Travel
+        // Allied Health", "Contract (Allied)" and "Per Diem (Allied)" were all
+        // dropped, which is why a filtered Trend disagreed wildly with the
+        // unfiltered totals. "All Nursing" kept 44%.
         const selectedCats = s.filterSelection.categories;
         const matchesTrendCategory = (cat) => {
           if (selectedCats.size === 0) return true;
           const nc = (cat || '').toLowerCase();
           for (const filterCat of selectedCats) {
             const fc = String(filterCat).toLowerCase();
-            if (nc === fc || nc.includes(fc) || fc.includes(nc)) return true;
+            if (fc === 'all nursing' || fc === 'all allied') {
+              if (Utils.checkCategoryMatch(cat, filterCat)) return true;
+              continue;
+            }
+            // Only nc.includes(fc): the dropdown offers normalized names while
+            // Trend holds the raw value, so "Travel Nursing" must match
+            // "Travel Nursing - 48". The reverse test (fc.includes(nc)) also
+            // made "Travel Nursing" match the plain "Nursing" category — and
+            // "Allied Health" match "Allied", a different category with its
+            // own 105 rows.
+            if (nc === fc || nc.includes(fc)) return true;
           }
           return false;
         };
