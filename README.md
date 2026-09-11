@@ -2,6 +2,18 @@
 
 ## Version History
 
+### 2.23.0 - Channel is a column on non-MSP, not just a badge
+- Who holds the program (direct, or in behind someone else's MSP, and which one)
+  was a badge you could read but not sort or filter by. It is now a real column
+  on Open Jobs, through the same stageApply the stage tabs use
+- Non-MSP only: on an MSP account the answer is always GHR, so the column would
+  be a stack of identical cells
+- The column's sort key and the rendered cell both call `View.channelOf`, so what
+  you sort on is exactly what you see. Unset systems show a dash rather than
+  asserting a channel nobody recorded
+- The facility column gives up the width, so the table still totals 100% and does
+  not reintroduce a horizontal scroll
+
 ### 2.22.0 - Closed gets a drillable "Ended Early"
 - New KPI counting seats that ended before they were meant to, clickable to narrow
   the table to exactly those rows, with a banner and a "Show all" so a filtered

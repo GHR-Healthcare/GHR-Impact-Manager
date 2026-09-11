@@ -5263,7 +5263,13 @@
           // Given an explicit share: with table-fixed an unsized column swallows
           // every remaining pixel, which on a wide screen left a band of white
           // space here while ID and Category truncated at their fixed widths.
-          { label: 'System / Facility / Specialty', key: 'facility', w: '30%' },
+          { label: 'System / Facility / Specialty', key: 'facility',
+            w: s.dataSource === 'non_msp' ? '18%' : '30%' },
+          // Sortable and filterable like every other column here, through the
+          // same stageApply the stage tabs use.
+          ...(s.dataSource === 'non_msp'
+            ? [{ label: 'Channel', key: r => View.channelOf(r), w: '12%' }]
+            : []),
           { label: '#',             key: 'numPositions', align: 'center', sub: 'Pos', w: '4%' },
           { label: 'Bill Rate',     key: r => parseFloat(String(r.billRate).replace(/[^0-9.]/g, '')) || null, align: 'center', w: '8%' },
           { label: 'Days',          key: 'daysPast', align: 'center', w: '6%' },
@@ -6021,6 +6027,16 @@
           <td class="px-3 py-2 max-w-0">${View.stageSystemCell(
             { health_system: job.healthSystem, facility: job.facility },
             { eyebrow, spec: abbrSpecialty, extra: detailLine })}</td>
+          ${nonMsp ? (() => {
+            const ch = View.channelOf(job);
+            if (!ch) return '<td class="px-3 py-2 text-xs text-slate-300">&mdash;</td>';
+            const [rel, ...rest] = ch.split(' · ');
+            const via = rest.join(' · ');
+            return `<td class="px-3 py-2 max-w-0" title="${View.esc(ch)}">
+              <div class="text-xs font-medium text-slate-700 truncate">${View.esc(rel)}</div>
+              ${via ? `<div class="text-[10px] text-slate-400 truncate">via ${View.esc(via)}</div>` : ''}
+            </td>`;
+          })() : ''}
           <td class="px-3 py-2 text-center font-bold text-slate-700 text-sm">${job.numPositions || 1}</td>
           <td class="px-3 py-2 text-center font-bold text-xs ${job.billRateEstimated ? 'text-amber-600' : 'text-slate-700'}"
               title="${job.billRateEstimated ? 'Estimated (using suggested/max rate)' : ''}">${job.billRate}${job.billRateEstimated ? '*' : ''}</td>
@@ -6041,6 +6057,25 @@
           </td>`;
       },
 
+
+      /* Who holds the program, as one sortable string.
+       *
+       * Non-MSP only. On an MSP account the answer is always GHR, so the column
+       * would be a stack of identical cells; on the non-MSP book the channel is
+       * the thing being worked -- direct, or in behind somebody else's MSP.
+       *
+       * Configured per health system in Settings (Utils.systemRelationship),
+       * not derived: dhc.crosswalk covers 7 of the 20 systems, has no
+       * '3rd Party' value at all and stores free text. Returns null when unset
+       * so the cell shows a dash rather than asserting a channel nobody
+       * recorded. Both the column key and the cell call this, so what you sort
+       * on is exactly what you see.
+       */
+      channelOf(job) {
+        const x = Utils.systemRelationship(job.healthSystem || job.system);
+        if (!x) return null;
+        return [x.relationship, x.incumbent].filter(Boolean).join(' · ') || null;
+      },
 
       detailStat(label, value, note) {
         return `<div class="bg-white border border-slate-200 rounded-lg px-3 py-2.5">
