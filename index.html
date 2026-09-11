@@ -642,12 +642,45 @@
         <i data-lucide="move-horizontal" class="w-4 h-4"></i>
         <span>Swipe left/right to see all columns</span>
       </div>
-      <!-- Open Jobs renders through the same stage table as Closed, Extensions
-           and Onboarding, so the four tabs read as one surface and Open Jobs
-           gains their sortable headers and per-column filters. The hand-built
-           grid-cols-12 header and its SORT dispatches lived here; the shell
-           draws its own header from the column set now. -->
-      <div id="listContent" class="flex-1 min-h-0"></div>
+      <!-- Two Open Jobs surfaces, one shown. Production MSP keeps the original
+           grid; non-MSP and the prototype get the stage table, which is what
+           gives them sortable headers and per-column filters. Utils.impactUi()
+           decides, so MSP is untouched until the prototype branch merges. -->
+      <div id="legacyListWrap">
+      <!-- Single scroll container for header + body -->
+      <div class="overflow-x-auto flex-1 overflow-y-visible md:overflow-y-auto">
+        <div class="min-w-[900px]">
+          <div class="grid grid-cols-12 bg-slate-100 p-4 font-bold text-slate-600 border-b border-slate-200 text-sm uppercase tracking-wider sticky top-0 z-20 shrink-0" id="tableHeader">
+            <div class="col-span-1 cursor-pointer hover:text-blue-600 flex items-center" onclick="store.dispatch('SORT','id')">ID <i data-lucide="arrow-up-down" class="ml-1 w-3 h-3 opacity-50"></i></div>
+            <div class="col-span-1 cursor-pointer hover:text-blue-600 flex items-center truncate" onclick="store.dispatch('SORT','program')">Category <i data-lucide="arrow-up-down" class="ml-1 w-3 h-3 opacity-50"></i></div>
+            <div class="col-span-3 cursor-pointer hover:text-blue-600 flex items-center" onclick="store.dispatch('SORT','facility')">System / Facility / Specialty <i data-lucide="arrow-up-down" class="ml-1 w-3 h-3 opacity-50"></i></div>
+            <div class="col-span-1 text-center cursor-pointer hover:text-blue-600 flex flex-col justify-center items-center" onclick="store.dispatch('SORT','numPositions')">
+              <div class="flex items-center"># <i data-lucide="arrow-up-down" class="ml-1 w-3 h-3 opacity-50"></i></div>
+              <div class="text-[9px] text-slate-400 font-normal">Pos</div>
+            </div>
+            <div class="col-span-1 text-center cursor-pointer hover:text-blue-600 flex justify-center items-center" onclick="store.dispatch('SORT','billRate')">Bill Rate <i data-lucide="arrow-up-down" class="ml-1 w-3 h-3 opacity-50"></i></div>
+            <div class="col-span-1 text-center cursor-pointer hover:text-blue-600 flex justify-center items-center" onclick="store.dispatch('SORT','daysPast')">Days <i data-lucide="arrow-up-down" class="ml-1 w-3 h-3 opacity-50"></i></div>
+            <div class="col-span-1 text-center cursor-pointer hover:text-blue-600 flex justify-center items-center" onclick="store.dispatch('SORT','margin')">Margin <i data-lucide="arrow-up-down" class="ml-1 w-3 h-3 opacity-50"></i></div>
+            <div class="col-span-1 text-center cursor-pointer hover:text-blue-600 flex justify-center items-center" onclick="store.dispatch('SORT','impact')">Impact <i data-lucide="arrow-up-down" class="ml-1 w-3 h-3 opacity-50"></i></div>
+            <div class="col-span-1 text-center cursor-pointer hover:text-blue-600 flex flex-col justify-center items-center" onclick="store.dispatch('SORT','ghrSubs')">
+              <div class="flex items-center">Active <i data-lucide="arrow-up-down" class="ml-1 w-3 h-3 opacity-50"></i></div>
+              <div class="text-[9px] text-slate-400 font-normal" id="hdrActiveSplit">GHR / Agency</div>
+            </div>
+            <div class="col-span-1 text-center cursor-pointer hover:text-blue-600 flex flex-col justify-center items-center" onclick="store.dispatch('SORT','ghrDeclines')">
+              <div class="flex items-center">Declines <i data-lucide="arrow-up-down" class="ml-1 w-3 h-3 opacity-50"></i></div>
+              <div class="text-[9px] text-slate-400 font-normal" id="hdrDeclinesSplit">GHR / Agency</div>
+            </div>
+          </div>
+          <div id="jobsContainer" class="divide-y divide-slate-100 min-h-0 relative">
+            <div class="absolute inset-0 flex flex-col items-center justify-center text-slate-400">
+              <i data-lucide="loader" class="w-12 h-12 mb-2 opacity-50 animate-spin"></i>
+              <p>Loading data...</p>
+            </div>
+          </div>
+        </div>
+      </div>
+      </div>
+      <div id="listContent" class="flex-1 min-h-0 hidden"></div>
     </div>
 
     <div id="hotJobsViewWrapper" class="hidden flex flex-col h-full overflow-hidden bg-slate-50">
@@ -2578,6 +2611,19 @@
        * Declined count and the Declined list could disagree, and clicking a
        * count of five could show three. Both now ask this.
        */
+      /* Does this instance get the IMPACT redesign?
+       *
+       * main serves BOTH production MSP and non-MSP, and only the stage tabs
+       * were gated -- so every change on a SHARED surface (Open Jobs, the job
+       * detail, Trend, the footer) reached production MSP, which was supposed
+       * to stay exactly as it was until the prototype branch merges. This is
+       * the single switch those surfaces ask. The prototype branch overrides
+       * it to true, which is its one deliberate divergence.
+       */
+      impactUi() {
+        return window.store.state.dataSource === 'non_msp';
+      },
+
       isDeclinedNow(jobId, c) {
         const st = Utils.interviewStage(jobId, c);
         if (st === 'Declined' || st === 'Post-Offer Decline') return true;
@@ -2718,19 +2764,7 @@
 
       abbreviate(text) {
         if (!text) return '';
-        /* B4 writes many specialties as "X - X" -- "Medical Assistant - Medical
-         * Assistant", "CT TECH - CT TECH" -- on 62 of its 91 open orders. The
-         * halves are identical, so the second is noise: it doubled the longest
-         * cell on Open Jobs and was what pushed the table into a horizontal
-         * scroll. Collapsed only when both halves match exactly; a genuine
-         * "RN - ICU" is left alone.
-         */
-        {
-          const parts = String(text).split(' - ');
-          if (parts.length === 2 && parts[0].trim() && parts[0].trim() === parts[1].trim()) {
-            text = parts[0].trim();
-          }
-        }
+
         const MAP = { 'Registered Nurse': 'RN', 'Medical Surgical': 'MS', 'Med Surg': 'MS', 'Med/Surg': 'MS', 'Telemetry': 'TELE', 'Tele': 'TELE', 'Intensive Care Unit': 'ICU', 'Emergency Room': 'ER', 'Emergency Dept': 'ED', 'Emergency Department': 'ED', 'Operating Room': 'OR', 'Labor & Delivery': 'L&D', 'Labor and Delivery': 'L&D', 'Progressive Care Unit': 'PCU', 'Catheterization Lab': 'Cath Lab', 'Radiologic Technologist': 'Rad Tech', 'Certified Nursing Assistant': 'CNA', 'Medical Technologist': 'Med Tech' };
         let s = String(text);
         Object.keys(MAP).forEach(key => { s = s.replace(new RegExp(key, 'gi'), MAP[key]); });
@@ -4293,7 +4327,11 @@
           // Same reasoning as Systems above: a facility with assignments but no
           // open orders was unreachable here while its system stayed
           // selectable, so a filled-but-quiet site could not be filtered to.
-          assignmentSources.forEach(r => {
+          //
+          // Non-MSP only for now. It changes which facilities are selectable,
+          // and production MSP is not taking behaviour changes until the
+          // prototype branch merges.
+          (Utils.impactUi() ? assignmentSources : []).forEach(r => {
             if (!r.facility) return;
             const sysOk = s.filterSelection.systems.size === 0
               || s.filterSelection.systems.has(r.healthSystem);
@@ -4619,6 +4657,13 @@
         const el = $('revenueBar');
         if (!el) return;
         const s = window.store.state;
+        // The standing bar is part of the redesign, so production MSP does not
+        // get it -- it had no bottom bar before and should not gain one here.
+        if (!Utils.impactUi()) {
+          el.hidden = true;
+          document.body.classList.remove('pb-16', 'sm:pb-20');
+          return;
+        }
         const money = v => '$' + Math.round(Math.abs(v)).toLocaleString();
 
         /* Standing totals. Every instance gets three real numbers.
@@ -4724,8 +4769,336 @@
         });
       },
 
+      /* ---- Production MSP's Open Jobs, exactly as it was ----
+       *
+       * Restored from 2.5.0, the state of main before the IMPACT work began.
+       * Open Jobs is production MSP's main screen, so rebuilding it as a stage
+       * table changed a live tool for people who had not asked for it -- the
+       * questions about "what are all these new filters" came from exactly that.
+       * Both renderers now exist and Utils.impactUi() picks between them, so
+       * MSP is untouched until the prototype branch merges.
+       */
+      listLegacy() {
+        const s = window.store.state;
+        $('legacyListWrap')?.classList.remove('hidden');
+        $('listContent')?.classList.add('hidden');
+        const list = this.getFilteredJobs(s).sort((a, b) => {
+          const k = s.sort.key;
+          let valA = a[k], valB = b[k];
+          if (k === 'billRate' || k === 'margin') { valA = parseFloat(valA); valB = parseFloat(valB); }
+          if (k === 'impact') { valA = Utils.calculateImpactPercent(a.levers); valB = Utils.calculateImpactPercent(b.levers); }
+          if (valA < valB) return s.sort.dir === 'asc' ? -1 : 1;
+          if (valA > valB) return s.sort.dir === 'asc' ? 1 : -1;
+          return 0;
+        });
+
+        this.kpis(list);
+
+        const container = $('jobsContainer');
+        if (!container) return;
+
+        if (list.length === 0 && s.jobs.length > 0) { container.innerHTML = '<div class="p-8 text-center text-slate-400">No jobs match filters</div>'; return; }
+        if (list.length === 0) { container.innerHTML = '<div class="absolute inset-0 flex flex-col items-center justify-center text-slate-400"><i data-lucide="inbox" class="w-12 h-12 mb-2 opacity-50"></i><p>No data loaded. Click "Load from Database" to begin.</p></div>'; return; }
+
+        Utils.renderChunks(list, container, (job) => {
+          const div = document.createElement('div');
+          div.id = `row-${job.id}`;
+          div.innerHTML = this.buildRowHtmlLegacy(job);
+          return div;
+        }, 50, () => lucide.createIcons());
+
+        this.legend();
+      },
+
+      buildRowHtmlLegacy(job) {
+        const s = window.store.state;
+        const expanded = s.expandedRows.has(job.id);
+        const impact = Utils.calculateImpactPercent(job.levers);
+        const isPerm = String(job.program).toLowerCase().includes('perm');
+
+        const colorClass = isPerm ? 'border border-slate-500 text-slate-700 bg-white' : Utils.getAgingColorClasses(job.daysPast, job.system);
+        const color = isPerm ? '' : colorClass.split(' ')[0];
+        const bubbleText = isPerm ? 'text-slate-700' : (color.includes('slate') ? 'text-slate-800' : 'text-white');
+        const bubbleClasses = isPerm ? 'border border-slate-500 bg-white' : `${color}`;
+
+        const abbrSpecialty = Utils.abbreviate(job.specialty);
+        const cleanSpec = abbrSpecialty.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+        const cleanUnit = (job.unit || '').replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+        const showUnit = job.unit && cleanUnit !== cleanSpec && !cleanUnit.includes(cleanSpec) && !cleanSpec.includes(cleanUnit);
+
+        const isHot = job.levers && job.levers.hotJob && job.levers.hotJob.done;
+        const totalDeclines = job.ghrDeclines + job.avDeclines;
+
+        // Four systems feed this list, not two. The old test was VNDLY-or-else,
+        // so Bullhorn and Symplr rows both rendered a 'B4' badge -- on the
+        // non-MSP side, where no B4 data exists at all. Unknown values show
+        // their own first character rather than being relabelled as B4.
+        const SOURCE_BADGE = {
+          B4:       { label: 'B4', cls: 'bg-blue-100 text-blue-700' },
+          VNDLY:    { label: 'V',  cls: 'bg-purple-100 text-purple-700' },
+          Bullhorn: { label: 'BH', cls: 'bg-emerald-100 text-emerald-700' },
+          Symplr:   { label: 'SY', cls: 'bg-amber-100 text-amber-800' },
+        };
+        const srcKey = job.sourceSystem || '';
+        const srcBadge = SOURCE_BADGE[srcKey]
+          || { label: (srcKey || '?').slice(0, 2).toUpperCase(), cls: 'bg-slate-100 text-slate-600' };
+        const sourceColor = srcBadge.cls;
+        const sourceLabel = srcBadge.label;
+        
+        let html = `
+          <div class="grid grid-cols-12 p-4 items-center hover:bg-slate-50 cursor-pointer group transition-colors" onclick="window.store.dispatch('TOGGLE_ROW','${job.id}')">
+            <div class="col-span-1 flex items-center gap-1 overflow-hidden">
+              <button onclick="event.stopPropagation(); window.store.dispatch('TOGGLE_HOT_JOB','${job.id}')" class="shrink-0 transition-transform hover:scale-110">
+                <i data-lucide="flame" class="w-4 h-4 ${isHot ? 'hot-job-active' : 'text-slate-300 hover:text-orange-400'}"></i>
+              </button>
+              <span class="px-1 py-0.5 rounded text-[9px] font-bold ${sourceColor}" title="${job.sourceSystem || 'Unknown source'}">${sourceLabel}</span>
+              <span class="px-1.5 py-0.5 rounded text-xs font-bold ${colorClass} truncate">${job.id}</span>
+            </div>
+            <div class="col-span-1 text-xs font-medium text-slate-700 truncate overflow-hidden" title="${job.program}">${job.program}</div>
+            <div class="col-span-3 pr-4 pl-2">
+              <div class="text-[10px] uppercase font-bold text-slate-400 truncate" title="${job.healthSystem}${job.healthSystem && job.requisitionReason ? ' - ' : ''}${job.requisitionReason || (job.healthSystem ? '' : 'No Reason Given')}">${job.healthSystem}${job.healthSystem && job.requisitionReason ? ' - ' : ''}${job.requisitionReason || (job.healthSystem ? '' : 'No Reason Given')}</div>
+              <div class="font-bold text-sm truncate">${job.facility}</div>
+              ${(() => {
+                // Relationship + incumbent, the first thing asked of a job:
+                // do we own this program, or are we bidding through someone
+                // else's? Rendered only when configured.
+                const r = Utils.systemRelationship(job.healthSystem);
+                if (!r) return '';
+                const tone = r.relationship === 'MSP' ? 'bg-emerald-100 text-emerald-700 border-emerald-200'
+                           : r.relationship === 'Direct' ? 'bg-blue-100 text-blue-700 border-blue-200'
+                           : r.relationship === '3rd Party' ? 'bg-amber-100 text-amber-800 border-amber-200'
+                           : 'bg-slate-100 text-slate-600 border-slate-200';
+                const inc = r.incumbent
+                  ? `<span class="text-[10px] text-slate-500 truncate">via ${View.esc(r.incumbent)}</span>` : '';
+                const rel = r.relationship
+                  ? `<span class="px-1.5 py-0.5 rounded border text-[9px] font-bold uppercase tracking-wide ${tone}">${View.esc(r.relationship)}</span>` : '';
+                return `<div class="flex items-center gap-1.5 mt-0.5 min-w-0">${rel}${inc}</div>`;
+              })()}
+              <div class="text-xs text-slate-500 truncate" title="${job.shiftTime ? `${job.shiftTime}${job.shift && job.shift !== 'N/A' ? ` (${job.shift})` : ''}` : (job.shift || '')}">
+                ${abbrSpecialty}${showUnit ? ` • ${job.unit}` : ''}${job.costCenter ? ` • ${job.costCenter}` : ''}${job.startTime && job.endTime ? ` • ${job.startTime}-${job.endTime}` : (job.shift && job.shift !== 'N/A' ? ` • ${job.shift}` : '')}
+              </div>
+            </div>
+            <div class="col-span-1 text-center font-bold text-slate-700 text-sm">${job.numPositions || 1}</div>
+            <div class="col-span-1 text-center font-bold text-xs ${job.billRateEstimated ? 'text-amber-600' : 'text-slate-700'}" title="${job.billRateEstimated ? 'Estimated (using suggested/max rate)' : ''}">${job.billRate}${job.billRateEstimated ? '*' : ''}</div>
+            <div class="col-span-1 text-center">
+              <span class="inline-flex font-bold text-xs ${bubbleClasses} ${bubbleText} rounded-full w-8 h-8 items-center justify-center mx-auto">${job.daysPast}</span>
+            </div>
+            <div class="col-span-1 text-center font-bold text-slate-700 hover:text-blue-600 z-10"
+                 onclick="event.stopPropagation(); window.store.dispatch('OPEN_MODAL',{type:'margin',jobId:'${job.id}',val:'${job.margin}'})">${job.margin}%</div>
+            <div class="col-span-1 text-center font-bold text-slate-700">${impact}%</div>
+            <div class="col-span-1 text-center font-medium text-slate-700">${
+              window.store.state.dataSource === 'non_msp'
+                ? `<span class="text-blue-600">${job.ghrSubs}</span>`
+                : `<span class="text-blue-600">${job.ghrSubs}</span> <span class="text-slate-300">/</span> <span class="text-blue-600">${job.avSubs}</span>`
+            }</div>
+            <div class="col-span-1 text-center font-medium text-slate-700 ${totalDeclines > 0 ? 'cursor-help hover:bg-slate-100 rounded transition-colors group-declines' : ''}"
+                 onclick="${totalDeclines > 0 ? `event.stopPropagation(); window.store.dispatch('ANALYZE_DECLINES',{id:'${job.id}'})` : ''}"
+                 title="${totalDeclines > 0 ? 'Click to Analyze' : ''}">
+                 ${window.store.state.dataSource === 'non_msp'
+                    ? `<span class="text-red-500">${job.ghrDeclines}</span>`
+                    : `<span class="text-red-500">${job.ghrDeclines}</span> <span class="text-slate-300">/</span> <span class="text-red-500">${job.avDeclines}</span>`}
+                 ${totalDeclines > 0 ? '<i data-lucide="pie-chart" class="w-3 h-3 text-slate-400 inline ml-1 opacity-0 group-hover:opacity-100 group-[.group-declines]:opacity-50"></i>' : ''}
+            </div>
+          </div>
+        `;
+
+        if (expanded) {
+          const view = s.rowSubView[job.id] || 'active';
+          const cands = job.candidates.filter(c => view === 'active' ? !c.isDeclined : c.isDeclined);
+
+          // --- LEVER SORTING LOGIC (Columnar Flow with Next Step Spanning Bottom) ---
+          
+          // Define Tier groups
+          const LEVER_GROUPS = [
+              { name: "Tier 1. Program Management Levers", keys: ['adjStartPeriod', 'flex48', 'autoOffer', 'relaxRequirements'] },
+              { name: "Tier 2. Recruitment Levers", keys: ['additionalRecruiter', 'hotJob', 'recruiterIncentive', 'payAdj'] },
+              { name: "Tier 3. Final Levers", keys: ['openToAVs', 'billRateIncrease'] }
+          ];
+
+          let leverGridHtml = '';
+          
+          LEVER_GROUPS.forEach(group => {
+              leverGridHtml += `
+                <div class="mb-4 last:mb-0">
+                    <h5 class="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2 border-b border-slate-100 pb-1">${group.name}</h5>
+                    <div class="grid grid-cols-2 gap-2">
+                        ${group.keys.map(k => {
+                            const v = job.levers[k] || { done: false };
+                            return `
+                                <div class="border p-2 rounded bg-white flex items-center gap-2 ${v.done ? 'border-indigo-500 bg-indigo-50' : 'hover:border-slate-300'} cursor-pointer"
+                                     onclick="${v.done ? `window.store.dispatch('TOGGLE_LEVER_OFF',{id:'${job.id}',key:'${k}'})` : `window.store.dispatch('OPEN_MODAL',{type:'lever',jobId:'${job.id}',key:'${k}'})`}">
+                                    <div class="w-4 h-4 shrink-0 border rounded flex items-center justify-center ${v.done ? 'bg-indigo-600 border-indigo-600' : 'border-slate-300'}">
+                                        ${v.done ? '<i data-lucide="check" class="text-white w-3 h-3"></i>' : ''}
+                                    </div>
+                                    <div class="flex flex-col min-w-0">
+                                        <span class="text-xs font-medium text-slate-700 leading-tight">${CONSTANTS.LEVER_LABELS[k]}</span>
+                                        ${v.done ? `<span class="text-[9px] text-slate-500 font-medium mt-0.5 block truncate">${v.user || ''}</span>` : ''}
+                                    </div>
+                                </div>
+                            `;
+                        }).join('')}
+                    </div>
+                </div>
+              `;
+          });
+
+          // -------------------------------------------
+
+          html += `
+            <div class="bg-slate-50 p-6 border-b shadow-inner cursor-auto fade-in" onclick="event.stopPropagation()">
+              <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
+                <div>
+                  <h4 class="font-bold mb-3 text-sm uppercase text-slate-500">Impact Levers</h4>
+                  
+                  <div class="space-y-2">
+                    ${leverGridHtml}
+                  </div>
+                  
+                  ${job.avOpenDate ? `<div class="mt-4 text-xs bg-purple-50 p-2 border border-purple-200 rounded text-purple-800 flex items-center gap-2"><i data-lucide="calendar" class="w-3 h-3"></i> <strong>AV Opened:</strong> ${job.avOpenDate}</div>` : ''}
+                </div>
+
+                <div>
+                  <div class="flex justify-between items-center mb-2">
+                    <div class="flex items-center gap-2">
+                        <h4 class="font-bold text-sm uppercase text-slate-500">Submission Log</h4>
+                        ${totalDeclines > 0 ? `
+                        <button onclick="event.stopPropagation(); window.store.dispatch('ANALYZE_DECLINES',{id:'${job.id}'})" class="text-[10px] bg-white border border-slate-300 hover:bg-slate-50 text-slate-600 px-2 py-0.5 rounded flex items-center gap-1 transition-colors shadow-sm" title="Analyze Decline Reasons">
+                            <i data-lucide="pie-chart" class="w-3 h-3"></i> Analyze
+                        </button>` : ''}
+                    </div>
+                    <div class="flex bg-white border rounded p-0.5">
+                      <button class="px-3 py-0.5 text-xs font-bold rounded ${view==='active' ? 'bg-blue-100 text-blue-700' : 'text-slate-400'}"
+                              onclick="window.store.dispatch('SET_SUB_VIEW',{id:'${job.id}',view:'active'})">Active</button>
+                      <button class="px-3 py-0.5 text-xs font-bold rounded ${view==='declined' ? 'bg-red-100 text-red-700' : 'text-slate-400'}"
+                              onclick="window.store.dispatch('SET_SUB_VIEW',{id:'${job.id}',view:'declined'})">Declined</button>
+                    </div>
+                  </div>
+
+                  <div class="bg-white border rounded h-56 overflow-y-auto p-0 text-xs mb-3">
+                    ${cands.length === 0 ? '<div class="p-4 text-center text-slate-400 italic">No candidates found</div>' : cands.map((c) => {
+                      const originalIndex = job.candidates.indexOf(c);
+                      const daysAgo = c.date ? Utils.calcDays(c.date) : '-';
+                      const subDateStr = c.date ? c.date.toLocaleDateString() : 'N/A';
+                      
+                      const agLower = (c.agency || '').toLowerCase();
+                      // GHR or Planet Healthcare = internal, but not "The Planet Group"
+                      const isGHR = agLower.includes('ghr');
+                      const isPlanetHealthcare = agLower.includes('planet healthcare');
+                      const isInternal = isGHR || isPlanetHealthcare;
+
+                      // Redaction Logic: Only redact if NOT internal/partner
+                      const displayName = (s.redactMode && !isInternal) ? Utils.redactName(c.name) : c.name;
+                      const displayAgency = (s.redactMode && !isInternal) ? 'Vendor' : c.agency;
+
+                      // Styling Logic
+                      let rowBgClass = 'hover:bg-slate-50 border-transparent';
+                      let nameColorClass = 'text-slate-800';
+                      let badgeClass = 'text-slate-400';
+
+                      if (isGHR) {
+                          rowBgClass = 'bg-blue-50/40 hover:bg-blue-50 border-blue-100';
+                          nameColorClass = 'text-blue-900';
+                          badgeClass = 'text-blue-500 font-bold';
+                      } else if (isPlanetHealthcare) {
+                          rowBgClass = 'bg-purple-50/40 hover:bg-purple-50 border-purple-100';
+                          nameColorClass = 'text-purple-900';
+                          badgeClass = 'text-purple-500 font-bold';
+                      }
+
+                      // Center Content: Status / Reason / Alerts
+                      let centerContent = '';
+                      if (c.isDeclined) {
+                          centerContent = `<div class="text-red-700 font-bold truncate" title="${c.declineType}">${c.declineType}</div>`;
+                          if (c.declineReason) centerContent += `<div class="text-slate-500 truncate italic" title="${c.declineReason}">${c.declineReason}</div>`;
+                      } else {
+                          // Active Candidate Prompts
+                          if (c.offerDate) {
+                              centerContent = `<div class="text-green-600 font-bold bg-green-50 px-1 rounded inline-block">Offer Pending</div>`;
+                          } else if (c.interviewDate) {
+                              centerContent = `<div class="text-blue-600 font-bold bg-blue-50 px-2 py-0.5 rounded inline-block">📅 Interview: ${c.interviewDate}</div>`;
+                          } else if (c.removedFromQueue) {
+                              centerContent = `<div class="text-slate-500 font-bold bg-slate-100 px-2 py-0.5 rounded inline-block line-through">Removed: ${c.declineReason || 'N/A'}</div>`;
+                          } else {
+                              const alertColor = c.alert ? (c.alert.level === 'green' ? 'text-emerald-600' : (c.alert.level === 'yellow' ? 'text-amber-600' : 'text-red-600')) : 'text-slate-500';
+                              centerContent = `<div class="${alertColor} font-bold uppercase tracking-wide truncate" title="${c.alert ? c.alert.text : 'Pending'}">${c.alert ? c.alert.text : 'Pending'}</div>`;
+                          }
+                          if(c.reqReason) centerContent += `<div class="text-slate-400 italic truncate" title="${c.reqReason}">Req: ${c.reqReason}</div>`;
+                      }
+
+                      // Right Content: Dates
+                      let rightContent = `<div class="font-mono text-slate-500 text-[10px]">Sub: ${subDateStr}</div>`;
+                      if(c.date) rightContent += `<div class="font-bold text-slate-700">${daysAgo}d ago</div>`;
+                      
+                      if (c.isDeclined && c.declineDate) {
+                          rightContent += `<div class="text-red-400 text-[9px] mt-0.5">Dec: ${c.declineDate.toLocaleDateString()}</div>`;
+                      }
+
+                      // Determine if candidate is actionable (active tab, not already declined/removed)
+                      const isActionable = view === 'active' && !c.isDeclined && !c.removedFromQueue;
+                      const clickHandler = isActionable 
+                        ? `onclick="window.store.dispatch('OPEN_MODAL',{type:'candidate_action',jobId:'${job.id}',candidateIndex:${originalIndex}})"` 
+                        : '';
+                      const cursorClass = isActionable ? 'cursor-pointer' : 'cursor-default';
+
+                      return `
+                        <div class="px-3 py-2 border-b last:border-0 transition-colors grid grid-cols-12 gap-2 items-center ${rowBgClass} ${cursorClass}"
+                             ${clickHandler}>
+                          
+                          <!-- Left: Name & Agency -->
+                          <div class="col-span-4 min-w-0">
+                            <div class="font-bold ${nameColorClass} truncate" title="${displayName}">${displayName}</div>
+                            <div class="text-[10px] uppercase tracking-wider ${badgeClass} truncate" title="${displayAgency}">${displayAgency}</div>
+                          </div>
+                          
+                          <!-- Center: Status & Notes -->
+                          <div class="col-span-5 min-w-0">
+                            ${centerContent}
+                          </div>
+
+                          <!-- Right: Dates -->
+                          <div class="col-span-3 text-right">
+                            ${rightContent}
+                          </div>
+                        </div>
+                      `;
+                    }).join('')}
+                  </div>
+
+                  <!-- Next Steps (Moved Here) -->
+                  <div class="border border-slate-200 border-dashed p-3 rounded bg-slate-50/50 flex flex-col gap-2">
+                     <div class="flex gap-2">
+                       <button class="flex-1 bg-white border border-slate-300 text-slate-600 hover:bg-slate-50 px-2 py-1.5 rounded text-xs font-bold flex items-center justify-center gap-2 transition-colors shadow-sm"
+                              onclick="window.store.dispatch('OPEN_MODAL',{type:'next_step',jobId:'${job.id}'})">
+                        <i data-lucide="message-square" class="w-3 h-3"></i> ${job.nextStep ? 'Update Next Step' : 'Add Next Step'}
+                       </button>
+                       <button class="bg-white border border-slate-300 text-slate-500 hover:bg-slate-50 hover:text-slate-700 px-2 py-1.5 rounded text-xs font-medium flex items-center justify-center gap-1 transition-colors shadow-sm"
+                              onclick="window.store.dispatch('OPEN_MODAL',{type:'next_step_history',jobId:'${job.id}'})"
+                              title="View next step history">
+                        <i data-lucide="history" class="w-3 h-3"></i> History
+                       </button>
+                     </div>
+                     ${job.nextStep ? `<div class="text-[10px] text-yellow-800 bg-yellow-50 p-2 rounded border border-yellow-100 leading-snug break-words whitespace-pre-wrap">${job.nextStep.text} <em class="block mt-1 text-slate-400 font-normal not-italic">(${job.nextStep.user || 'Unknown'})</em></div>` : ''}
+                  </div>
+
+                </div>
+              </div>
+            </div>
+          `;
+        }
+
+        return html;
+      },
+
+      /*
+       * Row-detail panes for the Rate / Pipeline / Placements sub-tabs.
+       * Levers stays inline above — it was already there.
+       */
       list() {
         const s = window.store.state;
+        // Production MSP keeps the renderer it has always had.
+        if (!Utils.impactUi()) return View.listLegacy();
+        $('legacyListWrap')?.classList.add('hidden');
+        $('listContent')?.classList.remove('hidden');
         /* Open Jobs, through the same stage table as the other three tabs.
          *
          * It used to render a div per job into #jobsContainer under a
@@ -5017,6 +5390,15 @@
       rowUpdate(id) {
         const job = window.store.state.jobs.find(j => j.id === id);
         if (!job) return;
+        // Production MSP's row is a div with id="row-<id>" holding its own
+        // detail. Redraw it the way it has always been redrawn -- everything
+        // that edits a job (levers, margin, next step, interview, decline)
+        // comes through here, so getting this wrong breaks all of them.
+        if (!Utils.impactUi()) {
+          const row = $(`row-${id}`);
+          if (row) { row.innerHTML = View.buildRowHtmlLegacy(job); lucide.createIcons(); }
+          return;
+        }
         const sel = String(id).replace(/"/g, '\\"');
         const tr = document.querySelector(`tr[data-row-key="${sel}"]`);
         if (tr) tr.innerHTML = View.jobRowCells(job);
@@ -5318,7 +5700,19 @@
         const color = isPerm ? '' : colorClass.split(' ')[0];
         const bubbleText = isPerm ? 'text-slate-700' : (color.includes('slate') ? 'text-slate-800' : 'text-white');
         const bubbleClasses = isPerm ? 'border border-slate-500 bg-white' : `${color}`;
-        const abbrSpecialty = Utils.abbreviate(job.specialty);
+        /* B4 writes many specialties doubled -- "Medical Assistant - Medical
+         * Assistant", "CT TECH - CT TECH" -- on 62 of its 91 open orders. The
+         * halves are identical, so the second is noise, and it doubled the
+         * longest cell in this table. Collapsed here rather than in
+         * Utils.abbreviate, which production MSP's row also calls and which is
+         * not taking display changes yet. A genuine "RN - ICU" is left alone.
+         */
+        const dedupe = t => {
+          const parts = String(t || '').split(' - ');
+          return (parts.length === 2 && parts[0].trim() && parts[0].trim() === parts[1].trim())
+            ? parts[0].trim() : t;
+        };
+        const abbrSpecialty = Utils.abbreviate(dedupe(job.specialty));
         const cleanSpec = abbrSpecialty.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
         const cleanUnit = (job.unit || '').replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
         const showUnit = job.unit && cleanUnit !== cleanSpec
@@ -8469,6 +8863,34 @@
           if (activeHere > 0) jobsWithActivity++;
         });
 
+        /* Production MSP keeps its original six cards. The reference-spec row
+         * below is part of the IMPACT redesign and belongs to non-MSP and the
+         * prototype until that branch merges.
+         */
+        if (!Utils.impactUi()) {
+          const isNonMspKpi = s.dataSource === 'non_msp';
+          const cards = isNonMspKpi
+            ? [
+                { label: 'Avg Days Open', val: avgDays, icon: 'clock', color: 'purple', tooltip: 'Average number of days positions have been open' },
+                { label: 'Submission Pending', val: `${avgPending} Days`, icon: 'hourglass', color: 'orange', tooltip: 'Average days submissions have been pending review' },
+                { label: 'Total Submissions', val: totalSubs.toLocaleString(), icon: 'users', color: 'blue', tooltip: 'All active submissions across visible open jobs' },
+                { label: 'Avg Margin', val: avgMargin + '%', icon: 'trending-up', color: 'green', tooltip: 'Average margin percentage across all open positions' },
+                { label: 'Total Jobs', val: `${total} / <span class="text-red-500">${critical}</span>`, icon: 'alert-triangle', color: 'red', tooltip: 'Total open positions / Critical (aging) positions' },
+                { label: 'Fill Rate / Active', val: `${overallFillRate}% / ${activeCount}`, icon: 'check-circle', color: 'emerald', tooltip: 'Overall fill rate % / Total active on contract' },
+              ]
+            : [
+                { label: 'Avg Days Open', val: avgDays, icon: 'clock', color: 'purple', tooltip: 'Average number of days positions have been open' },
+                { label: 'Submission Pending', val: `${avgPending} Days`, icon: 'hourglass', color: 'orange', tooltip: 'Average days submissions have been pending review' },
+                { label: 'Active Sub Mix', val: `${ghrPct}% / ${avPct}%`, icon: 'users', color: 'blue', tooltip: 'GHR submissions % / Agency Vendor submissions %' },
+                { label: 'Avg Margin', val: avgMargin + '%', icon: 'trending-up', color: 'green', tooltip: 'Average margin percentage across all open positions' },
+                { label: 'Total Jobs', val: `${total} / <span class="text-red-500">${critical}</span>`, icon: 'alert-triangle', color: 'red', tooltip: 'Total open positions / Critical (aging) positions' },
+                { label: 'GHR / Overall Fill / Active', val: `${ghrFillRate}% / ${overallFillRate}% / ${activeCount}`, icon: 'check-circle', color: 'emerald', tooltip: 'GHR fill rate % / Overall fill rate % / Total active on contract' },
+              ];
+          container.innerHTML = cards.map(c => View.kpiCardHtml(c)).join('');
+          lucide.createIcons();
+          return;
+        }
+
         const cards = [
           { label: 'Avg Days Open', val: avgDays, icon: 'clock', color: 'purple',
             tooltip: 'Average days the visible positions have been open' },
@@ -8491,7 +8913,16 @@
                 tooltip: 'GHR share of active seats here / total clinicians on assignment' },
         ];
 
-        container.innerHTML = cards.map(c => `
+        container.innerHTML = cards.map(c => View.kpiCardHtml(c)).join('');
+
+        lucide.createIcons();
+      },
+
+      /* The KPI card markup, shared by production MSP's row and the
+       * reference-spec row so the two cannot drift apart visually.
+       */
+      kpiCardHtml(c) {
+        return `
           <div class="bg-white p-2 sm:p-4 rounded-lg border border-slate-200 shadow-sm flex flex-col justify-between hover:shadow-md transition-shadow relative">
             <div class="flex justify-between items-start mb-1 sm:mb-2">
               <span class="text-[9px] sm:text-xs font-bold text-slate-500 uppercase tracking-wider leading-tight">${c.label}</span>
@@ -8499,11 +8930,8 @@
             </div>
             <div class="text-base sm:text-2xl font-bold text-slate-800">${c.val}</div>
           </div>
-        `).join('');
-
-        lucide.createIcons();
+        `;
       },
-
       renderKpiCards(cards) {
         const container = $('kpiContainer');
         if (!container) return;
@@ -9705,7 +10133,9 @@
                       </td>
                       ${sysMetrics.map((m, ci) => {
                         const wi = activeWeekIndices[ci];
-                        const mv = movement[ci];
+                        // Production MSP's Trend tab is unchanged; the movement
+                        // annotation belongs to the redesign.
+                        const mv = Utils.impactUi() ? movement[ci] : null;
                         const delta = mv && mv.net !== 0
                           ? `<div class="text-[9px] leading-none mt-0.5 ${mv.net > 0 ? 'text-emerald-600' : 'text-red-600'}">${
                               mv.net > 0 ? '+' : ''}${mv.net}</div>`
@@ -14081,6 +14511,13 @@
               const id = payload;
               if (!s.rowSubView[id]) s.rowSubView[id] = 'active';
               if (!s.rowDetailTab[id]) s.rowDetailTab[id] = 'levers';
+              if (!Utils.impactUi()) {
+                // MSP expands in place, as before.
+                if (s.expandedRows.has(id)) s.expandedRows.delete(id);
+                else s.expandedRows.add(id);
+                View.rowUpdate(id);
+                break;
+              }
               // The same surgical insert/remove the stage tabs use, so opening
               // a job cannot lose the scroll position either.
               View.toggleStageRow('list', id);
