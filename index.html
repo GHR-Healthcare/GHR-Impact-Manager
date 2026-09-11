@@ -7141,6 +7141,62 @@
         return View.onboardingDetail(r);
       },
 
+      /* Bring a just-expanded row fully into view, centred.
+       *
+       * Expanding used to leave the detail wherever it happened to fall --
+       * usually half of it below the fold, so the first thing you did after
+       * opening a row was scroll to see what you had opened.
+       *
+       * Centres the row and its detail together when the pair fits, and falls
+       * back to top-aligning when the detail is taller than the viewport,
+       * since centring something taller than the view just hides its top. The
+       * sticky table header overlays the top of the scroller, so its height
+       * comes off the usable area or a top-aligned block lands underneath it.
+       *
+       * Works on either surface: the stage tables expand into a sibling <tr>,
+       * production MSP's rows expand inside their own div.
+       */
+      revealExpanded(key) {
+        const esc = String(key).replace(/"/g, '\\"');
+        const row = document.querySelector(`tr[data-row-key="${esc}"]`)
+                 || document.getElementById(`row-${key}`);
+        if (!row) return;
+        const detail = document.querySelector(`tr[data-detail-for="${esc}"]`);
+
+        // Nearest scrolling ancestor, or the page.
+        let node = row.parentElement;
+        while (node && node !== document.body) {
+          const oy = getComputedStyle(node).overflowY;
+          if ((oy === 'auto' || oy === 'scroll') && node.scrollHeight > node.clientHeight) break;
+          node = node.parentElement;
+        }
+        const usePage = !node || node === document.body;
+        const scroller = usePage ? (document.scrollingElement || document.documentElement) : node;
+
+        // Measure after layout has settled -- icons render after the insert
+        // and change the detail's height.
+        requestAnimationFrame(() => {
+          const rowR = row.getBoundingClientRect();
+          const detR = detail ? detail.getBoundingClientRect() : rowR;
+          const top = Math.min(rowR.top, detR.top);
+          const blockH = Math.max(rowR.bottom, detR.bottom) - top;
+
+          const viewTop = usePage ? 0 : scroller.getBoundingClientRect().top;
+          const viewH = usePage ? window.innerHeight : scroller.clientHeight;
+          const head = scroller.querySelector ? scroller.querySelector('thead') : null;
+          const headH = head ? head.getBoundingClientRect().height : 0;
+          const usable = Math.max(0, viewH - headH);
+
+          const target = blockH <= usable
+            ? viewTop + headH + (usable - blockH) / 2      // centred
+            : viewTop + headH + 8;                          // too tall: top-aligned
+          const delta = top - target;
+          if (Math.abs(delta) < 4) return;
+          const smooth = !window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+          scroller.scrollBy({ top: delta, behavior: smooth ? 'smooth' : 'auto' });
+        });
+      },
+
       toggleStageRow(view, id) {
         const s = window.store.state;
         const setKey = View.STAGE_EXPANDED_SET[view];
@@ -7157,6 +7213,7 @@
           if (tr && row) {
             tr.insertAdjacentHTML('afterend', View.stageDetailRow(view, row));
             lucide.createIcons();
+            View.revealExpanded(id);
           } else {
             View[view]();   // row not on screen (filtered out) -- fall back
             return;
@@ -14628,9 +14685,11 @@
               if (!s.rowDetailTab[id]) s.rowDetailTab[id] = 'levers';
               if (!Utils.impactUi()) {
                 // MSP expands in place, as before.
-                if (s.expandedRows.has(id)) s.expandedRows.delete(id);
-                else s.expandedRows.add(id);
+                const opening = !s.expandedRows.has(id);
+                if (opening) s.expandedRows.add(id);
+                else s.expandedRows.delete(id);
                 View.rowUpdate(id);
+                if (opening) View.revealExpanded(id);
                 break;
               }
               // The same surgical insert/remove the stage tabs use, so opening
