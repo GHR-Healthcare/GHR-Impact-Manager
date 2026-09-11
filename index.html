@@ -5540,30 +5540,45 @@
 
         let leverGridHtml = '';
         
-        LEVER_GROUPS.forEach(group => {
-            leverGridHtml += `
-              <div class="mb-4 last:mb-0">
-                  <h5 class="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2 border-b border-slate-100 pb-1">${group.name}</h5>
-                  <div class="grid grid-cols-2 gap-2">
-                      ${group.keys.map(k => {
-                          const v = job.levers[k] || { done: false };
-                          return `
-                              <div class="border p-2 rounded bg-white flex items-center gap-2 ${v.done ? 'border-indigo-500 bg-indigo-50' : 'hover:border-slate-300'} cursor-pointer"
-                                   onclick="${v.done ? `window.store.dispatch('TOGGLE_LEVER_OFF',{id:'${job.id}',key:'${k}'})` : `window.store.dispatch('OPEN_MODAL',{type:'lever',jobId:'${job.id}',key:'${k}'})`}">
-                                  <div class="w-4 h-4 shrink-0 border rounded flex items-center justify-center ${v.done ? 'bg-indigo-600 border-indigo-600' : 'border-slate-300'}">
-                                      ${v.done ? '<i data-lucide="check" class="text-white w-3 h-3"></i>' : ''}
-                                  </div>
-                                  <div class="flex flex-col min-w-0">
-                                      <span class="text-xs font-medium text-slate-700 leading-tight">${CONSTANTS.LEVER_LABELS[k]}</span>
-                                      ${v.done ? `<span class="text-[9px] text-slate-500 font-medium mt-0.5 block truncate">${v.user || ''}</span>` : ''}
-                                  </div>
-                              </div>
-                          `;
-                      }).join('')}
-                  </div>
-              </div>
-            `;
-        });
+        /* Lever tiers as panels, to the design Dan sent for this dropdown.
+         *
+         * Tier 1 and Tier 2 sit side by side and Tier 3 spans beneath them,
+         * which is how the three groups actually divide: the first two are
+         * choices made in parallel, the last is what you reach for once they
+         * have not worked. Each lever is a card carrying who pulled it, since
+         * a lever with no name against it cannot be chased.
+         */
+        const leverPanel = (group) => `
+          <div class="border border-slate-200 rounded-xl bg-slate-50/60 p-3">
+            <h5 class="text-[10px] font-extrabold text-slate-500 uppercase tracking-wider mb-2.5">${group.name}</h5>
+            <div class="grid grid-cols-2 gap-2">
+              ${group.keys.map(k => {
+                const v = job.levers[k] || { done: false };
+                return `
+                  <div class="bg-white border rounded-lg px-3 py-2.5 flex items-start gap-2.5 cursor-pointer transition-colors ${
+                        v.done ? 'border-blue-300' : 'border-slate-200 hover:border-slate-300'}"
+                       onclick="${v.done
+                         ? `window.store.dispatch('TOGGLE_LEVER_OFF',{id:'${job.id}',key:'${k}'})`
+                         : `window.store.dispatch('OPEN_MODAL',{type:'lever',jobId:'${job.id}',key:'${k}'})`}">
+                    <div class="w-5 h-5 shrink-0 rounded-md border flex items-center justify-center mt-0.5 ${
+                          v.done ? 'bg-blue-600 border-blue-600' : 'border-slate-300 bg-white'}">
+                      ${v.done ? '<i data-lucide="check" class="text-white w-3.5 h-3.5"></i>' : ''}
+                    </div>
+                    <div class="min-w-0">
+                      <span class="block text-sm font-semibold text-slate-700 leading-snug">${CONSTANTS.LEVER_LABELS[k]}</span>
+                      ${v.done && v.user ? `<span class="block text-[11px] text-slate-400 truncate mt-0.5" title="${View.esc(v.user)}">${View.esc(v.user)}</span>` : ''}
+                    </div>
+                  </div>`;
+              }).join('')}
+            </div>
+          </div>`;
+
+        leverGridHtml = `
+          <div class="grid grid-cols-1 xl:grid-cols-2 gap-3">
+            ${leverPanel(LEVER_GROUPS[0])}
+            ${leverPanel(LEVER_GROUPS[1])}
+          </div>
+          <div class="mt-3">${leverPanel(LEVER_GROUPS[2])}</div>`;
 
         // -------------------------------------------
 
@@ -5603,36 +5618,47 @@
 
         html += `
           <div class="bg-slate-50 p-6 border-b shadow-inner cursor-auto fade-in" onclick="event.stopPropagation()">
-            ${detailTabStrip}
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-8 ${detailTab === 'levers' ? '' : 'hidden'}">
-              <div>
-                <h4 class="font-bold mb-3 text-sm uppercase text-slate-500">Impact Levers</h4>
-                
-                <div class="space-y-2">
-                  ${leverGridHtml}
+            <!-- One header line: what this panel is, how to move between its
+                 tabs, and the log's own controls -- rather than a bare pill
+                 strip with the two section titles buried below it. -->
+            <div class="flex flex-wrap items-start justify-between gap-4 mb-4">
+              <div class="min-w-0">
+                <h4 class="text-lg font-extrabold uppercase tracking-tight text-slate-800 leading-none">Impact Levers</h4>
+                <p class="text-xs text-slate-500 mt-1">Select the levers to include in this submission</p>
+              </div>
+              ${detailTabStrip}
+              <div class="flex items-center gap-2">
+                <h4 class="text-lg font-extrabold uppercase tracking-tight text-slate-800 leading-none">Submission Log</h4>
+                ${totalDeclines > 0 ? `
+                  <button onclick="event.stopPropagation(); window.store.dispatch('ANALYZE_DECLINES',{id:'${job.id}'})"
+                          class="text-[11px] bg-white border border-slate-300 hover:bg-slate-50 text-slate-600 px-2 py-1 rounded-lg flex items-center gap-1 shadow-sm"
+                          title="Analyse the decline reasons on this job">
+                    <i data-lucide="pie-chart" class="w-3 h-3"></i> Analyze
+                  </button>` : ''}
+                <div class="flex bg-white border border-slate-200 rounded-lg p-0.5">
+                  <button class="px-3 py-1 text-xs font-bold rounded-md ${view==='active' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-slate-600'}"
+                          onclick="window.store.dispatch('SET_SUB_VIEW',{id:'${job.id}',view:'active'})">Active</button>
+                  <button class="px-3 py-1 text-xs font-bold rounded-md ${view==='declined' ? 'bg-slate-700 text-white' : 'text-slate-400 hover:text-slate-600'}"
+                          onclick="window.store.dispatch('SET_SUB_VIEW',{id:'${job.id}',view:'declined'})">Declined</button>
                 </div>
-                
-                ${job.avOpenDate ? `<div class="mt-4 text-xs bg-purple-50 p-2 border border-purple-200 rounded text-purple-800 flex items-center gap-2"><i data-lucide="calendar" class="w-3 h-3"></i> <strong>AV Opened:</strong> ${job.avOpenDate}</div>` : ''}
+              </div>
+            </div>
+            <div class="grid grid-cols-1 xl:grid-cols-[1.35fr_1fr] gap-6 ${detailTab === 'levers' ? '' : 'hidden'}">
+              <div>
+                ${leverGridHtml}
+                ${job.avOpenDate ? `<div class="mt-3 text-xs bg-purple-50 p-2 border border-purple-200 rounded text-purple-800 flex items-center gap-2"><i data-lucide="calendar" class="w-3 h-3"></i> <strong>AV Opened:</strong> ${job.avOpenDate}</div>` : ''}
               </div>
 
               <div>
-                <div class="flex justify-between items-center mb-2">
-                  <div class="flex items-center gap-2">
-                      <h4 class="font-bold text-sm uppercase text-slate-500">Submission Log</h4>
-                      ${totalDeclines > 0 ? `
-                      <button onclick="event.stopPropagation(); window.store.dispatch('ANALYZE_DECLINES',{id:'${job.id}'})" class="text-[10px] bg-white border border-slate-300 hover:bg-slate-50 text-slate-600 px-2 py-0.5 rounded flex items-center gap-1 transition-colors shadow-sm" title="Analyze Decline Reasons">
-                          <i data-lucide="pie-chart" class="w-3 h-3"></i> Analyze
-                      </button>` : ''}
-                  </div>
-                  <div class="flex bg-white border rounded p-0.5">
-                    <button class="px-3 py-0.5 text-xs font-bold rounded ${view==='active' ? 'bg-blue-100 text-blue-700' : 'text-slate-400'}"
-                            onclick="window.store.dispatch('SET_SUB_VIEW',{id:'${job.id}',view:'active'})">Active</button>
-                    <button class="px-3 py-0.5 text-xs font-bold rounded ${view==='declined' ? 'bg-red-100 text-red-700' : 'text-slate-400'}"
-                            onclick="window.store.dispatch('SET_SUB_VIEW',{id:'${job.id}',view:'declined'})">Declined</button>
-                  </div>
-                </div>
 
-                <div class="bg-white border rounded h-56 overflow-y-auto p-0 text-xs mb-3">
+                <div class="bg-white border border-slate-200 rounded-xl overflow-hidden mb-3">
+                  <div class="grid grid-cols-12 gap-2 px-3 py-2 bg-slate-50 border-b border-slate-200
+                              text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                    <div class="col-span-4">Name / Company</div>
+                    <div class="col-span-5">Status</div>
+                    <div class="col-span-3 text-right">Submitted</div>
+                  </div>
+                  <div class="h-56 overflow-y-auto text-xs">
                   ${cands.length === 0 ? '<div class="p-4 text-center text-slate-400 italic">No candidates found</div>' : cands.map((c) => {
                     const originalIndex = job.candidates.indexOf(c);
                     const daysAgo = c.date ? Utils.calcDays(c.date) : '-';
@@ -5668,25 +5694,33 @@
                     // a decline recorded in the app reads as one here rather
                     // than falling through to the active-candidate prompts.
                     const declinedNow = Utils.isDeclinedNow(job.id, c);
-                    let centerContent = '';
+                    /* One status pill per row, in the vocabulary Dan's design
+                     * uses, mapped onto the states we hold. A single pill reads
+                     * at a glance where a stack of coloured lines did not; the
+                     * decline reason, req reason and interview override still
+                     * sit beneath it.
+                     */
+                    const pill = (text, cls, extra = '') =>
+                      `<span class="inline-block px-2 py-1 rounded-md text-[10px] font-extrabold uppercase tracking-wide ${cls} ${extra}"
+                             title="${View.esc(text)}">${View.esc(text)}</span>`;
+                    let centerContent;
                     if (declinedNow) {
-                        const dType = c.declineType || Utils.interviewStage(job.id, c);
-                        centerContent = `<div class="text-red-700 font-bold truncate" title="${dType}">${dType}</div>`;
-                        if (c.declineReason) centerContent += `<div class="text-slate-500 truncate italic" title="${c.declineReason}">${c.declineReason}</div>`;
+                      centerContent = pill(c.declineType || Utils.interviewStage(job.id, c), 'bg-red-100 text-red-700');
+                      if (c.declineReason) centerContent += `<div class="text-[10px] text-slate-500 italic truncate mt-1" title="${View.esc(c.declineReason)}">${View.esc(c.declineReason)}</div>`;
+                    } else if (c.removedFromQueue) {
+                      centerContent = pill(`Removed: ${c.declineReason || 'Other'}`, 'bg-slate-200 text-slate-500', 'line-through');
+                    } else if (c.offerDate) {
+                      centerContent = pill('Offer Pending', 'bg-green-100 text-green-700');
+                    } else if (c.interviewDate) {
+                      centerContent = pill(`Interview · ${c.interviewDate}`, 'bg-blue-100 text-blue-700');
+                    } else if (c.alert && c.alert.level === 'red') {
+                      centerContent = pill(c.alert.text || 'Needs Attention', 'bg-red-100 text-red-700');
+                    } else if (c.date && Utils.calcDays(c.date) <= 3) {
+                      centerContent = pill('New Submission', 'bg-emerald-100 text-emerald-700');
                     } else {
-                        // Active Candidate Prompts
-                        if (c.offerDate) {
-                            centerContent = `<div class="text-green-600 font-bold bg-green-50 px-1 rounded inline-block">Offer Pending</div>`;
-                        } else if (c.interviewDate) {
-                            centerContent = `<div class="text-blue-600 font-bold bg-blue-50 px-2 py-0.5 rounded inline-block">📅 Interview: ${c.interviewDate}</div>`;
-                        } else if (c.removedFromQueue) {
-                            centerContent = `<div class="text-slate-500 font-bold bg-slate-100 px-2 py-0.5 rounded inline-block line-through">Removed: ${c.declineReason || 'N/A'}</div>`;
-                        } else {
-                            const alertColor = c.alert ? (c.alert.level === 'green' ? 'text-emerald-600' : (c.alert.level === 'yellow' ? 'text-amber-600' : 'text-red-600')) : 'text-slate-500';
-                            centerContent = `<div class="${alertColor} font-bold uppercase tracking-wide truncate" title="${c.alert ? c.alert.text : 'Pending'}">${c.alert ? c.alert.text : 'Pending'}</div>`;
-                        }
-                        if(c.reqReason) centerContent += `<div class="text-slate-400 italic truncate" title="${c.reqReason}">Req: ${c.reqReason}</div>`;
+                      centerContent = pill(c.alert && c.alert.text ? c.alert.text : 'Submitted', 'bg-blue-50 text-blue-700');
                     }
+                    if (c.reqReason) centerContent += `<div class="text-[10px] text-slate-400 italic truncate mt-1" title="${View.esc(c.reqReason)}">Req: ${View.esc(c.reqReason)}</div>`;
 
                     // Manual interview stage, internal submissions only. The row itself
                     // opens the candidate-action modal, so the select stops propagation —
@@ -5705,8 +5739,8 @@
                     }
 
                     // Right Content: Dates
-                    let rightContent = `<div class="font-mono text-slate-500 text-[10px]">Sub: ${subDateStr}</div>`;
-                    if(c.date) rightContent += `<div class="font-bold text-slate-700">${daysAgo}d ago</div>`;
+                    let rightContent = `<div class="text-[10px] text-slate-500">${subDateStr}</div>`;
+                    if (c.date) rightContent += `<div class="font-bold text-slate-700">${daysAgo}d ago</div>`;
                     
                     if (declinedNow && c.declineDate) {
                         rightContent += `<div class="text-red-400 text-[9px] mt-0.5">Dec: ${Utils.fmtDate(c.declineDate)}</div>`;
@@ -5741,22 +5775,32 @@
                       </div>
                     `;
                   }).join('')}
+                  </div>
                 </div>
 
-                <!-- Next Steps (Moved Here) -->
-                <div class="border border-slate-200 border-dashed p-3 rounded bg-slate-50/50 flex flex-col gap-2">
-                   <div class="flex gap-2">
-                     <button class="flex-1 bg-white border border-slate-300 text-slate-600 hover:bg-slate-50 px-2 py-1.5 rounded text-xs font-bold flex items-center justify-center gap-2 transition-colors shadow-sm"
+                <!-- Next step: the note leads and the actions sit beside it, per Dan's
+                     design. Previously the buttons came first and the note was a
+                     footnote underneath, which read as two controls with an
+                     afterthought rather than "here is where this job stands". -->
+                <div class="rounded-xl border ${job.nextStep ? 'border-amber-200 bg-amber-50' : 'border-slate-200 border-dashed bg-slate-50/50'}
+                            px-3 py-2.5 flex items-center justify-between gap-3">
+                  <div class="min-w-0">
+                    ${job.nextStep ? `
+                      <div class="text-xs text-amber-900 leading-snug break-words whitespace-pre-wrap">${View.esc(job.nextStep.text || '')}</div>
+                      <div class="text-[11px] text-amber-700/70 mt-0.5">(${View.esc(job.nextStep.user || 'unattributed')})</div>`
+                    : `<div class="text-xs text-slate-400 italic">No next step recorded for this job.</div>`}
+                  </div>
+                  <div class="flex items-center gap-2 shrink-0">
+                    <button class="bg-white border border-slate-300 text-slate-600 hover:bg-slate-50 px-2.5 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 shadow-sm"
                             onclick="window.store.dispatch('OPEN_MODAL',{type:'next_step',jobId:'${job.id}'})">
                       <i data-lucide="message-square" class="w-3 h-3"></i> ${job.nextStep ? 'Update Next Step' : 'Add Next Step'}
-                     </button>
-                     <button class="bg-white border border-slate-300 text-slate-500 hover:bg-slate-50 hover:text-slate-700 px-2 py-1.5 rounded text-xs font-medium flex items-center justify-center gap-1 transition-colors shadow-sm"
+                    </button>
+                    <button class="bg-white border border-slate-300 text-slate-500 hover:bg-slate-50 hover:text-slate-700 px-2.5 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1.5 shadow-sm"
                             onclick="window.store.dispatch('OPEN_MODAL',{type:'next_step_history',jobId:'${job.id}'})"
                             title="View next step history">
                       <i data-lucide="history" class="w-3 h-3"></i> History
-                     </button>
-                   </div>
-                   ${job.nextStep ? `<div class="text-[10px] text-yellow-800 bg-yellow-50 p-2 rounded border border-yellow-100 leading-snug break-words whitespace-pre-wrap">${job.nextStep.text} <em class="block mt-1 text-slate-400 font-normal not-italic">(${job.nextStep.user || 'Unknown'})</em></div>` : ''}
+                    </button>
+                  </div>
                 </div>
 
               </div>
