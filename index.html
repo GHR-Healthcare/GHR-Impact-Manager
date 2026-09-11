@@ -2661,7 +2661,12 @@
        * it to true, which is its one deliberate divergence.
        */
       impactUi() {
-        return window.store.state.dataSource === 'non_msp';
+        // THE DELIBERATE DIVERGENCE ON THIS BRANCH. main returns
+        // dataSource === 'non_msp', so production MSP keeps its original
+        // surfaces; this branch exists to show reviewers MSP *with* the
+        // redesign, so it returns true for both instances. Merging to main is
+        // a matter of deciding this one line.
+        return true;
       },
 
       isDeclinedNow(jobId, c) {
