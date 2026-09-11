@@ -5782,6 +5782,58 @@
        * stage tables: B4 and VNDLY are the MSP books, Bullhorn and Symplr the
        * non-MSP ones, so a non-MSP row can never legitimately show "B4".
        */
+      /* ---- The two cells every stage table shares ----
+       *
+       * Closed, Extensions and Onboarding had grown one convention; Open Jobs
+       * kept the old list view's, inside the new table -- a coloured ID with a
+       * flame, a relationship chip on its own line, and a slate bulleted
+       * detail line where the other three show an uppercase blue specialty.
+       * Same column, three treatments. These are the single definition.
+       */
+      stageIdCell(r, o = {}) {
+        const src = View.SOURCE_BADGE[r.source_system || '']
+          || { label: String(r.source_system || '?').slice(0, 2).toUpperCase(),
+               cls: 'bg-slate-100 text-slate-600' };
+        // The aging tone only means something where days-open drives the row;
+        // elsewhere the badge stays neutral rather than implying a state.
+        const idTone = o.tone || 'border border-slate-200 bg-white text-slate-600';
+        return `
+          <div class="flex items-center gap-1 whitespace-nowrap">
+            ${o.hot === undefined ? '' : `
+              <button onclick="event.stopPropagation(); window.store.dispatch('TOGGLE_HOT_JOB','${r.id}')"
+                      class="shrink-0 transition-transform hover:scale-110" title="Mark as a hot job">
+                <i data-lucide="flame" class="w-4 h-4 ${o.hot ? 'hot-job-active' : 'text-slate-300 hover:text-orange-400'}"></i>
+              </button>`}
+            <span class="px-1 py-0.5 rounded text-[9px] font-bold ${src.cls}"
+                  title="${View.esc(r.source_system || 'Unknown source')}">${src.label}</span>
+            <span class="px-1.5 py-0.5 rounded text-xs font-bold font-mono ${idTone}">${r.id || '—'}</span>
+            <span class="text-slate-400" data-chev>&#9654;</span>
+          </div>`;
+      },
+
+      stageSystemCell(r, o = {}) {
+        // Relationship and incumbent, where configured. Shown on every stage
+        // table rather than Open Jobs alone -- knowing a seat runs through
+        // someone else's programme matters just as much once it has closed.
+        const rel = (() => {
+          const x = Utils.systemRelationship(r.health_system || r.healthSystem);
+          if (!x || !x.relationship) return '';
+          const tone = x.relationship === 'MSP' ? 'bg-emerald-100 text-emerald-700 border-emerald-200'
+                     : x.relationship === 'Direct' ? 'bg-blue-100 text-blue-700 border-blue-200'
+                     : x.relationship === '3rd Party' ? 'bg-amber-100 text-amber-800 border-amber-200'
+                     : 'bg-slate-100 text-slate-600 border-slate-200';
+          return `<span class="px-1 py-0.5 rounded border text-[9px] font-bold uppercase tracking-wide ${tone}">${View.esc(x.relationship)}</span>`
+               + (x.incumbent ? `<span class="text-[9px] text-slate-400 ml-1">via ${View.esc(x.incumbent)}</span>` : '');
+        })();
+        const eyebrow = o.eyebrow || r.health_system || r.healthSystem || '—';
+        return `
+          <div class="text-[10px] uppercase tracking-wide text-slate-400 truncate" title="${View.esc(eyebrow)}">${View.esc(eyebrow)}</div>
+          <div class="font-bold text-sm text-slate-700 truncate" title="${View.esc(r.facility || '')}">${View.esc(r.facility || '—')}</div>
+          <div class="text-[10px] uppercase tracking-wide text-blue-600 truncate" title="${View.esc(o.spec || '')}">${View.esc(o.spec || '')}</div>
+          ${rel ? `<div class="flex items-center mt-0.5 min-w-0">${rel}</div>` : ''}
+          ${o.extra ? `<div class="text-[10px] text-slate-400 truncate mt-0.5" title="${View.esc(o.extraTitle || o.extra)}">${o.extra}</div>` : ''}`;
+      },
+
       SOURCE_BADGE: {
         B4:       { label: 'B4', cls: 'bg-blue-100 text-blue-700' },
         VNDLY:    { label: 'V',  cls: 'bg-purple-100 text-purple-700' },
@@ -5818,51 +5870,27 @@
         const isHot = job.levers && job.levers.hotJob && job.levers.hotJob.done;
         const totalDeclines = job.ghrDeclines + job.avDeclines;
         const srcKey = job.sourceSystem || '';
-        const srcBadge = View.SOURCE_BADGE[srcKey]
-          || { label: (srcKey || '?').slice(0, 2).toUpperCase(), cls: 'bg-slate-100 text-slate-600' };
         const nonMsp = s.dataSource === 'non_msp';
         const eyebrow = `${job.healthSystem || ''}${job.healthSystem && job.requisitionReason ? ' - ' : ''}${
           job.requisitionReason || (job.healthSystem ? '' : 'No Reason Given')}`;
-        const rel = (() => {
-          // Relationship + incumbent: do we own this programme, or are we
-          // bidding through someone else's? Rendered only when configured.
-          const r = Utils.systemRelationship(job.healthSystem);
-          if (!r) return '';
-          const tone = r.relationship === 'MSP' ? 'bg-emerald-100 text-emerald-700 border-emerald-200'
-                     : r.relationship === 'Direct' ? 'bg-blue-100 text-blue-700 border-blue-200'
-                     : r.relationship === '3rd Party' ? 'bg-amber-100 text-amber-800 border-amber-200'
-                     : 'bg-slate-100 text-slate-600 border-slate-200';
-          const inc = r.incumbent
-            ? `<span class="text-[10px] text-slate-500 truncate">via ${View.esc(r.incumbent)}</span>` : '';
-          const chip = r.relationship
-            ? `<span class="px-1.5 py-0.5 rounded border text-[9px] font-bold uppercase tracking-wide ${tone}">${View.esc(r.relationship)}</span>` : '';
-          return `<div class="flex items-center gap-1.5 mt-0.5 min-w-0">${chip}${inc}</div>`;
-        })();
-        const specLine = `${abbrSpecialty}${showUnit ? ` &bull; ${job.unit}` : ''}${
-          job.costCenter ? ` &bull; ${job.costCenter}` : ''}${
-          job.startTime && job.endTime ? ` &bull; ${job.startTime}-${job.endTime}`
-            : (job.shift && job.shift !== 'N/A' ? ` &bull; ${job.shift}` : '')}`;
+        // The specialty leads on the blue line, as on the other three tabs;
+        // unit, cost centre and shift drop to the muted line beneath instead of
+        // being bulleted into one slate string the way the old list view did.
+        const detailLine = [
+          showUnit ? job.unit : null,
+          job.costCenter || null,
+          job.startTime && job.endTime ? `${job.startTime}-${job.endTime}`
+            : (job.shift && job.shift !== 'N/A' ? job.shift : null),
+        ].filter(Boolean).join(' &bull; ');
 
         return `
-          <td class="px-3 py-2">
-            <div class="flex items-center gap-1 whitespace-nowrap">
-              <button onclick="event.stopPropagation(); window.store.dispatch('TOGGLE_HOT_JOB','${job.id}')"
-                      class="shrink-0 transition-transform hover:scale-110" title="Mark as a hot job">
-                <i data-lucide="flame" class="w-4 h-4 ${isHot ? 'hot-job-active' : 'text-slate-300 hover:text-orange-400'}"></i>
-              </button>
-              <span class="px-1 py-0.5 rounded text-[9px] font-bold ${srcBadge.cls}"
-                    title="${View.esc(job.sourceSystem || 'Unknown source')}">${srcBadge.label}</span>
-              <span class="px-1.5 py-0.5 rounded text-xs font-bold ${colorClass}">${job.id}</span>
-              <span class="ml-0.5 text-slate-400" data-chev>&#9654;</span>
-            </div>
-          </td>
+          <td class="px-3 py-2">${View.stageIdCell(
+            { id: job.id, source_system: job.sourceSystem },
+            { hot: isHot, tone: colorClass })}</td>
           <td class="px-3 py-2 text-xs font-medium text-slate-700 truncate" title="${View.esc(job.program || '')}">${View.esc(job.program || '')}</td>
-          <td class="px-3 py-2 max-w-0">
-            <div class="text-[10px] uppercase font-bold text-slate-400 truncate" title="${View.esc(eyebrow)}">${View.esc(eyebrow)}</div>
-            <div class="font-bold text-sm text-slate-700 truncate">${View.esc(job.facility || '')}</div>
-            ${rel}
-            <div class="text-xs text-slate-500 truncate">${specLine}</div>
-          </td>
+          <td class="px-3 py-2 max-w-0">${View.stageSystemCell(
+            { health_system: job.healthSystem, facility: job.facility },
+            { eyebrow, spec: abbrSpecialty, extra: detailLine })}</td>
           <td class="px-3 py-2 text-center font-bold text-slate-700 text-sm">${job.numPositions || 1}</td>
           <td class="px-3 py-2 text-center font-bold text-xs ${job.billRateEstimated ? 'text-amber-600' : 'text-slate-700'}"
               title="${job.billRateEstimated ? 'Estimated (using suggested/max rate)' : ''}">${job.billRate}${job.billRateEstimated ? '*' : ''}</td>
@@ -7740,7 +7768,8 @@
         // every one of them. VNDLY has no such path and says so rather than
         // showing a blank.
         const extCols = [
-          { label: '' },
+          // No separate chevron column: the disclosure arrow lives in the ID
+          // cell, as it does on Closed and Open Jobs.
           { label: 'Assignment ID',   key: 'id' },
           { label: 'Assignment',      key: 'facility' },
           { label: 'Clinician',       key: 'clinician' },
@@ -7814,15 +7843,8 @@
             const e = View.extensionEdit(r);
             body += `
               <tr data-row-key="${r.id}" class="hover:bg-slate-50 border-b border-slate-100 cursor-pointer" onclick="store.dispatch('TOGGLE_EXTENSION_ROW','${r.id}')">
-                <td class="px-3 py-2 text-slate-400" data-chev>${open ? '&#9660;' : '&#9654;'}</td>
-                <td class="px-3 py-2 whitespace-nowrap">
-                  <span class="px-1.5 py-0.5 rounded border border-slate-200 bg-white text-[10px] font-mono text-slate-600">${r.id || '—'}</span>
-                </td>
-                <td class="px-3 py-2">
-                  <div class="text-[10px] uppercase tracking-wide text-slate-400">${View.esc(r.health_system || '—')}</div>
-                  <div class="font-bold text-sm text-slate-700">${View.esc(r.facility || '—')}</div>
-                  <div class="text-[10px] uppercase tracking-wide text-blue-600">${View.esc(r.role || r.care_type || '')}</div>
-                </td>
+                <td class="px-3 py-2">${View.stageIdCell(r)}</td>
+                <td class="px-3 py-2 max-w-0">${View.stageSystemCell(r, { spec: r.role || r.care_type || '' })}</td>
                 <td class="px-3 py-2">
                   <div class="font-medium text-slate-700">${View.stageWorker(r)}</div>
                   <div class="text-[10px] mt-0.5">${View.stageAgency(r)}</div>
@@ -8244,7 +8266,6 @@
         // Agency ride under Clinician the way Extensions does, so the row
         // reads the same on both tabs.
         const onbCols = [
-          { label: '' },
           { label: 'Start ID',      key: 'id' },
           { label: 'Assignment',    key: 'facility' },
           { label: 'Clinician',     key: 'clinician' },
@@ -8321,15 +8342,8 @@
             const slip = View.onboardingSlip(r);
             body += `
               <tr data-row-key="${r.id}" class="hover:bg-slate-50 border-b border-slate-100 cursor-pointer" onclick="store.dispatch('TOGGLE_ONBOARDING_ROW','${r.id}')">
-                <td class="px-3 py-2 text-slate-400" data-chev>${open ? '&#9660;' : '&#9654;'}</td>
-                <td class="px-3 py-2 whitespace-nowrap">
-                  <span class="px-1.5 py-0.5 rounded border border-slate-200 bg-white text-[10px] font-mono text-slate-600">${r.id || '—'}</span>
-                </td>
-                <td class="px-3 py-2">
-                  <div class="text-[10px] uppercase tracking-wide text-slate-400">${View.esc(r.health_system || '—')}</div>
-                  <div class="font-bold text-sm text-slate-700">${View.esc(r.facility || '—')}</div>
-                  <div class="text-[10px] uppercase tracking-wide text-blue-600">${View.esc(r.role || '')}</div>
-                </td>
+                <td class="px-3 py-2">${View.stageIdCell(r)}</td>
+                <td class="px-3 py-2 max-w-0">${View.stageSystemCell(r, { spec: r.role || '' })}</td>
                 <td class="px-3 py-2">
                   <div class="font-medium text-slate-700">${View.stageWorker(r)}</div>
                   <div class="text-[10px] mt-0.5">${View.stageAgency(r)}</div>
@@ -8524,16 +8538,9 @@
             body += `
               <tr data-row-key="${r.id}" class="hover:bg-slate-50 border-b border-slate-100 ${closedExpandable ? 'cursor-pointer' : ''}"
                   ${closedExpandable ? `onclick="store.dispatch('TOGGLE_CLOSED_ROW','${r.id}')"` : ''}>
-                <td class="px-3 py-2 whitespace-nowrap">
-                  <span class="px-1.5 py-0.5 rounded border border-slate-200 bg-white text-[10px] font-mono text-slate-600">${r.id || '—'}</span>
-                  ${closedExpandable ? `<span class="ml-1 text-slate-400" data-chev>${open ? '&#9660;' : '&#9654;'}</span>` : ''}
-                </td>
+                <td class="px-3 py-2">${View.stageIdCell(r)}</td>
                 <td class="px-3 py-2 font-semibold text-slate-700">${r.category || '—'}</td>
-                <td class="px-3 py-2">
-                  <div class="text-[10px] uppercase tracking-wide text-slate-400">${View.esc(r.health_system || '—')}</div>
-                  <div class="font-bold text-sm text-slate-700">${View.esc(r.facility || '—')}</div>
-                  <div class="text-[10px] uppercase tracking-wide text-blue-600">${View.esc(r.role || r.specialty || '')}</div>
-                </td>
+                <td class="px-3 py-2 max-w-0">${View.stageSystemCell(r, { spec: r.role || r.specialty || '' })}</td>
                 <td class="px-3 py-2 text-center">
                   ${r.group ? View.stageBadge(View.closedOutcome(r).label, View.closedOutcome(r).tone) : '—'}
                   ${r.outcome_reason ? `<div class="text-[10px] text-slate-400 mt-0.5">${View.esc(r.outcome_reason)}</div>` : ''}
