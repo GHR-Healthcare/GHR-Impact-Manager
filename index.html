@@ -10299,12 +10299,51 @@
            * Written onto a parallel array rather than the metric objects, which
            * are shared with the drill-down and the tiles.
            */
+          /* Each move is also classified by CAUSE, which is what the notes
+           * asked for: a start is net-new demand or the continuation of a seat
+           * that already existed, and an end is a departure or a handover to
+           * the worker's next assignment. A net of -11 that is eleven
+           * departures is a different problem from one that is eleven
+           * extensions landing a week late.
+           *
+           * Derived from the assignment spans already loaded, using the same
+           * chain rule the extension work verified against PLACEMENT_DIM's
+           * IsExtension: the same clinician with an adjacent assignment at
+           * this account. That agreed with the warehouse flag on 86% of
+           * flagged placements against 8.7% of unflagged ones, so it stands on
+           * its own without the flag -- which the trend feed does not carry.
+           *
+           * Fourteen days' grace either side, matching the window that
+           * verification used. A gap wider than that is a rehire, not a
+           * continuation.
+           */
+          const GAP_DAYS = 14, DAY = 86400000;
+          const spans = new Map();
+          sysAssignments.forEach(a => {
+            if (!a.worker_name || !a.startDate) return;
+            if (!spans.has(a.worker_name)) spans.set(a.worker_name, []);
+            spans.get(a.worker_name).push({ s: a.startDate, e: a.endDate || null });
+          });
+          // A start continues something if that worker had an assignment
+          // ending just before this week began.
+          const continues = (w, weekStart) => (spans.get(w) || []).some(x =>
+            x.e && x.e < weekStart && (weekStart - x.e) <= GAP_DAYS * DAY);
+          // An end is a handover if that worker picks up again just after.
+          const handedOver = (w, weekEnd) => (spans.get(w) || []).some(x =>
+            x.s > weekEnd && (x.s - weekEnd) <= GAP_DAYS * DAY);
+
           const movement = sysMetrics.map((m, ci) => {
             const prev = ci > 0 ? sysMetrics[ci - 1] : null;
             if (!prev || !m?.activeWorkers || !prev.activeWorkers) return null;
             const started = [...m.activeWorkers].filter(w => !prev.activeWorkers.has(w));
             const ended = [...prev.activeWorkers].filter(w => !m.activeWorkers.has(w));
-            return { started, ended, net: started.length - ended.length };
+            const ws = m.week?.start, we = prev.week?.end;
+            const extStarts = ws ? started.filter(w => continues(w, ws)) : [];
+            const newStarts = started.filter(w => !extStarts.includes(w));
+            const handed = we ? ended.filter(w => handedOver(w, we)) : [];
+            const departed = ended.filter(w => !handed.includes(w));
+            return { started, ended, net: started.length - ended.length,
+                     newStarts, extStarts, handed, departed };
           });
           // Names are the point of this, but they are clinician names: the
           // redact button hides vendor-side identity, and these are GHR's own
@@ -10312,13 +10351,17 @@
           // forty does not produce an unreadable wall.
           const movementTip = mv => {
             if (!mv) return '';
-            const cap = 8;
+            const cap = 6;
             const list = (arr, verb) => arr.length
               ? `${verb} (${arr.length}): ` + arr.slice(0, cap).join(', ')
                 + (arr.length > cap ? `, +${arr.length - cap} more` : '')
               : '';
-            return [list(mv.started, 'Started'), list(mv.ended, 'Ended')]
-              .filter(Boolean).join('\n') || 'No change in who is on assignment';
+            return [
+              list(mv.newStarts, 'New placements'),
+              list(mv.extStarts, 'Extensions / continuations'),
+              list(mv.departed, 'Left'),
+              list(mv.handed, 'Ended, continuing elsewhere'),
+            ].filter(Boolean).join('\n') || 'No change in who is on assignment';
           };
           const encodedKey = encodeURIComponent(key).replace(/'/g, '%27');
 
@@ -10340,17 +10383,28 @@
                       <td class="py-1.5 px-2 font-medium text-slate-600 sticky left-0 bg-white"
                           title="Distinct workers on assignment in the week. The figure beneath each count is the change from the previous column — hover it to see who started and who ended.">
                         Total Active Headcount
-                        <span class="block text-[9px] font-normal text-slate-400 leading-none mt-0.5">change vs previous &middot; hover for names</span>
+                        <span class="block text-[9px] font-normal text-slate-400 leading-none mt-0.5">change vs previous &middot; new / ext / left &middot; hover for names</span>
                       </td>
                       ${sysMetrics.map((m, ci) => {
                         const wi = activeWeekIndices[ci];
                         // Production MSP's Trend tab is unchanged; the movement
                         // annotation belongs to the redesign.
                         const mv = Utils.impactUi() ? movement[ci] : null;
+                        /* The net, then what caused it. "-11" alone is not
+                         * actionable; "-11 (2 new / 13 left)" says where to
+                         * look, and the tooltip names them.
+                         */
+                        const cause = mv ? [
+                          mv.newStarts.length ? `${mv.newStarts.length} new` : '',
+                          mv.extStarts.length ? `${mv.extStarts.length} ext` : '',
+                          mv.departed.length ? `${mv.departed.length} left` : '',
+                        ].filter(Boolean).join(' / ') : '';
                         const delta = mv && mv.net !== 0
                           ? `<div class="text-[9px] leading-none mt-0.5 ${mv.net > 0 ? 'text-emerald-600' : 'text-red-600'}">${
-                              mv.net > 0 ? '+' : ''}${mv.net}</div>`
-                          : (mv ? `<div class="text-[9px] leading-none mt-0.5 text-slate-300">&mdash;</div>` : '');
+                              mv.net > 0 ? '+' : ''}${mv.net}</div>${
+                              cause ? `<div class="text-[8px] leading-none mt-0.5 text-slate-400">${cause}</div>` : ''}`
+                          : (mv ? `<div class="text-[9px] leading-none mt-0.5 text-slate-300">&mdash;</div>${
+                              cause ? `<div class="text-[8px] leading-none mt-0.5 text-slate-400">${cause}</div>` : ''}` : '');
                         const tip = mv ? ` title="${View.esc(movementTip(mv))}"` : '';
                         return m.activeHC > 0
                           ? `<td class="text-center py-1.5 px-2 text-blue-600 cursor-pointer hover:bg-blue-50"${tip} onclick="window.showPDDrilldown('${encodedKey}',${wi},'activeHC')"><span class="underline">${m.activeHC}</span>${delta}</td>`
