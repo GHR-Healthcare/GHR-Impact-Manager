@@ -2,6 +2,17 @@
 
 ## Version History
 
+### 2.20.0 - Pipeline gains an Accepted stage and a link back to the source
+- The funnel ran Submitted → Interview → Offer and stopped, so it said an offer
+  went out but never how many were taken. Accepted is now its own stage: it used
+  to share a rank with Offer Pending and Post-Offer Decline
+- Each record can link back to the system it came from. The URL templates come
+  from config (`SOURCE_URL_B4`, `SOURCE_URL_VNDLY`, `SOURCE_URL_BULLHORN`,
+  `SOURCE_URL_SYMPLR`), since the hosts are tenant-specific -- an unset source
+  renders no link rather than a broken one, and only http(s) is ever emitted
+- The unreferenced `bucket()` helper is commented out rather than removed; it is
+  still the right shape for a terminal-state breakdown
+
 ### 2.19.0 - Placements defaults to the last 90 days
 - The Placements pane showed only seats live at that moment, so a facility that
   turned over last month read as untouched. It now defaults to a 90-day window --

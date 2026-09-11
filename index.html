@@ -1481,6 +1481,10 @@
                     // Reveal the sibling-instance toggle if the config gave us
                     // a URL. Hidden by default so a misconfigured deploy doesn't
                     // show a dead link.
+                    // Per-source deep-link templates. Absent unless the
+                    // instance is configured for them, in which case no link
+                    // renders at all -- see Utils.sourceLink.
+                    window.store.state.sourceLinks = config.sourceLinks || {};
                     const toggleBtn = document.getElementById('instanceToggleBtn');
                     const toggleLabel = document.getElementById('instanceToggleLabel');
                     if (toggleBtn && config.otherInstanceUrl) {
@@ -2636,6 +2640,24 @@
 
       // Is this agency string us? GHR or Planet Healthcare, matching how the
       // rest of the app already tests it (per-diem, stats, candidate rows).
+      /* Deep link back to the system a record came from.
+       *
+       * Templates arrive from /api/get-config (SOURCE_URL_B4,
+       * SOURCE_URL_VNDLY, SOURCE_URL_BULLHORN, SOURCE_URL_SYMPLR), each a URL
+       * containing {id}. Returns null when the instance has no template for
+       * that source, so the caller renders no link rather than a dead one --
+       * the hosts are tenant-specific (Bullhorn's cluster number, the VNDLY
+       * subdomain) and cannot be hard-coded.
+       */
+      sourceLink(system, id) {
+        const tpl = (window.store.state.sourceLinks || {})[system || ''];
+        if (!tpl || id == null || id === '') return null;
+        const url = String(tpl).replace('{id}', encodeURIComponent(String(id)));
+        // Only ever emit http(s) -- a template is configuration, but it still
+        // reaches an href, and javascript: must not survive that trip.
+        return /^https?:\/\//i.test(url) ? url : null;
+      },
+
       isGhrAgency(a) {
         const x = String(a || '').toLowerCase();
         return x.includes('ghr') || x.includes('planet healthcare');
@@ -6120,6 +6142,12 @@
         // string only where the flag is absent.
         const isGhr = c => (c.isGHR != null ? !!c.isGHR : Utils.isGhrAgency(c.agency));
 
+        /* Superseded by rankOf below when the funnel moved from "where each
+         * candidate stopped" to "everyone who reached this stage", and
+         * unreferenced since. Kept because it is still the correct shape for a
+         * terminal-state breakdown, which is a different question the Pipeline
+         * pane may yet be asked.
+         *
         // Furthest stage reached, so nobody is counted twice.
         const bucket = c => {
           // Covers the whole Utils.INTERVIEW_STAGES vocabulary. 'Post-Offer
@@ -6132,6 +6160,7 @@
               || st === 'Interview Complete') return 'Interview';
           return 'Submitted';
         };
+        */
         const active = cands.filter(c => !Utils.isDeclinedNow(job.id, c));
         const declined = cands.filter(c => Utils.isDeclinedNow(job.id, c));
 
@@ -6149,13 +6178,17 @@
          */
         const rankOf = c => {
           const st = stageOf(c);
-          if (st === 'Offer Accepted' || st === 'Offer Pending'
-              || st === 'Post-Offer Decline') return 2;
+          // Accepted is its own depth. It used to share rank 2 with Offer
+          // Pending and Post-Offer Decline, so the funnel ended at "an offer
+          // went out" and never said how many were taken -- the one step that
+          // says whether the job actually got filled.
+          if (st === 'Offer Accepted') return 3;
+          if (st === 'Offer Pending' || st === 'Post-Offer Decline') return 2;
           if (st === 'Interview Requested' || st === 'Interview Scheduled'
               || st === 'Interview Complete') return 1;
           return 0;
         };
-        const STAGES = ['Submitted', 'Interview', 'Offer'];
+        const STAGES = ['Submitted', 'Interview', 'Offer', 'Accepted'];
         const rows = STAGES.map((label, i) => {
           // Everyone who got at least this far, declines included -- the
           // funnel describes what happened, not who is still live.
@@ -6180,7 +6213,20 @@
         return `
           <div class="fade-in grid grid-cols-1 xl:grid-cols-2 gap-6">
             <div>
-              <h4 class="font-bold mb-3 text-sm uppercase text-slate-500">Stage Summary</h4>
+              <div class="flex items-center justify-between gap-2 mb-3">
+                <h4 class="font-bold text-sm uppercase text-slate-500">Stage Summary</h4>
+                ${(() => {
+                  const href = Utils.sourceLink(job.sourceSystem, job.positionId || job.id);
+                  return href ? `
+                    <a href="${href}" target="_blank" rel="noopener noreferrer"
+                       onclick="event.stopPropagation()"
+                       class="inline-flex items-center gap-1 text-[10px] font-semibold text-blue-600 hover:text-blue-700 hover:underline"
+                       title="Open this record in ${View.esc(job.sourceSystem)}">
+                      Open in ${View.esc(job.sourceSystem)}
+                      <i data-lucide="external-link" class="w-3 h-3"></i>
+                    </a>` : '';
+                })()}
+              </div>
               <table class="w-full text-xs border border-slate-200 rounded-lg overflow-hidden">
                 <thead class="bg-slate-50 text-[10px] uppercase tracking-wide text-slate-500">
                   <tr>
@@ -14178,6 +14224,7 @@
         // Placements pane window. Defaults to the 90-day view: active-only hid
         // recent turnover at a facility entirely.
         placementsScope: 'recent',
+        sourceLinks: {},
         financialData: [],
         financialFromMonth: null,
         financialToMonth: null,

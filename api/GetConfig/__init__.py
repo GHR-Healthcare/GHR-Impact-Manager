@@ -25,6 +25,21 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             # 'msp' (default) or 'non_msp' — frontend uses this to hide tabs
             # that don't apply to the non-MSP instance (Pending, Per Diem).
             'dataSource': ds,
+            # Deep links back to the system a record came from, per source.
+            # Each is a URL template containing {id}; the frontend substitutes
+            # the record's own position_id and renders nothing when the
+            # template is unset, so an unconfigured instance simply shows no
+            # link rather than a broken one. The hosts are tenant-specific
+            # (Bullhorn's cluster number, the VNDLY subdomain), which is why
+            # these are configuration and not constants in the code.
+            'sourceLinks': {
+                k: v for k, v in (
+                    ('B4', os.environ.get('SOURCE_URL_B4')),
+                    ('VNDLY', os.environ.get('SOURCE_URL_VNDLY')),
+                    ('Bullhorn', os.environ.get('SOURCE_URL_BULLHORN')),
+                    ('Symplr', os.environ.get('SOURCE_URL_SYMPLR')),
+                ) if v
+            },
             # Sibling instance URL for the header toggle. Empty string = hide toggle.
             'otherInstanceUrl': other_url,
             'otherInstanceLabel': 'MSP' if ds == 'non_msp' else 'Non-MSP',
