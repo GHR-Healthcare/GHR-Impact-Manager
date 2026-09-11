@@ -6058,6 +6058,47 @@
         };
       },
 
+      /* Where this rate sits against its peers, in the "+7.8% · #3 of 27" form.
+       *
+       * Variance is measured against the peer MEDIAN, not the mean: these are
+       * small samples at one facility, where a single outlier rate drags an
+       * average somewhere no actual seat sits.
+       *
+       * Rank uses a mid-rank for ties. Counting only strictly-higher peers is
+       * what put a seat sitting exactly at the peer median in the 93rd
+       * percentile -- with ties, the rank has to land in the middle of the
+       * block of equal values, not at the top of it.
+       */
+      rateMarketPosition(bill, rates, opts) {
+        const vals = (rates || []).map(Number).filter(v => isFinite(v) && v > 0).sort((a, b) => a - b);
+        const b = Number(bill);
+        if (!vals.length || !isFinite(b) || b <= 0) return null;
+        const n = vals.length;
+        // Median of the peers, never of the population below -- this rate is
+        // what we are measuring, so it must not move the line it is measured
+        // against.
+        const median = n % 2 ? vals[(n - 1) / 2] : (vals[n / 2 - 1] + vals[n / 2]) / 2;
+        /* Whether this job's own rate is already one of the peers decides the
+         * denominator. Ranking against PLACED rates, it is not -- so it has to
+         * be added, or a lone peer yields the nonsense "#2 of 1". Ranking
+         * against other OPEN jobs at the facility, this job is one of them
+         * already and adding it again would count it twice.
+         */
+        const population = (opts && opts.includesSelf) ? vals : vals.concat([b]).sort((x, y) => x - y);
+        const above = population.filter(v => v > b).length;
+        const equal = population.filter(v => v === b).length;
+        // #1 is the highest rate; a tied block sits at its own midpoint.
+        // Counting only strictly-higher peers is what once put a seat at the
+        // peer median in the 93rd percentile.
+        const rank = above + (equal + 1) / 2;
+        return {
+          variance: median > 0 ? ((b - median) / median) * 100 : null,
+          rank: Math.round(rank),
+          of: population.length,
+          median,
+        };
+      },
+
       detailRatePane(job) {
         const money = v => (v || v === 0) ? '$' + Number(v).toFixed(2) : '—';
         const bill = Number(job.billRate) || 0;
@@ -6107,10 +6148,32 @@
                 const p = View.placedPeers(job);
                 const bill = Number(job.billRate);
                 const strip = View.rankStripSvg(p.rates, bill, { width: 240 });
+                // Open-job peers already contain this job; placed rates do not.
+                const pos = View.rateMarketPosition(bill, p.rates, { includesSelf: p.basis === 'open' });
                 const money2 = v => (v || v === 0) ? '$' + Number(v).toFixed(0) : '—';
                 const avg = a => a.length ? a.reduce((x, y) => x + y, 0) / a.length : null;
                 const gAvg = avg(p.ghrRates), aAvg = avg(p.affRates);
                 return strip + `
+                  ${pos ? `
+                    <div class="flex flex-wrap items-center gap-2 mt-2">
+                      ${pos.variance == null ? '' : `
+                        <span class="text-xs font-bold rounded px-2 py-0.5 border ${
+                          Math.abs(pos.variance) < 1
+                            ? 'bg-slate-50 border-slate-200 text-slate-600'
+                            : pos.variance < 0
+                              ? 'bg-emerald-50 border-emerald-200 text-emerald-700'
+                              : 'bg-amber-50 border-amber-200 text-amber-700'}"
+                              title="This bill rate against the median of the ${pos.of} rate${pos.of === 1 ? '' : 's'} it is ranked against (${money2(pos.median)})">
+                          ${pos.variance > 0 ? '+' : ''}${pos.variance.toFixed(1)}%
+                        </span>`}
+                      <span class="text-xs font-bold text-slate-700 tabular-nums"
+                            title="Highest rate ranks #1. Ties share the middle of their block.">
+                        #${pos.rank} of ${pos.of}
+                      </span>
+                      <span class="text-[10px] text-slate-400">
+                        vs ${p.basis === 'placed' ? 'placed' : 'open-job'} median ${money2(pos.median)}
+                      </span>
+                    </div>` : ''}
                   ${p.basis === 'placed' && (gAvg != null || aAvg != null) ? `
                     <div class="flex flex-wrap gap-2 mt-2">
                       ${gAvg != null ? `<span class="text-[10px] bg-blue-50 border border-blue-200 text-blue-700 rounded px-1.5 py-0.5 font-semibold">GHR placed avg ${money2(gAvg)} · ${p.ghrRates.length}</span>` : ''}

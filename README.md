@@ -2,6 +2,15 @@
 
 ## Version History
 
+### 2.21.0 - Rate says where it sits: "+7.8% · #3 of 8"
+- The Rate pane drew a rank strip but never stated the position in words. It now
+  gives variance against the peer median and an explicit rank
+- Variance is measured against the median, not the mean: these are small samples
+  at a single facility, where one outlier drags an average somewhere no real seat sits
+- Ties take a mid-rank, and this job's own rate is counted in the denominator when
+  it is not already one of the peers -- ranking against a single placed rate used
+  to produce "#2 of 1"
+
 ### 2.20.0 - Pipeline gains an Accepted stage and a link back to the source
 - The funnel ran Submitted → Interview → Offer and stopped, so it said an offer
   went out but never how many were taken. Accepted is now its own stage: it used
