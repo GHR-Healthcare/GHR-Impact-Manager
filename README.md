@@ -2,6 +2,16 @@
 
 ## Version History
 
+### 2.18.0 - Headcount moves explain themselves
+- Trend's category breakdown now says what caused each headcount move rather than
+  only how large it was
+- Open Jobs' row dropdown rebuilt to Dan's current design (prototype and non-MSP;
+  production MSP keeps the renderer it has always had)
+- One ID cell and one system cell shared across all four stage tables, so the
+  columns line up tab to tab
+- Expanding a row centres the dropdown itself, measured after it reflows, instead
+  of scrolling to the top of the row and cutting off the contents
+
 ### 2.17.0 - Production MSP gated off the redesign
 
 main serves both production MSP and non-MSP, and only the stage tabs were gated. Everything on a shared surface — Open Jobs, the job detail, Trend, the footer — therefore reached production MSP, which was to stay exactly as it was until the prototype branch merges. `Utils.impactUi()` is now the single switch every new surface asks: `dataSource === 'non_msp'` on main, `true` on the prototype, which is that branch's one deliberate divergence.
