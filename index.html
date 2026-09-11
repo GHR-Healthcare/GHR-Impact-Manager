@@ -7059,6 +7059,10 @@
        * production MSP's rows expand inside their own div.
        */
       revealExpanded(key) {
+        // Production MSP takes no behaviour changes until the prototype branch
+        // merges. Guarded here rather than only at the call sites, so adding a
+        // caller later cannot quietly put this back on that instance.
+        if (!Utils.impactUi()) return;
         const esc = String(key).replace(/"/g, '\\"');
         const row = document.querySelector(`tr[data-row-key="${esc}"]`)
                  || document.getElementById(`row-${key}`);
@@ -14589,7 +14593,6 @@
                 if (opening) s.expandedRows.add(id);
                 else s.expandedRows.delete(id);
                 View.rowUpdate(id);
-                if (opening) View.revealExpanded(id);
                 break;
               }
               // The same surgical insert/remove the stage tabs use, so opening
