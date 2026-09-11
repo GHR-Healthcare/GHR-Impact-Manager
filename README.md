@@ -2,7 +2,39 @@
 
 ## Version History
 
-### 2.13.0 - One people picker, and assignees get a stable identity
+### 2.17.0 - Production MSP gated off the redesign
+
+main serves both production MSP and non-MSP, and only the stage tabs were gated. Everything on a shared surface — Open Jobs, the job detail, Trend, the footer — therefore reached production MSP, which was to stay exactly as it was until the prototype branch merges. `Utils.impactUi()` is now the single switch every new surface asks: `dataSource === 'non_msp'` on main, `true` on the prototype, which is that branch's one deliberate divergence.
+
+Production MSP's Open Jobs grid renderer and row builder were restored from 2.5.0 and verified identical. They live alongside the stage-table versions rather than replacing them. Also gated back: the KPI row, the standing bottom bar, the Trend movement annotation, the Facilities dropdown change, the doubled-specialty collapse, and row centring.
+
+Two things would have broken MSP outright. `rowUpdate` and `TOGGLE_ROW` had been rewritten for the table and would have silently failed on div-based rows, taking every lever, margin and interview edit with them. And `s.sort` with its `SORT` reducer had been deleted as dead weight when Open Jobs moved to `stageApply` — the restored renderer reads `s.sort.key` on its first line, so every load threw until they came back.
+
+The pre-commit check now asserts those two renderers still match their 2.5.0 baseline, so drift on that surface is caught mechanically.
+
+### 2.16.0 - Open Jobs fits its container
+
+Column widths as percentages so the table stops needing a horizontal scroll: an unsized column under `table-fixed` swallows every remaining pixel, which left a band of white space while ID and Category truncated. B4 writes many specialties doubled ("CT TECH - CT TECH") on 62 of its 91 open orders; the halves are collapsed where they match exactly.
+
+Two KPIs could only ever read zero. `interviewDerivedStage` never returns 'Post-Offer Decline', so counting that stage matched nothing; a decline carrying an offer date is one. And `onboardingSlip` measured against a start recorded at the previous meeting, returning null until someone had saved one — it now falls back to the slip the source reports.
+
+### 2.15.0 - Pending detail panels
+
+Clinician Status, Pipeline Mix and Next Action. Stage age is days since submission; the blocker is whatever the source recorded. Pipeline Mix counts other submissions against the same facility and position. No feed carries an owner, so that tile says so rather than naming one.
+
+### 2.14.0 - Movement History
+
+Every `dateBegin` edit from `EditHistoryPlacement` with its old value, new value and author. An edit setting the start to the value it already held is dropped. Only Bullhorn keeps a per-edit trail; B4 and VNDLY say the per-move history is unavailable rather than showing an empty timeline.
+
+### 2.13.0 - Open Jobs on the shared stage table
+
+Open Jobs rendered a div per job under a hand-built header with its own sort. It now renders through `stageShell` with the reference's ten columns, gaining sortable headers and column filters. `buildRowHtml` split into `jobRowCells` and `jobDetailHtml`; the `SORT` action and `s.sort` were removed as superseded — which 2.17.0 had to undo.
+
+### 2.12.2 - Reviewed contracts were all attributed to one person
+
+### 2.16.1 - One people picker, and assignees get a stable identity
+
+*(Renumbered from 2.13.0. Two sessions numbered in parallel and both reached 2.13.0 — this one shipped on the prototype branch, the other on main for Open Jobs. The content is unchanged.)*
 
 The lever/margin tag is *who the action is assigned to*, recorded separately from who performed it (`changes.user_name`, which is the Azure AD email and is 100% consistent across all 4,649 rows). The assignee was the inconsistent half: of 2,030 lever completions, **1,115 carried a display name and 915 an email**, so the same person appears twice and the records can't be grouped by assignee.
 
@@ -14,32 +46,6 @@ A selection now carries both — the display name in the visible field, the emai
 
 The tradeoff: MSP loses one-click chips for type-to-search.
 
-### 2.6.0 - System Match, Recruiter, and what `IsExtension` actually means
-
-The two columns Extensions was missing both shipped. Both needed the same thing: a way to find a seat's counterpart record in the other system.
-
-**`PLACEMENT_DIM.IsExtension` does not mean what its name suggests.** It marks a placement that *is* an extension of a prior assignment, not one that *has been* extended. Checked against the chain rule the feedback describes — same clinician, same client, a prior placement ending within 14 days of this one's start — 7,545 of the 8,745 flagged placements chain (86%), against 8.7% of the unflagged ones. That is also why the flag and the date signal barely overlap: only 871 records both carry `IsExtension` and show `DateEnd > DateOriginalEnd`, because a flagged placement is a *new record* whose own end date has not moved. They answer different questions, so both ship: `seat_is_continuation` for the chain and `is_extension` for a pushed-out end date.
-
-Neither is the Extensions tab's driver. The tab lists active seats approaching contract end; the flags supply the seat's history.
-
-**System Match** compares the same fact as the VMS and the ATS each record it. `BH_PLACEMENT_RAW_TO_B4HealthOrder` links a B4 contract to a Bullhorn placement and resolves 287 of the 313 live GHR seats in the 45-day window (92%).
-
-The crosswalk is used for the link and nothing else. Its own status and date columns are a snapshot frozen at load time: 3,002 of its 4,179 newest rows (72%) disagree with the live placement status and 1,257 (30%) with the live end date. Reading them as facts produced 78 phantom end-date mismatches and made 270 working seats look stuck in "Pending Start" — live, 272 of the 287 read "Approved". Every compared value is now read from `PLACEMENT_DIM`.
-
-Only fields that are genuinely the same fact are compared. Status is not one of them: B4's `Contract_Status` describes the requisition and reads "Closed And Awarded" on every live seat, while Bullhorn's describes the placement lifecycle, so comparing the strings would flag all 287 as mismatched. The Lifecycle row asks the answerable question instead — has one system closed a seat the other still runs?
-
-| Field | Mismatches (of 287 linked) |
-|---|---|
-| End Date | 36 |
-| Start Date | 17 |
-| Clinician | 2 |
-| Lifecycle — ended in ATS, live in VMS | 10 |
-
-**Recruiter** is reached through the same crosswalk and is named on all 287 linked seats.
-
-VNDLY gets neither, and says so rather than showing a blank: no identifier reaches from a VNDLY work order to a Bullhorn placement. `VMSReqID` looked like the bridge and is a B4 contract number (5,068 of its 5,069 values resolve to B4, none to a work order); `STAGING_VNDLY_CONTRACTOR_XREF.[Client Contractor]` looked like a Bullhorn candidate ID and is the client's own contractor number (zero of 283 match). Non-MSP has one system of record, so the panel shows the seat's own audit trail instead — `EditHistoryPlacement` records every end-date move with its old value, new value and author, which is stronger evidence than a comparison would be.
-
-Also: the Extensions group header spanned 8 columns against a 12-column table, and KPI cards silently dropped any `sub` line they were given.
 
 ### 2.11.1 - Sweep for things built but never wired
 
@@ -110,6 +116,33 @@ Three vocabularies had to be reconciled first, and none of them met:
 A fourth ladder rung, `category + profession`, was added for this. Without it MSP could rank one seat in eight; with it, 49% of recent closed seats rank (37% at category+profession, 8% at account+category+profession, 4% with specialty). Still category-first — the widest rung is all accounts *within* one engagement type, never across the book.
 
 Two smaller fixes: `normalize()` could not resolve "RN III" (its contained-match fallback needs an alias longer than three characters and "rn" is two), so 1,508 B4 rows fell through to unmapped names and matched no peers; a trailing seniority level is now stripped, leaving "Level II Trauma" alone. And the rank counts are computed by binary search over the already-sorted peer array rather than two linear scans, since this runs per visible row per render and again for the sort key.
+
+### 2.6.0 - System Match, Recruiter, and what `IsExtension` actually means
+
+The two columns Extensions was missing both shipped. Both needed the same thing: a way to find a seat's counterpart record in the other system.
+
+**`PLACEMENT_DIM.IsExtension` does not mean what its name suggests.** It marks a placement that *is* an extension of a prior assignment, not one that *has been* extended. Checked against the chain rule the feedback describes — same clinician, same client, a prior placement ending within 14 days of this one's start — 7,545 of the 8,745 flagged placements chain (86%), against 8.7% of the unflagged ones. That is also why the flag and the date signal barely overlap: only 871 records both carry `IsExtension` and show `DateEnd > DateOriginalEnd`, because a flagged placement is a *new record* whose own end date has not moved. They answer different questions, so both ship: `seat_is_continuation` for the chain and `is_extension` for a pushed-out end date.
+
+Neither is the Extensions tab's driver. The tab lists active seats approaching contract end; the flags supply the seat's history.
+
+**System Match** compares the same fact as the VMS and the ATS each record it. `BH_PLACEMENT_RAW_TO_B4HealthOrder` links a B4 contract to a Bullhorn placement and resolves 287 of the 313 live GHR seats in the 45-day window (92%).
+
+The crosswalk is used for the link and nothing else. Its own status and date columns are a snapshot frozen at load time: 3,002 of its 4,179 newest rows (72%) disagree with the live placement status and 1,257 (30%) with the live end date. Reading them as facts produced 78 phantom end-date mismatches and made 270 working seats look stuck in "Pending Start" — live, 272 of the 287 read "Approved". Every compared value is now read from `PLACEMENT_DIM`.
+
+Only fields that are genuinely the same fact are compared. Status is not one of them: B4's `Contract_Status` describes the requisition and reads "Closed And Awarded" on every live seat, while Bullhorn's describes the placement lifecycle, so comparing the strings would flag all 287 as mismatched. The Lifecycle row asks the answerable question instead — has one system closed a seat the other still runs?
+
+| Field | Mismatches (of 287 linked) |
+|---|---|
+| End Date | 36 |
+| Start Date | 17 |
+| Clinician | 2 |
+| Lifecycle — ended in ATS, live in VMS | 10 |
+
+**Recruiter** is reached through the same crosswalk and is named on all 287 linked seats.
+
+VNDLY gets neither, and says so rather than showing a blank: no identifier reaches from a VNDLY work order to a Bullhorn placement. `VMSReqID` looked like the bridge and is a B4 contract number (5,068 of its 5,069 values resolve to B4, none to a work order); `STAGING_VNDLY_CONTRACTOR_XREF.[Client Contractor]` looked like a Bullhorn candidate ID and is the client's own contractor number (zero of 283 match). Non-MSP has one system of record, so the panel shows the seat's own audit trail instead — `EditHistoryPlacement` records every end-date move with its old value, new value and author, which is stronger evidence than a comparison would be.
+
+Also: the Extensions group header spanned 8 columns against a 12-column table, and KPI cards silently dropped any `sub` line they were given.
 
 ### 2.6.1 - Standing revenue bar
 
