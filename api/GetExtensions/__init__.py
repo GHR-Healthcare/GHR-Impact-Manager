@@ -126,6 +126,8 @@ def _b4_rows(cursor, horizon, include_affiliate):
             -- and the two agree on only 871 records, which is why both ship.
             bh.match_is_extension                       AS match_is_extension,
             bh.match_original_end                       AS match_original_end,
+            bh.source_is_extension                      AS source_is_extension,
+            bh.recorded_rto                             AS recorded_rto,
             -- B4 carries no original end date; the parent-contract chain in
             -- parent_ref is the only extension evidence on this source.
             CAST(NULL AS DATE)                          AS original_end_date
@@ -157,10 +159,30 @@ def _b4_rows(cursor, horizon, include_affiliate):
                 -- Recruiter is not on the B4 order at all: it belongs to the
                 -- ATS record. Populated on 85% of PLACEMENT_DIM, which beats a
                 -- column of dashes.
-                NULLIF(LTRIM(RTRIM(pd.Recruiter)), '')   AS Recruiter
+                NULLIF(LTRIM(RTRIM(pd.Recruiter)), '')   AS Recruiter,
+                -- Bullhorn's own "Extension?" field (customText14) is exactly
+                -- what PLACEMENT_DIM.IsExtension already carries: across the
+                -- whole warehouse the two agree on every row (8,773 Yes/True,
+                -- 17,860 No/False, 25,019 null/null, no disagreements), so it
+                -- is restated from the dimension rather than joined for a second time.
+                -- Emitted under the same name the VNDLY and Bullhorn branches
+                -- use so the row shape stays identical across sources.
+                CASE WHEN pd.IsExtension = 1 THEN 'Yes'
+                     WHEN pd.IsExtension = 0 THEN 'No'
+                END                                      AS source_is_extension,
+                -- Recorded RTO lives in customTextBlock9 ("Time Off"). The
+                -- warehouse copy of the placement does not carry that column --
+                -- BH_PLACEMENT_RAW holds Blocks 1-5 and 10 only -- so RTO is
+                -- available on the non-MSP branch, which reads the mirror's
+                -- View_Placement, and is null here.
+                CAST(NULL AS NVARCHAR(MAX))              AS recorded_rto
             FROM dbo.BH_PLACEMENT_RAW_TO_B4HealthOrder l WITH (NOLOCK)
             INNER JOIN dbo.PLACEMENT_DIM pd WITH (NOLOCK)
                     ON pd.Source_Placement_ID = l.placementID
+            -- LEFT JOIN dbo.BH_PLACEMENT_RAW bp WITH (NOLOCK)
+            -- ON bp.placementID = l.placementID
+            -- ^ dropped with 2.18.1: only reached customText14, which
+            --   PLACEMENT_DIM.IsExtension already restates exactly.
             WHERE LTRIM(RTRIM(l.Contract_ID)) = LTRIM(RTRIM(o.Contract_ID))
             ORDER BY pd.DateEnd DESC, l.RUN_ID DESC
         ) bh
@@ -203,17 +225,43 @@ def _vndly_rows(cursor, horizon, include_affiliate):
                     ISNULL([Reason for Modification], ''), '|',
                     ISNULL([Other Reason], '')))                AS ext_events,
                 MAX([Last Modified])                            AS last_ext_at,
-                -- The free text is where the actual decision lives
-                -- ('Extension offered for Chemistry unit - new end date
-                -- 12/26/26'), so keep the most recent non-empty note.
-                MAX(CASE WHEN NULLIF(LTRIM(RTRIM([Other Reason])), '') IS NOT NULL
-                         THEN [Other Reason] END)               AS ext_note,
-                MAX([Last Modified By])                         AS ext_by,
                 MAX(CASE WHEN [Other Reason] LIKE '%offer%' THEN 1 ELSE 0 END) AS mentions_offer
             FROM dbo.STAGING_VNDLY_WORKODER_MODIFICATIONS WITH (NOLOCK)
             WHERE [Reason for Modification] = 'Date Extension'
                OR [Other Reason] LIKE '%exten%'
             GROUP BY WOSystemKey
+        ),
+        -- The free text is where the actual decision lives ('Extension offered
+        -- for Chemistry unit - new end date 12/26/26'), so it has to be the
+        -- note from the LATEST modification.
+        --
+        -- Replaced in 2.18.1. The note and its author used to come out of the
+        -- aggregate above as:
+        --
+        --     MAX(CASE WHEN NULLIF(LTRIM(RTRIM([Other Reason])), '') IS NOT NULL
+        --              THEN [Other Reason] END)               AS ext_note,
+        --     MAX([Last Modified By])                         AS ext_by,
+        --
+        -- but MAX() over text is alphabetical, not chronological. 91 of the 149
+        -- work orders carrying an extension note have more than one, and on 14
+        -- of them (9%) the alphabetical pick is not the newest note -- so those
+        -- records showed a superseded end date. MAX([Last Modified By]) was the
+        -- same mistake with a worse result: it credited the change to whichever
+        -- name sorted last rather than whoever actually made it.
+        ext_latest AS (
+            SELECT wo, ext_note, ext_by
+            FROM (
+                SELECT WOSystemKey                              AS wo,
+                       [Other Reason]                           AS ext_note,
+                       [Last Modified By]                       AS ext_by,
+                       ROW_NUMBER() OVER (PARTITION BY WOSystemKey
+                                          ORDER BY [Last Modified] DESC)  AS rn
+                FROM dbo.STAGING_VNDLY_WORKODER_MODIFICATIONS WITH (NOLOCK)
+                WHERE ([Reason for Modification] = 'Date Extension'
+                    OR [Other Reason] LIKE '%exten%')
+                  AND NULLIF(LTRIM(RTRIM([Other Reason])), '') IS NOT NULL
+            ) r
+            WHERE r.rn = 1
         )
         SELECT
             'VNDLY'                                     AS source_system,
@@ -245,8 +293,8 @@ def _vndly_rows(cursor, horizon, include_affiliate):
             -- See the B4 branch: margin is a configured rate, not a lookup.
             ISNULL(x.ext_events, 0)                      AS extension_events,
             CONVERT(VARCHAR(19), x.last_ext_at, 120)     AS last_extension_at,
-            x.ext_note                                   AS extension_note,
-            x.ext_by                                     AS extension_by,
+            xl.ext_note                                   AS extension_note,
+            xl.ext_by                                     AS extension_by,
             -- Decision state is only inferable from free text: ~50 of the 105
             -- work orders with extension activity say "offer". Anything else
             -- with an executed date change is treated as already extended.
@@ -272,6 +320,8 @@ def _vndly_rows(cursor, horizon, include_affiliate):
             -- Recruiter lives on the ATS record, which is only reachable
             -- through the crosswalk B4 has and VNDLY does not.
             NULL                                         AS recruiter,
+            NULL                                         AS source_is_extension,
+            NULL                                         AS recorded_rto,
             NULL                                         AS match_is_extension,
             CAST(NULL AS DATE)                           AS match_original_end,
             -- VNDLY is the one MSP source that states the seat's original end
@@ -280,6 +330,7 @@ def _vndly_rows(cursor, horizon, include_affiliate):
             TRY_CAST(w.[Original End Date] AS DATE)      AS original_end_date
         FROM dbo.STAGING_VNDLY_WORKORDERS w WITH (NOLOCK)
         LEFT JOIN ext_mods x ON x.wo = w.WOSystemKey
+        LEFT JOIN ext_latest xl ON xl.wo = w.WOSystemKey
         -- STAGING_VNDLY_JOBS holds 664 rows across only 387 distinct [Job Id],
         -- so joining it raw fans work orders out — measured at 112 rows where
         -- the truth is 60. Collapse to one row per job before joining.
@@ -379,6 +430,24 @@ def _bullhorn_ext_rows(cursor, app_conn, horizon):
             -- View_Placement -- the mapping GetContractsComparison already
             -- runs on. ownerID above is the record owner, not the recruiter.
             NULLIF(LTRIM(RTRIM(p.customText12)), '')      AS recruiter,
+            -- EXTENSION MILESTONES, as far as Bullhorn records them.
+            --
+            -- customText14 ("Extension?") is the book's own answer to whether
+            -- a placement IS an extension, populated on 2,417 of 2,453 live
+            -- seats (99%) and carrying the same agreement profile as the
+            -- warehouse flag: 7,411 of 8,777 "Yes" rows chain to a prior
+            -- assignment (84%) against 6% of "No" rows. Better than inferring.
+            --
+            -- customTextBlock9 ("Time Off") is the clinician's requested time
+            -- off, already written down on 35% of live seats -- free text like
+            -- "12/8/2023 - 12/22/2023" or "September 1-5", so it is shown
+            -- rather than parsed. The team should not be asked for it twice.
+            --
+            -- customText28 ("Upcoming Extension?") would have carried client
+            -- interest, and is empty on every row, so that milestone genuinely
+            -- has nowhere to come from and stays manual.
+            NULLIF(LTRIM(RTRIM(p.customText14)), '')      AS source_is_extension,
+            NULLIF(LTRIM(RTRIM(CAST(p.customTextBlock9 AS NVARCHAR(MAX)))), '') AS recorded_rto,
             NULL                                          AS match_is_extension,
             CAST(NULL AS DATE)                            AS match_original_end,
             CAST(NULL AS DATE)                            AS original_end_date,
@@ -514,6 +583,8 @@ def _symplr_ext_rows(cursor, app_conn, horizon):
             -- lt_order carries the booker (BookedByUserID, used above for the
             -- account manager) but no separate recruiter.
             NULL                                          AS recruiter,
+            NULL                                          AS source_is_extension,
+            NULL                                          AS recorded_rto,
             NULL                                          AS match_is_extension,
             CAST(NULL AS DATE)                            AS match_original_end,
             CAST(NULL AS DATE)                            AS original_end_date,
