@@ -13778,6 +13778,12 @@
         view: 'list',
         expandedRows: new Set(),
         rowSubView: {},
+        // Production MSP's Open Jobs sorts through this and its header
+        // dispatches SORT. Removed when Open Jobs moved to the stage table,
+        // which sorts through stageApply -- but the original renderer was then
+        // restored for MSP and reads s.sort.key on its first line, so every
+        // load threw before the table rendered.
+        sort: { key: 'daysPast', dir: 'desc' },
         modal: { open: false, type: null, jobId: null, key: null, val: null, candidateIndex: null },
         sessionLog: [],
         filename: 'Updated_Positions',
@@ -14506,6 +14512,15 @@
               break;
             }
 
+
+            // Open Jobs on production MSP. The stage table sorts through
+            // stageApply instead, so this drives the legacy header only.
+            case 'SORT': {
+              if (s.sort.key === payload) s.sort.dir = s.sort.dir === 'asc' ? 'desc' : 'asc';
+              else { s.sort.key = payload; s.sort.dir = 'desc'; }
+              View.main();
+              break;
+            }
 
             case 'TOGGLE_ROW': {
               const id = payload;
