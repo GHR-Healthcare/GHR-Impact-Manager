@@ -2,6 +2,15 @@
 
 ## Version History
 
+### 2.18.3 - Rate & GM condensed into the record
+- Rate & GM was a full-width strip below the detail panels on Extensions and
+  Onboarding; it now sits inside the record itself, beside the decision it informs
+- Same numbers, same override field, same save path -- only the placement changed.
+  The old full-width block is kept in place, unused, if a wider one is wanted back
+- A seat with no bill rate on file now shows a dash instead of $0.00. Symplr
+  onboarding rows carry no bill rate at all, so every one of them was claiming
+  $0.00 bill and $0.00 GM/hour. A genuine zero still renders as $0.00
+
 ### 2.18.2 - Extension checkpoints show what the source already knows
 - "Gather RTO" and "Send Extension" now display the recorded text from the source
   system beside the checkbox, so the team confirms rather than re-gathers
