@@ -6998,6 +6998,49 @@
       ],
       EXT_GROUP_ORDER: ['NO DECISION', 'RTO', 'OFFERED', 'PENDING ACCEPTANCE', 'APPROVED', 'BACKFILL', 'EXCEPTION'],
 
+      /* What a source system already knows about a team-owned step.
+       *
+       * Shown beside the checkbox, never instead of it. Ticking stays a
+       * person's job on purpose: 68 of the 351 seats carrying recorded time
+       * off say "None needed" or "N/A", and the field is free text, so its
+       * presence cannot be read as "this step is done" -- auto-completing on
+       * it would quietly advance the funnel on seats nobody has looked at.
+       * What this does buy is that the team stops re-gathering what is
+       * already written down.
+       *
+       * Coverage, measured 2026-09-11:
+       *   gatherRTO      customTextBlock9, 351 of 726 live non-MSP seats (48%).
+       *                  MSP shows nothing -- the warehouse copy of the
+       *                  placement carries Blocks 1-5 and 10 but not 9, and
+       *                  VNDLY has no time-off field at all, so there is no
+       *                  second source to fall back to.
+       *   sendExtension  VNDLY's [Other Reason] free text ("extension offer -
+       *                  new end date X"), or Bullhorn's audit trail, which
+       *                  records the move itself ("End date moved X to Y") and
+       *                  so is evidence the send already happened.
+       *   confirmClient  nothing, anywhere. Bullhorn's "Upcoming Extension?"
+       *                  (customText28) is the field built for it and is empty
+       *                  on all 726 live seats, so client interest and client
+       *                  approval are manual by necessity, not by choice.
+       */
+      extStepEvidence(r, key, done) {
+        let text = null;
+        if (key === 'gatherRTO') text = r.recorded_rto;
+        else if (key === 'sendExtension') text = r.extension_note;
+        const t = text == null ? '' : String(text).trim();
+        if (!t) return '';
+        const origin = View.esc(r.source_system || 'The source system');
+        // "None needed" / "N/A" is an answer, not a blank. Say what it means
+        // rather than quoting it back as though it were a date range.
+        const body = /^(none|n\/?a|no\s+(rto|time\s*off))\b/i.test(t)
+          ? `${origin} records no time off requested`
+          : `${origin} records: &ldquo;${View.esc(t.length > 160 ? t.slice(0, 160).trim() + '\u2026' : t)}&rdquo;`;
+        return `
+          <span class="block mt-1 text-[10px] text-blue-800 bg-blue-50 border border-blue-100 rounded px-1.5 py-0.5 leading-snug">
+            ${body}${done ? '' : ' <span class="text-blue-500">&middot; confirm to complete</span>'}
+          </span>`;
+      },
+
       /*
        * GM block for a CONTRACT row. There is no job behind these, so the
        * override lands in workspace_state (see Utils.marginFor). Bill rate is
@@ -7753,6 +7796,7 @@
                         <span class="flex-1">
                           <span class="block text-xs font-semibold text-slate-700">${st.label}</span>
                           <span class="block text-[10px] text-slate-400">${st.blurb}</span>
+                          ${View.extStepEvidence(r, st.key, !!e.steps[st.key])}
                         </span>
                         <span class="text-[10px] text-slate-400 whitespace-nowrap">${
                           st.owner === 'pm' ? `PM · ${View.esc(pm)}` : recLabel}</span>

@@ -2,6 +2,17 @@
 
 ## Version History
 
+### 2.18.2 - Extension checkpoints show what the source already knows
+- "Gather RTO" and "Send Extension" now display the recorded text from the source
+  system beside the checkbox, so the team confirms rather than re-gathers
+- The box is still ticked by a person. 68 of the 351 seats with recorded time off
+  say "None needed" or "N/A", and the field is free text, so presence cannot mean
+  the step is done -- auto-completing would advance the funnel on untouched seats
+- "None needed" is reported as such rather than quoted back as if it were a date
+- MSP shows nothing for RTO, and structurally cannot: the warehouse placement copy
+  omits customTextBlock9 and VNDLY has no time-off field at all. Written up with
+  the measurements in EXTENSION_MILESTONE_SOURCES.md
+
 ### 2.18.1 - The extension note shown is the latest one
 - VNDLY's extension note and its author were picked with `MAX()` over text, which
   is alphabetical rather than chronological. 91 of the 149 work orders carrying an
