@@ -2658,6 +2658,44 @@
         return /^https?:\/\//i.test(url) ? url : null;
       },
 
+      /* Did this seat end before it was meant to?
+       *
+       * Two conditions, both required. The row must be one somebody actually
+       * filled -- an unfilled order that the hospital cancelled is a lost
+       * order, not a seat that ended early -- and its reason must name an
+       * actual early end.
+       *
+       * Coverage is not uniform, and the UI says so. B4's Unfilled_Reason and
+       * VNDLY's [End Reason] are assignment-level and carry this well.
+       * Bullhorn's reasonClosed is order-level only (Filled 3166, Lost to
+       * Competition 2601, Cancelled by Client 2136 -- none of them an
+       * assignment outcome), so non-MSP rows classify as unknown rather than
+       * as completed. Bullhorn's early-end signal is the placement status
+       * Termination, which lives on a different feed.
+       *
+       * Matching is on normalised text because the same reason is typed
+       * several ways: "Terminated - attendance" and "Terminated-attendance",
+       * "Professional Resigned-no notice given" and "Professional resigned -
+       * no notice given".
+       */
+      FILLED_CLOSED_GROUPS: ['GHR WON', 'AFFILIATE WON', 'FILLED'],
+
+      endedEarly(r) {
+        if (!r || !Utils.FILLED_CLOSED_GROUPS.includes(r.group)) return false;
+        const t = String(r.outcome_reason || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+        if (!t) return false;
+        // Administrative closes and normal completions first -- "assignment
+        // completed - extension offered" must never read as an early end.
+        if (/assignment complete/.test(t)) return false;
+        if (/made in error|due to error|data cleanup|system error|duplicate/.test(t)) return false;
+        return /\bterminated\b/.test(t)
+            || /\bresign/.test(t)
+            || /\bquit\b/.test(t)
+            || /poor performance|performance expectation/.test(t)
+            || /no call no show/.test(t)
+            || /\b(hospital|agency) cancell?ed\b/.test(t);
+      },
+
       isGhrAgency(a) {
         const x = String(a || '').toLowerCase();
         return x.includes('ghr') || x.includes('planet healthcare');
@@ -8734,8 +8772,12 @@
           { label: 'Owner',         key: 'account_manager' },
         ];
         View.stageColCount.closed = closedCols.length;
+        const allClosed = (s.closedRows || []).filter(View.stageFilter);
+        // Counted before the drill narrows anything, so the card keeps showing
+        // the total it drills into rather than its own filtered self.
+        const endedEarlyRows = allClosed.filter(Utils.endedEarly);
         const rows = View.stageApply('closed',
-          (s.closedRows || []).filter(View.stageFilter), closedCols);
+          s.closedEndedEarlyOnly ? endedEarlyRows : allClosed, closedCols);
         const money = v => (v || v === 0) ? '$' + Number(v).toLocaleString(undefined, { maximumFractionDigits: 0 }) : '—';
         const byGroup = {};
         rows.forEach(r => { byGroup[r.group] = (byGroup[r.group] || 0) + 1; });
@@ -8822,6 +8864,19 @@
           { label: 'Revenue Missed', val: fmtK(missedRev),
             sub: nonMspKpi ? 'unfilled / declined' : 'affiliate / decline / unfilled',
             icon: 'alert-triangle', color: 'red' },
+          // Drillable: clicking narrows the table to these rows. Non-MSP shows
+          // it as unavailable rather than as zero -- Bullhorn's reasonClosed is
+          // order-level, so "no early ends" there would be a claim the data
+          // cannot support. See Utils.endedEarly.
+          { label: 'Ended Early',
+            val: nonMspKpi ? '—' : endedEarlyRows.length,
+            sub: nonMspKpi
+              ? 'not recorded on this book'
+              : `of ${allClosed.filter(r => Utils.FILLED_CLOSED_GROUPS.includes(r.group)).length} filled`,
+            icon: 'scissors', color: 'amber',
+            onClick: nonMspKpi || !endedEarlyRows.length
+              ? null : "store.dispatch('TOGGLE_CLOSED_ENDED_EARLY')",
+            active: !!s.closedEndedEarlyOnly },
         ]);
 
         // Grouped like the reference: outcome buckets in a fixed order, each
@@ -8844,6 +8899,22 @@
         rows.forEach(r => { (grouped[r.group] = grouped[r.group] || []).push(r); });
 
         let body = '';
+        // A narrowed table must say so. The KPI card carries a ring, but the
+        // table is the thing being read, and a filtered one that looks like the
+        // full one is how a quiet week gets reported as a real one.
+        if (s.closedEndedEarlyOnly) {
+          body += `
+            <tr><td colspan="${closedCols.length}" class="px-3 py-2 bg-amber-50 border-y border-amber-200">
+              <span class="text-[11px] font-bold uppercase tracking-wide text-amber-800">
+                Showing only seats that ended early
+              </span>
+              <span class="ml-2 text-[10px] text-amber-700">${endedEarlyRows.length} of ${allClosed.length} closed rows</span>
+              <button onclick="store.dispatch('TOGGLE_CLOSED_ENDED_EARLY')"
+                      class="ml-2 px-2 py-0.5 rounded bg-white border border-amber-300 text-amber-800 text-[10px] font-semibold hover:bg-amber-100">
+                Show all
+              </button>
+            </td></tr>`;
+        }
         CLOSED_GROUPS.forEach(([key, label]) => {
           const list = grouped[key] || [];
           if (!list.length) return;
@@ -9364,7 +9435,10 @@
         const container = $('kpiContainer');
         if (!container) return;
         container.innerHTML = cards.map(c => `
-          <div class="bg-white p-2 sm:p-4 rounded-lg border border-slate-200 shadow-sm flex flex-col justify-between hover:shadow-md transition-shadow relative">
+          <div class="bg-white p-2 sm:p-4 rounded-lg border shadow-sm flex flex-col justify-between hover:shadow-md transition-shadow relative ${
+                 c.active ? 'border-blue-400 ring-1 ring-blue-200' : 'border-slate-200'
+               } ${c.onClick ? 'cursor-pointer' : ''}"
+               ${c.onClick ? `onclick="${c.onClick}" role="button" tabindex="0" title="${c.active ? 'Showing only these — click to clear' : 'Click to show only these'}"` : ''}>
             <div class="flex justify-between items-start mb-1 sm:mb-2">
               <span class="text-[9px] sm:text-xs font-bold text-slate-500 uppercase tracking-wider leading-tight">${c.label}</span>
               <i data-lucide="${c.icon}" class="w-3 h-3 sm:w-4 sm:h-4 text-${c.color}-500 shrink-0"></i>
@@ -14287,6 +14361,7 @@
         // Placements pane window. Defaults to the 90-day view: active-only hid
         // recent turnover at a facility entirely.
         placementsScope: 'recent',
+        closedEndedEarlyOnly: false,
         sourceLinks: {},
         financialData: [],
         financialFromMonth: null,
@@ -15175,6 +15250,12 @@
             // with no reducer and no markup, so the three panes were dead code
             // on this branch -- and non-MSP, which deploys from main, had no
             // tabbed job detail at all.
+            case 'TOGGLE_CLOSED_ENDED_EARLY': {
+              s.closedEndedEarlyOnly = !s.closedEndedEarlyOnly;
+              View.main();
+              break;
+            }
+
             case 'SET_PLACEMENTS_SCOPE': {
               s.placementsScope = payload === 'active' ? 'active' : 'recent';
               View.main();

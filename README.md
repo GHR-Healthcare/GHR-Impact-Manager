@@ -2,6 +2,21 @@
 
 ## Version History
 
+### 2.22.0 - Closed gets a drillable "Ended Early"
+- New KPI counting seats that ended before they were meant to, clickable to narrow
+  the table to exactly those rows, with a banner and a "Show all" so a filtered
+  table can't be mistaken for the full one
+- Two conditions, both required: the row must be one somebody actually filled, and
+  its reason must name a real early end. An unfilled order the hospital cancelled
+  is a lost order, not a seat that ended early
+- Reasons are matched on normalised text -- the same reason is typed several ways
+  ("Terminated - attendance" and "Terminated-attendance"). Checked against all 33
+  distinct reason values in the live data
+- Non-MSP shows "—", not 0. Bullhorn's `reasonClosed` is order-level (Filled, Lost
+  to Competition, Cancelled by Client), so "no early ends" would be a claim the
+  data can't support
+- KPI cards can now carry a click target and an active state
+
 ### 2.21.0 - Rate says where it sits: "+7.8% · #3 of 8"
 - The Rate pane drew a rank strip but never stated the position in words. It now
   gives variance against the peer median and an explicit rank
