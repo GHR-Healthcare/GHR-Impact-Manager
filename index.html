@@ -4619,37 +4619,25 @@
         const el = $('revenueBar');
         if (!el) return;
         const s = window.store.state;
-        /* Revenue Won and Missed come from Closed, which the original MSP does
-         * not load -- its stage tabs are prototype-only. Shown there, the bar
-         * stood permanently empty. It is hidden instead, and the body padding
-         * that reserves room for it comes off with it so the pinned desktop
-         * layout does not lose 64px to a bar that is not there.
-         */
-        if (!s.stageDataEnabled) {
-          el.hidden = true;
-          document.body.classList.remove('pb-16', 'sm:pb-20');
-          return;
-        }
-        el.hidden = false;
-        document.body.classList.add('pb-16', 'sm:pb-20');
         const money = v => '$' + Math.round(Math.abs(v)).toLocaleString();
 
-        const closed = (s.closedRows || []).filter(View.stageFilter);
-        const wonRows    = closed.filter(r => (Number(r.revenue) || 0) > 0);
-        const missedRows = closed.filter(r => (Number(r.revenue) || 0) < 0);
-        const won    = wonRows.reduce((a, r) => a + Number(r.revenue), 0);
-        const missed = missedRows.reduce((a, r) => a + Number(r.revenue), 0);
-
-        // GetPositions returns open demand only -- every branch filters to it
-        // at source (Bullhorn open statuses, `lt.status = 'open'`,
-        // `[Job Status] = 'Active'`) -- so the filtered jobs ARE the open
-        // seats. No `filled` flag exists on a job to test.
+        /* Standing totals. Every instance gets three real numbers.
+         *
+         * This used to hide itself where Closed is not loaded, because Revenue
+         * Won and Missed come from Closed and the original MSP does not load
+         * it -- leaving a bar with nothing in it. Hiding solved the emptiness
+         * but cost the bar entirely on that side. It now shows what the
+         * instance can actually answer: where Closed is loaded, what was won
+         * and missed; where it is not, the size of the open book. Open
+         * Exposure is common to both, so the right-hand figure never moves.
+         */
         const open = View.getFilteredJobs(s);
-        let exposure = 0, priced = 0, unpriced = 0;
+        let exposure = 0, priced = 0, unpriced = 0, openings = 0;
         open.forEach(j => {
           const rate = parseFloat(String(j.billRate).replace(/[^0-9.]/g, ''));
           const hrs  = Number(j.shiftHours);
           const seats = Number(j.numPositions) || 1;
+          openings += seats;
           if (isFinite(rate) && rate > 0 && isFinite(hrs) && hrs > 0) {
             exposure += rate * hrs * 13 * seats;
             priced += seats;
@@ -4665,18 +4653,38 @@
             ${sub ? `<div class="text-[9px] text-slate-400 mt-0.5 leading-none truncate">${sub}</div>` : ''}
           </div>`;
 
-        const loaded = s.closedLoaded;
+        const exposureCell = cell('Open Exposure', exposure ? money(exposure) : '—', 'text-slate-800',
+          priced
+            ? `${priced} seat${priced === 1 ? '' : 's'} priced${unpriced ? ` · ${unpriced} without hours` : ''}`
+            : (open.length ? `${open.length} open, none priced` : 'No open seats'));
+
+        let cells;
+        if (s.closedLoaded) {
+          const closed = (s.closedRows || []).filter(View.stageFilter);
+          const wonRows    = closed.filter(r => (Number(r.revenue) || 0) > 0);
+          const missedRows = closed.filter(r => (Number(r.revenue) || 0) < 0);
+          const won    = wonRows.reduce((a, r) => a + Number(r.revenue), 0);
+          const missed = missedRows.reduce((a, r) => a + Number(r.revenue), 0);
+          cells = cell('Revenue Won', money(won), 'text-emerald-600',
+                       `${wonRows.length} outcome${wonRows.length === 1 ? '' : 's'}`)
+                + cell('Revenue Missed', money(missed), 'text-red-600',
+                       `${missedRows.length} outcome${missedRows.length === 1 ? '' : 's'}`)
+                + exposureCell;
+        } else {
+          // No Closed on this instance, so the bar totals the open book instead
+          // of standing empty.
+          cells = cell('Open Jobs', open.length.toLocaleString(), 'text-slate-800',
+                       `${openings.toLocaleString()} opening${openings === 1 ? '' : 's'}`)
+                + cell('Aged 16+ Days',
+                       open.filter(j => (Number(j.daysPast) || 0) >= 16).length.toLocaleString(),
+                       'text-red-600', 'of the open book')
+                + exposureCell;
+        }
+
+        el.hidden = false;
+        document.body.classList.add('pb-16', 'sm:pb-20');
         el.innerHTML = `
-          <div class="flex items-center gap-5 sm:gap-8 min-w-0">
-            ${cell('Revenue Won', loaded ? money(won) : '—', 'text-emerald-600',
-                   loaded ? `${wonRows.length} outcome${wonRows.length === 1 ? '' : 's'}` : 'Closed not loaded')}
-            ${cell('Revenue Missed', loaded ? money(missed) : '—', 'text-red-600',
-                   loaded ? `${missedRows.length} outcome${missedRows.length === 1 ? '' : 's'}` : 'Closed not loaded')}
-            ${cell('Open Exposure', exposure ? money(exposure) : '—', 'text-slate-800',
-                   priced
-                     ? `${priced} seat${priced === 1 ? '' : 's'}${unpriced ? ` · ${unpriced} without hours` : ''}`
-                     : (open.length ? `${open.length} open, none priced` : 'No open seats'))}
-          </div>
+          <div class="flex items-center gap-5 sm:gap-8 min-w-0">${cells}</div>
           <div class="hidden md:block text-[11px] font-bold text-slate-500 whitespace-nowrap">
             GHR Impact Manager &middot; Account Performance Workspace
           </div>`;
@@ -4728,18 +4736,21 @@
          * and column filtering the stage tabs have.
          */
         const openCols = [
-          { label: 'ID',            key: 'id', w: '9rem' },
-          { label: 'Category',      key: 'program', w: '9rem' },
-          { label: 'System / Facility / Specialty', key: 'facility' },
-          { label: '#',             key: 'numPositions', align: 'center', sub: 'Pos', w: '3.5rem' },
-          { label: 'Bill Rate',     key: r => parseFloat(String(r.billRate).replace(/[^0-9.]/g, '')) || null, align: 'center', w: '5.5rem' },
-          { label: 'Days',          key: 'daysPast', align: 'center', w: '4.5rem' },
-          { label: 'Margin',        key: r => parseFloat(r.margin), align: 'center', w: '5rem' },
-          { label: 'Impact',        key: r => Utils.calculateImpactPercent(r.levers), align: 'center', w: '5rem' },
+          { label: 'ID',            key: 'id', w: '9%' },
+          { label: 'Category',      key: 'program', w: '11%' },
+          // Given an explicit share: with table-fixed an unsized column swallows
+          // every remaining pixel, which on a wide screen left a band of white
+          // space here while ID and Category truncated at their fixed widths.
+          { label: 'System / Facility / Specialty', key: 'facility', w: '30%' },
+          { label: '#',             key: 'numPositions', align: 'center', sub: 'Pos', w: '4%' },
+          { label: 'Bill Rate',     key: r => parseFloat(String(r.billRate).replace(/[^0-9.]/g, '')) || null, align: 'center', w: '8%' },
+          { label: 'Days',          key: 'daysPast', align: 'center', w: '6%' },
+          { label: 'Margin',        key: r => parseFloat(r.margin), align: 'center', w: '7%' },
+          { label: 'Impact',        key: r => Utils.calculateImpactPercent(r.levers), align: 'center', w: '7%' },
           { label: 'Active',        key: r => (Number(r.ghrSubs) || 0) + (Number(r.avSubs) || 0),
-            align: 'center', w: '5.5rem', sub: s.dataSource === 'non_msp' ? 'GHR' : 'GHR / Agency' },
+            align: 'center', w: '9%', sub: s.dataSource === 'non_msp' ? 'GHR' : 'GHR / Agency' },
           { label: 'Declines',      key: r => (Number(r.ghrDeclines) || 0) + (Number(r.avDeclines) || 0),
-            align: 'center', w: '5.5rem', sub: s.dataSource === 'non_msp' ? 'GHR' : 'GHR / Agency' },
+            align: 'center', w: '9%', sub: s.dataSource === 'non_msp' ? 'GHR' : 'GHR / Agency' },
         ];
         View.stageColCount.list = openCols.length;
 
@@ -4760,10 +4771,9 @@
 
         const el = $('listContent');
         if (!el) return;
-        el.innerHTML = View.stageShell('list', 'Open Jobs',
-          'Open requisitions with pipeline activity, Impact levers, and the submission log. '
-          + 'Group identical demand by position type, category, or health system.',
-          body, openCols, null);
+        // No sub-note on Open Jobs: the columns say what the table is, and the
+        // sentence was a band of filler above the working surface.
+        el.innerHTML = View.stageShell('list', 'Open Jobs', '', body, openCols, null);
         lucide.createIcons();
       },
 
@@ -5343,14 +5353,14 @@
 
         return `
           <td class="px-3 py-2">
-            <div class="flex items-center gap-1 overflow-hidden">
+            <div class="flex items-center gap-1 whitespace-nowrap">
               <button onclick="event.stopPropagation(); window.store.dispatch('TOGGLE_HOT_JOB','${job.id}')"
                       class="shrink-0 transition-transform hover:scale-110" title="Mark as a hot job">
                 <i data-lucide="flame" class="w-4 h-4 ${isHot ? 'hot-job-active' : 'text-slate-300 hover:text-orange-400'}"></i>
               </button>
               <span class="px-1 py-0.5 rounded text-[9px] font-bold ${srcBadge.cls}"
                     title="${View.esc(job.sourceSystem || 'Unknown source')}">${srcBadge.label}</span>
-              <span class="px-1.5 py-0.5 rounded text-xs font-bold ${colorClass} truncate">${job.id}</span>
+              <span class="px-1.5 py-0.5 rounded text-xs font-bold ${colorClass}">${job.id}</span>
               <span class="ml-0.5 text-slate-400" data-chev>&#9654;</span>
             </div>
           </td>
@@ -5963,7 +5973,7 @@
           <div class="flex items-center justify-between mb-3 pb-3 border-b border-slate-100 shrink-0">
             <div>
               <h2 class="text-lg font-bold text-slate-700">${title}</h2>
-              <p class="text-xs text-slate-400">${subtitle}</p>
+              ${subtitle ? `<p class="text-xs text-slate-400">${subtitle}</p>` : ''}
             </div>
             ${anyFilter || sort.label ? `<button onclick="store.dispatch('RESET_STAGE_TABLE','${key}')"
                 class="text-[11px] font-semibold text-blue-600 hover:text-blue-800">Reset sort &amp; filters</button>` : ''}
