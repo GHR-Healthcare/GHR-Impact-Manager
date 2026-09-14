@@ -609,7 +609,18 @@
            grid; non-MSP and the prototype get the stage table, which is what
            gives them sortable headers and per-column filters. Utils.impactUi()
            decides, so MSP is untouched until the prototype branch merges. -->
-      <div id="legacyListWrap">
+      <!-- flex-1 min-h-0 flex flex-col is load-bearing, not decoration. This
+           wrapper sits between listViewWrapper (flex flex-col md:h-full
+           md:overflow-hidden) and the scroll container below, which carries
+           flex-1 + md:overflow-y-auto. With no classes it is a plain block:
+           the scroller's flex-1 goes inert, the scroller takes its full
+           content height, overflow-y-auto has nothing to scroll, and
+           listViewWrapper's md:overflow-hidden clips the list with no
+           scrollbar. That shipped to production MSP and is fixed in 2.18.1.
+           Inert on this branch -- impactUi() is always true here, so this
+           wrapper is never shown -- but it must carry the fix, or merging
+           this branch into main would put the bug straight back. -->
+      <div id="legacyListWrap" class="flex-1 min-h-0 flex flex-col">
       <!-- Single scroll container for header + body -->
       <div class="overflow-x-auto flex-1 overflow-y-visible md:overflow-y-auto">
         <div class="min-w-[900px]">

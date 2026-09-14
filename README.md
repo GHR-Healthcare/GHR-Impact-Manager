@@ -2,6 +2,11 @@
 
 ## Version History
 
+### 2.23.1 - Carry the scrolling hotfix onto this branch
+- `legacyListWrap` gets the same `flex-1 min-h-0 flex flex-col` shipped to main in
+  2.18.1. Inert here -- `impactUi()` is always true on this branch, so the wrapper
+  is never shown -- but without it, merging this branch would reintroduce the bug
+
 ### 2.23.0 - Channel is a column on non-MSP, not just a badge
 - Who holds the program (direct, or in behind someone else's MSP, and which one)
   was a badge you could read but not sort or filter by. It is now a real column
