@@ -2,6 +2,18 @@
 
 ## Version History
 
+### 2.18.1 - Hotfix: production MSP could not scroll the job list
+- `legacyListWrap`, the wrapper added in 2.17.0 to hide the legacy list when the
+  redesign is on, was given no classes. It sat between `listViewWrapper`
+  (`flex flex-col md:h-full md:overflow-hidden`) and the scroll container, so the
+  scroller's `flex-1` became inert, the scroller took its full content height,
+  `overflow-y-auto` had nothing to scroll, and the list was clipped at the bottom
+  of the viewport with no scrollbar
+- Desktop MSP only. On mobile the `md:` rules are off and the body scrolls; on
+  non-MSP the wrapper is hidden entirely -- which is why it went unnoticed
+- Restores the baseline flex chain with `flex-1 min-h-0 flex flex-col`. Verified
+  that every other view wrapper is byte-identical to the 2.5.0 baseline
+
 ### 2.18.0 - Headcount moves explain themselves
 - Trend's category breakdown now says what caused each headcount move rather than
   only how large it was

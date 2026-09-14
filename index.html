@@ -646,7 +646,17 @@
            grid; non-MSP and the prototype get the stage table, which is what
            gives them sortable headers and per-column filters. Utils.impactUi()
            decides, so MSP is untouched until the prototype branch merges. -->
-      <div id="legacyListWrap">
+      <!-- flex-1 min-h-0 flex flex-col is load-bearing, not decoration. This
+           wrapper sits between listViewWrapper (flex flex-col md:h-full
+           md:overflow-hidden) and the scroll container below, which carries
+           flex-1 + md:overflow-y-auto. Added with no classes, it was a plain
+           block: the scroller's flex-1 became inert, so the scroller took its
+           full content height, overflow-y-auto never had anything to scroll,
+           and listViewWrapper's md:overflow-hidden clipped the list at the
+           bottom of the viewport with no scrollbar. Desktop MSP only -- on
+           mobile the md: rules are off and the body scrolls, and non-MSP hides
+           this wrapper entirely, which is why it went unnoticed. -->
+      <div id="legacyListWrap" class="flex-1 min-h-0 flex flex-col">
       <!-- Single scroll container for header + body -->
       <div class="overflow-x-auto flex-1 overflow-y-visible md:overflow-y-auto">
         <div class="min-w-[900px]">
