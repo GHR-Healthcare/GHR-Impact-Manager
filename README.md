@@ -2,6 +2,19 @@
 
 ## Version History
 
+### 2.24.1 - Sorting and column filters were dead on every stage table
+- `label:${JSON.stringify('Assignment ID')}` emits `label:"Assignment ID"` inside a
+  double-quoted HTML attribute, so the parser ended the attribute at that first
+  inner quote and the handler was cut mid-expression. Every click and keystroke
+  threw "Unexpected end of input"
+- Sorting and per-column filtering therefore never worked on Extensions,
+  Onboarding, Closed or Open Jobs. The interview-stage dropdown in the job detail
+  passed a candidate name the same way and was broken too
+- Fixed by escaping the interpolation, so the parser decodes the quotes back
+  inside the handler. Apostrophes in a name or label are now safe as well
+- Verified in a browser against 60 real placements: filtering narrows 60 rows to
+  1 with every visible row matching, and sorting reorders all 60 both ways
+
 ### 2.24.0 - Extensions filters AM and Recruiter by dropdown
 - Both columns were free-text filters. On the non-MSP book they are effectively
   fully populated -- 661 of 661 seats carry an AM, 660 carry a recruiter -- across
