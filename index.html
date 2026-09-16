@@ -2611,6 +2611,27 @@
 
       // Is this agency string us? GHR or Planet Healthcare, matching how the
       // rest of the app already tests it (per-diem, stats, candidate rows).
+      /* job.billRate is a DISPLAY STRING, not a number.
+       *
+       * cleanBillRate() formats it at ingest into "$58/hr", "$1,200" or
+       * "$0.00", so Number(job.billRate) is NaN everywhere it was used as a
+       * number. The Rate pane showed "Bill Rate $0.00" and "GM / Hour —" on a
+       * job billing $58, and printed "Rate Rank: no comparable rates" directly
+       * above its own line reading "Against 92 placed rates at Orlando
+       * Health". placedPeers' open-jobs fallback could never find a rate, so
+       * it never fell back.
+       *
+       * The column sorters already parsed it correctly; this is that same
+       * parse, in one place. Returns null rather than 0 for "no rate", so a
+       * missing rate reads as unknown instead of free.
+       */
+      rateNum(v) {
+        if (v == null || v === '') return null;
+        if (typeof v === 'number') return isFinite(v) ? v : null;
+        const n = parseFloat(String(v).replace(/[^0-9.]/g, ''));
+        return isFinite(n) ? n : null;
+      },
+
       isGhrAgency(a) {
         const x = String(a || '').toLowerCase();
         return x.includes('ghr') || x.includes('planet healthcare');
@@ -5928,8 +5949,8 @@
         // Not enough placements here to rank against, so fall back to demand
         // and say so rather than ranking against two rows.
         const open = (s.jobs || [])
-          .filter(j => j.facility === job.facility && Number(j.billRate) > 0)
-          .map(j => Number(j.billRate));
+          .filter(j => j.facility === job.facility && (Utils.rateNum(j.billRate) || 0) > 0)
+          .map(j => Utils.rateNum(j.billRate));
         return {
           basis: 'open',
           rates: open, ghrRates: [], affRates: [],
@@ -5941,13 +5962,13 @@
 
       detailRatePane(job) {
         const money = v => (v || v === 0) ? '$' + Number(v).toFixed(2) : '—';
-        const bill = Number(job.billRate) || 0;
+        const bill = Utils.rateNum(job.billRate);
         const marginPct = Number(job.margin);
         // MSP has no clinician pay rate, so GM% IS the configured margin —
         // either the tenant default or a per-job override. The bill/pay split
         // the new endpoints return is an MSP FEE split, not a margin, and is
         // deliberately not shown here as one.
-        const gmHr = bill && !isNaN(marginPct) ? bill * (marginPct / 100) : null;
+        const gmHr = (bill != null && !isNaN(marginPct)) ? bill * (marginPct / 100) : null;
         // No weekly GM: the open-jobs feed carries no hours-per-week, so it
         // would read "unknown" on nearly every row. Extensions/Onboarding do
         // return hours_per_week, so it belongs on those panes, not this one.
@@ -5986,7 +6007,7 @@
                  * against, and the note says which basis was used.
                  */
                 const p = View.placedPeers(job);
-                const bill = Number(job.billRate);
+                const bill = Utils.rateNum(job.billRate);
                 const strip = View.rankStripSvg(p.rates, bill, { width: 240 });
                 const money2 = v => (v || v === 0) ? '$' + Number(v).toFixed(0) : '—';
                 const avg = a => a.length ? a.reduce((x, y) => x + y, 0) / a.length : null;
@@ -6352,7 +6373,18 @@
         }
         const lo = vals[0], hi = vals[vals.length - 1], span = (hi - lo) || 1;
         const pos = Math.max(0, Math.min(1, (mine - lo) / span));
-        const rank = vals.filter(v => v > mine).length + 1;
+        /* Mid-rank for ties. This was:
+         *
+         *     const rank = vals.filter(v => v > mine).length + 1;
+         *
+         * which counts only strictly-higher peers, so a rate tied with a block
+         * of peers ranks at the TOP of that block rather than its middle --
+         * the same tie bug that once put a seat sitting at the peer median in
+         * the 93rd percentile. #1 is still the highest rate.
+         */
+        const above = vals.filter(v => v > mine).length;
+        const equal = vals.filter(v => v === mine).length;
+        const rank = Math.round(above + (equal + 1) / 2);
         const w = o.width || 220;
         return `
           <div>
