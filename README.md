@@ -2,6 +2,18 @@
 
 ## Version History
 
+### 2.24.3 - Financials could spin forever; Contracts could fail opaquely
+- `financials()` treated an empty array as "still loading", and both failure paths
+  set `financialData = []` -- so a financials request that 500'd or threw span
+  "Loading financial data from database..." for as long as the tab stayed open,
+  and a period with genuinely no rows looked identical. Verified against main: an
+  HTTP 500 and an empty result both spin indefinitely
+- Now three states: loading, failed (with the reason), and loaded-but-empty
+- `new Set(rBody.keys || [])` breaks if `/api/reviewed-contracts` ever answers with
+  an array -- `rBody.keys` is then `Array.prototype.keys`, a *function*, which is
+  truthy, so `|| []` never fires and `new Set(fn)` throws. It surfaced as
+  "Couldn't load contracts comparison" with nothing useful in the console
+
 ### 2.24.2 - A mechanical check for production-MSP bleed
 - `node tools/msp-bleed-check.js [refA] [refB]` renders index.html AS production
   MSP at two git refs and diffs what the page actually produces: visible tabs and

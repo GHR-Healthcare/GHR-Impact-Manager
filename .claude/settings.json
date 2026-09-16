@@ -21,7 +21,26 @@
       "Bash(python3 - /tmp/claude-1000/-home-mjones-Projects-GHR-Impact-Manager/a1037c54-7ca4-418e-bef9-4fa80ddadc41/scratchpad/symplr_closed.sql)",
       "Bash(timeout 115 /tmp/claude-1000/-home-mjones-Projects-GHR-Impact-Manager/a1037c54-7ca4-418e-bef9-4fa80ddadc41/scratchpad/q ghr_ctmsync)",
       "Bash(timeout 115 /tmp/claude-1000/-home-mjones-Projects-GHR-Impact-Manager/a1037c54-7ca4-418e-bef9-4fa80ddadc41/scratchpad/qj ghr_ctmsync)",
-      "Bash(python3 /tmp/claude-1000/-home-mjones-Projects-GHR-Impact-Manager/a1037c54-7ca4-418e-bef9-4fa80ddadc41/scratchpad/test_closed_agg.py)"
+      "Bash(python3 /tmp/claude-1000/-home-mjones-Projects-GHR-Impact-Manager/a1037c54-7ca4-418e-bef9-4fa80ddadc41/scratchpad/test_closed_agg.py)",
+      "Bash(az staticwebapp appsettings list *)",
+      "Bash(az staticwebapp environment list *)",
+      "Bash(az staticwebapp list *)",
+      "Bash(az staticwebapp show *)",
+      "Bash(az monitor app-insights query *)",
+      "Bash(az monitor app-insights component show *)",
+      "Bash(az monitor log-analytics query *)",
+      "Bash(az functionapp config appsettings list *)",
+      "Bash(az functionapp list *)",
+      "Bash(az functionapp show *)",
+      "Bash(az webapp config appsettings list *)",
+      "Bash(az resource list *)",
+      "Bash(az resource show *)",
+      "Bash(az account show *)",
+      "Bash(az ad app show *)",
+      "Bash(az sql db list *)",
+      "Bash(az logic workflow show *)",
+      "Bash(az rest --method get *)",
+      "Bash(az rest --method GET *)"
     ]
   }
 }
