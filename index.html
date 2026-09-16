@@ -1561,6 +1561,31 @@
                 console.warn('Could not load config, using defaults');
             }
             
+            /* Per-record workspace state: extension decisions and the
+             * fields recorded against them, revised onboarding starts,
+             * interview stages, GM overrides.
+             *
+             * This was missing entirely on this branch. workspaceState was
+             * initialised to {}, written locally after each POST, and read in
+             * eight places -- but never fetched. Everything the team recorded
+             * went to the database and never came back: refresh the page and
+             * every extension decision, onboarding review, interview stage and
+             * margin override was gone. The data was there the whole time; the
+             * app simply never asked for it.
+             *
+             * Non-fatal: without it the views still render, they just show no
+             * saved decisions.
+             */
+            try {
+              const wsResp = await fetch(`${API_BASE_URL}/workspace-state`);
+              if (wsResp.ok) {
+                const ws = await wsResp.json();
+                window.store.state.workspaceState = (ws && !ws.error) ? ws : {};
+              }
+            } catch (e) {
+              console.warn('Error loading workspace state:', e);
+            }
+
             // Fetch health system mappings from database
             try {
                 const [mappingsResponse, pmMappingsResponse] = await Promise.all([
@@ -7057,6 +7082,25 @@
           decision: saved?.decision || 'Not Requested',
           notes: saved?.notes || '',
           steps: saved?.steps || {},
+          /* Recorded here because the source systems mostly cannot hold it.
+           *
+           * Of 497 MSP seats ending in the next 45 days, only the 115 VNDLY
+           * ones have a modification feed to write an extension to, and 57 of
+           * those actually carry one. B4's 382 have nowhere at all. RTO is
+           * worse: the warehouse copy of the placement does not carry
+           * customTextBlock9, so MSP cannot even read it, let alone store it.
+           *
+           * newEnd  - the proposed end date, the single fact an extension IS
+           * rto     - requested time off, as free text, matching how Bullhorn
+           *           stores it ("7/1-7/5, 7/11-7/18", "None needed")
+           * isExt   - override for the book's own "Extension?" flag, '' means
+           *           defer to the source
+           * reason  - why, when the decision is Declined or Backfill Required
+           */
+          newEnd: saved?.newEnd || '',
+          rto: saved?.rto || '',
+          isExt: saved?.isExt || '',
+          reason: saved?.reason || '',
         };
       },
 
@@ -7427,7 +7471,6 @@
             </div>
             <div class="bg-white border border-slate-200 rounded-lg px-3 py-2">
               <div class="text-[9px] uppercase tracking-wide text-slate-400 font-semibold">Previously Extended</div>
-              <div class="text-sm font-bold text-slate-800 mt-0.5">${r.is_extension ? 'Yes' : 'No'}</div>
             </div>
           </div>
           ${rows}`;
@@ -7793,6 +7836,43 @@
                                   data-id="${r.id}" placeholder="Client or extension context…">${e.notes}</textarea>
                       </div>
                     </div>
+                    <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-3">
+                      <div>
+                        <label class="block text-[10px] font-semibold text-slate-500 uppercase tracking-wide mb-1">New End Date</label>
+                        <input type="date" class="ext-new-end w-full bg-white border border-slate-300 rounded-md px-3 py-2 text-sm"
+                               data-id="${r.id}" value="${View.esc(e.newEnd)}">
+                        <div class="text-[9px] text-slate-400 mt-0.5">${
+                          r.end_date ? 'Current end ' + View.esc(String(r.end_date).slice(0, 10)) : 'no current end on file'}</div>
+                      </div>
+                      <div>
+                        <label class="block text-[10px] font-semibold text-slate-500 uppercase tracking-wide mb-1">Requested Time Off</label>
+                        <input type="text" class="ext-rto w-full bg-white border border-slate-300 rounded-md px-3 py-2 text-sm"
+                               data-id="${r.id}" value="${View.esc(e.rto)}"
+                               placeholder="${r.recorded_rto ? View.esc(String(r.recorded_rto).slice(0, 40)) : 'e.g. 7/1-7/5, 8/26 — or None'}">
+                        <div class="text-[9px] text-slate-400 mt-0.5">${
+                          r.recorded_rto
+                            ? 'Placeholder is what ' + View.esc(r.source_system || 'the source') + ' already has'
+                            : 'Not recorded in the source system'}</div>
+                      </div>
+                      <div>
+                        <label class="block text-[10px] font-semibold text-slate-500 uppercase tracking-wide mb-1">Is An Extension</label>
+                        <select class="ext-flag w-full bg-white border border-slate-300 rounded-md px-3 py-2 text-sm" data-id="${r.id}">
+                          ${[['', 'Use the source'], ['Yes', 'Yes — override'], ['No', 'No — override']]
+                            .map(([v, l]) => `<option value="${v}" ${e.isExt === v ? 'selected' : ''}>${l}</option>`).join('')}
+                        </select>
+                        <div class="text-[9px] text-slate-400 mt-0.5">Source says ${
+                          r.source_is_extension ? View.esc(r.source_is_extension)
+                            : (r.is_extension ? 'Yes' : 'nothing')}</div>
+                      </div>
+                    </div>
+                    ${/Declined|Backfill/.test(e.decision) ? `
+                      <div class="mt-3">
+                        <label class="block text-[10px] font-semibold text-slate-500 uppercase tracking-wide mb-1">
+                          Reason &mdash; ${View.esc(e.decision)}</label>
+                        <input type="text" class="ext-reason w-full bg-white border border-slate-300 rounded-md px-3 py-2 text-sm"
+                               data-id="${r.id}" value="${View.esc(e.reason)}"
+                               placeholder="Why the seat is not extending">
+                      </div>` : ''}
                     <div class="flex items-center gap-3 mt-3">
                       <button onclick="store.dispatch('SAVE_EXTENSION','${r.id}')"
                               class="px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-md text-xs font-semibold shadow-sm">
@@ -14491,7 +14571,18 @@
               document.querySelectorAll(`.ext-step[data-id="${id}"]`).forEach(cb => {
                 steps[cb.dataset.step] = cb.checked;
               });
-              const state = { decision, notes, steps };
+              // Read straight off the open detail, same as decision and notes.
+              // A field the user never opened is absent, not blank, so ?? ''
+              // rather than || '' would still be wrong here -- an absent input
+              // means "no detail open", and this only runs from an open one.
+              const val = sel => (document.querySelector(`${sel}[data-id="${id}"]`)?.value || '').trim();
+              const state = {
+                decision, notes, steps,
+                newEnd: val('.ext-new-end'),
+                rto: val('.ext-rto'),
+                isExt: val('.ext-flag'),
+                reason: val('.ext-reason'),
+              };
               (async () => {
                 try {
                   const resp = await fetch(`${API_BASE_URL}/workspace-state`, {

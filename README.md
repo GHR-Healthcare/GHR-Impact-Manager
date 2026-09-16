@@ -2,6 +2,20 @@
 
 ## Version History
 
+### 2.20.0 - Saved decisions were never loaded back; extension fields you can set
+- **`workspaceState` was never fetched.** It was initialised to `{}`, written
+  locally after each POST, and read in eight places -- but the app never asked the
+  server for it. Every extension decision, onboarding review, interview stage and
+  GM override saved to the database and was gone on the next refresh. Caught before
+  anyone used it: the `impactmgr.workspace_state` table is still empty, so nothing
+  was lost and no old values will suddenly reappear
+- **Extensions can now record what the source can't hold**: New End Date, Requested
+  Time Off, an Is An Extension override, and a Reason for Declined / Backfill
+- Of 497 MSP seats ending in the next 45 days, only the 115 VNDLY ones have a
+  modification feed to write an extension to, and 57 carry one. B4's 382 have
+  nowhere at all, and the warehouse omits `customTextBlock9` so MSP can't even read
+  requested time off
+
 ### 2.19.0 - Non-MSP: MSP accounts removed, divisions merged to the core seven
 Requested by the divisions taking the non-MSP instance live (Matthew Kyle, Daniel
 Matteson, 2026-09-16).
