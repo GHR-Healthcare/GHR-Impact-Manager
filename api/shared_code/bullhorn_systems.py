@@ -174,9 +174,38 @@ def discover_active_client_ids(bullhorn_cursor):
         return set()
 
 
+# MSP accounts, excluded from the non-MSP book unconditionally.
+#
+# These health systems are managed on the MSP instance out of B4 and VNDLY.
+# They also exist in Bullhorn, and their CLIENT-level division tag list
+# (cc.customTextBlock1) names every division GHR services them across -- so
+# auto-scope, which admits a client whose tag list contains any non-MSP
+# division token, pulled them in wholesale.
+#
+# Measured 2026-09-16: 29 of the 371 auto-scoped clients were MSP accounts
+# carrying 540 live heads. That is why the non-MSP Allied view showed MSP
+# heads -- Hospital of the University of Pennsylvania alone contributed 132,
+# tagged "Allied,Nursing,RevCycle Workforce". Cooper University Hospital 72,
+# Capital Health Regional 58, Inspira Mullica Hill 47.
+#
+# Subtracted from the FINAL scope, not just from auto-discovery, so a manual
+# allowlist entry cannot re-admit an MSP account by accident. That is
+# deliberate: the requirement is that no MSP account data appears on the
+# non-MSP side at all.
+#
+# Covers Penn, Cooper, Capital Health, Inspira, Hunterdon, Richmond
+# University, Redeemer, Jefferson/Einstein and St. Luke's at Grand View.
+MSP_CLIENT_IDS = {
+    247, 737, 1128, 3223, 4179, 4185, 4186, 4206, 4207, 4211, 4311, 4312,
+    5091, 5392, 5397, 5410, 5440, 5470, 5624, 6169, 6760, 7598, 9072,
+    48539, 76078, 180695, 353106, 353167, 353987,
+}
+
+
 def resolve_scope_client_ids(bullhorn_cursor, app_conn=None):
     """
-    The full effective scope: hardcoded rollup ∪ manual allowlist ∪ auto-active.
+    The full effective scope: (hardcoded rollup ∪ manual allowlist ∪ auto-active)
+    minus MSP_CLIENT_IDS -- MSP accounts never belong to the non-MSP book.
 
     Call this once at the top of every non-MSP endpoint, then pass the
     resulting set into build_scope_filter(). Both DB connections should be
@@ -186,7 +215,7 @@ def resolve_scope_client_ids(bullhorn_cursor, app_conn=None):
         set(CLIENT_ID_TO_SYSTEM.keys())
         | get_manual_allowlist_ids(app_conn)
         | discover_active_client_ids(bullhorn_cursor)
-    )
+    ) - MSP_CLIENT_IDS
 
 
 def build_system_case_expr(column_name='p.clientCorporationID', fallback_name_column="ISNULL(pcc.name, cc.name)"):

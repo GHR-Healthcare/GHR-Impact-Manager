@@ -1674,6 +1674,12 @@
                             if (r.Agency && !r.agency) r.agency = r.Agency;
                             // Apply health system mapping
                             r.healthSystem = Utils.getHealthSystem(r.facility, r.system);
+                                                    // These rows feed the Division filter through
+                            // allAssignments, and GetStatsData emits the raw
+                            // client tag list -- without this the dropdown
+                            // showed "RevCycle Workforce", "United" and
+                            // "Locum Tenens" alongside their merged names.
+                            r.division = Utils.normalizeDivision(r.division);
                         });
                     }
                     
@@ -1685,6 +1691,12 @@
                             if (r.Agency && !r.agency) r.agency = r.Agency;
                             // Apply health system mapping
                             r.healthSystem = Utils.getHealthSystem(r.facility, r.system);
+                                                    // These rows feed the Division filter through
+                            // allAssignments, and GetStatsData emits the raw
+                            // client tag list -- without this the dropdown
+                            // showed "RevCycle Workforce", "United" and
+                            // "Locum Tenens" alongside their merged names.
+                            r.division = Utils.normalizeDivision(r.division);
                         });
                     }
                     
@@ -2545,11 +2557,35 @@
        * comparison, so the dropdown, the matcher and the Division→Team cascade
        * all see one canonical value with no further call sites to keep in sync.
        */
+      /* Core divisions, per the divisions asking for the non-MSP instance
+       * (Matthew Kyle, 2026-09-16): Nursing, Allied, Technology, Non-Acute,
+       * Education, Rev Cycle, Search and Locums. Everything the data emits
+       * maps into one of those, except genuinely untagged rows, which stay
+       * under 'Other' rather than vanishing -- 599 of 4,379 open reqs carry
+       * no division on either the job or the client, and silently dropping
+       * them is the failure this taxonomy is meant to prevent.
+       *
+       * Raw tokens and their open-req counts, job-level, measured 2026-09-16:
+       *   Nursing 2980, Allied 1264, Locum Tenens 173, RevCycle Workforce 130,
+       *   Search 74, United 49, Technology 24, GHR Internal 1
+       */
+      CORE_DIVISIONS: ['Nursing', 'Allied', 'Technology', 'Non-Acute',
+                       'Education', 'Rev Cycle', 'Search and Locums'],
+
       DIVISION_ALIASES: {
         // Rolled into Nursing
         'Acute': 'Nursing',
         'Travel Nursing': 'Nursing',
         'Planet Healthcare': 'Nursing',
+        // Rev Cycle: the data spells it "RevCycle Workforce".
+        'RevCycle Workforce': 'Rev Cycle',
+        'RevCycle': 'Rev Cycle',
+        // Search and Locums = Search + United Anesthesia + Locum Tenens.
+        // 'United' is how United Anesthesia appears in the tag list.
+        'Search': 'Search and Locums',
+        'United': 'Search and Locums',
+        'United Anesthesia': 'Search and Locums',
+        'Locum Tenens': 'Search and Locums',
         // These two also align Bullhorn with the vocabulary Symplr already
         // emits (symplr_systems.build_division_case_expr returns exactly
         // 'Education' / 'Non-Acute'), so both sources now share one taxonomy.

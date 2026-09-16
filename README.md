@@ -2,6 +2,25 @@
 
 ## Version History
 
+### 2.19.0 - Non-MSP: MSP accounts removed, divisions merged to the core seven
+Requested by the divisions taking the non-MSP instance live (Matthew Kyle, Daniel
+Matteson, 2026-09-16).
+- **MSP account data removed.** Auto-scope admitted any client whose *client-level*
+  division tag list contained a non-MSP token -- and MSP health systems are tagged
+  across divisions. 29 of the 371 auto-scoped clients were MSP accounts carrying
+  540 live heads, which is exactly why Allied showed MSP heads: Hospital of the
+  University of Pennsylvania alone contributed 132, tagged
+  "Allied,Nursing,RevCycle Workforce". Now subtracted from the final scope
+- **Core divisions.** `RevCycle Workforce` → Rev Cycle; `Search` + `United`
+  (United Anesthesia) + `Locum Tenens` → Search and Locums
+- `statsData` rows were never run through `normalizeDivision`, and they feed the
+  Division filter, so raw tokens showed beside their own merged names
+- `Other` (untagged) and `GHR Internal` are still listed rather than hidden --
+  599 of 4,379 open reqs carry no division, and dropping them silently is the
+  failure this taxonomy exists to prevent
+- Production MSP unaffected: the division filter and the Bullhorn scope are
+  non-MSP surfaces, confirmed by the bleed check
+
 ### 2.18.4 - Bill rate was a string everywhere it was used as a number
 - `job.billRate` is a display string (`"$58/hr"`, `"$1,200"`) -- `cleanBillRate()`
   formats it at ingest. Three places called `Number()` on it and got `NaN`
