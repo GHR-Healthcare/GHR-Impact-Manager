@@ -2,6 +2,20 @@
 
 ## Version History
 
+### 2.24.0 - Extensions filters AM and Recruiter by dropdown
+- Both columns were free-text filters. On the non-MSP book they are effectively
+  fully populated -- 661 of 661 seats carry an AM, 660 carry a recruiter -- across
+  71 and 78 distinct people, which is more names than anyone can spell from memory
+- Dropdown matching is exact, not substring: picking "Ann Lee" no longer also
+  returns "Ann Leeson". Typed filters elsewhere still match on substring
+- Options are built from the loaded rows before any column filter applies, so
+  choosing a name never empties the list you chose it from
+- A "— none —" option where a column has blanks, so "who has no recruiter
+  assigned" is askable
+- The column reads AM on non-MSP and stays PM on MSP, matching what each book
+  calls the role
+- `filter: 'select'` is generic; any stage column can opt in
+
 ### 2.23.1 - Carry the scrolling hotfix onto this branch
 - `legacyListWrap` gets the same `flex-1 min-h-0 flex flex-col` shipped to main in
   2.18.1. Inert here -- `impactUi()` is always true on this branch, so the wrapper

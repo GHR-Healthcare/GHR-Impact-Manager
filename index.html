@@ -6729,12 +6729,44 @@
       },
 
       // Apply the per-column filters, then the active sort. Returns a new array.
+      // Sentinel for "this column is empty on the row". A real name can never
+      // collide with it, and it makes "who has no recruiter assigned" askable.
+      FILTER_BLANK: '\u2014 none \u2014',
+
+      /* Distinct values for a dropdown column filter.
+       *
+       * Computed over the rows BEFORE any column filter is applied, so the
+       * options do not disappear as you narrow -- a list that empties itself
+       * as you use it cannot be used to change your selection.
+       */
+      stageColOptions(rows, col) {
+        const seen = new Set();
+        let blanks = false;
+        (rows || []).forEach(r => {
+          const v = View.stageColValue(col, r);
+          const sv = v == null ? '' : String(v).trim();
+          if (sv) seen.add(sv); else blanks = true;
+        });
+        const out = [...seen].sort((a, b) => a.localeCompare(b));
+        if (blanks) out.push(View.FILTER_BLANK);
+        return out;
+      },
+
       stageApply(viewKey, rows, cols) {
         const filters = View.stageColFilter[viewKey] || {};
         let out = rows.filter(r => cols.every(c => {
-          const q = (filters[c.label] || '').trim().toLowerCase();
-          if (!q || !c.key) return true;
-          return String(View.stageColValue(c, r) ?? '').toLowerCase().includes(q);
+          const raw = (filters[c.label] || '').trim();
+          if (!raw || !c.key) return true;
+          const v = View.stageColValue(c, r);
+          // A dropdown match is exact. Substring would make picking "Ann Lee"
+          // also return "Ann Leeson", which is not what choosing a name off a
+          // list means -- and with 71 AMs and 78 recruiters on the non-MSP
+          // book, overlapping names are a certainty rather than a worry.
+          if (c.filter === 'select') {
+            const sv = v == null ? '' : String(v).trim();
+            return raw === View.FILTER_BLANK ? sv === '' : sv === raw;
+          }
+          return String(v ?? '').toLowerCase().includes(raw.toLowerCase());
         }));
         const sort = View.stageSort[viewKey];
         if (sort && sort.label) {
@@ -6786,6 +6818,21 @@
         };
         const filterCell = (c) => {
           if (!c.key) return '<th class="px-2 py-1 bg-slate-50"></th>';
+          if (c.filter === 'select') {
+            const cur = filters[c.label] || '';
+            const opts = c.options || [];
+            // change, not input: a select fires once and the re-render below
+            // cannot land mid-interaction the way it could with typing.
+            return `<th class="px-2 py-1 bg-slate-50">
+                <select onchange="store.dispatch('FILTER_STAGE',{view:'${key}',label:${JSON.stringify(c.label)},value:this.value})"
+                        title="${cur ? 'Filtering by ' + View.esc(cur) : 'Filter by ' + View.esc(c.label)}"
+                        class="w-full min-w-[4.5rem] border rounded px-1 py-0.5 text-[10px] font-normal normal-case bg-white ${
+                          cur ? 'border-blue-400 text-blue-700 font-semibold' : 'border-slate-200'}">
+                  <option value=""${cur ? '' : ' selected'}>All${opts.length ? ` (${opts.length})` : ''}</option>
+                  ${opts.map(o => `<option value="${View.esc(o)}"${o === cur ? ' selected' : ''}>${View.esc(o)}</option>`).join('')}
+                </select>
+              </th>`;
+          }
           return `<th class="px-2 py-1 bg-slate-50">
               <input value="${(filters[c.label] || '').replace(/"/g, '&quot;')}"
                      oninput="store.dispatch('FILTER_STAGE',{view:'${key}',label:${JSON.stringify(c.label)},value:this.value})"
@@ -8183,8 +8230,15 @@
           { label: 'Days Left',       key: 'days_left',     align: 'center', sub: 'To Contract End' },
           { label: 'System Match',    key: r => View.matchSummary(r).sort },
           { label: 'Client Decision', key: r => View.extensionEdit(r).decision, align: 'center' },
-          { label: 'PM',              key: 'account_manager' },
-          { label: 'Recruiter',       key: 'recruiter' },
+          // Dropdowns rather than free text. Both are fully populated on the
+          // non-MSP book -- 661 of 661 seats carry an AM and 660 carry a
+          // recruiter -- across 71 and 78 distinct people respectively, which
+          // is more names than anyone can spell from memory into a text box.
+          // Options are built from the rows below, so each list holds exactly
+          // the people who actually appear in the loaded window.
+          { label: s.dataSource === 'non_msp' ? 'AM' : 'PM',
+            key: 'account_manager', filter: 'select' },
+          { label: 'Recruiter',       key: 'recruiter', filter: 'select' },
           // "Who has the ball" and "what next", from the IT notes. Sorted and
           // filtered on the owner, which is the question people scan for.
           { label: 'Next Action',     key: r => View.extensionBall(r).owner },
@@ -8192,6 +8246,11 @@
           { label: '13-Wk Value',     key: 'extension_value_13wk', align: 'right' },
         ];
         const all = (s.extensionsRows || []).filter(View.stageFilter);
+        // Built from `all`, before the per-column filters narrow anything, so
+        // picking a name never empties the list you picked it from.
+        extCols.forEach(c => {
+          if (c.filter === 'select') c.options = View.stageColOptions(all, c);
+        });
         View.stageColCount.extensions = extCols.length;
         const rows = View.stageApply('extensions',
           all.filter(View.extSearchMatch), extCols);
