@@ -1,0 +1,67 @@
+# Non-MSP preview of the prototype branch.
+#
+# WHY THIS EXISTS
+#
+# The prototype branch carries a lot of non-MSP-specific code -- 18 branches in
+# View.closed alone, plus the Channel column, which is non-MSP only, and the
+# Bullhorn and Symplr halves of GetExtensions, GetStatsData and GetOnboarding.
+# None of it executed anywhere. The MSP prototype environment is a named
+# environment of ghr-impact-manager, which inherits DATA_SOURCE unset -> 'msp',
+# so every non-MSP path on the branch was dead code until merge.
+#
+# The sharpest case: the extension RTO evidence reads customTextBlock9, which is
+# populated on 48% of non-MSP seats and 0% of MSP ones -- the warehouse copy of
+# the placement does not carry that column. The one feature that only has data
+# on non-MSP was only ever deployed where it has none.
+#
+# This deploys the same branch to a named environment on the NON-MSP app, which
+# carries DATA_SOURCE=non_msp, so the branch finally runs against the Bullhorn +
+# Symplr book.
+#
+# NOT THE SAME AS THE EARLIER MIXUP
+#
+# msp-prototype-env.yml warns that pointing the non-MSP instance at the
+# prototype caused "the MSP link goes to non-MSP" confusion. That was the
+# PRODUCTION non-MSP site. This is a separate named environment on the same app:
+# production non-MSP stays on main and does not move.
+#
+# NOT FOR DISTRIBUTION
+#
+# This is a verification environment, not a review link. It exists so the
+# branch's non-MSP code executes before it reaches main. Four links is already
+# more than anyone wants to keep straight, so this one does not get handed out.
+#
+#   Original MSP    lively-plant-057be0a0f...                    main, MSP
+#   New MSP         lively-plant-057be0a0f-prototype...          branch, MSP
+#   Non-MSP         witty-stone-0bf78240f...                     main, non-MSP
+#   Non-MSP preview witty-stone-0bf78240f-prototype...           branch, non-MSP  <- this
+name: Non-MSP Prototype Environment
+
+on:
+  push:
+    branches:
+      - feature/msp-impact-prototype
+  workflow_dispatch:
+
+jobs:
+  build_and_deploy_nonmsp_prototype:
+    runs-on: ubuntu-latest
+    name: Deploy Non-MSP Prototype
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+          lfs: false
+      - name: Build And Deploy
+        uses: Azure/static-web-apps-deploy@v1
+        with:
+          azure_static_web_apps_api_token: ${{ secrets.AZURE_STATIC_WEB_APPS_API_TOKEN_WITTY_STONE_0BF78240F }}
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          action: "upload"
+          app_location: "/"
+          api_location: "api"
+          output_location: ""
+          # Same environment name as the MSP preview. The app it lands on is
+          # what makes it the non-MSP one, so the two hostnames differ by their
+          # app prefix rather than by a name nobody would remember.
+          deployment_environment: prototype
