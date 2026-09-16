@@ -2,6 +2,20 @@
 
 ## Version History
 
+### 2.18.3 - Financials could spin forever; Contracts could fail opaquely
+- `financials()` treated an empty array as "still loading", and both failure paths
+  set `financialData = []` -- so a request that returned 500 or threw span
+  "Loading financial data from database..." for as long as the tab stayed open,
+  and a period with genuinely no rows looked identical. Verified: before the fix
+  an HTTP 500 and an empty payload both spin indefinitely
+- Now three states: loading, failed (with the reason), and loaded-but-empty
+- `new Set(rBody.keys || [])` breaks if `/api/reviewed-contracts` ever answers with
+  an array -- `rBody.keys` is then `Array.prototype.keys`, a *function*, which is
+  truthy, so `|| []` never fires and `new Set(fn)` throws
+- Adds `tools/msp-bleed-check.js`, which renders index.html AS production MSP at
+  two git refs and diffs what the page produces, so "did a feature bleed in" is a
+  check rather than a recollection
+
 ### 2.18.2 - Sorting and column filters never worked on the stage tables
 - `label:${JSON.stringify('Assignment ID')}` emits `label:"Assignment ID"` inside a
   double-quoted HTML attribute, so the parser ended the attribute at that first

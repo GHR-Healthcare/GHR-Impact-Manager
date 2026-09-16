@@ -1283,7 +1283,13 @@
             }
             if (rResp.ok) {
                 const rBody = await rResp.json();
-                s.reviewedContractsKeys = new Set(rBody.keys || []);
+                // Array.isArray, not `|| []`: if the endpoint ever answers with
+                // an array rather than {keys:[...]}, rBody.keys is
+                // Array.prototype.keys -- a function, and truthy, so `|| []`
+                // never fires and new Set(fn) throws "function is not
+                // iterable". That surfaced as "Couldn't load contracts
+                // comparison" with nothing useful in the console.
+                s.reviewedContractsKeys = new Set(Array.isArray(rBody && rBody.keys) ? rBody.keys : []);
             }
         } catch (e) {
             s.contractsData = { error: e.message || String(e) };
@@ -1706,13 +1712,24 @@
                     if (window.store.state.view === 'financials') {
                         window.store.dispatch('REFRESH_UI');
                     }
+                    window.store.state.financialsError = null;
                 } else {
                     console.warn('Could not load financial data');
                     window.store.state.financialData = [];
+                    window.store.state.financialsError = `HTTP ${finResponse.status}`;
                 }
             } catch (finError) {
                 console.warn('Error loading financial data:', finError);
                 window.store.state.financialData = [];
+                window.store.state.financialsError = finError.message || String(finError);
+            } finally {
+                // Loaded means "the request finished", whatever it returned.
+                // Without this an empty result and a failed one both render as
+                // a spinner that never stops.
+                window.store.state.financialsLoaded = true;
+                if (window.store.state.view === 'financials') {
+                    window.store.dispatch('REFRESH_UI');
+                }
             }
 
             // Load per diem data for the Per Diem tab
@@ -9159,7 +9176,28 @@
         const container = $('financialsContent');
         if (!container) return;
 
-        const rawData = window.store.state.financialData || [];
+        const s0 = window.store.state;
+        const rawData = s0.financialData || [];
+        /* Three outcomes, three messages. This used to be one: an empty array
+         * rendered the spinner, and both failure paths set financialData = [],
+         * so a financials request that errored span "Loading financial data
+         * from database..." for as long as the tab stayed open. A period with
+         * genuinely no rows looked identical.
+         */
+        if (s0.financialsLoaded && s0.financialsError) {
+          container.innerHTML = `<div class="p-4 bg-red-50 border border-red-200 rounded text-red-700 text-sm">
+            <div class="font-semibold mb-1">Couldn&rsquo;t load financial data</div>
+            <div class="text-xs text-red-600">Please refresh the page. If it keeps happening, contact the app team.</div>
+            <div class="mt-1 font-mono text-[10px] break-all text-red-500">${View.esc(s0.financialsError)}</div>
+          </div>`;
+          return;
+        }
+        if (s0.financialsLoaded && rawData.length === 0) {
+          container.innerHTML = `<div class="p-6 text-slate-500 bg-slate-50 border border-slate-200 rounded text-sm">
+            No financial data for this period.
+          </div>`;
+          return;
+        }
         if (rawData.length === 0) {
           container.innerHTML = `<div class="p-6 text-slate-500 bg-slate-50 border border-slate-200 rounded flex items-center gap-3">
             <svg class="animate-spin h-5 w-5 text-blue-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg>
@@ -13930,6 +13968,10 @@
       state: {
         jobs: [],
         statsData: { onAssignment: [], upcoming: [] },
+        // Financials needs three states, not two. An empty array used to mean
+        // "still loading", so a failed fetch span the spinner forever.
+        financialsLoaded: false,
+        financialsError: null,
         financialData: [],
         financialFromMonth: null,
         financialToMonth: null,
