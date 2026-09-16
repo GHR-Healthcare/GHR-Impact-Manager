@@ -2,6 +2,21 @@
 
 ## Version History
 
+### 2.24.4 - Bill rate was a string everywhere it was used as a number
+- `job.billRate` is a display string (`"$58/hr"`, `"$1,200"`) -- `cleanBillRate()`
+  formats it at ingest. Four places called `Number()` on it and got `NaN`
+- The Rate pane showed **Bill Rate $0.00** and **GM / Hour —** on a job billing
+  $58, and printed **"Rate Rank: no comparable rates"** directly above its own line
+  reading "Against 92 placed rates at Orlando Health"
+- Priority Jobs' **Avg Bill Rate** KPI read "—" always. `placedPeers`' open-jobs
+  fallback could never find a rate, so it never actually fell back
+- One `Utils.rateNum()` now parses it, the same way the column sorters already did
+- The rank strip counted only strictly-higher peers, so a tied rate ranked at the
+  top of its block rather than the middle -- and disagreed with the variance chip
+  beside it: "#78 of 92" next to "#86 of 93" for one rate against one peer set.
+  Both now use one definition
+- Verified in a browser: Bill Rate $58.00, GM/Hour $14.50, #86 of 93, -9.4%
+
 ### 2.24.3 - Financials could spin forever; Contracts could fail opaquely
 - `financials()` treated an empty array as "still loading", and both failure paths
   set `financialData = []` -- so a financials request that 500'd or threw span

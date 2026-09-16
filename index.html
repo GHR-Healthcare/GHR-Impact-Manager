@@ -2724,6 +2724,28 @@
             || /\b(hospital|agency) cancell?ed\b/.test(t);
       },
 
+      /* job.billRate is a DISPLAY STRING, not a number.
+       *
+       * cleanBillRate() formats it at ingest into "$58/hr", "$1,200" or
+       * "$0.00", so Number(job.billRate) is NaN everywhere it was used as a
+       * number. The consequences were visible and nobody had looked: the Rate
+       * pane showed "Bill Rate $0.00" and "GM / Hour —" on a job billing $58,
+       * and printed "Rate Rank: no comparable rates" directly above its own
+       * line reading "Against 92 placed rates at Orlando Health". Priority
+       * Jobs' "Avg Bill Rate" KPI read "—" always. placedPeers' open-jobs
+       * fallback could never find a rate, so it never fell back.
+       *
+       * The column sorters already parsed it correctly; this is that same
+       * parse, in one place. Returns null rather than 0 for "no rate", so a
+       * missing rate reads as unknown instead of free.
+       */
+      rateNum(v) {
+        if (v == null || v === '') return null;
+        if (typeof v === 'number') return isFinite(v) ? v : null;
+        const n = parseFloat(String(v).replace(/[^0-9.]/g, ''));
+        return isFinite(n) ? n : null;
+      },
+
       isGhrAgency(a) {
         const x = String(a || '').toLowerCase();
         return x.includes('ghr') || x.includes('planet healthcare');
@@ -5354,7 +5376,7 @@
             { label: 'At 16+ Days', val: stale, icon: 'alert-triangle', color: 'red' },
             { label: 'Active Submissions', val: subs, icon: 'users', color: 'emerald' },
             { label: 'Avg Bill Rate', val: (() => {
-                const rates = list.map(j => Number(j.billRate)).filter(v => isFinite(v) && v > 0);
+                const rates = list.map(j => Utils.rateNum(j.billRate)).filter(v => v != null && v > 0);
                 return rates.length ? '$' + (rates.reduce((a, b) => a + b, 0) / rates.length).toFixed(0) : '—';
               })(), icon: 'dollar-sign', color: 'emerald' },
           ]);
@@ -6148,8 +6170,8 @@
         // Not enough placements here to rank against, so fall back to demand
         // and say so rather than ranking against two rows.
         const open = (s.jobs || [])
-          .filter(j => j.facility === job.facility && Number(j.billRate) > 0)
-          .map(j => Number(j.billRate));
+          .filter(j => j.facility === job.facility && (Utils.rateNum(j.billRate) || 0) > 0)
+          .map(j => Utils.rateNum(j.billRate));
         return {
           basis: 'open',
           rates: open, ghrRates: [], affRates: [],
@@ -6202,13 +6224,13 @@
 
       detailRatePane(job) {
         const money = v => (v || v === 0) ? '$' + Number(v).toFixed(2) : '—';
-        const bill = Number(job.billRate) || 0;
+        const bill = Utils.rateNum(job.billRate);
         const marginPct = Number(job.margin);
         // MSP has no clinician pay rate, so GM% IS the configured margin —
         // either the tenant default or a per-job override. The bill/pay split
         // the new endpoints return is an MSP FEE split, not a margin, and is
         // deliberately not shown here as one.
-        const gmHr = bill && !isNaN(marginPct) ? bill * (marginPct / 100) : null;
+        const gmHr = (bill != null && !isNaN(marginPct)) ? bill * (marginPct / 100) : null;
         // No weekly GM: the open-jobs feed carries no hours-per-week, so it
         // would read "unknown" on nearly every row. Extensions/Onboarding do
         // return hours_per_week, so it belongs on those panes, not this one.
@@ -6247,8 +6269,9 @@
                  * against, and the note says which basis was used.
                  */
                 const p = View.placedPeers(job);
-                const bill = Number(job.billRate);
-                const strip = View.rankStripSvg(p.rates, bill, { width: 240 });
+                const bill = Utils.rateNum(job.billRate);
+                const strip = View.rankStripSvg(p.rates, bill,
+                  { width: 240, includesSelf: p.basis === 'open' });
                 // Open-job peers already contain this job; placed rates do not.
                 const pos = View.rateMarketPosition(bill, p.rates, { includesSelf: p.basis === 'open' });
                 const money2 = v => (v || v === 0) ? '$' + Number(v).toFixed(0) : '—';
@@ -6267,12 +6290,9 @@
                               title="This bill rate against the median of the ${pos.of} rate${pos.of === 1 ? '' : 's'} it is ranked against (${money2(pos.median)})">
                           ${pos.variance > 0 ? '+' : ''}${pos.variance.toFixed(1)}%
                         </span>`}
-                      <span class="text-xs font-bold text-slate-700 tabular-nums"
-                            title="Highest rate ranks #1. Ties share the middle of their block.">
-                        #${pos.rank} of ${pos.of}
-                      </span>
                       <span class="text-[10px] text-slate-400">
                         vs ${p.basis === 'placed' ? 'placed' : 'open-job'} median ${money2(pos.median)}
+                        &middot; rank shown on the strip above
                       </span>
                     </div>` : ''}
                   ${p.basis === 'placed' && (gAvg != null || aAvg != null) ? `
@@ -6700,7 +6720,21 @@
         }
         const lo = vals[0], hi = vals[vals.length - 1], span = (hi - lo) || 1;
         const pos = Math.max(0, Math.min(1, (mine - lo) / span));
-        const rank = vals.filter(v => v > mine).length + 1;
+        /* One definition of rank, shared with the variance chip beside this
+         * strip. It used to be:
+         *
+         *     const rank = vals.filter(v => v > mine).length + 1;
+         *
+         * which counts only strictly-higher peers, so a rate tied with a block
+         * of peers ranks at the TOP of that block instead of its middle -- the
+         * same tie bug that once put a seat at the peer median in the 93rd
+         * percentile. With the two computed separately the pane contradicted
+         * itself: "#78 of 92" on the strip and "#86 of 93" in the chip
+         * immediately after, for one rate against one set of peers.
+         */
+        const mp = View.rateMarketPosition(mine, vals, { includesSelf: !!o.includesSelf });
+        const rank = mp ? mp.rank : vals.filter(v => v > mine).length + 1;
+        const total = mp ? mp.of : vals.length;
         const w = o.width || 220;
         return `
           <div>
@@ -6714,7 +6748,7 @@
             </svg>
             <div class="flex justify-between text-[9px] text-slate-400 -mt-1">
               <span>$${lo.toFixed(0)}</span>
-              <span class="font-bold text-blue-700">#${rank} of ${vals.length}</span>
+              <span class="font-bold text-blue-700">#${rank} of ${total}</span>
               <span>$${hi.toFixed(0)}</span>
             </div>
           </div>`;
