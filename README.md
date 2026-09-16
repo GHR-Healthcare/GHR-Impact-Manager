@@ -2,6 +2,19 @@
 
 ## Version History
 
+### 2.26.0 - Extensions can be recorded here when the source can't hold them
+- **New End Date**, **Requested Time Off**, an **Is An Extension** override and a
+  **Reason** field (shown for Declined / Backfill Required), all saving through the
+  existing `workspace-state` path alongside decision, notes and the checkpoints
+- The source systems mostly cannot hold this. Of 497 MSP seats ending in the next
+  45 days, only the 115 VNDLY ones have a modification feed to write an extension
+  to, and 57 carry one; B4's 382 have nowhere at all. RTO is worse -- the warehouse
+  copy of the placement omits `customTextBlock9`, so MSP cannot even read it
+- Recorded values feed the UI rather than being write-only: typed RTO shows beside
+  the Gather RTO checkpoint as "Recorded here", and the extension override drives
+  "Previously Extended" with a "set here" marker
+- The RTO placeholder shows what the source already has, so nobody retypes it
+
 ### 2.25.0 - Non-MSP: MSP accounts removed, divisions merged to the core seven
 Requested by the divisions taking the non-MSP instance live (Matthew Kyle, Daniel
 Matteson, 2026-09-16).

@@ -7428,12 +7428,19 @@
        *                  approval are manual by necessity, not by choice.
        */
       extStepEvidence(r, key, done) {
-        let text = null;
-        if (key === 'gatherRTO') text = r.recorded_rto;
-        else if (key === 'sendExtension') text = r.extension_note;
+        let text = null, origin = null;
+        if (key === 'gatherRTO') {
+          // What someone typed here wins over the book. On MSP the book has
+          // nothing at all, so this is the only place RTO can live.
+          const mine = (View.extensionEdit(r).rto || '').trim();
+          if (mine) { text = mine; origin = 'Recorded here'; }
+          else { text = r.recorded_rto; origin = r.source_system; }
+        } else if (key === 'sendExtension') {
+          text = r.extension_note; origin = r.source_system;
+        }
         const t = text == null ? '' : String(text).trim();
         if (!t) return '';
-        const origin = View.esc(r.source_system || 'The source system');
+        origin = View.esc(origin || 'The source system');
         // "None needed" / "N/A" is an answer, not a blank. Say what it means
         // rather than quoting it back as though it were a date range.
         const body = /^(none|n\/?a|no\s+(rto|time\s*off))\b/i.test(t)
@@ -7550,6 +7557,25 @@
           decision: saved?.decision || 'Not Requested',
           notes: saved?.notes || '',
           steps: saved?.steps || {},
+          /* Recorded here because the source systems mostly cannot hold it.
+           *
+           * Of 497 MSP seats ending in the next 45 days, only the 115 VNDLY
+           * ones have a modification feed to write an extension to, and 57 of
+           * those actually carry one. B4's 382 have nowhere at all. RTO is
+           * worse: the warehouse copy of the placement does not carry
+           * customTextBlock9, so MSP cannot even read it, let alone store it.
+           *
+           * newEnd  - the proposed end date, the single fact an extension IS
+           * rto     - requested time off, as free text, matching how Bullhorn
+           *           stores it ("7/1-7/5, 7/11-7/18", "None needed")
+           * isExt   - override for the book's own "Extension?" flag, '' means
+           *           defer to the source
+           * reason  - why, when the decision is Declined or Backfill Required
+           */
+          newEnd: saved?.newEnd || '',
+          rto: saved?.rto || '',
+          isExt: saved?.isExt || '',
+          reason: saved?.reason || '',
         };
       },
 
@@ -7920,7 +7946,11 @@
             </div>
             <div class="bg-white border border-slate-200 rounded-lg px-3 py-2">
               <div class="text-[9px] uppercase tracking-wide text-slate-400 font-semibold">Previously Extended</div>
-              <div class="text-sm font-bold text-slate-800 mt-0.5">${r.is_extension ? 'Yes' : 'No'}</div>
+              <div class="text-sm font-bold text-slate-800 mt-0.5">${(() => {
+                const ov = View.extensionEdit(r).isExt;
+                if (ov) return `${View.esc(ov)} <span class="text-[9px] font-normal text-blue-600">set here</span>`;
+                return r.is_extension ? 'Yes' : 'No';
+              })()}</div>
             </div>
           </div>
           ${rows}`;
@@ -8288,6 +8318,43 @@
                                   data-id="${r.id}" placeholder="Client or extension context…">${e.notes}</textarea>
                       </div>
                     </div>
+                    <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-3">
+                      <div>
+                        <label class="block text-[10px] font-semibold text-slate-500 uppercase tracking-wide mb-1">New End Date</label>
+                        <input type="date" class="ext-new-end w-full bg-white border border-slate-300 rounded-md px-3 py-2 text-sm"
+                               data-id="${r.id}" value="${View.esc(e.newEnd)}">
+                        <div class="text-[9px] text-slate-400 mt-0.5">${
+                          r.end_date ? 'Current end ' + View.esc(String(r.end_date).slice(0, 10)) : 'no current end on file'}</div>
+                      </div>
+                      <div>
+                        <label class="block text-[10px] font-semibold text-slate-500 uppercase tracking-wide mb-1">Requested Time Off</label>
+                        <input type="text" class="ext-rto w-full bg-white border border-slate-300 rounded-md px-3 py-2 text-sm"
+                               data-id="${r.id}" value="${View.esc(e.rto)}"
+                               placeholder="${r.recorded_rto ? View.esc(String(r.recorded_rto).slice(0, 40)) : 'e.g. 7/1-7/5, 8/26 — or None'}">
+                        <div class="text-[9px] text-slate-400 mt-0.5">${
+                          r.recorded_rto
+                            ? 'Placeholder is what ' + View.esc(r.source_system || 'the source') + ' already has'
+                            : 'Not recorded in the source system'}</div>
+                      </div>
+                      <div>
+                        <label class="block text-[10px] font-semibold text-slate-500 uppercase tracking-wide mb-1">Is An Extension</label>
+                        <select class="ext-flag w-full bg-white border border-slate-300 rounded-md px-3 py-2 text-sm" data-id="${r.id}">
+                          ${[['', 'Use the source'], ['Yes', 'Yes — override'], ['No', 'No — override']]
+                            .map(([v, l]) => `<option value="${v}" ${e.isExt === v ? 'selected' : ''}>${l}</option>`).join('')}
+                        </select>
+                        <div class="text-[9px] text-slate-400 mt-0.5">Source says ${
+                          r.source_is_extension ? View.esc(r.source_is_extension)
+                            : (r.is_extension ? 'Yes' : 'nothing')}</div>
+                      </div>
+                    </div>
+                    ${/Declined|Backfill/.test(e.decision) ? `
+                      <div class="mt-3">
+                        <label class="block text-[10px] font-semibold text-slate-500 uppercase tracking-wide mb-1">
+                          Reason &mdash; ${View.esc(e.decision)}</label>
+                        <input type="text" class="ext-reason w-full bg-white border border-slate-300 rounded-md px-3 py-2 text-sm"
+                               data-id="${r.id}" value="${View.esc(e.reason)}"
+                               placeholder="Why the seat is not extending">
+                      </div>` : ''}
                     <div class="flex items-center gap-3 mt-3">
                       <button onclick="store.dispatch('SAVE_EXTENSION','${r.id}')"
                               class="px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-md text-xs font-semibold shadow-sm">
@@ -15042,7 +15109,18 @@
               document.querySelectorAll(`.ext-step[data-id="${id}"]`).forEach(cb => {
                 steps[cb.dataset.step] = cb.checked;
               });
-              const state = { decision, notes, steps };
+              // Read straight off the open detail, same as decision and notes.
+              // A field the user never opened is absent, not blank, so ?? ''
+              // rather than || '' would still be wrong here -- an absent input
+              // means "no detail open", and this only runs from an open one.
+              const val = sel => (document.querySelector(`${sel}[data-id="${id}"]`)?.value || '').trim();
+              const state = {
+                decision, notes, steps,
+                newEnd: val('.ext-new-end'),
+                rto: val('.ext-rto'),
+                isExt: val('.ext-flag'),
+                reason: val('.ext-reason'),
+              };
               (async () => {
                 try {
                   const resp = await fetch(`${API_BASE_URL}/workspace-state`, {
