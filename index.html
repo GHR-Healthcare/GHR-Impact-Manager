@@ -5642,7 +5642,7 @@
                       const overridden = !!s.workspaceState?.interview?.[Utils.interviewKey(job.id, c)];
                       centerContent += `<div class="mt-1 flex items-center gap-1" onclick="event.stopPropagation()">
                           <select class="text-[10px] border border-slate-300 rounded px-1 py-0.5 bg-white"
-                                  onchange="event.stopPropagation();window.store.dispatch('SAVE_INTERVIEW',{jobId:'${job.id}',name:${JSON.stringify(c.name || '')},stage:this.value})">
+                                  onchange="event.stopPropagation();window.store.dispatch('SAVE_INTERVIEW',{jobId:'${job.id}',name:${View.esc(JSON.stringify(c.name || ''))},stage:this.value})">
                             ${Utils.INTERVIEW_STAGES.map(o => `<option ${o === stage ? 'selected' : ''}>${o}</option>`).join('')}
                           </select>
                           <span class="text-[9px] ${overridden ? 'text-blue-500 font-semibold' : 'text-slate-300'}"
@@ -6421,6 +6421,19 @@
         const sort = View.stageSort[key] || {};
         const filters = View.stageColFilter[key] || {};
         const anyFilter = Object.values(filters).some(v => (v || '').trim());
+        /* JSON.stringify inside a double-quoted attribute terminates it.
+         *
+         * `label:${JSON.stringify('Assignment ID')}` emits label:"Assignment
+         * ID" -- the HTML parser ends the attribute at that first inner quote,
+         * so the handler was cut to
+         * `store.dispatch('FILTER_STAGE',{view:'extensions',label:` and threw
+         * "Unexpected end of input" on every click and keystroke. Sorting and
+         * per-column filtering were dead on every stage table.
+         *
+         * View.esc emits &quot;, which the parser decodes back to a real quote
+         * when it reads the attribute, so the handler gets the string intact.
+         * It escapes ' too, so a label or name with an apostrophe is safe.
+         */
         const th = (c) => {
           const sortable = !!c.key;
           const active = sort.label === c.label;
@@ -6433,14 +6446,14 @@
           // denser columns — sized to their own body text, as List's is.
           return `<th ${c.w ? `style="width:${c.w}"` : ''} class="px-3 py-3 text-${c.align || 'left'} font-bold text-slate-600 text-xs uppercase tracking-wider whitespace-nowrap bg-slate-100 border-b border-slate-200 ${
                       sortable ? 'cursor-pointer hover:text-slate-700 select-none' : ''}"
-                      ${sortable ? `onclick="store.dispatch('SORT_STAGE',{view:'${key}',label:${JSON.stringify(c.label)}})"` : ''}
+                      ${sortable ? `onclick="store.dispatch('SORT_STAGE',{view:'${key}',label:${View.esc(JSON.stringify(c.label))}})"` : ''}
                       ${sortable ? `title="Sort by ${c.label || 'this column'}"` : ''}>${c.label}${arrow}</th>`;
         };
         const filterCell = (c) => {
           if (!c.key) return '<th class="px-2 py-1 bg-slate-50"></th>';
           return `<th class="px-2 py-1 bg-slate-50">
               <input value="${(filters[c.label] || '').replace(/"/g, '&quot;')}"
-                     oninput="store.dispatch('FILTER_STAGE',{view:'${key}',label:${JSON.stringify(c.label)},value:this.value})"
+                     oninput="store.dispatch('FILTER_STAGE',{view:'${key}',label:${View.esc(JSON.stringify(c.label))},value:this.value})"
                      placeholder="filter"
                      class="w-full min-w-[4.5rem] border border-slate-200 rounded px-1.5 py-0.5 text-[10px] font-normal normal-case bg-white">
             </th>`;

@@ -2,6 +2,20 @@
 
 ## Version History
 
+### 2.18.2 - Sorting and column filters never worked on the stage tables
+- `label:${JSON.stringify('Assignment ID')}` emits `label:"Assignment ID"` inside a
+  double-quoted HTML attribute, so the parser ended the attribute at that first
+  inner quote and the handler was cut mid-expression, throwing "Unexpected end of
+  input" on every click and keystroke
+- Sorting and per-column filtering were therefore dead on Closed, Extensions and
+  Onboarding (the non-MSP stage tables). The interview-stage dropdown in the job
+  detail passed a candidate name the same way and was broken too -- that one is
+  reachable on both instances
+- Fixed by escaping the interpolation, so the parser decodes the quotes back
+  inside the handler; apostrophes in a name or label are now safe as well
+- Verified in a browser against 60 real placements: sorting reorders all 60 rows
+  monotonically in both directions, and the text filters narrow correctly
+
 ### 2.18.1 - Hotfix: production MSP could not scroll the job list
 - `legacyListWrap`, the wrapper added in 2.17.0 to hide the legacy list when the
   redesign is on, was given no classes. It sat between `listViewWrapper`
