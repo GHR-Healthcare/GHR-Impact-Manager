@@ -2,6 +2,19 @@
 
 ## Version History
 
+### 2.24.2 - A mechanical check for production-MSP bleed
+- `node tools/msp-bleed-check.js [refA] [refB]` renders index.html AS production
+  MSP at two git refs and diffs what the page actually produces: visible tabs and
+  their labels, body classes, the Open Jobs layout tree, KPI labels, whether the
+  legacy list is what's on screen, and console errors
+- The "don't change production MSP" rule has been enforced by memory and failed
+  twice -- the standing revenue bar reached production, and a gating wrapper broke
+  scrolling on the job list. Both were invisible in a diff and obvious in a browser
+- Serves the files locally and stubs `/api/*`, because the deployed sites require
+  an authenticated role on `/` and a headless browser just lands on the Entra ID
+  sign-in page
+- Exit code is the number of differences, so it can gate a push
+
 ### 2.24.1 - Sorting and column filters were dead on every stage table
 - `label:${JSON.stringify('Assignment ID')}` emits `label:"Assignment ID"` inside a
   double-quoted HTML attribute, so the parser ended the attribute at that first
