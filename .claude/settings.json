@@ -40,7 +40,8 @@
       "Bash(az sql db list *)",
       "Bash(az logic workflow show *)",
       "Bash(az rest --method get *)",
-      "Bash(az rest --method GET *)"
+      "Bash(az rest --method GET *)",
+      "Bash(sort -u -t: -k2)"
     ]
   }
 }

@@ -2,6 +2,21 @@
 
 ## Version History
 
+### 2.20.1 - The bottom bar really was still on production MSP
+- `View.revenueBar()` hid it with `el.hidden = true`. That relies on the UA
+  stylesheet's `[hidden]{display:none}`, and the element carries Tailwind's `flex`
+  class -- an author style, which beats the UA one. Nothing in the file re-asserts
+  `[hidden]`, so the attribute was set and the bar stayed laid out at its full 56px
+- Measured on production MSP: a blank white strip from y=844 to y=900 covering the
+  bottom **56px of the job list**, and the topmost element at that point, so it was
+  swallowing clicks on the row beneath it. `pb-16` had been removed, so nothing kept
+  content clear of it
+- It read as "reverted" only because the content below never renders on MSP -- it
+  didn't *look* like a revenue bar, so nobody questioned it
+- Now hidden with the `hidden` class (Tailwind emits `.hidden` after `.flex`, so it
+  wins) and hidden in the markup by default, which also removes the blank strip that
+  flashed on every load until the config arrived. Non-MSP is revealed explicitly
+
 ### 2.20.0 - Saved decisions were never loaded back; extension fields you can set
 - **`workspaceState` was never fetched.** It was initialised to `{}`, written
   locally after each POST, and read in eight places -- but the app never asked the
