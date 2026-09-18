@@ -2,6 +2,14 @@
 
 ## Version History
 
+### 2.26.1 - Carry the bottom-bar hide fix onto this branch
+- `el.hidden = true` cannot hide an element carrying Tailwind's `flex` class, so on
+  main the bar stayed laid out at 56px across production MSP's job list. Inert here
+  (`impactUi()` is always true) but carried so merging can't reintroduce it
+- The bar is also hidden in the markup now and revealed by `View.revenueBar()`,
+  which removes the blank strip that flashed on every load. Verified the bar still
+  appears on both books on this branch
+
 ### 2.26.0 - Extensions can be recorded here when the source can't hold them
 - **New End Date**, **Requested Time Off**, an **Is An Extension** override and a
   **Reason** field (shown for Declined / Backfill Required), all saving through the

@@ -136,8 +136,11 @@
        affiliate win or unfilled seat negative -- decided server-side so both
        instances agree). Open Exposure is the 13-week value of seats still
        open. All three follow the active filters, like everything else. -->
-  <footer id="revenueBar"
-          class="fixed left-0 right-0 bottom-0 z-40 h-14 bg-white border-t border-slate-200 px-4 sm:px-6
+  <!-- Starts hidden and View.revenueBar() reveals it, rather than starting
+       visible and being hidden. Shown by default it painted a blank 56px strip
+       across the bottom of the page on every load until the config arrived. -->
+  <footer id="revenueBar" hidden
+          class="hidden fixed left-0 right-0 bottom-0 z-40 h-14 bg-white border-t border-slate-200 px-4 sm:px-6
                  flex items-center justify-between gap-4 shadow-[0_-1px_2px_rgba(15,34,66,.05)]">
   </footer>
 
@@ -4889,10 +4892,23 @@
         // The standing bar is part of the redesign, so production MSP does not
         // get it -- it had no bottom bar before and should not gain one here.
         if (!Utils.impactUi()) {
+          /* The `hidden` CLASS, not just the attribute. el.hidden = true
+           * relies on the UA stylesheet's [hidden]{display:none}, and this
+           * element carries Tailwind's `flex` class -- an author style, which
+           * beats it. On main that left the bar laid out at its full 56px
+           * across the bottom of production MSP's job list, as the topmost
+           * element there, swallowing clicks. Inert on this branch, where
+           * impactUi() is always true, but it must carry the fix or merging
+           * would put it straight back. See 2.20.1.
+           */
           el.hidden = true;
+          el.classList.add('hidden');
           document.body.classList.remove('pb-16', 'sm:pb-20');
           return;
         }
+        // Reveal it for the instances that do get a bar.
+        el.hidden = false;
+        el.classList.remove('hidden');
         const money = v => '$' + Math.round(Math.abs(v)).toLocaleString();
 
         /* Standing totals. Every instance gets three real numbers.
