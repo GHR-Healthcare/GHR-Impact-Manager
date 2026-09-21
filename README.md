@@ -2,6 +2,16 @@
 
 ## Version History
 
+### 2.27.1 - One variance in the Rate pane, and the facility strip keeps its job
+- The variance chip added in 2.21.0 is removed. Market Position now states variance
+  against 337 all-accounts peers; a second figure from five placed rates invited
+  reconciling numbers that answer different questions
+- The **strip stays**. It answers what nothing else does, and what the IT notes call
+  the most important use case: what seats at *this* facility actually filled at. A
+  $38 opening against ~$45 of recent fills explains why a job isn't filling; the
+  market ladder can't say that. Relabelled "What This Facility Actually Pays" so the
+  two sections read as different questions rather than rival answers
+
 ### 2.27.0 - Market position, derived from rate data that was already there
 - **Market rate is live.** `BH_BILL_RATE_TRENDS_OUTLIERS_FACT` already carries the
   population and `GetRateIntel` already ships it, so the Rate pane now reads
