@@ -17,3 +17,10 @@ obj/
 # Claude Code per-machine permissions (project-level .claude/settings.json
 # is shared; the .local one is personal and must not be committed)
 .claude/settings.local.json
+
+# Vendor API documentation. Kept locally, never committed: the root of this
+# repo is served by the Static Web App, and staticwebapp.config.json gates
+# only /, /*.html and /api/* behind authentication -- a real file at the root
+# with no matching route would be publicly fetchable.
+VNDLY API Docs.pdf
+*.pdf
