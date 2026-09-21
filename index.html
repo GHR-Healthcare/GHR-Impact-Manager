@@ -2799,6 +2799,71 @@
         return isFinite(n) ? n : null;
       },
 
+      /* ONE aging ladder, and the action due date derived from it.
+       *
+       * The thresholds were already stated in three places and two of them
+       * disagreed. The legend bands (<=7 / 8-14 / 15-21 / 22+) and the API's
+       * _urgency (critical <=7, high <=14, medium <=21, low) match; the UI's
+       * extensionUrgencyLabel used <=14 High, <=30 Medium, so a seat 25 days
+       * out was 'low' on the server, in the legend's green band, and 'Medium'
+       * in its own Urgency column. Dan's cross-module ask is that summary
+       * cards, legend, Days Left and Urgency share one logic. This is it.
+       *
+       * DUE DATE is derived rather than entered: an extension decision is due
+       * when the seat would otherwise enter the critical band, so the owner
+       * has the last 7 days to execute rather than to decide. Nothing else
+       * needs storing, and the due date cannot drift from Days Left because
+       * it IS Days Left, offset.
+       */
+      AGING_CRITICAL_DAYS: 7,
+
+      agingBand(days) {
+        if (days == null) return 'low';
+        if (days <= 7) return 'critical';
+        if (days <= 14) return 'high';
+        if (days <= 21) return 'medium';
+        return 'low';
+      },
+
+      AGING_LABEL: { critical: 'Critical', high: 'High', medium: 'Medium', low: 'Low' },
+
+      /* Days until the decision is due, which can be negative.
+       * Null when there is no end date to count from -- an unknown deadline
+       * is not the same as one that has passed.
+       */
+      actionDueInDays(daysLeft) {
+        if (daysLeft == null || isNaN(Number(daysLeft))) return null;
+        return Number(daysLeft) - Utils.AGING_CRITICAL_DAYS;
+      },
+
+      /* "Due in 9d" / "Due today" / "3d overdue", plus a tone so the phrase
+       * and the Urgency column can never disagree.
+       */
+      actionDue(daysLeft, endDate) {
+        const d = Utils.actionDueInDays(daysLeft);
+        if (d == null) return null;
+        const band = Utils.agingBand(daysLeft);
+        const text = d < 0 ? `${Math.abs(d)}d overdue` : d === 0 ? 'Due today' : `Due in ${d}d`;
+        /* The calendar date, for the people who want a date on a task and not
+         * a countdown. Taken off the end date when we have one rather than
+         * off today's clock: days_left IS (end date - today) on the server,
+         * so end date - 7 and today + (days_left - 7) are the same day by
+         * construction -- but the end date path cannot be knocked a day out
+         * by a timezone or by a tab left open overnight.
+         */
+        let date = null;
+        const end = Utils.toDateOrNull(endDate);
+        if (end) {
+          date = new Date(end.getTime());
+          date.setUTCDate(date.getUTCDate() - Utils.AGING_CRITICAL_DAYS);
+        } else {
+          date = new Date();
+          date.setDate(date.getDate() + d);
+        }
+        return { days: d, text, band, overdue: d < 0, date,
+                 dateText: Utils.fmtDate(date, { month: 'numeric', day: 'numeric', year: '2-digit' }) };
+      },
+
       isGhrAgency(a) {
         const x = String(a || '').toLowerCase();
         return x.includes('ghr') || x.includes('planet healthcare');
@@ -7027,7 +7092,7 @@
           return `<th ${c.w ? `style="width:${c.w}"` : ''} class="px-3 py-3 text-${c.align || 'left'} font-bold text-slate-600 text-xs uppercase tracking-wider whitespace-nowrap bg-slate-100 border-b border-slate-200 ${
                       sortable ? 'cursor-pointer hover:text-slate-700 select-none' : ''}"
                       ${sortable ? `onclick="store.dispatch('SORT_STAGE',{view:'${key}',label:${View.esc(JSON.stringify(c.label))}})"` : ''}
-                      ${sortable ? `title="Sort by ${c.label || 'this column'}"` : ''}>${c.label}${arrow}</th>`;
+                      ${sortable ? `title="Sort by ${c.sortNote || c.label || 'this column'}"` : ''}>${c.label}${arrow}</th>`;
         };
         const filterCell = (c) => {
           if (!c.key) return '<th class="px-2 py-1 bg-slate-50"></th>';
@@ -7786,13 +7851,12 @@
        * mismatch count feeds in here.
        */
       extensionUrgencyLabel(r) {
+        // A system mismatch is its own reason to act, regardless of how far
+        // out the end date is, so it still floors the label at High.
         const bad = (r.match && r.match.counts && r.match.counts.bad) || 0;
-        const d = r.days_left;
-        if (bad > 0) return 'High';
-        if (d == null) return 'Low';
-        if (d <= 14) return 'High';
-        if (d <= 30) return 'Medium';
-        return 'Low';
+        const band = Utils.agingBand(r.days_left);
+        if (bad > 0 && (band === 'medium' || band === 'low')) return 'High';
+        return Utils.AGING_LABEL[band];
       },
 
       extensionDecisionBadge(d) {
@@ -8400,19 +8464,68 @@
               action: 'Extension sent — awaiting acceptance' };
       },
 
+      /* The compact task area: decision, owner, due date and next action on
+       * one line, so no task needs a second panel opened to find out who owns
+       * it or when it is due. Shared by Extensions and Onboarding rather than
+       * written twice -- the two modules disagreeing about what "due" means
+       * is exactly what the feedback objected to.
+       */
+      taskStrip({ decision, owner, who, action, due, decisionLabel }) {
+        const tone = { PM: 'bg-blue-100 text-blue-700', Recruiter: 'bg-purple-100 text-purple-700',
+                       Client: 'bg-amber-100 text-amber-800', System: 'bg-emerald-100 text-emerald-700' }[owner]
+                     || 'bg-slate-100 text-slate-600';
+        const dueTone = !due ? 'text-slate-400'
+          : due.overdue || due.band === 'critical' ? 'text-red-700'
+          : due.band === 'high' ? 'text-amber-800' : 'text-slate-700';
+        const cell = (lab, body) => `
+          <div class="px-2.5 py-1.5">
+            <div class="text-[9px] uppercase tracking-wide text-slate-400 font-semibold">${lab}</div>
+            <div class="text-[11px] font-semibold text-slate-800 mt-0.5 leading-snug">${body}</div>
+          </div>`;
+        return `
+          <div class="grid grid-cols-2 sm:grid-cols-4 divide-x divide-slate-200 bg-white border border-slate-200 rounded-lg mb-3">
+            ${cell(decisionLabel || 'Decision', View.esc(decision || '—'))}
+            ${cell('Owner', `<span class="px-1.5 py-0.5 rounded text-[9px] font-bold ${tone}">${owner}</span>${
+              who ? `<span class="text-[10px] text-slate-500 ml-1">${View.esc(who)}</span>` : ''}`)}
+            ${cell('Due', due
+              ? `<span class="${dueTone}">${due.dateText}</span>
+                 <span class="block text-[9px] font-normal ${dueTone}">${due.text}</span>`
+              : `<span class="italic font-normal text-slate-300" title="No end date on file, so there is nothing to count from">no date to derive from</span>`)}
+            ${cell('Next Action', `<span class="font-normal text-blue-700">${View.esc(action)}</span>`)}
+          </div>`;
+      },
+
       extensionBallCell(r) {
         const b = View.extensionBall(r);
         const tone = { PM: 'bg-blue-100 text-blue-700', Recruiter: 'bg-purple-100 text-purple-700',
                        Client: 'bg-amber-100 text-amber-800', System: 'bg-emerald-100 text-emerald-700' }[b.owner]
                      || 'bg-slate-100 text-slate-600';
+        /* Decision owner, who, DUE DATE and next action in one cell -- the
+         * compact task area the feedback asks for, so ownership never
+         * requires opening a panel to read.
+         *
+         * The due date is derived from days_left through the shared aging
+         * ladder, not stored: the decision is due when the seat would
+         * otherwise enter the critical band, leaving the last 7 days to
+         * execute rather than to decide. Because it IS Days Left offset, it
+         * cannot drift from the Days Left or Urgency columns beside it.
+         */
+        const due = Utils.actionDue(r.days_left, r.end_date);
+        const dueTone = !due ? '' : due.overdue || due.band === 'critical'
+          ? 'bg-red-100 text-red-700'
+          : due.band === 'high' ? 'bg-amber-100 text-amber-800'
+          : 'bg-slate-100 text-slate-600';
         return `
           <span class="px-1.5 py-0.5 rounded text-[9px] font-bold ${tone}">${b.owner}</span>
           ${b.who ? `<span class="text-[10px] text-slate-500 ml-1">${View.esc(b.who)}</span>` : ''}
+          ${due ? `<span class="ml-1 px-1.5 py-0.5 rounded text-[9px] font-bold ${dueTone}"
+                         title="Due ${due.dateText} &mdash; derived from ${r.days_left} day${r.days_left === 1 ? '' : 's'} left, allowing ${Utils.AGING_CRITICAL_DAYS} days to execute after the decision">${due.text}</span>` : ''}
           <div class="text-[10px] text-blue-700 mt-0.5 leading-snug">${View.esc(b.action)}</div>`;
       },
 
       extensionDetail(r) {
         const e = View.extensionEdit(r);
+        const ball = View.extensionBall(r);
         const meta = window.store.state.workspaceState?.extension?.[r.id];
         const pm = r.account_manager || '—';
         // Recruiter now arrives on the row: on MSP through the Bullhorn
@@ -8453,7 +8566,11 @@
                     ${tile('PM', View.esc(pm))}
                     ${tile('Recruiter', rec ? View.esc(rec) : '<span class="text-slate-300 italic">—</span>')}
                     ${tile('Days Left', r.days_left != null ? r.days_left : '—')}
-                    ${tile('Urgency', r.urgency ? r.urgency.charAt(0).toUpperCase() + r.urgency.slice(1) : '—')}
+                    ${/* Same call the URGENCY column makes, not the raw server field:
+                          a seat whose systems disagree is floored at High in the
+                          column, and the panel saying Medium for the same seat is
+                          exactly the split the feedback asked us to close. */''}
+                    ${tile('Urgency', View.extensionUrgencyLabel(r))}
                   </div>
                   ${View.rateGmInline(r)}
                   <div class="space-y-1.5 mt-3">
@@ -8481,6 +8598,9 @@
                     </div>
                   </div>
                   <div class="mt-3 pt-3 border-t border-slate-100">
+                    ${View.taskStrip({ decision: e.decision, decisionLabel: 'Client Decision',
+                                       owner: ball.owner, who: ball.who, action: ball.action,
+                                       due: Utils.actionDue(r.days_left, r.end_date) })}
                     <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
                       <div>
                         <label class="block text-[10px] font-semibold text-slate-500 uppercase tracking-wide mb-1">Client Decision</label>
@@ -8581,7 +8701,15 @@
           { label: 'Recruiter',       key: 'recruiter', filter: 'select' },
           // "Who has the ball" and "what next", from the IT notes. Sorted and
           // filtered on the owner, which is the question people scan for.
-          { label: 'Next Action',     key: r => View.extensionBall(r).owner },
+          /* Sorted by how soon the action is due rather than by owner name:
+           * the column answers "what needs doing next", and alphabetical
+           * owners put Client before PM for no reason anyone cares about.
+           * Rows with no end date sort last -- unknown, not urgent.
+           */
+          { label: 'Next Action',
+            key: r => { const d = Utils.actionDueInDays(r.days_left);
+                        return d == null ? 99999 : d; },
+            sortNote: 'when the action is due (seats with no end date last)' },
           { label: 'Urgency',         key: 'urgency',       align: 'center' },
           { label: '13-Wk Value',     key: 'extension_value_13wk', align: 'right' },
         ];
@@ -8733,6 +8861,65 @@
         }
         const d = Number(r.days_delayed);
         return isFinite(d) ? d : null;
+      },
+
+      /* Who has the ball on a start, and what next.
+       *
+       * The action comes from the API's own next_action, which reads it off
+       * compliance state and movement -- not recomputed here, so the row and
+       * the panel cannot disagree. The owner follows the action: a
+       * credentialling blocker sits with the recruiter where one is named,
+       * a date that moved sits with the PM, and a clear packet is waiting on
+       * the client to confirm. Nothing is invented -- Bullhorn's
+       * credentialSpecialistUserID is null on every row, so there is no
+       * compliance owner to name and the recorded owner keeps it.
+       */
+      onboardingBall(r) {
+        const c = r.compliance || {};
+        const pm = r.account_manager || null;
+        const rec = r.recruiter || null;
+        const action = r.next_action || 'No action recorded for this start';
+        if (c.state === 'cancelled') return { owner: 'PM', who: pm, action };
+        if (c.state === 'blocked' || c.state === 'expiring')
+          return { owner: rec ? 'Recruiter' : 'PM', who: rec || pm, action };
+        if (View.onboardingSlip(r)) return { owner: 'PM', who: pm, action };
+        if (c.state === 'clear') return { owner: 'Client', who: r.hiring_manager || null, action };
+        return { owner: 'PM', who: pm, action };
+      },
+
+      /* Onboarding's deadline is the start date, not an end date, so the
+       * ladder counts down days_until_start instead of days_left. Same offset
+       * and same bands: the last 7 days before a start are for executing the
+       * onboarding, not for discovering it slipped.
+       */
+      onboardingDue(r) {
+        return Utils.actionDue(r.days_until_start, r.current_start);
+      },
+
+      // The Extensions cell, for starts: owner, who, when it is due, what next.
+      onboardingBallCell(r) {
+        const b = View.onboardingBall(r);
+        const tone = { PM: 'bg-blue-100 text-blue-700', Recruiter: 'bg-purple-100 text-purple-700',
+                       Client: 'bg-amber-100 text-amber-800', System: 'bg-emerald-100 text-emerald-700' }[b.owner]
+                     || 'bg-slate-100 text-slate-600';
+        const due = View.onboardingDue(r);
+        const dueTone = !due ? '' : due.overdue || due.band === 'critical'
+          ? 'bg-red-100 text-red-700'
+          : due.band === 'high' ? 'bg-amber-100 text-amber-800'
+          : 'bg-slate-100 text-slate-600';
+        /* The recorded AM still shows even when the ball has moved to the
+         * client or the recruiter. This column is named Owner and people read
+         * it to find the AM; dropping that name because compliance happens to
+         * be clear would lose information the column used to carry.
+         */
+        const pm = r.account_manager || null;
+        return `
+          <span class="px-1.5 py-0.5 rounded text-[9px] font-bold ${tone}">${b.owner}</span>
+          ${b.who ? `<span class="text-[10px] text-slate-500 ml-1">${View.esc(b.who)}</span>` : ''}
+          ${due ? `<span class="ml-1 px-1.5 py-0.5 rounded text-[9px] font-bold ${dueTone}"
+                         title="Due ${due.dateText} &mdash; derived from the start date, allowing ${Utils.AGING_CRITICAL_DAYS} days to onboard">${due.text}</span>` : ''}
+          ${pm && pm !== b.who ? `<div class="text-[10px] text-slate-400 mt-0.5">AM &middot; ${View.esc(pm)}</div>` : ''}
+          ${r.next_action ? `<div class="text-[10px] text-blue-700 mt-0.5 leading-snug">${View.esc(b.action)}</div>` : ''}`;
       },
 
       onboardingGroup(r) {
@@ -8996,6 +9183,7 @@
       onboardingDetail(r) {
         const e = View.onboardingEdit(r);
         const slip = View.onboardingSlip(r);
+        const ball = View.onboardingBall(r);
         const meta = window.store.state.workspaceState?.onboarding?.[r.id];
         const notInData = '<span class="italic text-slate-300" title="Not recorded in B4 or VNDLY">not in data</span>';
         const notTracked = '<span class="italic text-slate-300" title="No planned start on file for this seat">not tracked</span>';
@@ -9035,6 +9223,10 @@
                 <div>
                   <h5 class="text-xs font-bold uppercase tracking-wide text-slate-500 mb-1">Start Date Feedback</h5>
                   <p class="text-[10px] text-slate-400 mb-3">Update the expected start and record why it moved.</p>
+                  ${View.taskStrip({ decision: e.delayCategory !== 'None' ? e.delayCategory : (r.delay_category || 'None'),
+                                     decisionLabel: 'Delay Category',
+                                     owner: ball.owner, who: ball.who, action: ball.action,
+                                     due: View.onboardingDue(r) })}
                   ${slip ? `<div class="mb-3 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-[11px] text-amber-900">
                       <b>Context required.</b> Last recorded ${e.recordedStart}, source now says ${r.current_start}.
                       Record why before saving.
@@ -9085,7 +9277,9 @@
           { label: 'Moves',         key: 'move_count',    align: 'center' },
           { label: 'Days Delayed',  key: 'days_delayed',  align: 'center' },
           { label: 'Delay Reason',  key: 'delay_reason' },
-          { label: 'Owner',         key: 'account_manager' },
+          { label: 'Owner',         key: r => { const d = Utils.actionDueInDays(r.days_until_start);
+                                                return d == null ? 99999 : d; },
+            sortNote: 'when the onboarding action is due (starts with no date last)' },
         ];
         View.stageColCount.onboarding = onbCols.length;
         const rows = View.stageApply('onboarding',
@@ -9169,11 +9363,7 @@
                   <div class="text-slate-700">${e.delayCategory !== 'None' ? e.delayCategory : (r.delay_category || '—')}</div>
                   <div class="text-[10px] text-slate-400 truncate max-w-[16rem]">${e.context || r.delay_reason || ''}</div>
                 </td>
-                <td class="px-3 py-2 text-slate-500">
-                  <div>${View.esc(r.account_manager || '—')}</div>
-                  ${r.recruiter ? `<div class="text-[10px] text-slate-400">Recruiter · ${View.esc(r.recruiter)}</div>` : ''}
-                  ${r.next_action ? `<div class="text-[10px] text-blue-600 mt-0.5">${View.esc(r.next_action)}</div>` : ''}
-                </td>
+                <td class="px-3 py-2 text-slate-500">${View.onboardingBallCell(r)}</td>
               </tr>`;
             if (open) body += View.onboardingDetail(r);
           });

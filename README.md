@@ -2,6 +2,35 @@
 
 ## Version History
 
+### 2.30.0 - Derived action due dates, and one aging ladder behind all of them
+- **Due dates are derived from Days Left, not entered.** A decision is due when the
+  seat would otherwise enter the critical band, so the owner keeps the last 7 days
+  to execute rather than to decide. Because the due date *is* Days Left offset, it
+  cannot drift from the Days Left or Urgency columns beside it
+- **Three aging ladders collapsed into one.** The legend bands and the API's urgency
+  agreed (critical <=7, high <=14, medium <=21, low beyond), but `extensionUrgencyLabel`
+  used <=14 High / <=30 Medium -- so a seat 25 days out was *low* on the server, in
+  the legend's green band, and *Medium* in its own Urgency column. All of it now
+  runs through `Utils.agingBand`
+- The extension panel's Urgency tile reads the same call as the Urgency column
+  instead of the raw server field, so a seat whose systems disagree no longer says
+  High in the column and Medium in the panel
+- **A compact task area on Extensions and Onboarding** -- decision, owner, due date
+  and next action on one line, in the row and repeated at the head of the detail
+  panel. No task needs a second panel opened to find out who owns it or when it is due
+- **Onboarding gained an owner, a next action and a due date**, which it never had.
+  Its deadline counts down to the start date rather than an end date, same offset and
+  same bands: the last week before a start is for onboarding, not for discovering it
+  slipped. The action comes from the API's own `next_action`, so the row and the panel
+  can't disagree; the recorded AM still shows even when the ball has moved to the
+  client or the recruiter
+- Both Next Action / Owner columns now sort by when the action is due rather than
+  alphabetically by owner. Records with no date to derive from sort last -- unknown,
+  not urgent
+- Verified in a browser against 70 live extension seats and 60 live upcoming starts
+  sampled across the full 45-day horizon, so all four bands are exercised: every row's
+  due phrase, Days Left and Urgency agree, and no row lost its AM
+
 ### 2.29.0 - Under Review in the funnel, and stages say when they aren't recorded
 - **Under Review** added between Submitted and Interview. It's VNDLY's shortlist,
   and on that book it's where the volume actually sits: **611 submissions
