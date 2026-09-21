@@ -9136,10 +9136,27 @@
           { label: 'Weekly Revenue Captured', val: fmtK(capturedPos),
             sub: windowDays ? `closed outcomes · ${windowDays}d window` : 'closed outcomes',
             icon: 'dollar-sign', color: 'emerald' },
-          { label: 'Monthly Revenue Captured', val: fmtK(capturedPos * 4.33),
-            sub: 'rolling equivalent', icon: 'calendar', color: 'emerald' },
-          { label: 'Annualized Revenue Captured', val: fmtK(capturedPos * 52),
-            sub: 'run-rate equivalent', icon: 'trending-up', color: 'emerald' },
+          /* Monthly and Annualized removed per Dan's UI feedback (Sept 2026,
+           * "Closed Jobs"): they are arithmetic on the weekly figure --
+           * x4.33 and x52 -- so they carry no information the first card does
+           * not, and they pushed the row to seven cards in a six-column grid.
+           * The seventh wrapped to its own line and left a band of dead space
+           * above the grid, which is the space he wants spent on visible
+           * records.
+           *
+           * Kept rather than deleted: if the weekly framing changes, these are
+           * the right shape to bring back.
+           *
+           *   { label: 'Monthly Revenue Captured', val: fmtK(capturedPos * 4.33),
+           *     sub: 'rolling equivalent', icon: 'calendar', color: 'emerald' },
+           *   { label: 'Annualized Revenue Captured', val: fmtK(capturedPos * 52),
+           *     sub: 'run-rate equivalent', icon: 'trending-up', color: 'emerald' },
+           *
+           * His sixth card is Bid Activity (total / GHR / competitive bids).
+           * Not built: no bid field exists in GetClosed or anywhere in the
+           * app, so it needs the data before the card. Five cards sit on one
+           * row in the six-column grid, which is the point.
+           */
           { label: nonMspKpi ? 'Fill Rate' : 'Capture Rate',
             val: captureRate == null ? '—' : captureRate + '%',
             sub: nonMspKpi ? 'filled of decided' : 'GHR share of agency starts',

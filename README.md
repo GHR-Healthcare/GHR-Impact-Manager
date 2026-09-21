@@ -2,6 +2,23 @@
 
 ## Version History
 
+### 2.26.2 - Closed KPIs back to one row; VNDLY client; Dan's feedback tracked
+- The Closed KPI row had seven cards in a six-column grid, so the seventh wrapped
+  and left a band of dead space above the records. Monthly and Annualized Revenue
+  Captured are parked as comments -- they are `weekly x 4.33` and `weekly x 52`,
+  carrying nothing the first card doesn't. Measured: 7 cards / 2 rows / 244px →
+  5 cards / 1 row / 106px
+- Dan's sixth card, Bid Activity, is not built: no bid field exists in `GetClosed`
+  or anywhere in the app. It needs the data before the card
+- `api/shared_code/vndly_api.py` — multi-tenant VNDLY client for writing requested
+  time off to the contractor's `RTO` custom field. Each MSP client is its own
+  tenant with its own host and token; the warehouse pools them, so writes resolve
+  the tenant from `[Health System]`. **`[Health System Id]` cannot be used** — it
+  is numbered per tenant and collides: Cooper and Inspira are both `3`
+- `DAN_UI_FEEDBACK.md` transcribes the September feedback with current status per
+  item. The PDF itself is gitignored -- the repo root is served by the Static Web
+  App, and a file there with no matching route would be publicly fetchable
+
 ### 2.26.1 - Carry the bottom-bar hide fix onto this branch
 - `el.hidden = true` cannot hide an element carrying Tailwind's `flex` class, so on
   main the bar stayed laid out at 56px across production MSP's job list. Inert here
