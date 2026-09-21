@@ -9279,6 +9279,42 @@
           { label: 'Revenue Missed', val: fmtK(missedRev),
             sub: nonMspKpi ? 'unfilled / declined' : 'affiliate / decline / unfilled',
             icon: 'alert-triangle', color: 'red' },
+          /* Bid activity -- the sixth card the feedback asks for, completing
+           * the row (revenue captured, capture rate, days to close, revenue
+           * missed, ended early, bid activity).
+           *
+           * Aggregated over DISTINCT bid_group, never over rows. A VNDLY
+           * job's bid count is repeated on every one of its work orders --
+           * up to 49 of them -- so summing rows inflated the count 7.5x when
+           * measured against the source. B4 is 1:1 so it is unaffected
+           * either way, which is exactly how a row-wise sum would have looked
+           * plausible.
+           *
+           * Non-MSP has no bid concept at all: Bullhorn is direct business,
+           * GHR is the only agency on the req. The card says so rather than
+           * showing a nought, which would read as "nobody bid".
+           */
+          (() => {
+            const groups = new Map();
+            allClosed.forEach(r => {
+              if (!r.bid_group || r.total_bids == null) return;
+              if (!groups.has(r.bid_group)) groups.set(r.bid_group, r);
+            });
+            if (!groups.size) {
+              return { label: 'Bid Activity', val: '—',
+                       sub: nonMspKpi ? 'not recorded on this book' : 'no bids on these records',
+                       icon: 'gavel', color: 'slate' };
+            }
+            let total = 0, ghr = 0;
+            groups.forEach(r => { total += Number(r.total_bids) || 0; ghr += Number(r.ghr_bids) || 0; });
+            const share = total ? Math.round((ghr / total) * 100) : null;
+            return {
+              label: 'Bid Activity', val: total.toLocaleString(),
+              sub: `${groups.size} job${groups.size === 1 ? '' : 's'}${
+                     share == null ? '' : ` · ${share}% GHR`}`,
+              icon: 'gavel', color: 'indigo',
+            };
+          })(),
           // Drillable: clicking narrows the table to these rows. Non-MSP shows
           // it as unavailable rather than as zero -- Bullhorn's reasonClosed is
           // order-level, so "no early ends" there would be a claim the data

@@ -2,6 +2,22 @@
 
 ## Version History
 
+### 2.28.0 - Bid activity, from submissions tables nothing was reading
+- Dan's sixth Closed KPI is built. `dhc.B4Health_Contract_Submissions` and
+  `dbo.STAGING_VNDLY_SUBMISSIONS` carry one row per agency submission with the
+  vendor name, so total / GHR / competitive bids are all countable. Nothing in the
+  app was reading either table
+- Coverage: 2,534 of 2,764 closed B4 orders (92%) carry bids -- 7,737 of them, 4,280
+  GHR. VNDLY 100%, 1,713 bids
+- **Counted over distinct bid groups, never over rows.** A VNDLY job's bids repeat on
+  every one of its work orders -- 1,498 work orders sit across just 404 Job Ids, up
+  to 49 on one job -- so a row-wise sum inflated bids 7.5×, from 1,713 to 12,766.
+  B4 is 1:1 and unaffected either way, which is exactly how a row-wise sum would
+  have looked plausible. `bid_group` is emitted so the client can aggregate honestly
+- Non-MSP shows "not recorded on this book", not 0: Bullhorn is direct business and
+  GHR is the only agency on the req, so nought would read as "nobody bid"
+- The Closed KPI row is now the six he specified, still on one row
+
 ### 2.27.1 - One variance in the Rate pane, and the facility strip keeps its job
 - The variance chip added in 2.21.0 is removed. Market Position now states variance
   against 337 all-accounts peers; a second figure from five placed rates invited

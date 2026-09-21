@@ -342,8 +342,36 @@ def _b4_rows(cursor, lookback):
             CAST(o.Start_Date AS DATE)                  AS start_date,
             TRY_CAST(o.Awarded_Rate AS DECIMAL(10,2))   AS bill_rate,
             TRY_CAST(o.Pay_Rate AS DECIMAL(10,2))       AS pay_rate,
-            TRY_CAST(o.Hours_per_Peek AS DECIMAL(10,2)) AS hours_per_week
+            TRY_CAST(o.Hours_per_Peek AS DECIMAL(10,2)) AS hours_per_week,
+            /* Bid activity. dhc.B4Health_Contract_Submissions is one row per
+             * agency submission against a contract, carrying Agency_Name --
+             * so total, GHR and competitive bids are all countable, and the
+             * winning supplier is already on the order as o.Agency.
+             *
+             * Safe as a correlated aggregate here: B4HealthOrder is 1:1 on
+             * Contract_ID (2,764 closed rows over 90 days, 2,764 distinct
+             * ids, max 1 row each), so nothing fans out. 2,534 of those 2,764
+             * (92%) carry at least one submission -- 7,737 bids, 4,280 GHR.
+             */
+            /* The population those bids were made against, so the client
+             * can aggregate without double counting. B4 is 1:1 on
+             * Contract_ID, so this is just the id; VNDLY repeats a job's bid
+             * count on each of its work orders (up to 49), so any sum across
+             * rows must be taken over DISTINCT bid_group.
+             */
+            'B4:' + LTRIM(RTRIM(o.Contract_ID))         AS bid_group,
+            ISNULL(b.total_bids, 0)                     AS total_bids,
+            ISNULL(b.ghr_bids, 0)                       AS ghr_bids,
+            ISNULL(b.total_bids, 0) - ISNULL(b.ghr_bids, 0) AS competitive_bids
         FROM dhc.B4HealthOrder o WITH (NOLOCK)
+        LEFT JOIN (
+            SELECT LTRIM(RTRIM(Contract_Assignment_ID)) AS cid,
+                   COUNT(*) AS total_bids,
+                   SUM(CASE WHEN Agency_Name LIKE '%GHR%'
+                             OR Agency_Name LIKE '%Planet%' THEN 1 ELSE 0 END) AS ghr_bids
+            FROM dhc.B4Health_Contract_Submissions WITH (NOLOCK)
+            GROUP BY LTRIM(RTRIM(Contract_Assignment_ID))
+        ) b ON b.cid = LTRIM(RTRIM(o.Contract_ID))
         WHERE o.Contract_Status LIKE 'Closed%'
     ''')
     rows = [dict(zip([c[0] for c in cursor.description], r)) for r in cursor.fetchall()]
@@ -399,8 +427,36 @@ def _vndly_rows(cursor, lookback):
             TRY_CAST(w.[Bill Rate] AS DECIMAL(10,2))      AS bill_rate,
             TRY_CAST(w.[Pay Rate] AS DECIMAL(10,2))       AS pay_rate,
             NULL                                          AS hours_per_week,
-            CASE WHEN TRY_CAST(w.[Onboarded Date] AS DATE) IS NOT NULL THEN 1 ELSE 0 END AS converted
+            CASE WHEN TRY_CAST(w.[Onboarded Date] AS DATE) IS NOT NULL THEN 1 ELSE 0 END AS converted,
+            /* Bid activity, aggregated PER JOB before it is joined.
+             *
+             * STAGING_VNDLY_SUBMISSIONS keys on [Job Id], and a job carries
+             * many work orders -- 1,498 work orders ending in the last 90
+             * days sit across only 404 distinct Job Ids, up to 49 work orders
+             * on one job. Joining submissions row-by-row inflated the count
+             * from 1,713 to 12,766, a factor of 7.5. The same fan-out the
+             * STAGING_VNDLY_JOBS join already had to collapse.
+             *
+             * Each work order therefore reports ITS JOB's bid count, which is
+             * the honest number: those vendors bid for that job. It follows
+             * that bids must never be SUMMED across rows -- count them over
+             * distinct jobs instead, which is what the KPI does.
+             */
+            -- See the B4 branch: a job's bids repeat across its work orders,
+            -- so aggregate over DISTINCT bid_group, never over rows.
+            'VNDLY:' + CAST(TRY_CAST(w.[Job Id] AS INT) AS NVARCHAR(20)) AS bid_group,
+            ISNULL(vb.total_bids, 0)                      AS total_bids,
+            ISNULL(vb.ghr_bids, 0)                        AS ghr_bids,
+            ISNULL(vb.total_bids, 0) - ISNULL(vb.ghr_bids, 0) AS competitive_bids
         FROM dbo.STAGING_VNDLY_WORKORDERS w WITH (NOLOCK)
+        LEFT JOIN (
+            SELECT [Job Id] AS job_id,
+                   COUNT(*) AS total_bids,
+                   SUM(CASE WHEN [Vendor Company Name] LIKE '%GHR%'
+                             OR [Vendor Company Name] LIKE '%Planet%' THEN 1 ELSE 0 END) AS ghr_bids
+            FROM dbo.STAGING_VNDLY_SUBMISSIONS WITH (NOLOCK)
+            GROUP BY [Job Id]
+        ) vb ON vb.job_id = TRY_CAST(w.[Job Id] AS INT)
         WHERE w.[Current Status] NOT IN
               ('Applied', 'Interviewing', 'Offer Released', 'Ready to Onboard',
                'Verification In Progress')
@@ -470,6 +526,16 @@ def _bullhorn_closed_rows(cursor, app_conn, lookback):
             -- (Travel / Local / Permanent / Remote / PRN), so the two
             -- vocabularies are identical rather than merely comparable.
             NULLIF(LTRIM(RTRIM(jo.employmentType)), '')    AS rate_category,
+            /* No bid concept on this book. Bullhorn is direct business --
+             * GHR is the only agency on the req, so "competitive bids" has no
+             * meaning rather than being zero. Symplr records no vendor
+             * competition either. Null, not 0, so the UI can say "not
+             * recorded on this book" instead of implying nobody bid.
+             */
+            NULL                                          AS bid_group,
+            NULL                                          AS total_bids,
+            NULL                                          AS ghr_bids,
+            NULL                                          AS competitive_bids,
             ISNULL(pl.n, 0)                               AS placement_count,
             CASE WHEN pl.n > 0
                  THEN CAST(DATEDIFF(HOUR, jo.dateAdded, pl.first_placed) AS FLOAT) / 24.0
@@ -570,6 +636,16 @@ def _symplr_closed_rows(cursor, app_conn, lookback):
             -- Symplr records no engagement type, so these rows carry no rank
             -- rather than being ranked against a category they never stated.
             NULL                                          AS rate_category,
+            /* No bid concept on this book. Bullhorn is direct business --
+             * GHR is the only agency on the req, so "competitive bids" has no
+             * meaning rather than being zero. Symplr records no vendor
+             * competition either. Null, not 0, so the UI can say "not
+             * recorded on this book" instead of implying nobody bid.
+             */
+            NULL                                          AS bid_group,
+            NULL                                          AS total_bids,
+            NULL                                          AS ghr_bids,
+            NULL                                          AS competitive_bids,
             lt.status                                     AS status,
             CAST(lt.date_entered AS DATE)                 AS opened_on,
             CAST(COALESCE(lt.BookedByDT, lt.voiddt, lt.datetimemodified) AS DATE) AS closed_on,
