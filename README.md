@@ -2,6 +2,29 @@
 
 ## Version History
 
+### 2.31.0 - Closed Job Detail: three panels into two
+- **Section 1 (Financial & Comparative)** and **Section 2 (Market Position & Bids)**,
+  replacing three panels. The old Panel C repeated Panel A almost entirely -- Rate Rank,
+  Days to Close, Comparable Median and Revenue each appeared twice under different
+  sub-labels, which reads as two measures rather than one shown twice
+- **One revenue figure, labelled by its sign.** `revenue` is signed at the source, so a
+  record is captured *or* missed, never both. The three-panel layout could show
+  "Revenue Captured $0" above "Revenue Outcome -$48,000" -- the same number stated twice
+  and contradicting itself once
+- **Bid activity on the record**: total, GHR and competitive bids, plus the winning
+  supplier. Bid-to-fill has no source -- neither VMS records a first-bid timestamp, and
+  Days to Close measures a different span -- so it says "Data Not Available" with the
+  reason rather than reusing a number that would look right and be wrong
+- **Owner appears on the record**, not only in a column the reader has scrolled past by
+  the time the panel is open
+- GHR Market Rank moved to Section 2. It is a market measure, and sitting it beside Rate
+  Rank invited the two to be read as the same ranking
+- Panel C's code kept as a comment rather than deleted
+- Verified by rendering against live data -- real closed B4 orders with their real bid
+  counts at accounts carrying a live vendor panel, plus rows at accounts without one.
+  No label appears twice in the expanded record, across GHR Won / Affiliate Won / Missed
+  and both market-share branches
+
 ### 2.30.1 - Due chip stays in one piece
 - The derived due phrase broke across two lines in the narrow Next Action column
   ("7d" above "overdue"), reading as two separate values. Kept whole

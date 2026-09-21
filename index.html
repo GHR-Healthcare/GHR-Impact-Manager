@@ -7262,10 +7262,14 @@
         return acct ? { ...acct, scope: `all roles at ${hs}` } : null;
       },
 
-      /* ---- Closed row detail: three panels, matching the reference ----
+      /* ---- Closed row detail: two sections ----
        *
        * The reference shows Closed Financial Summary | Market Share |
        * Comparable Performance. Ours showed only a market-share donut.
+       *
+       * Built as three panels to match, then folded to two in 2.31.0 because
+       * Comparable Performance repeated Panel A almost entirely (see the note
+       * above closedDetail's Section 1).
        *
        * Two of the reference's numbers are mock formulas rather than measured
        * values, so they are computed for real here instead of ported:
@@ -7405,37 +7409,129 @@
         const none = '<span class="text-slate-300 font-normal">—</span>';
         const panel = inner => `<section class="bg-white border border-slate-200 rounded-lg p-3.5 flex flex-col">${inner}</section>`;
 
-        // ---- Panel A: Closed Financial Summary ----
-        const captured = rev > 0 ? money(rev) : '$0';
-        const panelA = panel(`
+        // Days-to-close bars. Defined here rather than inside a panel now that
+        // the chart lives in Section 1 alongside the figures it plots.
+        const barMax = Math.max(hasDtc ? dtc : 0, cmp ? cmp.median : 0) || 1;
+        const bar = (label, val, cls) => `
+          <div class="grid grid-cols-[104px_1fr_52px] items-center gap-2 my-1.5 text-[11px]">
+            <span class="text-slate-500 truncate">${label}</span>
+            <span class="h-2.5 bg-slate-100 rounded-full overflow-hidden">
+              <span class="block h-full rounded-full ${cls}"
+                    style="width:${Math.max(8, Math.round((val / barMax) * 100))}%"></span>
+            </span>
+            <span class="text-slate-600 text-right tabular-nums">${val} days</span>
+          </div>`;
+
+        /* Two sections, not three. The feedback's success test is that the
+         * expanded record explains financial result, competitive position and
+         * outcome drivers *without repeating information* -- and the old
+         * Panel C repeated almost all of Panel A: Rate Rank, Days to Close,
+         * Comparable Median and Revenue each appeared twice, with different
+         * sub-labels, which reads as two measures rather than one shown twice.
+         *
+         * Section 1 = financial + comparative (what happened, and how it
+         * compares). Section 2 = market position + bids (who else was in it).
+         * Panel C's own code is kept commented below rather than deleted.
+         */
+
+        // ---- Section 1: Financial & Comparative Performance ----
+        /* One revenue figure, labelled by its sign. `revenue` is signed at the
+         * source -- positive is captured, negative is missed -- so a record is
+         * one or the other, never both, and showing "Revenue Captured $0"
+         * above "Revenue Outcome -$48,000" (as the three-panel layout did)
+         * states the same number twice and contradicts itself once.
+         */
+        const isMissed = rev < 0;
+        const revLabel = isMissed ? 'Revenue Missed' : 'Revenue Captured';
+        const revTone = rev > 0 ? 'text-emerald-600' : isMissed ? 'text-red-600' : 'text-slate-800';
+        const section1 = panel(`
           ${View.panelHead('Closed placement + financial data')}
-          <h5 class="text-xs font-bold uppercase tracking-wide text-slate-600">Closed Financial Summary</h5>
+          <h5 class="text-xs font-bold uppercase tracking-wide text-slate-600">Financial &amp; Comparative Performance</h5>
           <p class="text-[11px] text-slate-500 mt-0.5 mb-3">
-            Financial value and close performance, ahead of the activity timeline.
+            What this close was worth, and how it performed against comparable demand.
           </p>
           <div class="bg-slate-50/70 border border-slate-200 rounded-lg px-3 py-2.5 mb-2">
-            <div class="text-[9px] uppercase tracking-wide text-slate-400 font-semibold">Revenue Captured</div>
-            <div class="text-2xl font-extrabold mt-0.5 ${rev > 0 ? 'text-emerald-600' : 'text-slate-800'}">${captured}</div>
+            <div class="text-[9px] uppercase tracking-wide text-slate-400 font-semibold">${revLabel}</div>
+            <div class="text-2xl font-extrabold mt-0.5 ${revTone}">${rev ? money(Math.abs(rev)) : '$0'}</div>
           </div>
           <div class="grid grid-cols-2 gap-2">
-            ${View.panelTile('Days to Close', hasDtc ? dtc : none)}
-            ${View.panelTile('Comparable Median', cmp ? `${cmp.median} days` : none,
-                             cmp ? `${cmp.n} peers · ${cmp.scope}` : 'fewer than 3 comparable closes')}
+            ${View.panelTile('Bill Rate', r.bill_rate ? '$' + Number(r.bill_rate).toFixed(0) + '/hr' : none)}
             ${View.panelTile('Rate Rank', rr ? (rr.ordinal ? `#${rr.rank} of ${rr.of}` :
                              (rr.pct >= 67 ? 'Above' : rr.pct <= 33 ? 'Below' : 'At market')) : none,
-                             rr ? rr.scope : 'no comparable rates')}
-            ${View.panelTile('Bill Rate', r.bill_rate ? '$' + Number(r.bill_rate).toFixed(0) + '/hr' : none)}
+                             rr ? `${rr.pct}th percentile &middot; ${View.esc(rr.scope)}` : 'no comparable rates')}
+            ${View.panelTile('Days to Close', hasDtc ? dtc : none)}
+            ${View.panelTile('Comparable Median', cmp ? `${cmp.median} days` : none,
+                             cmp ? `${cmp.n} peers &middot; ${View.esc(cmp.scope)}` : 'fewer than 3 comparable closes')}
           </div>
+          ${(hasDtc && cmp) ? `
+            <div class="mt-3">
+              <div class="text-[9px] font-bold uppercase tracking-wide text-slate-500 mb-1">Days to Close vs Comparables</div>
+              ${bar('This Job', dtc, dtc <= cmp.median ? 'bg-emerald-500' : 'bg-blue-600')}
+              ${bar('Comparable Median', cmp.median, 'bg-slate-400')}
+            </div>`
+          : `<p class="text-[10px] text-slate-400 mt-3">
+               ${hasDtc ? 'Too few comparable closes to chart against.'
+                        : 'This job carries no close date, so it cannot be compared.'}
+             </p>`}
           <div class="mt-2 bg-slate-50/70 border border-slate-200 rounded-lg px-3 py-2">
-            <div class="text-[10px] font-bold text-slate-600">Outcome</div>
-            <div class="text-[11px] text-slate-600 mt-0.5">
-              ${View.esc([View.closedOutcomeLabel(r), View.closedFilledBy(r), r.outcome_reason]
-                          .filter(Boolean).join(' · '))}
+            <div class="flex items-start justify-between gap-3">
+              <div class="min-w-0">
+                <div class="text-[10px] font-bold text-slate-600">Outcome</div>
+                <div class="text-[11px] text-slate-600 mt-0.5">
+                  ${View.esc([View.closedOutcomeLabel(r), View.closedFilledBy(r), r.outcome_reason]
+                              .filter(Boolean).join(' · '))}
+                </div>
+              </div>
+              <!-- Owner belongs on the record, not only in a column the reader
+                   has scrolled past by the time the panel is open. -->
+              <div class="text-right shrink-0">
+                <div class="text-[9px] uppercase tracking-wide text-slate-400 font-semibold">Owner</div>
+                <div class="text-[11px] font-semibold text-slate-700">${View.esc(r.account_manager || '—')}</div>
+              </div>
             </div>
           </div>`);
 
-        // ---- Panel B: Market Share ----
-        let panelB;
+        // ---- Section 2: Market Position & Bid Activity ----
+        /* GHR Market Rank moves here from the old Panel C. It is a market
+         * measure -- where GHR sits among the vendors holding seats -- and
+         * sitting it beside Rate Rank in a "comparable performance" panel
+         * invited the two to be read as the same ranking.
+         */
+        const mr = View.closedMarketRank(d);
+        /* Bids come from the job, not the row: a VNDLY job repeats its bid
+         * count on every work order, so bid_group identifies the job the
+         * counts belong to. Absent on non-MSP, where Bullhorn is direct
+         * business and GHR is the only agency on the req -- so the block is
+         * omitted rather than showing noughts that would read as "nobody bid".
+         */
+        const hasBids = !!r.bid_group && r.total_bids != null;
+        const totalBids = Number(r.total_bids) || 0;
+        const ghrBids = Number(r.ghr_bids) || 0;
+        const compBids = r.competitive_bids == null ? (totalBids - ghrBids) : Number(r.competitive_bids);
+        const bidShare = totalBids ? Math.round((ghrBids / totalBids) * 100) : null;
+        const bidBlock = !hasBids ? '' : `
+          <div class="mt-3 pt-3 border-t border-slate-100">
+            <div class="text-[9px] font-bold uppercase tracking-wide text-slate-500 mb-1.5">Bid Activity</div>
+            <div class="grid grid-cols-3 gap-2">
+              ${View.panelTile('Total Bids', totalBids || none)}
+              ${View.panelTile('GHR Bids', ghrBids || none, bidShare == null ? null : `${bidShare}% of the field`)}
+              ${View.panelTile('Competitive', compBids || (compBids === 0 ? '0' : none),
+                               compBids === 0 ? 'GHR bid unopposed' : null)}
+            </div>
+            <div class="grid grid-cols-2 gap-2 mt-2">
+              ${View.panelTile('Winning Supplier', View.esc(View.closedFilledBy(r)))}
+              ${/* Bid-to-fill has no source: neither VMS records a first-bid
+                    timestamp, so the interval cannot be computed. Days to
+                    Close in Section 1 measures from open to fill, which is a
+                    different span -- naming this one "Data Not Available" is
+                    honest where reusing that number would not be. */''}
+              ${View.panelTile('Bid to Fill',
+                               '<span class="text-slate-400 text-xs font-normal">Data Not Available</span>',
+                               'no first-bid timestamp in either VMS')}
+            </div>
+          </div>`;
+
+        let section2;
         if (d) {
           const palette = ['#f97316', '#7c3aed', '#0aa36c', '#e11d48', '#0891b2', '#a16207'];
           let other = 0;
@@ -7449,9 +7545,9 @@
           if (other) seg.push({ label: 'Other', value: other, color: '#94a3b8' });
           const total = seg.reduce((a, x) => a + (Number(x.value) || 0), 0);
           const lift = View.closedCaptureImpact(r);
-          panelB = panel(`
+          section2 = panel(`
             ${View.panelHead('Active placements + closed outcomes')}
-            <h5 class="text-xs font-bold uppercase tracking-wide text-slate-600">Market Share</h5>
+            <h5 class="text-xs font-bold uppercase tracking-wide text-slate-600">Market Position &amp; Bids</h5>
             <p class="text-[11px] text-slate-500 mt-0.5 mb-2">
               Vendor share for comparable roles at the account &mdash; ${View.esc(d.scope)}.
             </p>
@@ -7469,72 +7565,53 @@
                 <div class="text-[10px] text-slate-400 mt-1">${d.total} clinician${d.total === 1 ? '' : 's'} on seat</div>
               </div>
             </div>
-            ${lift ? `
-              <div class="mt-3 border-l-[3px] rounded px-2.5 py-2 ${
-                lift.pts >= 0 ? 'border-emerald-500 bg-emerald-50' : 'border-red-500 bg-red-50'}">
-                <div class="text-[9px] uppercase tracking-wide font-bold ${
-                  lift.pts >= 0 ? 'text-emerald-700' : 'text-red-700'}">Impact on Account Capture</div>
-                <div class="text-base font-bold ${lift.pts >= 0 ? 'text-emerald-700' : 'text-red-700'}">
-                  ${lift.pts > 0 ? '+' : ''}${lift.pts} pts
-                </div>
-                <div class="text-[9px] text-slate-500 mt-0.5">
-                  capture across ${lift.n} decided seat${lift.n === 1 ? '' : 's'} here, with this one against without
-                </div>
-              </div>` : ''}`);
+            <div class="grid grid-cols-2 gap-2 mt-3">
+              ${View.panelTile('GHR Market Rank', mr ? `#${mr.rank} of ${mr.of}` :
+                               '<span class="text-slate-400 text-xs font-normal">Not ranked</span>',
+                               mr ? 'by seats held here' : 'GHR holds no seat here')}
+              ${lift ? View.panelTile('Impact on Account Capture',
+                         `<span class="${lift.pts >= 0 ? 'text-emerald-600' : 'text-red-600'}">${
+                           lift.pts > 0 ? '+' : ''}${lift.pts} pts</span>`,
+                         `across ${lift.n} decided seat${lift.n === 1 ? '' : 's'} here`)
+                     : View.panelTile('Impact on Account Capture',
+                         '<span class="text-slate-400 text-xs font-normal">Data Not Available</span>',
+                         'no decided seats here to measure against')}
+            </div>
+            ${bidBlock}`);
         } else {
-          panelB = panel(`
+          section2 = panel(`
             ${View.panelHead('Active placements + closed outcomes')}
-            <h5 class="text-xs font-bold uppercase tracking-wide text-slate-600">Market Share</h5>
+            <h5 class="text-xs font-bold uppercase tracking-wide text-slate-600">Market Position &amp; Bids</h5>
             <p class="text-[11px] text-slate-400 mt-2">
               No live vendor panel at this account to compare against.
-            </p>`);
+            </p>
+            ${bidBlock}`);
         }
 
-        // ---- Panel C: Comparable Performance ----
-        const mr = View.closedMarketRank(d);
-        const barMax = Math.max(hasDtc ? dtc : 0, cmp ? cmp.median : 0) || 1;
-        const bar = (label, val, cls) => `
-          <div class="grid grid-cols-[104px_1fr_52px] items-center gap-2 my-1.5 text-[11px]">
-            <span class="text-slate-500 truncate">${label}</span>
-            <span class="h-2.5 bg-slate-100 rounded-full overflow-hidden">
-              <span class="block h-full rounded-full ${cls}"
-                    style="width:${Math.max(8, Math.round((val / barMax) * 100))}%"></span>
-            </span>
-            <span class="text-slate-600 text-right tabular-nums">${val} days</span>
-          </div>`;
-        const panelC = panel(`
-          ${View.panelHead('Comparable closed jobs')}
-          <h5 class="text-xs font-bold uppercase tracking-wide text-slate-600">Comparable Performance</h5>
-          <p class="text-[11px] text-slate-500 mt-0.5 mb-3">How this closed job ranked against similar demand.</p>
-          <div class="grid grid-cols-2 gap-2">
-            ${View.panelTile('GHR Market Rank', mr ? `#${mr.rank} of ${mr.of}` :
-                             '<span class="text-slate-400 text-xs font-normal">Not ranked</span>',
-                             mr ? 'by seats held here' : 'GHR holds no seat here')}
-            ${View.panelTile('Rate Rank', rr ? (rr.ordinal ? `#${rr.rank} of ${rr.of}` :
-                             (rr.pct >= 67 ? 'Above' : rr.pct <= 33 ? 'Below' : 'At market')) : none,
-                             rr ? `${rr.pct}th percentile` : 'no comparable rates')}
-            ${View.panelTile('This Job · Days to Close', hasDtc ? dtc : none)}
-            ${View.panelTile('Comparable Median', cmp ? `${cmp.median} days` : none)}
-          </div>
-          ${(hasDtc && cmp) ? `
-            <div class="mt-3">
-              <div class="text-[9px] font-bold uppercase tracking-wide text-slate-500 mb-1">Days to Close vs Comparables</div>
-              ${bar('This Job', dtc, dtc <= cmp.median ? 'bg-emerald-500' : 'bg-blue-600')}
-              ${bar('Comparable Median', cmp.median, 'bg-slate-400')}
-            </div>`
-          : `<p class="text-[10px] text-slate-400 mt-3">
-               ${hasDtc ? 'Too few comparable closes to chart against.' : 'This job carries no close date, so it cannot be compared.'}
-             </p>`}
-          <div class="mt-3">
-            ${View.panelTile('Revenue Outcome',
-                `<span class="${rev > 0 ? 'text-emerald-600' : rev < 0 ? 'text-red-600' : ''}">${
-                  rev ? (rev > 0 ? '+' : '') + money(rev) : money(0)}</span>`)}
-          </div>`);
+        /* ---- Panel C: Comparable Performance (superseded in 2.31.0) ----
+         * Folded into Section 1. Kept rather than deleted: it duplicated
+         * Rate Rank, Days to Close, Comparable Median and Revenue from
+         * Panel A, and GHR Market Rank moved to Section 2.
+         *
+         * const panelC = panel(`
+         *   ${View.panelHead('Comparable closed jobs')}
+         *   <h5 ...>Comparable Performance</h5>
+         *   <p ...>How this closed job ranked against similar demand.</p>
+         *   <div class="grid grid-cols-2 gap-2">
+         *     ${View.panelTile('GHR Market Rank', ...)}
+         *     ${View.panelTile('Rate Rank', ...)}
+         *     ${View.panelTile('This Job · Days to Close', ...)}
+         *     ${View.panelTile('Comparable Median', ...)}
+         *   </div>
+         *   ... days-to-close bars ...
+         *   ${View.panelTile('Revenue Outcome', ...)}
+         * `);
+         */
 
         return `
           <div class="p-4 bg-slate-50 border-t border-slate-100">
-            <div class="grid grid-cols-1 xl:grid-cols-3 gap-3">
-              ${panelA}${panelB}${panelC}
+            <div class="grid grid-cols-1 xl:grid-cols-2 gap-3">
+              ${section1}${section2}
             </div>
           </div>`;
       },

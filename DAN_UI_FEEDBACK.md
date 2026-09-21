@@ -36,7 +36,7 @@ Status column is mine, as of 2026-09-21.
 |---|---|
 | Keep all summary KPIs on one row | **done** (2.26.2) |
 | Remove Monthly and Annualized Revenue Captured | **done** — parked as comments |
-| Retain revenue captured, capture rate, days to close, revenue missed, ended early, bid activity | **5 of 6** — bid activity has no data source |
+| Retain revenue captured, capture rate, days to close, revenue missed, ended early, bid activity | **done** (2.28.0) — bid activity sourced from the submissions tables |
 | Use recovered space for more visible records | **done** — 244px → 106px |
 | Rate Rank must populate for every job with a valid comparison group | **partly** — fixed in 2.24.4; needs verifying across cohorts |
 | Benchmark within the correct category (Nursing, Allied, Non-Clinical) | open — currently facility+specialty, not workforce cohort |
@@ -50,9 +50,17 @@ days to close and comparable median, rate rank, outcome, owner.
 Section 2 (Market Share + Bids): GHR share and competitor distribution, total/GHR/competitive
 bids, winning supplier and bid-to-fill, how the job changed account capture.
 
-**Status:** open. Bids and winning supplier have no data source.
+**Status: done (2.31.0).** Section 1 = Financial & Comparative Performance, Section 2 =
+Market Position & Bids. Bids and winning supplier are sourced as of 2.28.0; bid-to-fill
+still has no source (neither VMS records a first-bid timestamp) and says so.
 Success test: the expanded record explains financial result, competitive position and
 outcome drivers without repeating information.
+
+The old Panel C repeated Rate Rank, Days to Close, Comparable Median and Revenue from
+Panel A under different sub-labels -- which read as two measures rather than one shown
+twice. Verified by rendering: no label appears more than once in the expanded record,
+across GHR Won / Affiliate Won / Missed and both the with- and without-vendor-panel
+branches. Owner now appears on the record, not only in a column.
 
 ## 04 / Open Jobs — replace the fragmented detail with a usable funnel
 
@@ -60,7 +68,7 @@ outcome drivers without repeating information.
 |---|---|
 | Remove the redundant MSP box; keep a small badge in the header | open |
 | Full width for a funnel or horizontal bar chart | open |
-| Stages: Submitted, Under Review, Interview, Offer, Accepted, Declined | **partly** — Accepted added (2.20.0); no "Under Review" stage exists |
+| Stages: Submitted, Under Review, Interview, Offer, Accepted, Declined | **done** — Accepted (2.20.0), Under Review (2.29.0) |
 | Stage counts, conversion rates, and where each decline occurred | **partly** — counts and conversion done; decline stage not captured |
 | Candidate activity below the visualization, independently scrollable | open |
 | Show multiple candidates at once | open |
@@ -73,7 +81,7 @@ outcome drivers without repeating information.
 |---|---|---|
 | Contextual footer — Revenue Won/Missed/Open Exposure follow module, filters, population | Changing a filter or tab recalculates all three without refresh | needs verifying |
 | Space efficiency | First screen shows materially more actionable records at standard desktop | in progress |
-| Action ownership — every record shows decision, owner, due date, next action | No task requires opening multiple panels | **partly** — Extensions only |
+| Action ownership — every record shows decision, owner, due date, next action | No task requires opening multiple panels | **done** (2.30.0) — Extensions and Onboarding carry a compact task area in the row and the panel; due date derived from days left / days to start |
 | Data integrity — missing source events distinguished from true zero | Unavailable data shows a reason or "Data Not Available", never a misleading zero | **partly** — fixed in several places (bill rate, financials, RTO), not systematic |
 | Benchmark logic — comparable rates use the appropriate workforce and job cohort | Nursing, Allied and Non-Clinical never blended | open |
 
@@ -91,9 +99,15 @@ outcome drivers without repeating information.
 
 Three of his asks have no source today and need a data decision before any UI work:
 
-- **Bid activity** (total / GHR / competitive bids) — nothing in `GetClosed` or anywhere in the app
-- **Winning supplier** on affiliate wins — `agency` carries the winner but is not surfaced as such
-- **"Under Review"** as a distinct pipeline stage — not in `Utils.INTERVIEW_STAGES`
+~~- **Bid activity** (total / GHR / competitive bids)~~ — **resolved 2.28.0**, from the B4 and
+  VNDLY submissions tables. VNDLY must be collapsed per job first: a job's bid count repeats
+  on every work order, up to 49 of them, which inflated the count 7.5x
+~~- **Winning supplier** on affiliate wins~~ — **resolved 2.31.0**, surfaced in Section 2
+~~- **"Under Review"** as a distinct pipeline stage~~ — **resolved 2.29.0**
+
+Still genuinely without a source:
+- **Bid-to-fill interval** — neither VMS records a first-bid timestamp. Days to Close measures
+  open-to-fill, a different span, so the tile says "Data Not Available" rather than reusing it
 
 ## The theme worth pulling out
 
