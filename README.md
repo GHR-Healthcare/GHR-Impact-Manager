@@ -2,6 +2,10 @@
 
 ## Version History
 
+### 2.30.1 - Due chip stays in one piece
+- The derived due phrase broke across two lines in the narrow Next Action column
+  ("7d" above "overdue"), reading as two separate values. Kept whole
+
 ### 2.30.0 - Derived action due dates, and one aging ladder behind all of them
 - **Due dates are derived from Days Left, not entered.** A decision is due when the
   seat would otherwise enter the critical band, so the owner keeps the last 7 days

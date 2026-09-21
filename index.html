@@ -8518,7 +8518,7 @@
         return `
           <span class="px-1.5 py-0.5 rounded text-[9px] font-bold ${tone}">${b.owner}</span>
           ${b.who ? `<span class="text-[10px] text-slate-500 ml-1">${View.esc(b.who)}</span>` : ''}
-          ${due ? `<span class="ml-1 px-1.5 py-0.5 rounded text-[9px] font-bold ${dueTone}"
+          ${due ? `<span class="ml-1 px-1.5 py-0.5 rounded text-[9px] font-bold whitespace-nowrap inline-block ${dueTone}"
                          title="Due ${due.dateText} &mdash; derived from ${r.days_left} day${r.days_left === 1 ? '' : 's'} left, allowing ${Utils.AGING_CRITICAL_DAYS} days to execute after the decision">${due.text}</span>` : ''}
           <div class="text-[10px] text-blue-700 mt-0.5 leading-snug">${View.esc(b.action)}</div>`;
       },
@@ -8916,7 +8916,7 @@
         return `
           <span class="px-1.5 py-0.5 rounded text-[9px] font-bold ${tone}">${b.owner}</span>
           ${b.who ? `<span class="text-[10px] text-slate-500 ml-1">${View.esc(b.who)}</span>` : ''}
-          ${due ? `<span class="ml-1 px-1.5 py-0.5 rounded text-[9px] font-bold ${dueTone}"
+          ${due ? `<span class="ml-1 px-1.5 py-0.5 rounded text-[9px] font-bold whitespace-nowrap inline-block ${dueTone}"
                          title="Due ${due.dateText} &mdash; derived from the start date, allowing ${Utils.AGING_CRITICAL_DAYS} days to onboard">${due.text}</span>` : ''}
           ${pm && pm !== b.who ? `<div class="text-[10px] text-slate-400 mt-0.5">AM &middot; ${View.esc(pm)}</div>` : ''}
           ${r.next_action ? `<div class="text-[10px] text-blue-700 mt-0.5 leading-snug">${View.esc(b.action)}</div>` : ''}`;
