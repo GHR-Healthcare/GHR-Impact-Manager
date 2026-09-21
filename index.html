@@ -9300,9 +9300,21 @@
               if (!r.bid_group || r.total_bids == null) return;
               if (!groups.has(r.bid_group)) groups.set(r.bid_group, r);
             });
+            /* Omitted entirely where bids cannot apply, rather than shown
+             * as a dash. Non-MSP is direct business -- GHR is the only agency
+             * on the req -- so competitive bids are not MISSING, they do not
+             * exist, and a card saying so spends a slot on "not relevant
+             * here" in a row whose whole purpose is actionable numbers.
+             *
+             * The "never a misleading zero" rule still holds where a metric
+             * genuinely applies and the source did not capture it -- that is
+             * a dash with a reason. It is not a reason to keep a card alive
+             * for a book the measure means nothing on.
+             */
+            if (nonMspKpi) return null;
             if (!groups.size) {
               return { label: 'Bid Activity', val: '—',
-                       sub: nonMspKpi ? 'not recorded on this book' : 'no bids on these records',
+                       sub: 'no bids recorded on these records',
                        icon: 'gavel', color: 'slate' };
             }
             let total = 0, ghr = 0;
@@ -9315,19 +9327,22 @@
               icon: 'gavel', color: 'indigo',
             };
           })(),
-          // Drillable: clicking narrows the table to these rows. Non-MSP shows
-          // it as unavailable rather than as zero -- Bullhorn's reasonClosed is
-          // order-level, so "no early ends" there would be a claim the data
-          // cannot support. See Utils.endedEarly.
-          { label: 'Ended Early',
-            val: nonMspKpi ? '—' : endedEarlyRows.length,
-            sub: nonMspKpi
-              ? 'not recorded on this book'
-              : `of ${allClosed.filter(r => Utils.FILLED_CLOSED_GROUPS.includes(r.group)).length} filled`,
+          /* Drillable: clicking narrows the table to these rows.
+           *
+           * Omitted on non-MSP rather than shown as a dash. Bullhorn's
+           * reasonClosed is order-level (Filled / Lost to Competition /
+           * Cancelled by Client), so an early end cannot be determined there
+           * at all -- and a card that exists only to report its own
+           * inapplicability costs a slot in the row Dan wants spent on
+           * records. When the source can answer it, it answers.
+           */
+          ...(nonMspKpi ? [] : [{
+            label: 'Ended Early',
+            val: endedEarlyRows.length,
+            sub: `of ${allClosed.filter(r => Utils.FILLED_CLOSED_GROUPS.includes(r.group)).length} filled`,
             icon: 'scissors', color: 'amber',
-            onClick: nonMspKpi || !endedEarlyRows.length
-              ? null : "store.dispatch('TOGGLE_CLOSED_ENDED_EARLY')",
-            active: !!s.closedEndedEarlyOnly },
+            onClick: endedEarlyRows.length ? "store.dispatch('TOGGLE_CLOSED_ENDED_EARLY')" : null,
+            active: !!s.closedEndedEarlyOnly }]),
         ]);
 
         // Grouped like the reference: outcome buckets in a fixed order, each
@@ -9885,6 +9900,10 @@
       renderKpiCards(cards) {
         const container = $('kpiContainer');
         if (!container) return;
+        // Falsy entries are dropped so a card can opt out of a book entirely
+        // by returning null, rather than rendering to say it does not apply.
+        // A measure that means nothing on this instance should cost no space.
+        cards = (cards || []).filter(Boolean);
         container.innerHTML = cards.map(c => `
           <div class="bg-white p-2 sm:p-4 rounded-lg border shadow-sm flex flex-col justify-between hover:shadow-md transition-shadow relative ${
                  c.active ? 'border-blue-400 ring-1 ring-blue-200' : 'border-slate-200'

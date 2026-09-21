@@ -2,6 +2,17 @@
 
 ## Version History
 
+### 2.28.1 - Don't spend a card saying a measure doesn't apply here
+- Bid Activity and Ended Early are now **omitted** on non-MSP rather than rendered
+  as a dash. Non-MSP is direct business -- GHR is the only agency on the req -- so
+  competitive bids don't exist there, and Bullhorn's order-level `reasonClosed`
+  can't determine an early end. A card whose content is "not applicable" is the
+  opposite of the stated principle of spending space on actionable numbers
+- The distinction: **inapplicable** → omit the card; **applicable but not captured**
+  → show it with a reason. "Never a misleading zero" governs the second, not the first
+- `renderKpiCards` drops falsy entries, so any card can opt out of a book
+- Result: MSP shows six cards, non-MSP four real ones, both on one row
+
 ### 2.28.0 - Bid activity, from submissions tables nothing was reading
 - Dan's sixth Closed KPI is built. `dhc.B4Health_Contract_Submissions` and
   `dbo.STAGING_VNDLY_SUBMISSIONS` carry one row per agency submission with the
