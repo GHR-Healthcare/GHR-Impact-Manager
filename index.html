@@ -2071,6 +2071,12 @@
                 // Team (Bullhorn correlatedCustomText5) nests under Division.
                 team: String(row.team || ''),
                 profession: String(row.profession || row.specialty_name || ''),
+                // Engagement-type axis the rate ladder ranks within, stamped
+                // by GetPositions from the programme name. Kept under its own
+                // key rather than reusing `program`: View.rateKeyOf checks for
+                // rate_category first precisely so a booking programme is
+                // never matched against a peer's employmentType.
+                rate_category: row.rate_category || '',
                 region: String(row.region || ''),
                 ghrSubs: row.ghrSubs || 0,
                 avSubs: row.avSubs || 0,
@@ -6303,6 +6309,52 @@
                 calculated on the gross rate, not the net &mdash; the fee is shown separately rather
                 than folded in, because it is a fact from the job and GM is a rate we apply.
               </p>` : ''}
+            ${(() => {
+              /* Market position, in the form the feedback asked for:
+               *   Current $110 · Market $102 · +7.8% · #3 of 27
+               * Market is the tightest all-accounts rung with enough peers;
+               * the internal rank stays the account ladder below. Renders
+               * nothing at all when the peer set cannot support it, rather
+               * than showing a zero or an empty band.
+               */
+              const mk = View.rateMarket(job);
+              const rr = View.rateRank(job);
+              if (!mk && !rr) return '';
+              const m0 = v => (v || v === 0) ? '$' + Number(v).toFixed(0) : '\u2014';
+              const tone = v => Math.abs(v) < 1 ? 'bg-slate-50 border-slate-200 text-slate-600'
+                : v > 0 ? 'bg-amber-50 border-amber-200 text-amber-700'
+                        : 'bg-emerald-50 border-emerald-200 text-emerald-700';
+              return `
+                <div class="mt-4 pt-3 border-t border-slate-200">
+                  <div class="text-[10px] font-semibold uppercase tracking-wide text-slate-400 mb-1.5">Market Position</div>
+                  <div class="flex flex-wrap items-center gap-x-4 gap-y-2">
+                    <span class="flex items-baseline gap-1.5">
+                      <span class="text-[9px] uppercase tracking-wide text-slate-400 font-semibold">Current</span>
+                      <span class="text-sm font-bold text-slate-800">${m0(Utils.rateNum(job.billRate))}</span>
+                    </span>
+                    ${mk ? `
+                      <span class="flex items-baseline gap-1.5">
+                        <span class="text-[9px] uppercase tracking-wide text-slate-400 font-semibold">Market</span>
+                        <span class="text-sm font-bold text-slate-800">${m0(mk.market)}</span>
+                      </span>
+                      ${mk.variance == null ? '' : `
+                        <span class="text-xs font-bold rounded px-2 py-0.5 border ${tone(mk.variance)}"
+                              title="Against the median of ${mk.n} ${View.esc(mk.scope)} rate${mk.n === 1 ? '' : 's'}">
+                          ${mk.variance > 0 ? '+' : ''}${mk.variance.toFixed(1)}%
+                        </span>`}` : ''}
+                    ${rr ? `
+                      <span class="text-xs font-semibold text-slate-700 tabular-nums"
+                            title="Against comparable GHR openings (${View.esc(rr.scope)})">
+                        ${rr.ordinal ? `#${rr.rank} of ${rr.of}` : `${rr.pct}th pct of ${rr.of}`}
+                      </span>` : ''}
+                  </div>
+                  <div class="text-[9px] text-slate-400 mt-1 leading-snug">${
+                    mk ? `Market is the median of ${mk.n} ${View.esc(mk.scope)} rates over the
+                          last ${(window.store.state.rateMeta?.lookbackDays) || 90} days.`
+                       : 'No all-accounts comparison group large enough to quote a market rate.'}${
+                    rr ? ` Rank is against comparable GHR openings, ${View.esc(rr.scope)}.` : ''}</div>
+                </div>`;
+            })()}
             <div class="mt-4 pt-3 border-t border-slate-200">
               <div class="text-[10px] font-semibold uppercase tracking-wide text-slate-400 mb-1">Rate Rank</div>
               ${(() => {
@@ -8085,7 +8137,14 @@
        */
       rateKeyOf(r, field) {
         const v = field === 'account'
-          ? (r.health_system || r.facility || '')
+          // `account` last, and it is load-bearing: GetRateIntel emits peers
+          // with an `account` key and no health_system or facility, so
+          // without it every peer keyed to '' on this field and BOTH account
+          // rungs of the ladder were permanently empty. Every rank fell
+          // through to the all-accounts rungs -- correctly labelled, so it
+          // read as right -- and the account-level comparison the ladder
+          // exists to prefer had never once been made.
+          ? (r.health_system || r.facility || r.account || '')
           : field === 'profession' ? (r.profession || '')
           : field === 'specialty'  ? (r.specialty || '')
           // A Closed row's CATEGORY column is the booking programme ('Travel
@@ -8134,9 +8193,62 @@
         'category+profession': 'all accounts · profession',
       },
 
+      /* Which ladder rungs count as THE MARKET rather than our own book.
+       * Dan's example separates the two: "Market: $102" against
+       * "Internal Ranking: #3 of 27". The account rungs are our own pricing;
+       * only the all-accounts rungs are a market.
+       */
+      RATE_MARKET_RUNGS: ['category+profession+specialty', 'category+profession'],
+
+      /* Market rate and variance, from the peers already loaded for the rank.
+       *
+       * Tightest all-accounts rung that clears the peer floor -- same ladder
+       * discipline as rateRank, so "market" narrows to the specialty where
+       * the data supports it and widens to the profession where it does not,
+       * and the label says which.
+       *
+       * Median, not mean: one $400 outlier in a bucket of twenty drags an
+       * average somewhere no actual job sits. Measured on a live Rad Tech /
+       * Radiology Travel req at $100 -- 337 all-accounts peers, median $84,
+       * so +18.8%.
+       *
+       * Source is BH_BILL_RATE_TRENDS_OUTLIERS_FACT via GetRateIntel, which
+       * already ships these peers. Nothing new is fetched for this.
+       */
+      rateMarket(r) {
+        const s = window.store.state;
+        const bill = Utils.rateNum(r.bill_rate != null ? r.bill_rate : r.billRate);
+        if (!s.rateLoaded || !(bill > 0)) return null;
+        const meta = s.rateMeta || {};
+        const minPeers = meta.minPeers || 3;
+        const idx = View.rateIndex();
+        for (const rk of View.RATE_MARKET_RUNGS) {
+          const parts = rk.split('+').map(f => View.rateKeyOf(r, f));
+          if (parts.some(x => !x)) continue;
+          const rates = idx.get(rk)?.get(parts.join('|'));
+          if (!rates || rates.length < minPeers) continue;
+          // Already sorted descending; a median is symmetric so the middle
+          // reads the same either way.
+          const n = rates.length;
+          const market = n % 2 ? rates[(n - 1) / 2] : (rates[n / 2 - 1] + rates[n / 2]) / 2;
+          return {
+            market, n,
+            scope: View.RATE_SCOPE_LABEL[rk] || rk,
+            variance: market > 0 ? ((bill - market) / market) * 100 : null,
+          };
+        }
+        return null;
+      },
+
       rateRank(r) {
         const s = window.store.state;
-        const bill = Number(r.bill_rate);
+        /* Closed rows carry bill_rate, job rows carry billRate -- and a job
+         * row's is a DISPLAY string ("$100/hr"), so Number() on it is NaN.
+         * Reading only bill_rate meant this returned null for every open job,
+         * which is why the internal ranking never appeared on the Rate pane
+         * while the market figure beside it did. Utils.rateNum handles both.
+         */
+        const bill = Utils.rateNum(r.bill_rate != null ? r.bill_rate : r.billRate);
         if (!s.rateLoaded || !(bill > 0)) return null;
         const meta = s.rateMeta || {};
         const minPeers = meta.minPeers || 3;

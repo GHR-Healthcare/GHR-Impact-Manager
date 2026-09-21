@@ -261,30 +261,10 @@ def _closed_window(req, non_msp):
     return start, start + datetime.timedelta(days=6), 'previous week'
 
 
-# RATE RANK compares against Bullhorn job orders, whose category axis is
-# `employmentType` -- Travel / Local / Remote, an engagement type. MSP books a
-# programme instead, which fuses engagement type with service line: B4's
-# Program is 'Travel Nursing' / 'Local Contract Allied Health' / 'Contract
-# (Nursing)', VNDLY's Labor Type is 'Nursing' / 'Per Diem Nursing'. The two
-# vocabularies do not meet, so the engagement type is read back out of the
-# programme name -- but only where the name states it. 'Contract (Nursing)',
-# the single largest B4 bucket at 6,871 rows, could be travel or local and is
-# left unmapped rather than guessed: a Local seat ranked against Travel peers
-# reads as underpaid however well it is priced.
-#
-# Derivable on 16,749 of 29,106 B4 orders (58%). The rest carry no rank, which
-# is the honest answer.
-def _rate_category(programme):
-    p = (programme or '').lower()
-    if 'travel' in p:
-        return 'Travel'
-    if 'local' in p:
-        return 'Local'
-    if 'per diem' in p or 'perdiem' in p or 'prn' in p:
-        return 'Per Diem'
-    if 'remote' in p:
-        return 'Remote'
-    return None
+# Engagement-type axis for RATE RANK, shared with GetPositions so an open
+# job and a closed one rank on the same vocabulary. See shared_code/
+# rate_scope.py for why 'Contract (Nursing)' is deliberately unmapped.
+from shared_code.rate_scope import rate_category as _rate_category
 
 
 def _filled_by_and_revenue(row):

@@ -2,6 +2,29 @@
 
 ## Version History
 
+### 2.27.0 - Market position, derived from rate data that was already there
+- **Market rate is live.** `BH_BILL_RATE_TRENDS_OUTLIERS_FACT` already carries the
+  population and `GetRateIntel` already ships it, so the Rate pane now reads
+  `Current $100 · Market $84 · +18.8% · #5 of 23` -- the exact form the feedback
+  asked for, with no new fetch. Dan had deferred Rate to P3 on the assumption the
+  market data wasn't ready; 476K rows of `Client_Bill_Rate_AVG` run to Sep 2026
+- Market is the tightest **all-accounts** rung with enough peers; the rank stays the
+  **account** ladder, matching his split of "Market" from "Internal Ranking".
+  Median not mean -- one outlier in a small bucket moves an average off every real job
+- **The rate ladder's top two rungs had never fired.** `GetRateIntel` emits peers
+  with an `account` key; `rateKeyOf` read `health_system || facility`, which peers
+  don't have, so every peer keyed to `''` on that field and both account rungs were
+  permanently empty. Every rank silently fell through to all-accounts -- correctly
+  labelled, so it read as right. **77% of jobs (4,637 of 6,000) now rank against
+  their own account; previously none did**
+- `rateRank` read only `bill_rate`, so it returned null for every open job (they
+  carry `billRate`, and as a display string). Now uses `Utils.rateNum` on both
+- `rate_category` is emitted by `GetPositions` for all four sources, so an open job
+  and a closed one rank on the same axis. 1,050 of 1,052 live Bullhorn open jobs
+  resolve one; the two that don't are Permanent and correctly carry no rank
+- `rate_category()` moved to `shared_code/rate_scope.py` -- two copies would drift,
+  and a rank meaning one thing on Closed and another on Open Jobs is worse than none
+
 ### 2.26.2 - Closed KPIs back to one row; VNDLY client; Dan's feedback tracked
 - The Closed KPI row had seven cards in a six-column grid, so the seventh wrapped
   and left a band of dead space above the records. Monthly and Annualized Revenue

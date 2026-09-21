@@ -53,6 +53,31 @@ BULLHORN_TERMINAL_STATUSES = ('Placed', 'Placement')
 
 
 
+from shared_code.rate_scope import rate_category as _rate_category
+
+
+def _apply_rate_category(rows):
+    """
+    Stamp the engagement-type axis RATE RANK ranks within, on every row from
+    every source.
+
+    Applied to the finished list rather than inside each branch because the
+    four sources assemble rows in four different places -- Bullhorn and Symplr
+    through _apply_credential, B4 and VNDLY inline in main() -- and a rank that
+    exists on two books and not the other two is worse than none.
+
+    One call covers both vocabularies. Bullhorn's `program` IS employmentType
+    ('Travel'), which the peer set is built from, so it maps to itself; MSP's
+    is a programme name ('Travel Nursing'), which rate_category reads the
+    engagement type back out of. Anything that does not state one -- notably
+    B4's 'Contract (Nursing)' -- stays None and carries no rank rather than
+    being ranked against the wrong category.
+    """
+    for r in rows:
+        r['rate_category'] = _rate_category(r.get('program'))
+    return rows
+
+
 def _apply_credential(row_dict):
     """Fold both books into one credential vocabulary.
 
@@ -558,6 +583,7 @@ def _non_msp_positions(req: func.HttpRequest) -> func.HttpResponse:
         print(f"Symplr positions error: {e}")
         import traceback; traceback.print_exc()
         errors.append(f"symplr: {e}")
+    _apply_rate_category(positions)
     print(f"non-MSP positions: {len(positions)} rows (errors: {errors or 'none'})")
     return func.HttpResponse(
         json.dumps(positions, default=str),
@@ -892,6 +918,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
         
         conn.close()
         
+        _apply_rate_category(positions)
         b4_count = len([p for p in positions if p.get('source_system') == 'B4'])
         vndly_count = len([p for p in positions if p.get('source_system') == 'VNDLY'])
         print(f"Returning {len(positions)} positions (B4: {b4_count}, VNDLY: {vndly_count})")
