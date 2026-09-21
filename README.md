@@ -2,6 +2,25 @@
 
 ## Version History
 
+### 2.29.0 - Under Review in the funnel, and stages say when they aren't recorded
+- **Under Review** added between Submitted and Interview. It's VNDLY's shortlist,
+  and on that book it's where the volume actually sits: **611 submissions
+  shortlisted, all dated**, against 20 of 1,356 with a recorded interview date.
+  Without it those candidates showed as merely Submitted and the interview step
+  looked near-empty -- reading as a broken pipeline rather than an unrecorded stage
+- **Stages now declare when the source doesn't record them.** The cumulative count
+  assumes stages are sequential -- hold an offer, so you must have interviewed. On
+  VNDLY that's false: 474 offers against 19 interview dates. Counting it that way
+  had the funnel assert 474 interviews from 19 records, which is a misleading zero
+  pointed the other way
+- Each stage now also counts *direct* evidence. Where a stage has none but a later
+  one has volume, the row is marked "not captured" with the inference explained.
+  Verified across four shapes: VNDLY flags Interview, Bullhorn flags Under Review
+  (no shortlist concept), a complete funnel flags nothing, and a genuinely empty
+  funnel isn't mislabelled as a gap
+- Decline reasons needed no work -- `Hospital_Decline_Reason`, `Offer_Decline_Reason`
+  and VNDLY's `Rejected`/`Withdrawal Reason` were already flowing into candidates
+
 ### 2.28.1 - Don't spend a card saying a measure doesn't apply here
 - Bid Activity and Ended Early are now **omitted** on non-MSP rather than rendered
   as a dash. Non-MSP is direct business -- GHR is the only agency on the req -- so

@@ -2122,6 +2122,11 @@
                         date: submitDate,
                         offerDate: offerDate,
                         awardedDate: c.awardedDate ? new Date(c.awardedDate) : null,
+                        // VNDLY's shortlist flag, the funnel's "Under Review".
+                        // Absent on B4 and Bullhorn, which record no shortlist
+                        // -- those candidates skip the stage rather than being
+                        // counted as not having reached it.
+                        shortlistedDate: c.shortlistedDate ? new Date(c.shortlistedDate) : null,
                         rto: c.rto || null,
                         isDeclined: c.isDeclined || false,
                         declineType: declineType,
@@ -2701,8 +2706,15 @@
        * Editable only for internal submissions: an affiliate's pipeline is
        * theirs to report, not ours to overwrite.
        */
-      INTERVIEW_STAGES: ['Submitted', 'Interview Requested', 'Interview Scheduled',
-                         'Interview Complete', 'Offer Pending', 'Offer Accepted',
+      /* 'Under Review' sits between Submitted and the interview stages.
+       * It is VNDLY's shortlist, and on that book it carries the volume the
+       * interview stages do not: 611 submissions shortlisted and all dated,
+       * against 20 of 1,356 with a recorded interview date. B4 and Bullhorn
+       * have no shortlist concept, so their candidates never occupy it.
+       */
+      INTERVIEW_STAGES: ['Submitted', 'Under Review', 'Interview Requested',
+                         'Interview Scheduled', 'Interview Complete',
+                         'Offer Pending', 'Offer Accepted',
                          'Post-Offer Decline', 'Declined'],
 
       interviewKey(jobId, c) { return `${jobId}|${(c && c.name) || ''}`; },
@@ -2797,6 +2809,10 @@
         if (c.awardedDate) return 'Offer Accepted';
         if (c.offerDate) return 'Offer Pending';
         if (c.interviewDate) return 'Interview Scheduled';
+        // Checked after interview, not before: a shortlisted candidate who
+        // then interviewed has reached the later stage, and the funnel counts
+        // everyone who got AT LEAST this far anyway.
+        if (c.shortlistedDate) return 'Under Review';
         return 'Submitted';
       },
 
@@ -6467,21 +6483,50 @@
           // Pending and Post-Offer Decline, so the funnel ended at "an offer
           // went out" and never said how many were taken -- the one step that
           // says whether the job actually got filled.
-          if (st === 'Offer Accepted') return 3;
-          if (st === 'Offer Pending' || st === 'Post-Offer Decline') return 2;
+          if (st === 'Offer Accepted') return 4;
+          if (st === 'Offer Pending' || st === 'Post-Offer Decline') return 3;
           if (st === 'Interview Requested' || st === 'Interview Scheduled'
-              || st === 'Interview Complete') return 1;
+              || st === 'Interview Complete') return 2;
+          // Under Review is VNDLY's shortlist, and on that book it is where
+          // the volume sits: 611 shortlisted against 20 with a recorded
+          // interview. Without it the funnel showed those candidates as
+          // merely Submitted and the interview step as near-empty, which read
+          // as a broken pipeline rather than an unrecorded stage.
+          if (st === 'Under Review') return 1;
           return 0;
         };
-        const STAGES = ['Submitted', 'Interview', 'Offer', 'Accepted'];
+        const STAGES = ['Submitted', 'Under Review', 'Interview', 'Offer', 'Accepted'];
+        /* Does the source actually record this stage, or are we inferring it?
+         *
+         * The cumulative count assumes the stages are sequential: hold an
+         * offer, so you must have interviewed. That is false on VNDLY, which
+         * records 474 offers against 19 interview dates -- the interview
+         * happens, it just is not written down. Counting it cumulatively
+         * would have the funnel assert 474 interviews from 19 records, which
+         * is the same failure as showing a missing value as zero, pointed the
+         * other way.
+         *
+         * So each stage also counts DIRECT evidence -- candidates whose own
+         * recorded stage is that stage. Where a stage has no direct evidence
+         * at all but a later one has volume, the row is marked notCaptured
+         * and the view says so instead of quoting an inferred number.
+         */
+        const directAt = i => cands.filter(c => rankOf(stageOf(c)) === i).length;
         const rows = STAGES.map((label, i) => {
           // Everyone who got at least this far, declines included -- the
           // funnel describes what happened, not who is still live.
           const reached = cands.filter(c => rankOf(c) >= i);
           const ghr = reached.filter(isGhr).length;
           const aff = reached.length - ghr;
-          return { label, ghr, aff, total: reached.length,
+          return { label, ghr, aff, total: reached.length, direct: directAt(i),
                    share: reached.length ? Math.round((ghr / reached.length) * 100) : 0 };
+        });
+        // Marked after the fact: a stage is uncaptured only if nothing sits at
+        // it AND something sits beyond it. A genuinely empty top of funnel is
+        // just an empty funnel, not a recording gap.
+        rows.forEach((r, i) => {
+          const beyond = rows.slice(i + 1).reduce((a, x) => a + x.direct, 0);
+          r.notCaptured = r.direct === 0 && beyond > 0 && i > 0;
         });
         // Step-to-step conversion, which is the number the funnel exists for.
         rows.forEach((r, i) => {
@@ -6525,7 +6570,9 @@
                 </thead>
                 <tbody class="divide-y divide-slate-100">
                   ${rows.map(r => `<tr>
-                      <td class="py-1.5 px-2 font-medium text-slate-700">${r.label}</td>
+                      <td class="py-1.5 px-2 font-medium text-slate-700">${r.label}${
+                        r.notCaptured ? `<span class="ml-1.5 text-[9px] font-semibold text-slate-400 normal-case"
+                          title="No ${r.label.toLowerCase()} event is recorded on this source, though later stages are. The count below is inferred from those, not observed.">not captured</span>` : ''}</td>
                       ${cell(r.ghr)}${cell(r.aff)}${cell(r.total)}
                       <td class="py-1.5 px-2 text-right font-bold ${r.total ? 'text-emerald-600' : 'text-slate-300'}">${r.total ? r.share + '%' : '—'}</td>
                       <td class="py-1.5 px-2 text-right font-semibold ${

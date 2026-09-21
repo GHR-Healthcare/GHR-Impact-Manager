@@ -840,6 +840,15 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                     [Vendor Withdrawn Date] AS vendor_withdrawn_date,
                     [Withdrawal Reason - Choice] AS withdrawal_reason_choice,
                     [Withdrawal Reason - Text] AS withdrawal_reason_text,
+                    -- "Under Review" in the funnel. VNDLY's own shortlist
+                    -- flag, and the stage that actually carries the volume on
+                    -- this book: 611 submissions are shortlisted and all 611
+                    -- are dated, while Client Interview Date is populated on
+                    -- only 20 of 1,356. The flow here is often Submitted ->
+                    -- Under Review -> Offer with no interview recorded, so a
+                    -- funnel without this stage loses where the work happens.
+                    [Is Shortlisted?] AS is_shortlisted,
+                    [Original Shortlisted Date] AS shortlisted_date,
                     [Offer Release Date] AS offer_date,
                     [Offer Accepted Date] AS offer_accepted_date,
                     [Onboarded Date] AS onboarded_date,
@@ -889,6 +898,15 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                         'agency': sub.get('agency') or 'Unknown',
                         'submitDate': sub.get('submission_date').isoformat() if sub.get('submission_date') and hasattr(sub.get('submission_date'), 'isoformat') else None,
                         'offerDate': sub.get('offer_date').isoformat() if sub.get('offer_date') and hasattr(sub.get('offer_date'), 'isoformat') else None,
+                        # Only when the flag says Yes. 4 of the 1,111 'No'
+                        # rows carry a date anyway, which is noise, and a
+                        # stage derived from noise is worse than an absent one.
+                        'shortlistedDate': (
+                            sub.get('shortlisted_date').isoformat()
+                            if str(sub.get('is_shortlisted') or '').strip().lower() == 'yes'
+                            and sub.get('shortlisted_date')
+                            and hasattr(sub.get('shortlisted_date'), 'isoformat')
+                            else None),
                         'awardedDate': sub.get('offer_accepted_date').isoformat() if sub.get('offer_accepted_date') and hasattr(sub.get('offer_accepted_date'), 'isoformat') else None,
                         'rto': sub.get('rto_date').isoformat() if sub.get('rto_date') and hasattr(sub.get('rto_date'), 'isoformat') else None,
                         'isDeclined': is_declined,
