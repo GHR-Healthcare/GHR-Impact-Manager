@@ -936,6 +936,35 @@
     let APP_VERSION = '2.18.0';
 
     const API_BASE_URL = '/api';
+
+    /* Session-expiry guard.
+     *
+     * staticwebapp.config.json turns any 401 into a 302 to /.auth/login/aad.
+     * That is right for a page navigation and wrong for a fetch: the browser
+     * follows the redirect, the call resolves 200 with the sign-in page's
+     * HTML, and JSON.parse then fails with "Unexpected token '<'" -- which
+     * reads as a broken endpoint rather than an expired session. That is what
+     * a tab left open overnight looks like, and it is almost certainly what
+     * the "get-positions went red" report was.
+     *
+     * Detected centrally rather than at the twenty-odd call sites, so a new
+     * endpoint inherits it. Only /api/ calls are inspected; /.auth/me is
+     * meant to be read directly.
+     */
+    const SESSION_EXPIRED = 'SESSION_EXPIRED';
+    (() => {
+      const nativeFetch = window.fetch.bind(window);
+      window.fetch = async (input, init) => {
+        const resp = await nativeFetch(input, init);
+        const url = typeof input === 'string' ? input : (input && input.url) || '';
+        if (url.includes('/api/') && resp.redirected && /\/\.auth\//.test(resp.url || '')) {
+          const err = new Error('Your sign-in session has expired. Reload the page to sign in again.');
+          err.code = SESSION_EXPIRED;
+          throw err;
+        }
+        return resp;
+      };
+    })();
     
     const DB_CONFIG = {
         apiEndpoint: `${API_BASE_URL}/get-positions`,

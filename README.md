@@ -2,6 +2,22 @@
 
 ## Version History
 
+### 2.21.2 - An expired session says so, instead of looking like a broken endpoint
+- `staticwebapp.config.json` turns any 401 into a 302 to the sign-in page. That is
+  right for a page navigation and wrong for a `fetch`: the browser follows it, the
+  call resolves **200** carrying the sign-in page's HTML, and `JSON.parse` then fails
+  with `Unexpected token '<'` -- which reads as a broken endpoint rather than an
+  expired session. That is what a tab left open overnight looks like, and almost
+  certainly what the "get-positions went red" report was
+- A single guard on `window.fetch` now detects an `/api/` call that was redirected to
+  `/.auth/` and raises a plain "your sign-in session has expired, reload to sign in"
+  instead. Done centrally rather than at the twenty-odd call sites, so a new endpoint
+  inherits it
+- Auth configuration is unchanged -- page navigations still redirect to sign-in as
+  before. Verified both ways: a simulated 302 raises the session error with no
+  JSON-parse errors, and the normal path still loads 80 positions and 6 KPI cards
+  with no page errors
+
 ### 2.21.1 - MSP accounts the hand-kept list had missed
 - **Penn Lancaster General and 17 other MSP clients were showing on the non-MSP side**
   -- 1,667 open jobs, reported by the divisions ("Penn LGH is showing up as an open
