@@ -2,6 +2,26 @@
 
 ## Version History
 
+### 2.21.1 - MSP accounts the hand-kept list had missed
+- **Penn Lancaster General and 17 other MSP clients were showing on the non-MSP side**
+  -- 1,667 open jobs, reported by the divisions ("Penn LGH is showing up as an open
+  order"). The exclusion list only ever named parent accounts, so MSP facilities
+  sitting *under* a parent in Bullhorn were never caught
+- The added ids are **not name matches**. `dbo.BH_PLACEMENT_RAW_TO_B4HealthOrder` is
+  the warehouse's own link between a Bullhorn placement and a B4 order -- 8,189 links
+  over 4,387 placements naming 40 distinct Bullhorn clients. A client in there has had
+  a real placement tied to a real MSP order, so it is MSP by evidence rather than by
+  resemblance. 22 were already listed; these are the other 18
+- Applies to the whole non-MSP side, not just Open Jobs: all nine data endpoints
+  (Positions, Stats, Trend, YoY Trend, Closed, Extensions, Onboarding, Financials,
+  Hours) resolve scope through the same helper, which covers the trend/headcount leak
+  reported alongside it. Pending and Per Diem return empty on non-MSP already
+- **Two gaps left open deliberately**, both documented in the code: the crosswalk is
+  B4-only (there is no VNDLY-to-Bullhorn key of any kind), and it is placement-level,
+  so an MSP account whose jobs were never filled produces no link. Closing those needs
+  a decision on whether MSP is a property of the account or of the order -- account
+  level would exclude ~10,400 open jobs, order level ~1,600
+
 ### 2.21.0 - Tab row stays put, honest hero cards, Search split from Locums
 - **The tab row no longer moves between tabs.** The aging legend is `display:none`
   on views with no bands, and with `justify-between` a lone child falls to the left --

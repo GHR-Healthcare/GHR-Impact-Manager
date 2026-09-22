@@ -195,10 +195,48 @@ def discover_active_client_ids(bullhorn_cursor):
 #
 # Covers Penn, Cooper, Capital Health, Inspira, Hunterdon, Richmond
 # University, Redeemer, Jefferson/Einstein and St. Luke's at Grand View.
+#
+# --- 2026-09-22: 18 ids added, from the warehouse rather than by hand ---
+#
+# The hand-kept list missed MSP facilities that sit UNDER a parent in
+# Bullhorn: only the parent had ever been listed, so Lancaster General
+# (566 open jobs) leaked onto the non-MSP side, which is what the divisions
+# reported ("Penn LGH is showing up as an open order").
+#
+# The added ids are not name matches. dbo.BH_PLACEMENT_RAW_TO_B4HealthOrder
+# is the warehouse's own link between a Bullhorn placement and a B4 order --
+# 8,189 links over 4,387 placements naming 40 distinct Bullhorn clients. A
+# client appearing there has had a real placement tied to a real MSP order,
+# so it is MSP by evidence rather than by resemblance. 22 of the 40 were
+# already listed; these are the other 18, and every one is independently an
+# MSP account by name too. Together they remove 1,667 open jobs.
+#
+# To refresh (ghrdhc):
+#   SELECT DISTINCT clientCorporationID
+#   FROM dbo.BH_PLACEMENT_RAW_TO_B4HealthOrder WITH (NOLOCK)
+#   WHERE clientCorporationID IS NOT NULL;
+#
+# TWO KNOWN GAPS, deliberately not papered over:
+#   - The crosswalk is B4-only. There is no VNDLY<->Bullhorn key at all
+#     (STAGING_VNDLY_CONTRACTOR_XREF is VNDLY-internal, and
+#     STAGING_VNDLY_CONTRACTORS."Candidate Unique ID" is a VNDLY-format id,
+#     not a Bullhorn candidateID). Cooper, RUMC, Inspira and Redeemer run on
+#     VNDLY and are covered only through their B4 history.
+#   - It is placement-level, so an MSP account whose Bullhorn jobs were never
+#     filled produces no link and is not caught.
+#
+# Closing those needs a decision we do not have yet: whether MSP is a
+# property of the ACCOUNT (exclude Cooper outright) or of the ORDER (a
+# hospital may be an MSP client and also buy direct). Account-level would
+# exclude ~10,400 open jobs, order-level ~1,600. Until that is settled this
+# list stays evidence-based, because over-excluding hides real direct
+# business from the divisions -- the opposite failure to the one being fixed.
 MSP_CLIENT_IDS = {
-    247, 737, 1128, 3223, 4179, 4185, 4186, 4206, 4207, 4211, 4311, 4312,
-    5091, 5392, 5397, 5410, 5440, 5470, 5624, 6169, 6760, 7598, 9072,
-    48539, 76078, 180695, 353106, 353167, 353987,
+    247, 737, 1128, 3223, 4179, 4185, 4186, 4206, 4207, 4211, 4212, 4311,
+    4312, 4417, 5091, 5392, 5395, 5397, 5410, 5440, 5470, 5624, 6169, 6292,
+    6354, 6452, 6760, 7598, 8342, 8967, 9072, 9083, 14360, 23625, 25118,
+    48539, 73407, 74020, 76078, 85286, 169234, 180695, 353106, 353167,
+    353987, 377103, 377267,
 }
 
 
