@@ -2,6 +2,12 @@
 
 ## Version History
 
+### 2.32.2 - MSP accounts the hand-kept list had missed
+- Ported from main 2.21.1. 18 Bullhorn clients added to `MSP_CLIENT_IDS`, taking
+  1,667 open jobs (Penn Lancaster General and the rest) off the non-MSP side
+- Derived from `dbo.BH_PLACEMENT_RAW_TO_B4HealthOrder`, the warehouse's own link
+  between a Bullhorn placement and a B4 order, rather than from client names
+
 ### 2.32.1 - Tab row stays put; hero cards stop claiming zero
 - Ported from main 2.21.0. The aging legend is `display:none` on views with no
   bands, and with `justify-between` a lone child falls to the left -- the tab bar
