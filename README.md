@@ -2,6 +2,14 @@
 
 ## Version History
 
+### 2.32.1 - Tab row stays put; hero cards stop claiming zero
+- Ported from main 2.21.0. The aging legend is `display:none` on views with no
+  bands, and with `justify-between` a lone child falls to the left -- the tab bar
+  sat 446px further left on those tabs. Measured before and after: 446px, now 0
+- Pending Offers and Post-Offer Declines say *Not recorded* instead of `0` where no
+  stage or offer date exists, with the reason in the tooltip. `0` claims "no offers
+  are outstanding", which is not the same statement as "we don't know"
+
 ### 2.31.0 - Closed Job Detail: three panels into two
 - **Section 1 (Financial & Comparative)** and **Section 2 (Market Position & Bids)**,
   replacing three panels. The old Panel C repeated Panel A almost entirely -- Rate Rank,
