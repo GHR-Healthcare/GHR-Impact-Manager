@@ -2,6 +2,26 @@
 
 ## Version History
 
+### 2.32.4 - Why a rate has no rank, in the row's own terms
+- **Benchmark cohorts verified, not changed.** The concern was that Nursing, Allied and
+  Non-Clinical were being blended. They are not: every ladder rung keys on `profession`,
+  which is finer than service line, so an RN is only ranked against RNs. Measured over
+  **182,810 rate rows in 814 peer buckets -- zero buckets mix service lines**, and every
+  profession resolves to one. The original note described the older facility+specialty
+  ladder
+- **The real gap was the reason text, and it named the wrong cause.** Three distinct
+  causes collapsed into one message:
+  - `Number(r.bill_rate)` is NaN on an open job, whose rate is a display string on
+    `billRate` -- so every open job claimed "No bill rate on this record" while showing
+    one. Now reads through `Utils.rateNum`, as `rateRank` itself already did
+  - A job with no credential can reach no ladder rung at all. Over 81,574 open Bullhorn
+    jobs, **26,109 (32%) carry no category** -- the single biggest cause, and it was
+    being reported as "fewer than 3 comparable job orders", a statement about the peer
+    pool rather than about the job
+  - Genuinely too few peers, the only case the old text actually fitted
+- All 219 distinct credential values in the live book normalise, so the mapping is
+  complete; the unrankable jobs are missing source data, and now say so
+
 ### 2.32.3 - An expired session says so, instead of looking like a broken endpoint
 - Ported from main 2.21.2. A guard on `window.fetch` catches an `/api/` call that SWA
   redirected to the sign-in page and raises a session-expired error, instead of letting
