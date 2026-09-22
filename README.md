@@ -2,6 +2,11 @@
 
 ## Version History
 
+### 2.32.3 - An expired session says so, instead of looking like a broken endpoint
+- Ported from main 2.21.2. A guard on `window.fetch` catches an `/api/` call that SWA
+  redirected to the sign-in page and raises a session-expired error, instead of letting
+  `JSON.parse` fail on the sign-in HTML with `Unexpected token '<'`
+
 ### 2.32.2 - MSP accounts the hand-kept list had missed
 - Ported from main 2.21.1. 18 Bullhorn clients added to `MSP_CLIENT_IDS`, taking
   1,667 open jobs (Penn Lancaster General and the rest) off the non-MSP side
