@@ -1635,8 +1635,8 @@
                             // These rows feed the Division filter through
                             // allAssignments, and GetStatsData emits the raw
                             // client tag list -- without this the dropdown
-                            // showed "RevCycle Workforce", "United" and
-                            // "Locum Tenens" alongside their merged names.
+                            // showed "RevCycle Workforce" and "United"
+                            // alongside their canonical names.
                             r.division = Utils.normalizeDivision(r.division);
                         });
                     }
@@ -2600,8 +2600,16 @@
        *   Nursing 2980, Allied 1264, Locum Tenens 173, RevCycle Workforce 130,
        *   Search 74, United 49, Technology 24, GHR Internal 1
        */
+      /* Search and Locums split back apart (Matthew Kyle, 2026-09-22):
+       * "can we separate out search and locums as divisions". The 2026-09-16
+       * ask had been the opposite -- "Search and Locums (merge United
+       * Anesthesia and Locum Tenens)" -- so the merged form is kept below
+       * rather than deleted, since this has now moved in both directions.
+       */
+      // CORE_DIVISIONS: ['Nursing', 'Allied', 'Technology', 'Non-Acute',
+      //                  'Education', 'Rev Cycle', 'Search and Locums'],
       CORE_DIVISIONS: ['Nursing', 'Allied', 'Technology', 'Non-Acute',
-                       'Education', 'Rev Cycle', 'Search and Locums'],
+                       'Education', 'Rev Cycle', 'Search', 'Locums'],
 
       DIVISION_ALIASES: {
         // Rolled into Nursing
@@ -2611,12 +2619,24 @@
         // Rev Cycle: the data spells it "RevCycle Workforce".
         'RevCycle Workforce': 'Rev Cycle',
         'RevCycle': 'Rev Cycle',
-        // Search and Locums = Search + United Anesthesia + Locum Tenens.
-        // 'United' is how United Anesthesia appears in the tag list.
-        'Search': 'Search and Locums',
-        'United': 'Search and Locums',
-        'United Anesthesia': 'Search and Locums',
-        'Locum Tenens': 'Search and Locums',
+        /* Superseded 2026-09-22 -- was Search + United Anesthesia + Locum
+         * Tenens rolled into one division:
+         *   'Search': 'Search and Locums',
+         *   'United': 'Search and Locums',
+         *   'United Anesthesia': 'Search and Locums',
+         *   'Locum Tenens': 'Search and Locums',
+         *
+         * Now two divisions. Search stands on its own; United Anesthesia and
+         * Locum Tenens both land under Locums, which is the pairing the
+         * original merge itself named ("merge United Anesthesia and Locum
+         * Tenens") -- so splitting Search back out leaves those two together
+         * rather than inventing a third division.
+         *
+         * 'United' is how United Anesthesia appears in the raw tag list.
+         */
+        'Locum Tenens': 'Locums',
+        'United': 'Locums',
+        'United Anesthesia': 'Locums',
         // These two also align Bullhorn with the vocabulary Symplr already
         // emits (symplr_systems.build_division_case_expr returns exactly
         // 'Education' / 'Non-Acute'), so both sources now share one taxonomy.
