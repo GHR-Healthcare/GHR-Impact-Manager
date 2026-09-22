@@ -2,6 +2,34 @@
 
 ## Version History
 
+### 2.32.5 - P1 compression: Extensions shows five records instead of one
+- Measured at 1440x900, the standard desktop the feedback's acceptance test names.
+  **Before: 681px of chrome and 126px rows, fitting one record. After: 568px and
+  65px rows, fitting five.** Every number below was measured, not estimated
+- **Extension Search was a bordered panel with a heading, a description and stacked
+  labels for three controls** -- 74px plus margins. Now one inline strip with the
+  labels beside the controls, and Clear Filters is always visible once a filter is
+  set, since a filtered table that looks empty is otherwise indistinguishable from
+  an empty one
+- **The aging legend wrapped to two lines** (94px for four chips) because it was
+  sized `flex-1` against the tab bar and its labels repeated "Days Left", which the
+  column header already says. Now `≤7 days / 8-14 days / ...` on one line, 38px
+- **Row height 126px → 65px.** Next Action was the only cell driving it, measured at
+  79px: the owner name wrapped and the sentence ran to three lines. Name truncates,
+  sentence clamps to one line with the full text on hover. System Match's note
+  clamps to two
+- **Short dates** (`9/21/26`, not `2026-09-21`), title and subtitle on one line, and
+  `py-2` → `py-1.5` on the row
+- **Assignment finally readable.** It carried `max-w-0`, which forced it to the
+  narrowest possible box, so every facility read "Lancaster G...". Widening it
+  naively pushed the table 310px past its container -- a horizontal scroll the
+  feedback explicitly rules out -- so the table now declares percentage widths and
+  uses the fixed-layout path `stageShell` already had. **Horizontal overflow is 0px
+  at both 1440 and 1680.** The column-filter row needed `min-w-0` in that mode: its
+  `min-w-[4.5rem]` alone put the scrollbar back
+- Onboarding and Closed are unaffected -- they stay auto-layout, verified at 0px
+  overflow with no page errors
+
 ### 2.32.4 - Why a rate has no rank, in the row's own terms
 - **Benchmark cohorts verified, not changed.** The concern was that Nursing, Allied and
   Non-Clinical were being blended. They are not: every ladder rung keys on `profession`,

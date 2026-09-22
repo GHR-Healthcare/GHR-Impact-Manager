@@ -31,6 +31,15 @@
 
   <style>
     body { font-family: 'Inter', sans-serif; }
+    /* Row-density helper. Written out rather than using Tailwind's line-clamp
+       so it does not depend on a plugin being present in the CDN build. Used
+       on the table cells whose prose was setting the row height: a wrapped
+       sentence in a narrow column pushed Extensions rows to 126px, which fit
+       one record on a 900px screen. */
+    .clamp-2 { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+               overflow: hidden; }
+    .clamp-1 { display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical;
+               overflow: hidden; }
     .fade-in { animation: fadeIn 0.2s ease-in-out; }
     @keyframes fadeIn { from { opacity: 0; transform: translateY(-5px); } to { opacity: 1; transform: translateY(0); } }
 
@@ -547,7 +556,9 @@
   <div id="kpiContainer" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-2 sm:gap-4 mb-4 sm:mb-6 shrink-0 min-h-[80px] sm:min-h-[100px]"></div>
 
   <div class="flex flex-col sm:flex-row justify-between items-center mb-4 gap-4 shrink-0">
-    <div id="legendContainer" class="flex flex-wrap items-center gap-4 text-xs font-medium text-slate-600 bg-white p-3 rounded-md border border-slate-200 inline-flex shadow-sm min-h-[38px] flex-1"></div>
+    <!-- gap-4 + p-3 wrapped the four bands onto two lines beside the tab bar,
+         making a 94px box for four chips. gap-x-2/p-1.5 fits them on one. -->
+    <div id="legendContainer" class="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] font-medium text-slate-600 bg-white p-1.5 rounded-md border border-slate-200 inline-flex shadow-sm min-h-[38px]"></div>
     <!-- sm:ml-auto anchors the tab bar to the right whether or not the legend
          is there. The legend is display:none on views with no bands, and with
          justify-between a lone child falls to the LEFT -- so the tab row moved
@@ -7145,11 +7156,20 @@
           // wider tracking) so the four tabs read as one table style. Kept at
           // text-xs rather than List's text-sm because these tables carry 8-9
           // denser columns — sized to their own body text, as List's is.
-          return `<th ${c.w ? `style="width:${c.w}"` : ''} class="px-3 py-3 text-${c.align || 'left'} font-bold text-slate-600 text-xs uppercase tracking-wider whitespace-nowrap bg-slate-100 border-b border-slate-200 ${
+          return `<th ${c.w ? `style="width:${c.w}"` : ''} class="px-3 py-3 text-${c.align || 'left'} font-bold text-slate-600 text-xs uppercase tracking-wider bg-slate-100 border-b border-slate-200 ${
+                      c.w ? 'leading-tight' : 'whitespace-nowrap'} ${
                       sortable ? 'cursor-pointer hover:text-slate-700 select-none' : ''}"
                       ${sortable ? `onclick="store.dispatch('SORT_STAGE',{view:'${key}',label:${View.esc(JSON.stringify(c.label))}})"` : ''}
                       ${sortable ? `title="Sort by ${c.sortNote || c.label || 'this column'}"` : ''}>${c.label}${arrow}</th>`;
         };
+        /* In a fixed-layout table the filter controls must be allowed to
+         * shrink with their column: min-w-[4.5rem] is 72px, wider than the
+         * inner width of a 6% column once px-2 padding is taken off, so the
+         * filter row alone pushed the table 21px past its container and put a
+         * horizontal scrollbar back on a table that otherwise fit. Auto-layout
+         * tables keep the minimum, where the column grows to suit instead. */
+        const fixedLayout = cols.some(c => c.w);
+        const filterMin = fixedLayout ? 'min-w-0' : 'min-w-[4.5rem]';
         const filterCell = (c) => {
           if (!c.key) return '<th class="px-2 py-1 bg-slate-50"></th>';
           if (c.filter === 'select') {
@@ -7160,7 +7180,7 @@
             return `<th class="px-2 py-1 bg-slate-50">
                 <select onchange="store.dispatch('FILTER_STAGE',{view:'${key}',label:${View.esc(JSON.stringify(c.label))},value:this.value})"
                         title="${cur ? 'Filtering by ' + View.esc(cur) : 'Filter by ' + View.esc(c.label)}"
-                        class="w-full min-w-[4.5rem] border rounded px-1 py-0.5 text-[10px] font-normal normal-case bg-white ${
+                        class="w-full ${filterMin} border rounded px-1 py-0.5 text-[10px] font-normal normal-case bg-white ${
                           cur ? 'border-blue-400 text-blue-700 font-semibold' : 'border-slate-200'}">
                   <option value=""${cur ? '' : ' selected'}>All${opts.length ? ` (${opts.length})` : ''}</option>
                   ${opts.map(o => `<option value="${View.esc(o)}"${o === cur ? ' selected' : ''}>${View.esc(o)}</option>`).join('')}
@@ -7171,14 +7191,16 @@
               <input value="${(filters[c.label] || '').replace(/"/g, '&quot;')}"
                      oninput="store.dispatch('FILTER_STAGE',{view:'${key}',label:${View.esc(JSON.stringify(c.label))},value:this.value})"
                      placeholder="filter"
-                     class="w-full min-w-[4.5rem] border border-slate-200 rounded px-1.5 py-0.5 text-[10px] font-normal normal-case bg-white">
+                     class="w-full ${filterMin} border border-slate-200 rounded px-1.5 py-0.5 text-[10px] font-normal normal-case bg-white">
             </th>`;
         };
         return `
-          <div class="flex items-center justify-between mb-3 pb-3 border-b border-slate-100 shrink-0">
-            <div>
-              <h2 class="text-lg font-bold text-slate-700">${title}</h2>
-              ${subtitle ? `<p class="text-xs text-slate-400">${subtitle}</p>` : ''}
+          <!-- Title and subtitle on one line. Stacked, they cost ~25px of a
+               first screen that was showing one data row. -->
+          <div class="flex items-center justify-between mb-2 pb-2 border-b border-slate-100 shrink-0 gap-3">
+            <div class="flex items-baseline gap-2 min-w-0">
+              <h2 class="text-base font-bold text-slate-700 shrink-0">${title}</h2>
+              ${subtitle ? `<p class="text-[11px] text-slate-400 truncate">${subtitle}</p>` : ''}
             </div>
             ${anyFilter || sort.label ? `<button onclick="store.dispatch('RESET_STAGE_TABLE','${key}')"
                 class="text-[11px] font-semibold text-blue-600 hover:text-blue-800">Reset sort &amp; filters</button>` : ''}
@@ -7921,35 +7943,33 @@
         const opts = ['All'].concat(View.EXT_GROUP_ORDER).map(g =>
           `<option value="${g}" ${f.status === g ? 'selected' : ''}>${LABELS[g] || g}</option>`
         ).join('');
+        /* One strip, not a panel. It was a bordered box with a heading, a
+         * description and stacked labels above each control -- 74px plus
+         * margins to hold three inputs, on a first screen that was fitting a
+         * single data row. Labels now sit inline with their controls, which
+         * is enough for a date pair and a status.
+         *
+         * Clear Filters is always rendered once anything is set, rather than
+         * only on hover of the row it filters: the feedback asks for it to be
+         * visible, since a filtered table that looks empty is otherwise
+         * indistinguishable from an empty one.
+         */
         return `
-          <div class="mb-3 shrink-0 rounded-lg border border-slate-200 bg-white px-4 py-3">
-            <div class="flex flex-wrap items-end gap-3">
-              <div class="mr-1">
-                <div class="text-[11px] font-bold uppercase tracking-wider text-slate-500">Extension Search</div>
-                <div class="text-[10px] text-slate-400">Filter by contract end date and extension status.</div>
-              </div>
-              <div class="flex-1 min-w-[130px] max-w-[200px]">
-                <label class="${lbl}">End Date From</label>
-                <input type="date" id="extensionEndFrom" class="${field}" value="${f.endFrom}"
-                       onchange="store.dispatch('SET_EXT_FILTER')">
-              </div>
-              <div class="flex-1 min-w-[130px] max-w-[200px]">
-                <label class="${lbl}">End Date To</label>
-                <input type="date" id="extensionEndTo" class="${field}" value="${f.endTo}"
-                       onchange="store.dispatch('SET_EXT_FILTER')">
-              </div>
-              <div class="flex-1 min-w-[150px] max-w-[220px]">
-                <label class="${lbl}">Extension Status</label>
-                <select id="extensionStatusFilter" class="${field}"
-                        onchange="store.dispatch('SET_EXT_FILTER')">${opts}</select>
-              </div>
-              <div class="flex items-center gap-3 pb-1 ml-auto">
-                <span class="text-[11px] ${active ? 'text-slate-600 font-semibold' : 'text-slate-400'}">${
-                  active ? `${shown} of ${total} match` : `${total} in window`}</span>
-                ${active ? `<button onclick="store.dispatch('CLEAR_EXT_FILTERS')"
-                      class="text-[11px] font-semibold text-slate-500 hover:text-slate-700 underline">Clear</button>` : ''}
-              </div>
-            </div>
+          <div class="mb-2 shrink-0 flex flex-wrap items-center gap-x-3 gap-y-1.5 text-xs">
+            <span class="text-[10px] font-bold uppercase tracking-wider text-slate-400">Ending</span>
+            <input type="date" id="extensionEndFrom" class="${field} w-[130px]" value="${f.endFrom}"
+                   title="Contract end date from"
+                   onchange="store.dispatch('SET_EXT_FILTER')">
+            <span class="text-[10px] text-slate-400">to</span>
+            <input type="date" id="extensionEndTo" class="${field} w-[130px]" value="${f.endTo}"
+                   title="Contract end date to"
+                   onchange="store.dispatch('SET_EXT_FILTER')">
+            <select id="extensionStatusFilter" class="${field} w-[150px]" title="Extension status"
+                    onchange="store.dispatch('SET_EXT_FILTER')">${opts}</select>
+            <span class="text-[11px] ml-auto ${active ? 'text-slate-600 font-semibold' : 'text-slate-400'}">${
+              active ? `${shown} of ${total} match` : `${total} in window`}</span>
+            ${active ? `<button onclick="store.dispatch('CLEAR_EXT_FILTERS')"
+                  class="text-[11px] font-semibold text-blue-600 hover:text-blue-800 underline">Clear filters</button>` : ''}
           </div>`;
       },
 
@@ -8211,8 +8231,12 @@
 
       matchCell(r) {
         const sm = View.matchSummary(r);
+        // "No Bullhorn record joins to this seat" wrapped to three lines in
+        // this column and was, with Next Action, what set the row height.
+        // Clamped with the full text on hover.
         return `${View.stageBadge(sm.label, sm.tone)}
-                <div class="text-[10px] text-slate-400 mt-0.5">${View.esc(sm.note)}</div>`;
+                <div class="text-[10px] text-slate-400 mt-0.5 clamp-2"
+                     title="${View.esc(sm.note)}">${View.esc(sm.note)}</div>`;
       },
 
       // Extension window bar: how much of the 45-day decision window is left.
@@ -8679,10 +8703,12 @@
           : 'bg-slate-100 text-slate-600';
         return `
           <span class="px-1.5 py-0.5 rounded text-[9px] font-bold ${tone}">${b.owner}</span>
-          ${b.who ? `<span class="text-[10px] text-slate-500 ml-1">${View.esc(b.who)}</span>` : ''}
+          ${b.who ? `<span class="text-[10px] text-slate-500 ml-1 inline-block align-bottom max-w-[72px] truncate"
+                           title="${View.esc(b.who)}">${View.esc(b.who)}</span>` : ''}
           ${due ? `<span class="ml-1 px-1.5 py-0.5 rounded text-[9px] font-bold whitespace-nowrap inline-block ${dueTone}"
                          title="Due ${due.dateText} &mdash; derived from ${r.days_left} day${r.days_left === 1 ? '' : 's'} left, allowing ${Utils.AGING_CRITICAL_DAYS} days to execute after the decision">${due.text}</span>` : ''}
-          <div class="text-[10px] text-blue-700 mt-0.5 leading-snug">${View.esc(b.action)}</div>`;
+          <div class="text-[10px] text-blue-700 mt-0.5 leading-snug clamp-1"
+               title="${View.esc(b.action)}">${View.esc(b.action)}</div>`;
       },
 
       extensionDetail(r) {
@@ -8845,13 +8871,13 @@
         const extCols = [
           // No separate chevron column: the disclosure arrow lives in the ID
           // cell, as it does on Closed and Open Jobs.
-          { label: 'Assignment ID',   key: 'id' },
-          { label: 'Assignment',      key: 'facility' },
-          { label: 'Clinician',       key: 'clinician' },
-          { label: 'End Date',        key: 'end_date',      align: 'center' },
-          { label: 'Days Left',       key: 'days_left',     align: 'center', sub: 'To Contract End' },
-          { label: 'System Match',    key: r => View.matchSummary(r).sort },
-          { label: 'Client Decision', key: r => View.extensionEdit(r).decision, align: 'center' },
+          { label: 'ID',              key: 'id', w: '7%' },
+          { label: 'Assignment',      key: 'facility', w: '13%' },
+          { label: 'Clinician',       key: 'clinician', w: '8%' },
+          { label: 'End Date',        key: 'end_date',      align: 'center', w: '6%' },
+          { label: 'Days Left',       key: 'days_left',     align: 'center', w: '6%' },
+          { label: 'System Match',    key: r => View.matchSummary(r).sort, w: '10%' },
+          { label: 'Decision',        key: r => View.extensionEdit(r).decision, align: 'center', w: '9%' },
           // Dropdowns rather than free text. Both are fully populated on the
           // non-MSP book -- 661 of 661 seats carry an AM and 660 carry a
           // recruiter -- across 71 and 78 distinct people respectively, which
@@ -8859,8 +8885,8 @@
           // Options are built from the rows below, so each list holds exactly
           // the people who actually appear in the loaded window.
           { label: s.dataSource === 'non_msp' ? 'AM' : 'PM',
-            key: 'account_manager', filter: 'select' },
-          { label: 'Recruiter',       key: 'recruiter', filter: 'select' },
+            key: 'account_manager', filter: 'select', w: '8%' },
+          { label: 'Recruiter',       key: 'recruiter', filter: 'select', w: '8%' },
           // "Who has the ball" and "what next", from the IT notes. Sorted and
           // filtered on the owner, which is the question people scan for.
           /* Sorted by how soon the action is due rather than by owner name:
@@ -8871,9 +8897,9 @@
           { label: 'Next Action',
             key: r => { const d = Utils.actionDueInDays(r.days_left);
                         return d == null ? 99999 : d; },
-            sortNote: 'when the action is due (seats with no end date last)' },
-          { label: 'Urgency',         key: 'urgency',       align: 'center' },
-          { label: '13-Wk Value',     key: 'extension_value_13wk', align: 'right' },
+            sortNote: 'when the action is due (seats with no end date last)', w: '12%' },
+          { label: 'Urgency',         key: 'urgency',       align: 'center', w: '6%' },
+          { label: '13-Wk',           key: 'extension_value_13wk', align: 'right', w: '7%' },
         ];
         const all = (s.extensionsRows || []).filter(View.stageFilter);
         // Built from `all`, before the per-column filters narrow anything, so
@@ -8938,25 +8964,33 @@
             const e = View.extensionEdit(r);
             body += `
               <tr data-row-key="${r.id}" class="hover:bg-slate-50 border-b border-slate-100 cursor-pointer" onclick="store.dispatch('TOGGLE_EXTENSION_ROW','${r.id}')">
-                <td class="px-3 py-2">${View.stageIdCell(r)}</td>
-                <td class="px-3 py-2 max-w-0">${View.stageSystemCell(r, { spec: r.role || r.care_type || '' })}</td>
-                <td class="px-3 py-2">
-                  <div class="font-medium text-slate-700">${View.stageWorker(r)}</div>
+                <td class="px-3 py-1.5">${View.stageIdCell(r)}</td>
+                <!-- max-w-0 forced Assignment to the narrowest possible box, so
+                     every facility read "Lancaster G...". It is the column people
+                     scan, and the table is now fixed-layout, so the declared
+                     13% governs the width instead of a pixel cap. -->
+                <td class="px-3 py-1.5">${View.stageSystemCell(r, { spec: r.role || r.care_type || '' })}</td>
+                <td class="px-3 py-1.5">
+                  <div class="font-medium text-slate-700 truncate">${View.stageWorker(r)}</div>
                   <div class="text-[10px] mt-0.5">${View.stageAgency(r)}</div>
                 </td>
-                <td class="px-3 py-2 text-center text-slate-600">${r.end_date || '—'}</td>
-                <td class="px-3 py-2 text-center">${r.days_left != null ? View.stageBadge(r.days_left + 'd', r.urgency || 'low') : '—'}</td>
-                <td class="px-3 py-2">${View.matchCell(r)}</td>
-                <td class="px-3 py-2 text-center">${View.extensionDecisionBadge(e.decision)}</td>
-                <td class="px-3 py-2 text-slate-500">${View.esc(r.account_manager || '—')}</td>
-                <td class="px-3 py-2 text-slate-500">${r.recruiter
+                <!-- 9/18/26 rather than 2026-09-18: the column is read at a
+                     glance and the long form forced it wider than Assignment,
+                     which is the column people actually scan. -->
+                <td class="px-3 py-1.5 text-center text-slate-600 whitespace-nowrap">${
+                  r.end_date ? View.esc(Utils.fmtDate(r.end_date, { month: 'numeric', day: 'numeric', year: '2-digit' })) : '—'}</td>
+                <td class="px-3 py-1.5 text-center">${r.days_left != null ? View.stageBadge(r.days_left + 'd', r.urgency || 'low') : '—'}</td>
+                <td class="px-3 py-1.5">${View.matchCell(r)}</td>
+                <td class="px-3 py-1.5 text-center">${View.extensionDecisionBadge(e.decision)}</td>
+                <td class="px-3 py-1.5 text-slate-500 truncate">${View.esc(r.account_manager || '—')}</td>
+                <td class="px-3 py-1.5 text-slate-500 truncate">${r.recruiter
                   ? View.esc(r.recruiter)
                   : '<span class="text-slate-300 italic text-[10px]">not in data</span>'}</td>
-                <td class="px-3 py-2">${View.extensionBallCell(r)}</td>
-                <td class="px-3 py-2 text-center">${View.stageBadge(r.urgency
+                <td class="px-3 py-1.5">${View.extensionBallCell(r)}</td>
+                <td class="px-3 py-1.5 text-center">${View.stageBadge(r.urgency
                   ? r.urgency.charAt(0).toUpperCase() + r.urgency.slice(1)
                   : '—', r.urgency || 'low')}</td>
-                <td class="px-3 py-2 text-right text-slate-600">${money(r.extension_value_13wk)}</td>
+                <td class="px-3 py-1.5 text-right text-slate-600">${money(r.extension_value_13wk)}</td>
               </tr>`;
             if (open) body += View.extensionDetail(r);
           });
@@ -10379,10 +10413,10 @@
           { key: 'perm',  label: 'Perm',       dot: 'border border-slate-500 bg-white', perm: true },
         ],
         extensions: [
-          { key: 'e7',  label: '≤7 Days Left',    dot: 'bg-red-800',   pred: r => r.days_left != null && r.days_left <= 7 },
-          { key: 'e14', label: '8-14 Days Left',  dot: 'bg-[#EF4444]', pred: r => r.days_left > 7 && r.days_left <= 14 },
-          { key: 'e21', label: '15-21 Days Left', dot: 'bg-[#FACC15]', pred: r => r.days_left > 14 && r.days_left <= 21 },
-          { key: 'e22', label: '22+ Days Left',   dot: 'bg-[#22C55E]', pred: r => r.days_left > 21 },
+          { key: 'e7',  label: '≤7 days',    dot: 'bg-red-800',   pred: r => r.days_left != null && r.days_left <= 7 },
+          { key: 'e14', label: '8-14 days',  dot: 'bg-[#EF4444]', pred: r => r.days_left > 7 && r.days_left <= 14 },
+          { key: 'e21', label: '15-21 days', dot: 'bg-[#FACC15]', pred: r => r.days_left > 14 && r.days_left <= 21 },
+          { key: 'e22', label: '22+ days',   dot: 'bg-[#22C55E]', pred: r => r.days_left > 21 },
         ],
         onboarding: [
           { key: 'ontrack', label: 'On Track',    dot: 'bg-[#22C55E]', pred: r => View.onboardingGroup(r) === 'ON TRACK' },
@@ -10452,10 +10486,10 @@
                      : (f.ageMin === b.min && f.ageMax === b.max && !f.permOnly);
           return `<button type="button" onclick="store.dispatch('TOGGLE_LEGEND_BAND','${b.key}')"
               title="${on ? 'Clear this filter' : 'Filter to ' + b.label}"
-              class="flex items-center gap-2 px-2 py-1 rounded-md border transition-colors whitespace-nowrap ${
+              class="flex items-center gap-1.5 px-1.5 py-0.5 rounded-md border transition-colors whitespace-nowrap ${
                 on ? 'bg-blue-50 border-blue-300 text-blue-800 font-semibold'
                    : 'border-transparent hover:bg-slate-50 hover:border-slate-200'}">
-              <div class="w-3 h-3 rounded-full ${b.dot}"></div> ${b.label}
+              <div class="w-2.5 h-2.5 rounded-full shrink-0 ${b.dot}"></div> ${b.label}
             </button>`;
         }).join('');
       },
