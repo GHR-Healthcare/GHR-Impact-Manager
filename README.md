@@ -2,6 +2,26 @@
 
 ## Version History
 
+### 2.21.0 - Tab row stays put, honest hero cards, Search split from Locums
+- **The tab row no longer moves between tabs.** The aging legend is `display:none`
+  on views with no bands, and with `justify-between` a lone child falls to the left --
+  so the tab bar sat 446px further left on those tabs. Measured before and after:
+  446px shift, now 0
+- **Pending Offers and Post-Offer Declines no longer read `0` when nothing was
+  recorded.** B4 carries no interview date and VNDLY populates one on 1.3% of rows,
+  so on non-MSP the app's own recorded stage is the only signal -- and `0` claims
+  "no offers are outstanding", which is a very different statement from "we don't
+  know". Both cards now say *Not recorded*, styled as absent rather than as a value,
+  with the reason in the tooltip
+- **Search is its own division again.** Matthew Kyle, 2026-09-22: "can we separate
+  out search and locums as divisions". The 2026-09-16 ask had been the opposite, so
+  the merged form is kept as a comment -- this has now moved in both directions.
+  United Anesthesia and Locum Tenens stay merged under Locums, the pairing that ask
+  itself named
+- Production MSP verified unchanged: tabs, body classes, KPI row and list all
+  identical to the 2.5.0 baseline. The hero-card change is in the reference-spec
+  row, which production MSP does not render; the division filter is non-MSP gated
+
 ### 2.20.1 - The bottom bar really was still on production MSP
 - `View.revenueBar()` hid it with `el.hidden = true`. That relies on the UA
   stylesheet's `[hidden]{display:none}`, and the element carries Tailwind's `flex`

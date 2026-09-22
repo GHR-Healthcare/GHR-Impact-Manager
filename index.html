@@ -586,7 +586,12 @@
 
   <div class="flex flex-col sm:flex-row justify-between items-center mb-4 gap-4 shrink-0">
     <div id="legendContainer" class="flex flex-wrap items-center gap-4 text-xs font-medium text-slate-600 bg-white p-3 rounded-md border border-slate-200 inline-flex shadow-sm min-h-[38px] flex-1"></div>
-    <div class="flex items-center gap-3 shrink-0">
+    <!-- sm:ml-auto anchors the tab bar to the right whether or not the legend
+         is there. The legend is display:none on views with no bands, and with
+         justify-between a lone child falls to the LEFT -- so the tab row moved
+         from tab to tab depending on whether that view happened to have an
+         aging legend. -->
+    <div class="flex items-center gap-3 shrink-0 sm:ml-auto">
       <!-- Banner shown while a meeting is running. Non-MSP only. -->
       <div id="meetingBanner" class="hidden mb-4"></div>
       <div class="flex bg-white border border-slate-200 rounded-lg p-1 shadow-sm" id="viewToggles">
@@ -2597,8 +2602,16 @@
        *   Nursing 2980, Allied 1264, Locum Tenens 173, RevCycle Workforce 130,
        *   Search 74, United 49, Technology 24, GHR Internal 1
        */
+      /* Search and Locums split back apart (Matthew Kyle, 2026-09-22):
+       * "can we separate out search and locums as divisions". The 2026-09-16
+       * ask had been the opposite -- "Search and Locums (merge United
+       * Anesthesia and Locum Tenens)" -- so the merged form is kept below
+       * rather than deleted, since this has now moved in both directions.
+       */
+      // CORE_DIVISIONS: ['Nursing', 'Allied', 'Technology', 'Non-Acute',
+      //                  'Education', 'Rev Cycle', 'Search and Locums'],
       CORE_DIVISIONS: ['Nursing', 'Allied', 'Technology', 'Non-Acute',
-                       'Education', 'Rev Cycle', 'Search and Locums'],
+                       'Education', 'Rev Cycle', 'Search', 'Locums'],
 
       DIVISION_ALIASES: {
         // Rolled into Nursing
@@ -2608,12 +2621,23 @@
         // Rev Cycle: the data spells it "RevCycle Workforce".
         'RevCycle Workforce': 'Rev Cycle',
         'RevCycle': 'Rev Cycle',
-        // Search and Locums = Search + United Anesthesia + Locum Tenens.
-        // 'United' is how United Anesthesia appears in the tag list.
-        'Search': 'Search and Locums',
-        'United': 'Search and Locums',
-        'United Anesthesia': 'Search and Locums',
-        'Locum Tenens': 'Search and Locums',
+        /* Superseded 2026-09-22 -- was Search + United Anesthesia + Locum
+         * Tenens rolled into one division:
+         *   'Search': 'Search and Locums',
+         *   'United': 'Search and Locums',
+         *   'United Anesthesia': 'Search and Locums',
+         *   'Locum Tenens': 'Search and Locums',
+         *
+         * Now two divisions. Search stands on its own; United Anesthesia and
+         * Locum Tenens both land under Locums, which is the pairing the
+         * original merge itself named -- so splitting Search back out leaves
+         * those two together rather than inventing a third division.
+         *
+         * 'United' is how United Anesthesia appears in the raw tag list.
+         */
+        'Locum Tenens': 'Locums',
+        'United': 'Locums',
+        'United Anesthesia': 'Locums',
         // These two also align Bullhorn with the vocabulary Symplr already
         // emits (symplr_systems.build_division_case_expr returns exactly
         // 'Education' / 'Non-Acute'), so both sources now share one taxonomy.
@@ -9189,10 +9213,23 @@
          * is left out rather than assumed recent.
          */
         let pendingOffers = 0, postOfferDeclines = 0, jobsWithActivity = 0;
+        /* Whether the pipeline is being recorded at all, counted alongside the
+         * measures themselves.
+         *
+         * Both of these cards read 0 on a book where nobody has worked the
+         * stages yet -- and 0 says "no offers are outstanding", which is a
+         * different and much more reassuring claim than "we do not know".
+         * B4 carries no interview date and VNDLY populates one on 1.3% of
+         * rows, so on non-MSP the app's own recorded stage is the only signal;
+         * where none exists the card has to say so rather than count to nought.
+         */
+        let stagedCandidates = 0, offerDated = 0;
         const sevenDaysAgo = new Date(now.getTime() - 7 * 86400000);
         list.forEach(j => {
           let activeHere = 0;
           (j.candidates || []).forEach(c => {
+            if (Utils.interviewStage(j.id, c) !== 'Submitted') stagedCandidates++;
+            if (c.offerDate) offerDated++;
             const stage = Utils.interviewStage(j.id, c);
             const declined = Utils.isDeclinedNow(j.id, c);
             if (!declined && (stage === 'Offer Pending' || stage === 'Offer Accepted')) pendingOffers++;
@@ -9239,11 +9276,21 @@
         const cards = [
           { label: 'Avg Days Open', val: avgDays, icon: 'clock', color: 'purple',
             tooltip: 'Average days the visible positions have been open' },
-          { label: 'Pending Offers', val: pendingOffers, icon: 'hourglass', color: 'orange',
-            tooltip: isNonMspKpi ? 'Candidates sitting at offer'
-                                 : 'Candidates sitting at offer, GHR and affiliate' },
-          { label: 'Post-Offer Declines', val: postOfferDeclines, icon: 'user-x', color: 'red',
-            tooltip: 'Offers declined in the last 7 days. Declines with no recorded date are excluded.' },
+          // Not recorded is a statement about the source, so it is styled as
+          // absent rather than as a value -- it must not read as a figure.
+          { label: 'Pending Offers',
+            val: stagedCandidates ? pendingOffers : View.kpiNotRecorded(),
+            icon: 'hourglass', color: 'orange',
+            tooltip: stagedCandidates
+              ? (isNonMspKpi ? 'Candidates sitting at offer'
+                             : 'Candidates sitting at offer, GHR and affiliate')
+              : 'No candidate on these jobs has a stage recorded yet, so an offer count cannot be derived. This is not zero offers.' },
+          { label: 'Post-Offer Declines',
+            val: offerDated ? postOfferDeclines : View.kpiNotRecorded(),
+            icon: 'user-x', color: 'red',
+            tooltip: offerDated
+              ? 'Offers declined in the last 7 days. Declines with no recorded date are excluded.'
+              : 'No offer date is recorded on any candidate here, so a post-offer decline cannot be identified. This is not zero declines.' },
           { label: 'Open Jobs', val: `${total} / <span class="text-red-500">${critical}</span>`,
             icon: 'alert-triangle', color: 'red',
             tooltip: 'Open positions in view / of those, aged past the critical threshold' },
@@ -9266,6 +9313,12 @@
       /* The KPI card markup, shared by production MSP's row and the
        * reference-spec row so the two cannot drift apart visually.
        */
+      // One spelling of "the source does not carry this", so the KPI row and
+      // the panels cannot word it differently.
+      kpiNotRecorded(label) {
+        return `<span class="text-slate-400 text-sm sm:text-base font-semibold">${label || 'Not recorded'}</span>`;
+      },
+
       kpiCardHtml(c) {
         return `
           <div class="bg-white p-2 sm:p-4 rounded-lg border border-slate-200 shadow-sm flex flex-col justify-between hover:shadow-md transition-shadow relative">
