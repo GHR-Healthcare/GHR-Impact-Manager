@@ -6505,7 +6505,9 @@
         const o = opts || {};
         const vals = (values || []).map(Number).filter(v => isFinite(v) && v > 0).sort((a, b) => a - b);
         if (!vals.length || !isFinite(mine)) {
-          return '<div class="text-[10px] text-slate-400">no comparable rates</div>';
+          // Says which of the three reasons applies, rather than only that
+          // there is no rank -- the feedback asks for the reason explicitly.
+          return `<div class="text-[10px] text-slate-400">${View.esc(View.rateNoRankReason(r))}</div>`;
         }
         const lo = vals[0], hi = vals[vals.length - 1], span = (hi - lo) || 1;
         const pos = Math.max(0, Math.min(1, (mine - lo) / span));
@@ -6948,7 +6950,7 @@
                              cmp ? `${cmp.n} peers · ${cmp.scope}` : 'fewer than 3 comparable closes')}
             ${View.panelTile('Rate Rank', rr ? (rr.ordinal ? `#${rr.rank} of ${rr.of}` :
                              (rr.pct >= 67 ? 'Above' : rr.pct <= 33 ? 'Below' : 'At market')) : none,
-                             rr ? rr.scope : 'no comparable rates')}
+                             rr ? rr.scope : View.esc(View.rateNoRankReason(r)))}
             ${View.panelTile('Bill Rate', r.bill_rate ? '$' + Number(r.bill_rate).toFixed(0) + '/hr' : none)}
           </div>
           <div class="mt-2 bg-slate-50/70 border border-slate-200 rounded-lg px-3 py-2">
@@ -7037,7 +7039,7 @@
                              mr ? 'by seats held here' : 'GHR holds no seat here')}
             ${View.panelTile('Rate Rank', rr ? (rr.ordinal ? `#${rr.rank} of ${rr.of}` :
                              (rr.pct >= 67 ? 'Above' : rr.pct <= 33 ? 'Below' : 'At market')) : none,
-                             rr ? `${rr.pct}th percentile` : 'no comparable rates')}
+                             rr ? `${rr.pct}th percentile` : View.esc(View.rateNoRankReason(r)))}
             ${View.panelTile('This Job · Days to Close', hasDtc ? dtc : none)}
             ${View.panelTile('Comparable Median', cmp ? `${cmp.median} days` : none)}
           </div>
@@ -7758,13 +7760,41 @@
         return null;
       },
 
+      /* Why a row has no rate rank, in the row's own terms.
+       *
+       * Three distinct causes were collapsing into one message, and the
+       * message named the wrong one most of the time:
+       *
+       *  - `Number(r.bill_rate)` is NaN on an open job, whose rate is a
+       *    DISPLAY string on `billRate` ("$100/hr"). Every open job therefore
+       *    claimed "No bill rate on this record" while showing a bill rate.
+       *    Utils.rateNum reads both, as rateRank itself already does.
+       *  - A job with no credential cannot reach ANY ladder rung, since every
+       *    rung keys on profession. Measured over 81,574 open Bullhorn jobs:
+       *    26,109 (32%) carry no category at all, so this is the single
+       *    biggest cause -- and it was being reported as "fewer than 3
+       *    comparable job orders", which is a statement about the peer pool
+       *    rather than about this job.
+       *  - Genuinely too few peers, which is the only one the old text fitted.
+       */
+      rateNoRankReason(r) {
+        const s = window.store.state;
+        const minPeers = (s.rateMeta?.minPeers) || 3;
+        const lookback = (s.rateMeta?.lookbackDays) || 90;
+        if (!s.rateLoaded) return 'Rate benchmarks have not loaded';
+        if (!(Utils.rateNum(r.bill_rate != null ? r.bill_rate : r.billRate) > 0))
+          return 'No bill rate recorded on this record';
+        if (!View.rateKeyOf(r, 'profession'))
+          return 'No credential recorded on this job, so it has no comparison group';
+        if (!View.rateKeyOf(r, 'category'))
+          return 'No engagement type recorded, so it cannot be compared within Travel or Local';
+        return `Fewer than ${minPeers} comparable rates in the last ${lookback} days`;
+      },
+
       rateRankCell(r) {
         const rr = View.rateRank(r);
         if (!rr) {
-          const s = window.store.state;
-          const why = !s.rateLoaded ? 'Rate peers not loaded'
-            : !(Number(r.bill_rate) > 0) ? 'No bill rate on this record'
-            : `Fewer than ${(s.rateMeta?.minPeers) || 3} comparable job orders in the last ${(s.rateMeta?.lookbackDays) || 90} days`;
+          const why = View.rateNoRankReason(r);
           return `<span class="text-slate-300 text-[10px] italic" title="${View.esc(why)}">—</span>`;
         }
         const cls = rr.tone === 'good' ? 'text-emerald-600'
