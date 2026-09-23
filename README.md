@@ -2,6 +2,12 @@
 
 ## Version History
 
+### 2.32.7 - Per Diem crashed on open
+- Ported from main 2.21.4. `ReferenceError: sysAssignments is not defined` took the whole
+  Per Diem view down on open: the movement block read a variable declared inside the
+  earlier `groups.forEach`, a different callback that closes well before the use. Now
+  declared in the `activeGroups.forEach` scope that needs it
+
 ### 2.32.6 - P1 compression: Open Jobs pipeline is a funnel, full width
 - **The funnel is now a funnel.** The Pipeline pane's bars were "GHR Share by Stage" --
   always full width, showing the GHR/affiliate split and hiding the shape, which is the

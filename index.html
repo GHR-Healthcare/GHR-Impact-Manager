@@ -11613,6 +11613,18 @@
         // Per-system data tables
         activeGroups.forEach(({ key, label, healthSystem: gSys, facility: gFac }) => {
           const sysMetrics = activeWeekIndices.map(i => metrics[key][i]);
+          /* This group's assignments, for the movement causes below.
+           *
+           * The movement block referenced `sysAssignments`, which is declared
+           * in the earlier `groups.forEach` that builds `metrics` -- a
+           * different callback that has already closed by here. It therefore
+           * threw ReferenceError the moment the Per Diem tab rendered, taking
+           * the whole view down. Declared in this scope, off this loop's own
+           * gSys/gFac, which is what the surrounding code uses.
+           */
+          const sysAssignments = filteredAssignments.filter(a =>
+            a.healthSystem === gSys && (gFac === null || a.facility === gFac)
+          );
           /* Explainable movement.
            *
            * Headcount is a set of distinct workers per week, so a change
