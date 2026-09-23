@@ -2,6 +2,15 @@
 
 ## Version History
 
+### 2.21.4 - Per Diem crashed on open
+- `ReferenceError: sysAssignments is not defined` took the whole Per Diem view down as
+  soon as the tab was opened. The movement block referenced `sysAssignments`, which is
+  declared inside the earlier `groups.forEach` that builds `metrics` -- a different
+  callback that closes ~170 lines before the use. It is now declared in the
+  `activeGroups.forEach` scope that actually needs it, from that loop's own `gSys`/`gFac`
+- Only fires once there is enough data to reach the movement block, which is why it
+  survived the empty and light fixtures used in earlier checks
+
 ### 2.21.3 - Why a rate has no rank, instead of blaming the peer pool
 - **Benchmark cohorts verified, not changed.** Nursing, Allied and Non-Clinical are not
   being blended: every rate-ladder rung keys on `profession`, which is finer than
