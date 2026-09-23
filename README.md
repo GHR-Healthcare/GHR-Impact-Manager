@@ -2,6 +2,21 @@
 
 ## Version History
 
+### 2.32.6 - P1 compression: Open Jobs pipeline is a funnel, full width
+- **The funnel is now a funnel.** The Pipeline pane's bars were "GHR Share by Stage" --
+  always full width, showing the GHR/affiliate split and hiding the shape, which is the
+  one thing a funnel is for. Bar *length* is now reach against the widest stage, so it
+  narrows; the fill inside keeps the split the old bars carried. Verified against **236
+  real submissions** on the busiest open Bullhorn job: 236 → 1 → 1 → 0 → 0, narrowing
+  monotonically
+- **Full width, with candidate activity beneath it.** The pane was two half-width
+  columns, where the bars were too short to read a shape off and the activity list was a
+  narrow column
+- **Every candidate, in its own scroller.** The list was capped at 12 with a line saying
+  how many were withheld; it now renders all of them (236 in the check) in a 286px
+  scroller over 11,563px of content, so the funnel stays in view while the list is read
+- Horizontal overflow measured at 0px; no page errors
+
 ### 2.32.5 - P1 compression: Extensions shows five records instead of one
 - Measured at 1440x900, the standard desktop the feedback's acceptance test names.
   **Before: 681px of chrome and 126px rows, fitting one record. After: 568px and

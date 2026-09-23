@@ -6670,8 +6670,14 @@
         const decAff = declined.length - decGhr;
 
         const cell = v => `<td class="py-1.5 px-2 text-right tabular-nums">${v}</td>`;
+        /* Stacked, not side by side. The feedback asks for a full-width
+         * funnel with candidate activity beneath it; at half width the funnel
+         * bars were too short to read a shape off and the activity list was a
+         * narrow column truncated at twelve.
+         */
+        const maxReach = Math.max(1, ...rows.map(r => r.total || 0));
         return `
-          <div class="fade-in grid grid-cols-1 xl:grid-cols-2 gap-6">
+          <div class="fade-in flex flex-col gap-5">
             <div>
               <div class="flex items-center justify-between gap-2 mb-3">
                 <h4 class="font-bold text-sm uppercase text-slate-500">Stage Summary</h4>
@@ -6729,24 +6735,35 @@
               </p>
 
               <h5 class="text-[10px] uppercase tracking-wide text-slate-500 font-semibold mt-4 mb-2 flex items-center gap-3">
-                GHR Share by Stage
+                Funnel
                 <span class="flex items-center gap-1 font-normal normal-case text-slate-400">
                   <span class="inline-block w-2 h-2 rounded-sm bg-blue-600"></span>GHR
                   <span class="inline-block w-2 h-2 rounded-sm bg-orange-500 ml-2"></span>Affiliate
+                  <span class="ml-2">&middot; bar length is how many reached the stage</span>
                 </span>
               </h5>
-              <div class="space-y-2">
-                ${rows.map(r => `
+              <!-- Bar LENGTH is reach against the widest stage, so the funnel
+                   narrows the way a funnel should; the fill inside it keeps the
+                   GHR/affiliate split the old share bars carried. Those were
+                   always full width, so they showed the split and hid the
+                   shape -- which is the thing a funnel is for. -->
+              <div class="space-y-1.5">
+                ${rows.map(r => {
+                  const reach = Math.round((r.total || 0) / maxReach * 100);
+                  return `
                   <div class="flex items-center gap-3">
-                    <span class="text-xs font-medium text-slate-600 w-20 flex-shrink-0">${r.label}</span>
-                    <div class="flex-1 bg-slate-100 rounded-full h-2.5 overflow-hidden flex">
-                      ${r.total
-                        ? `<div class="bg-blue-600 h-full" style="width:${r.share}%"></div>
-                           <div class="bg-orange-500 h-full" style="width:${100 - r.share}%"></div>`
-                        : ''}
+                    <span class="text-xs font-medium text-slate-600 w-24 flex-shrink-0">${r.label}</span>
+                    <div class="flex-1 bg-slate-100 rounded-full h-3 overflow-hidden">
+                      ${r.total ? `<div class="h-full flex rounded-full overflow-hidden" style="width:${Math.max(reach, 2)}%"
+                             title="${r.total} reached ${View.esc(r.label)} — ${r.share}% GHR">
+                           <div class="bg-blue-600 h-full" style="width:${r.share}%"></div>
+                           <div class="bg-orange-500 h-full" style="width:${100 - r.share}%"></div>
+                         </div>` : ''}
                     </div>
-                    <span class="text-xs font-bold text-slate-700 w-10 text-right">${r.total ? r.share + '%' : '—'}</span>
-                  </div>`).join('')}
+                    <span class="text-xs font-bold text-slate-700 w-8 text-right tabular-nums">${r.total || '—'}</span>
+                    <span class="text-[10px] text-slate-400 w-10 text-right">${r.total ? r.share + '%' : ''}</span>
+                  </div>`;
+                }).join('')}
               </div>
 
               <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-4">
@@ -6765,9 +6782,16 @@
             </div>
 
             <div>
-              <h4 class="font-bold mb-3 text-sm uppercase text-slate-500">Current Clinician Activity</h4>
-              ${cands.length ? `<div class="divide-y divide-slate-100 border border-slate-200 rounded-lg">
-                  ${cands.slice(0, 12).map(c => {
+              <h4 class="font-bold mb-3 text-sm uppercase text-slate-500">
+                Current Clinician Activity
+                <span class="font-normal normal-case text-slate-400 text-xs ml-1">${cands.length} submission${cands.length === 1 ? '' : 's'}</span>
+              </h4>
+              <!-- Every candidate, in its own scroller, rather than the first
+                   twelve and a line saying how many were withheld. The list
+                   scrolls independently of the page so the funnel above stays
+                   in view while it is read. -->
+              ${cands.length ? `<div class="divide-y divide-slate-100 border border-slate-200 rounded-lg max-h-72 overflow-y-auto">
+                  ${cands.map(c => {
                     const st = stageOf(c);
                     const tone = st === 'Declined' ? 'bg-rose-100 text-rose-700'
                                : st.startsWith('Offer') ? 'bg-emerald-100 text-emerald-700'
@@ -6788,7 +6812,7 @@
                       </div>`;
                   }).join('')}
                 </div>
-                ${cands.length > 12 ? `<p class="text-[10px] text-slate-400 mt-2">Showing 12 of ${cands.length}.</p>` : ''}`
+                `
                 : '<p class="text-xs text-slate-400">No submissions on this job yet.</p>'}
             </div>
           </div>`;
