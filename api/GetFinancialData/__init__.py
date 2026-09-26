@@ -1,4 +1,5 @@
 import azure.functions as func
+from concurrent.futures import ThreadPoolExecutor
 import pyodbc
 import os
 import json
@@ -224,18 +225,29 @@ def _non_msp_financial(req: func.HttpRequest, date_from_sql: str, date_to_sql: s
     """Run Bullhorn + Symplr financial queries independently, union the results."""
     monthly_data = []
     errors = []
-    try:
-        monthly_data.extend(_bullhorn_financial_data(date_from_sql, date_to_sql))
-    except Exception as e:
-        print(f"Bullhorn financial error: {e}")
-        import traceback; traceback.print_exc()
-        errors.append(f"bullhorn: {e}")
-    try:
-        monthly_data.extend(_symplr_financial_data(date_from_sql, date_to_sql))
-    except Exception as e:
-        print(f"Symplr financial error: {e}")
-        import traceback; traceback.print_exc()
-        errors.append(f"symplr: {e}")
+
+    # Concurrent for the same reason as GetTrendData: two independent
+    # databases, two connections, no shared state, so sequencing them only
+    # cost wall-clock. This endpoint was measured at 9.2s on the deployed
+    # non-MSP instance and was intermittently timing out into an HTTP 500 --
+    # the "Couldn't load financial data" the divisions were seeing. Running
+    # both at once costs the slower branch rather than the sum.
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        bh_future = pool.submit(_bullhorn_financial_data, date_from_sql, date_to_sql)
+        sp_future = pool.submit(_symplr_financial_data, date_from_sql, date_to_sql)
+
+        try:
+            monthly_data.extend(bh_future.result())
+        except Exception as e:
+            print(f"Bullhorn financial error: {e}")
+            import traceback; traceback.print_exc()
+            errors.append(f"bullhorn: {e}")
+        try:
+            monthly_data.extend(sp_future.result())
+        except Exception as e:
+            print(f"Symplr financial error: {e}")
+            import traceback; traceback.print_exc()
+            errors.append(f"symplr: {e}")
     print(f"Returning {len(monthly_data)} non-MSP financial rows (errors: {errors or 'none'})")
     return func.HttpResponse(
         json.dumps({'monthlyData': monthly_data}, default=str),

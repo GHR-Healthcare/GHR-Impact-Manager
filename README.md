@@ -2,6 +2,25 @@
 
 ## Version History
 
+### 2.33.1 - Trend and Financials stop running their two sources one after the other
+- **The two source branches now run concurrently.** Bullhorn and Symplr hit different
+  databases on their own connections and share no state, so sequencing them only ever
+  cost wall-clock. Measured on the deployed non-MSP instance: `trend-data` **9.3s**,
+  `financial-data` **9.2s** or an intermittent **HTTP 500** -- the "Couldn't load
+  financial data" the divisions were seeing. The endpoint now costs the slower branch
+  rather than the sum
+- **The scope resolution behind the filter was dead work.** With the wide scope,
+  `build_scope_filter` ignores the client list, but every endpoint still ran a discovery
+  query *and opened a second connection to the app database* to build it. Skipped
+  entirely now; nine endpoints stop paying for it
+- **Verified the wide scope did not make the slow query slower** -- a fair concern, since
+  it replaced a selective `IN (~340 ids)` with `NOT IN (47)`. Timed against the real
+  query: 6.8s wide vs 7.8s narrow warm, so it is marginally *faster*
+- **Honest about what is left.** The main Bullhorn trend query is still ~2.5s warm and
+  far worse cold (17.8s on a cold plan, 6.5s warm, against a 4.2s connect baseline). It
+  carries four LEFT JOINs and two OUTER APPLYs evaluated per placement row. That cold
+  variance is what tips `financial-data` into a 500, and it is not fixed by this change
+
 ### 2.33.0 - The non-MSP book is every client except GHR's own MSP accounts
 - **The book was scoped to clients with a placement running today.** Any account GHR is
   actively recruiting for but hasn't yet placed anyone at was excluded entirely -- so the

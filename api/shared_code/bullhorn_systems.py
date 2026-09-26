@@ -249,6 +249,19 @@ def resolve_scope_client_ids(bullhorn_cursor, app_conn=None):
     resulting set into build_scope_filter(). Both DB connections should be
     from the caller's already-open connections so we don't churn extra logins.
     """
+    if WIDE_NON_MSP_SCOPE:
+        # build_scope_filter ignores this set while the wide scope is on, so
+        # resolving it is pure cost on every non-MSP endpoint call: a query
+        # against View_Placement, and a second DB connection to the app
+        # database for the manual allowlist. The discovery query itself is
+        # cheap (~40ms measured), but the extra connection is not, and nine
+        # endpoints pay for both.
+        #
+        # The hardcoded rollup is returned rather than an empty set so any
+        # future caller that reads this for something other than the scope
+        # filter still gets a sane, non-empty answer.
+        return set(CLIENT_ID_TO_SYSTEM.keys()) - MSP_CLIENT_IDS
+
     return (
         set(CLIENT_ID_TO_SYSTEM.keys())
         | get_manual_allowlist_ids(app_conn)

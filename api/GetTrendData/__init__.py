@@ -1,4 +1,5 @@
 import azure.functions as func
+from concurrent.futures import ThreadPoolExecutor
 import pyodbc
 import os
 import json
@@ -493,27 +494,42 @@ def _non_msp_trend(req: func.HttpRequest) -> func.HttpResponse:
     weekly_revenue = []
     errors = []
 
-    try:
-        bh = _bullhorn_trend_data()
-        assignments.extend(bh['assignments'])
-        weekly_revenue.extend(bh['weekly_revenue'])
-    except Exception as e:
-        print(f"Bullhorn trend error: {e}")
-        import traceback; traceback.print_exc()
-        errors.append(f"bullhorn: {e}")
+    # The two branches hit DIFFERENT databases on their own connections and
+    # share no state, so running them one after the other only ever cost
+    # wall-clock. Measured on the deployed non-MSP instance, trend-data took
+    # 9.3s and financial-data 9.2s -- long enough that the tab reads as blank
+    # while it loads, and long enough to time out into an HTTP 500 on a colder
+    # environment. Run concurrently the endpoint costs the slower branch
+    # instead of the sum.
+    #
+    # Threads, not processes: this is I/O-bound waiting on SQL, so the GIL is
+    # released for the duration. Each branch opens and closes its own pyodbc
+    # connection inside its own thread, which is how they already worked.
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        bh_future = pool.submit(_bullhorn_trend_data)
+        sp_future = pool.submit(_symplr_trend_data)
 
-    try:
-        sp = _symplr_trend_data()
-        assignments.extend(sp['assignments'])
-        weekly_revenue.extend(sp['weekly_revenue'])
-        # Surface per-query errors so the frontend / a diagnostic can see them
-        # without needing Function App log access.
-        for e in sp.get('errors') or []:
-            errors.append(e)
-    except Exception as e:
-        print(f"Symplr trend error: {e}")
-        import traceback; traceback.print_exc()
-        errors.append(f"symplr: {e}")
+        try:
+            bh = bh_future.result()
+            assignments.extend(bh['assignments'])
+            weekly_revenue.extend(bh['weekly_revenue'])
+        except Exception as e:
+            print(f"Bullhorn trend error: {e}")
+            import traceback; traceback.print_exc()
+            errors.append(f"bullhorn: {e}")
+
+        try:
+            sp = sp_future.result()
+            assignments.extend(sp['assignments'])
+            weekly_revenue.extend(sp['weekly_revenue'])
+            # Surface per-query errors so the frontend / a diagnostic can see
+            # them without needing Function App log access.
+            for e in sp.get('errors') or []:
+                errors.append(e)
+        except Exception as e:
+            print(f"Symplr trend error: {e}")
+            import traceback; traceback.print_exc()
+            errors.append(f"symplr: {e}")
 
     print(f"Returning {len(assignments)} non-MSP trend assignments, 0 pending, {len(weekly_revenue)} weekly revenue rows (errors: {errors or 'none'})")
     return func.HttpResponse(
