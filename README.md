@@ -2,6 +2,26 @@
 
 ## Version History
 
+### 2.33.0 - The non-MSP book is every client except GHR's own MSP accounts
+- **The book was scoped to clients with a placement running today.** Any account GHR is
+  actively recruiting for but hasn't yet placed anyone at was excluded entirely -- so the
+  app showed **1,336 of 6,298 open reqs** inside the same 45-day window it already applies
+- Divisions that sell searches rather than fill seats were worst hit, because they rarely
+  have an active placement to be discovered by. **Search showed 2 reqs out of 58**;
+  Locums 30 of 254; Allied 249 of 1,569; Nursing 991 of 4,268
+- **The 45-day cutoff was never the problem and stays.** 6,332 of the 6,350 reqs it lets
+  through were modified in the last 30 days -- live work, not stale postings. Of the reqs
+  over a year old, only 41 of 825 have been touched in a month, and those stay filtered
+- **Headcount is unaffected by construction.** A client with no active placement
+  contributes no heads, so Trend, Financials and headcount move **1,145 -> 1,157 (1.01x)**
+  while Open Jobs moves 4.8x. Clients go 333 -> 1,274, which widens the System and
+  Facility pickers
+- Rendered as `NOT IN (47 MSP ids)` rather than `IN (~10k ids)`: the honest expression of
+  the rule, and a far better query plan. One change in `build_scope_filter`, so all nine
+  non-MSP endpoints inherit it. `WIDE_NON_MSP_SCOPE = False` restores the old behaviour
+- Reconciled against analytics first: their 543 open Locums jobs / 1,048 openings is
+  `Accepting Candidates`, company-wide, no date limit. Measured here as 545 / 1,043
+
 ### 2.32.7 - Per Diem crashed on open
 - Ported from main 2.21.4. `ReferenceError: sysAssignments is not defined` took the whole
   Per Diem view down on open: the movement block read a variable declared inside the
