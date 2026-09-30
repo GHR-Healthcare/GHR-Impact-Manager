@@ -2749,6 +2749,32 @@
         return isFinite(n) ? n : null;
       },
 
+      /* One money formatter, because there were five and one was wrong.
+       *
+       * The Closed KPI formatter had no millions branch at all, so annualised
+       * revenue rendered as "+$112428.3k" -- a number that reads as a hundred
+       * thousand when it means a hundred million. Seen live on production
+       * non-MSP before this fix.
+       *
+       * Millions start at 950,000, not 1,000,000: a figure a whisker under a
+       * million reading as "$950K" understates it to anyone scanning.
+       */
+      MONEY_M_THRESHOLD: 950000,
+
+      fmtMoney(v, opts) {
+        const o = opts || {};
+        if (v == null || v === '' || isNaN(Number(v))) return o.dash || '\u2014';
+        const n = Number(v);
+        const abs = Math.abs(n);
+        const sign = n < 0 ? '-' : (o.signed ? '+' : '');
+        if (abs >= Utils.MONEY_M_THRESHOLD) {
+          const m = abs / 1e6;
+          return sign + '$' + (m < 1 ? 1 : m).toFixed(2) + 'M';
+        }
+        if (abs >= 1000) return sign + '$' + Math.round(abs / 1000) + 'K';
+        return sign + '$' + Math.round(abs);
+      },
+
       isGhrAgency(a) {
         const x = String(a || '').toLowerCase();
         return x.includes('ghr') || x.includes('planet healthcare');
@@ -8668,11 +8694,8 @@
         const missed = nonMspKpi ? gc('UNFILLED') : gc('MISSED');
         const decided = wins + avWins + missed;
         const captured = rows.reduce((a, r) => a + (Number(r.revenue) || 0), 0);
-        const fmtK = v => (v || v === 0)
-          ? (v < 0 ? '-' : '+') + '$' + (Math.abs(v) >= 1000
-              ? (Math.abs(v) / 1000).toFixed(1) + 'k'
-              : Math.abs(v).toFixed(0))
-          : '—';
+        // Was k-only, which rendered annualised revenue as "+$112428.3k".
+        const fmtK = v => Utils.fmtMoney(v, { signed: true });
         /* KPI row, to the reference's viewConfig.results spec: three revenue
          * periods, capture rate, average days to close, revenue missed.
          *
@@ -9596,11 +9619,7 @@
           const monthNames = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
           return monthNames[parseInt(mo) - 1] + '-' + y.slice(2);
         };
-        const fmt = (n) => {
-          if (n >= 1000000) return '$' + (n / 1000000).toFixed(1) + 'M';
-          if (n >= 1000) return '$' + Math.round(n / 1000) + 'K';
-          return '$' + Math.round(n);
-        };
+        const fmt = (n) => Utils.fmtMoney(n);
 
         // Filter systems that have meaningful data
         const activeSystems = systems.filter(sys =>
@@ -12839,7 +12858,7 @@
           const up = v > 0;
           const cls = up ? 'text-emerald-600' : 'text-red-500';
           const abs = Math.abs(v);
-          const s = abs >= 1e6 ? '$' + (abs / 1e6).toFixed(2) + 'M' : '$' + (abs / 1e3).toFixed(0) + 'k';
+          const s = Utils.fmtMoney(abs);
           return `<span class="${cls} font-semibold">${up ? '+' : '-'}${s}</span>`;
         };
         // The delta is next week vs THIS week, so the "vs" line names the current week —
@@ -13333,9 +13352,7 @@
                       const isRevenue = (ctx.dataset.label || '').startsWith('Revenue');
                       if (isRevenue) {
                         const fmt = (v) => {
-                          if (Math.abs(v) >= 1e6) return '$' + (v / 1e6).toFixed(2) + 'M';
-                          if (Math.abs(v) >= 1e3) return '$' + (v / 1e3).toFixed(1) + 'k';
-                          return '$' + v.toFixed(0);
+                          return Utils.fmtMoney(v);
                         };
                         // Week-over-week delta for the actual revenue line only
                         let delta = '';
@@ -13357,9 +13374,7 @@
                       if (!items || !items.length) return;
                       const i = items[0].dataIndex;
                       const fmt = (v) => {
-                        if (Math.abs(v) >= 1e6) return '$' + (v / 1e6).toFixed(2) + 'M';
-                        if (Math.abs(v) >= 1e3) return '$' + (v / 1e3).toFixed(1) + 'k';
-                        return '$' + v.toFixed(0);
+                        return Utils.fmtMoney(v);
                       };
                       const revItem = items.find(it => it.dataset.label === 'Revenue');
                       if (!revItem || revItem.parsed.y == null) return;
@@ -13382,7 +13397,7 @@
                   position: 'right',
                   beginAtZero: true,
                   grid: { drawOnChartArea: false },
-                  ticks: { font: { size: 11 }, callback: v => '$' + (v / 1000).toFixed(0) + 'k' },
+                  ticks: { font: { size: 11 }, callback: v => Utils.fmtMoney(v) },
                   title: { display: true, text: 'Revenue', font: { size: 11 } }
                 },
                 x: { ticks: { font: { size: 11 }, maxRotation: 30 } }
@@ -13893,9 +13908,7 @@
         // KPI helpers
         const fmtDollars = (v) => {
           if (!v && v !== 0) return '—';
-          if (Math.abs(v) >= 1e6) return '$' + (v / 1e6).toFixed(2) + 'M';
-          if (Math.abs(v) >= 1e3) return '$' + (v / 1e3).toFixed(1) + 'k';
-          return '$' + v.toFixed(0);
+          return Utils.fmtMoney(v);
         };
         const deltaBadge = (cur, base) => {
           if (!base) return '<span class="text-[10px] text-slate-400">no baseline</span>';

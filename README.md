@@ -2,6 +2,25 @@
 
 ## Version History
 
+### 2.21.5 - Money formatting, and a settings file that was being published
+Bug fixes only; the UI work from the 2026-09-30 feedback stays on the prototype.
+
+- **Closed KPIs rendered annualised revenue as `+$112428.3k`** -- a number that reads as
+  a hundred thousand when it means a hundred *million*. That formatter had no millions
+  branch at all. Seen live on production non-MSP. All seven money formatters now share
+  `Utils.fmtMoney`
+- Millions start at **950,000**, so a figure a whisker under a million stops understating
+  itself: 950k-999k shows `$1.00M`, 948k stays `$948K`
+- **`.claude/settings.json` was publicly fetchable.** `app_location` is `/` on all four
+  workflows, so the repo root is the deployed site, and `staticwebapp.config.json` gates
+  only `/`, `/*.html` and `/api/*`. Verified: `GET /.claude/settings.json` returned **200
+  with the file's contents, unauthenticated**, on both instances. Now ignored and
+  untracked, so the next deploy stops serving it. `*.pdf` ignored for the same reason
+- **Not fixed here:** every `.md` in the repo, `staticwebapp.config.json`,
+  `.github/workflows/*` and `tools/*` are reachable the same way. Closing that needs an
+  authenticated catch-all route -- a production auth change that should be made
+  deliberately, not folded into a bug-fix release
+
 ### 2.21.4 - Per Diem crashed on open
 - `ReferenceError: sysAssignments is not defined` took the whole Per Diem view down as
   soon as the tab was opened. The movement block referenced `sysAssignments`, which is

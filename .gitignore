@@ -13,3 +13,17 @@ local.settings.json
 .venv/
 bin/
 obj/
+
+# Claude Code settings. Neither file is committed.
+#
+# app_location is "/" on all four workflows, so the repo root IS the deployed
+# site, and staticwebapp.config.json gates only /, /*.html and /api/*.
+# Verified against production: GET /.claude/settings.json returned 200 with the
+# file's contents, unauthenticated, on both instances. Not credentials, but it
+# lists internal paths, resource group and database names, and the shape of our
+# tooling -- none of which belongs on a public URL.
+.claude/
+
+# Vendor/feedback PDFs. Kept locally, never committed: the repo root is served
+# by the Static Web App and a file with no matching route is publicly fetchable.
+*.pdf
