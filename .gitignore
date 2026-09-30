@@ -14,9 +14,19 @@ local.settings.json
 bin/
 obj/
 
-# Claude Code per-machine permissions (project-level .claude/settings.json
-# is shared; the .local one is personal and must not be committed)
-.claude/settings.local.json
+# Claude Code settings. Neither file is committed.
+#
+# The shared project-level settings.json used to be tracked, on the reasoning
+# that a permissions allowlist is team config worth sharing. It is not worth
+# what it costs here: app_location is "/" on all four workflows, so the repo
+# root IS the deployed site, and staticwebapp.config.json only gates /, /*.html
+# and /api/*. Verified against production -- GET /.claude/settings.json
+# returned 200 with the file's contents, unauthenticated, on both instances.
+#
+# The contents are not credentials, but they do list internal paths, resource
+# group and database names, and the shape of our tooling. None of that belongs
+# on a public URL.
+.claude/
 
 # Vendor API documentation. Kept locally, never committed: the root of this
 # repo is served by the Static Web App, and staticwebapp.config.json gates
