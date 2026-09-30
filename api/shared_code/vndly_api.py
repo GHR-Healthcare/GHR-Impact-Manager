@@ -50,11 +50,32 @@ human-curated free text following a loose convention:
     "Approved RTO: 7/17- 20, 7/28, 7/30, 8/3, 8/5, 8/26-8/28 and 9/4 - 9/14"
     "Approved break - 5/31-6/6"
 
-Inspira (ghrmspinspira, same date) is the opposite: 155 contractors, RTO
-populated on 2 of the first 100, with no convention at all -- one value is
-literally "none". Same field name, wildly different usage, so write risk is a
-per-tenant question rather than a global one: overwriting at Cooper destroys
-real work, at Inspira it mostly does not.
+All four tenants verified read-only on 2026-09-30. RTO exists in every one,
+under that exact name -- but usage could hardly differ more:
+
+    tenant              contractors   RTO set   note
+    ghrmspcooper            312        50/100   "Approved RTO: 7/17-20, ..."
+    ghrmspinspira           155         2/100   no convention; one is "none"
+    ghrmspbundled           180         1/100   RUMC + Redeemer share this key
+    ghrmspuphs-test         364         0/100   sandbox; see below
+
+So write risk is a per-tenant question, not a global one: overwriting at
+Cooper destroys real coordinator work, at Inspira or bundled it mostly does
+not. Do not reason about "the RTO field" as though it behaves the same
+everywhere.
+
+Custom field NAMES also drift between tenants -- bundled calls one field
+"Primary Residence Zip Code" where Cooper and Inspira say "Primary Residence
+Zip". RTO happening to be consistent across all four is luck, not a guarantee,
+so a new tenant must be checked rather than assumed.
+
+THERE IS A SAFE PLACE TO TEST A WRITE
+
+ghrmspuphs-test has 364 contractors and zero RTO values. It is a real tenant
+with real structure and nothing a coordinator would miss, which makes it the
+place to prove the PATCH before any of it points at Cooper. The production
+host ghrmspuphs.vndly.com resolves and answers 401, so that tenant is
+provisioned and simply needs its own key when Penn goes live.
 
 Note also that an explicit "none" is DATA. It means the coordinator asked and
 the answer was no time off, which is not the same as nobody having asked.
