@@ -89,6 +89,24 @@ Custom field NAMES also drift between tenants -- bundled calls one field
 Zip". RTO happening to be consistent across all four is luck, not a guarantee,
 so a new tenant must be checked rather than assumed.
 
+CONTRACTOR system_ids COLLIDE ACROSS TENANTS TOO
+
+Measured 2026-09-30: C0000369 is "Flynn TestCandidate" in ghrmspuphs-test and
+"Niiamon Neequaye", a real clinician, in ghrmspcooper. The ids are numbered
+per tenant exactly as Health System Id is, so a write addressed by id alone
+will land on whichever tenant it is pointed at -- and the wrong one holds a
+real person.
+
+This is why every entry point here takes health_system and resolves the tenant
+from it. Never accept a contractor id without the row it came from.
+
+WRITE PATH VERIFIED 2026-09-30
+
+Proven against ghrmspuphs-test on C0000371, read -> PATCH -> read -> restore:
+the round-trip was exact, and the field was returned to its original null.
+PATCH {"custom_fields": {"RTO": null}} clears it, so "" and null are both
+settable and are distinguishable on read.
+
 THERE IS A SAFE PLACE TO TEST A WRITE
 
 ghrmspuphs-test has 364 contractors and zero RTO values. It is a real tenant
