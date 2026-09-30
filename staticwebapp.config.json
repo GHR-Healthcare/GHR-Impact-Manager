@@ -8,6 +8,14 @@
       ]
     },
     {
+      "_comment": "The cache-refresh scheduler is a Logic App timer: it has no Entra session, so the gateway would bounce it to /.auth/login/aad and the function would never see its API key (observed as a 302 in the Logic App run history). The endpoint does its own auth instead -- CACHE_REFRESH_API_KEY, or a signed-in principal, which SWA still injects here for browser callers -- and refuses everything else.",
+      "route": "/api/cache/refresh",
+      "allowedRoles": [
+        "anonymous",
+        "authenticated"
+      ]
+    },
+    {
       "route": "/api/*",
       "allowedRoles": [
         "authenticated"

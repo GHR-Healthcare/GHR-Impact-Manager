@@ -69,13 +69,11 @@ def _build(route):
 
 
 def main(req: func.HttpRequest) -> func.HttpResponse:
-    # Status is readable by anyone who can reach the app; rebuilding is not.
-    if req.method == 'GET':
-        return func.HttpResponse(
-            json.dumps({'entries': cache_status(),
-                        'refreshable': list(REFRESHABLE)}, default=str),
-            mimetype='application/json', status_code=200)
-
+    # This route is anonymous at the SWA gateway so the scheduler's API key can
+    # reach the function at all -- the gateway would otherwise 302 it to the
+    # sign-in page. That makes authenticating HERE the only thing standing in
+    # front of it, including for GET: the status payload names who last ran a
+    # refresh, which is not something to hand out unauthenticated.
     supplied = (req.headers.get('x-api-key')
                 or req.params.get('apiKey') or '')
     expected = os.environ.get('CACHE_REFRESH_API_KEY')
@@ -85,6 +83,12 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
     if not user and not (expected and supplied and supplied == expected):
         return func.HttpResponse(json.dumps({'error': 'unauthorized'}),
                                  mimetype='application/json', status_code=401)
+
+    if req.method == 'GET':
+        return func.HttpResponse(
+            json.dumps({'entries': cache_status(),
+                        'refreshable': list(REFRESHABLE)}, default=str),
+            mimetype='application/json', status_code=200)
 
     # This cache is per-book, and an instance only knows its own book, so a
     # refresh here rebuilds THIS instance's entries. The non-MSP app and the
