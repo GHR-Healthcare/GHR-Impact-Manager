@@ -41,6 +41,26 @@ Tenants as of 2026-09-21, by active work orders:
     RUMC                              61 active,  9 ending <=45d
     Redeemer Health                   15 active,  3 ending <=45d
 
+THE FIELD IS ALREADY IN USE -- DO NOT BLIND-WRITE IT
+
+Verified against the live Cooper tenant (ghrmspcooper, 2026-09-30, read-only):
+312 contractors, and RTO was populated on 50 of the first 100. The values are
+human-curated free text following a loose convention:
+
+    "Approved RTO: 7/17- 20, 7/28, 7/30, 8/3, 8/5, 8/26-8/28 and 9/4 - 9/14"
+    "Approved break - 5/31-6/6"
+
+so this field is NOT an empty slot waiting for the app to fill it. PATCH
+replaces the whole value, which means a naive write destroys a coordinator's
+list. Anything that writes here must read the current value first and decide
+deliberately -- append, or refuse when the existing text is not something this
+app wrote. An empty field reads as null, not "".
+
+That also reframes the feature: the app currently cannot SEE any of this,
+because the warehouse staging tables carry no time-off column. Reading RTO
+back into the app is the larger and far safer win, and needs no write scope at
+all. Contractor system_ids look like "C0000001", not integers.
+
 CONFIGURATION
 
 One app setting, VNDLY_TENANTS, holding JSON keyed by the exact
