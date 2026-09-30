@@ -3,10 +3,30 @@ Workday VNDLY Program Services API client. Multi-tenant.
 
 WHY THIS EXISTS
 
-Requested time off has nowhere to live in the MSP book. The warehouse copy of
-the Bullhorn placement omits customTextBlock9 and VNDLY's staging tables carry
-no time-off column, so the app can neither read nor write it -- the team is
-asked for RTO and it lands somewhere nobody working in VNDLY can see.
+Requested time off has nowhere the app can reliably read it. The warehouse
+copy of the Bullhorn placement omits customTextBlock9, so the B4 half of the
+MSP book has no RTO at all.
+
+CORRECTION (2026-09-30): an earlier version of this note said VNDLY's staging
+tables carry no time-off column. That was wrong.
+dbo.STAGING_VNDLY_CONTRACTORS has an [RTO] column and 146 of its 417 rows are
+populated. It was missed because the column scan that looked for it grepped
+for placement/jobOrder/candidate/ATS and never for the literal string "RTO" --
+the same mistake, twice.
+
+The staging copy is still not good enough to read from, for two measured
+reasons:
+
+    health system                  rows  RTO  newest row     days stale
+    Cooper University Healthcare    258  133  2026-08-12         49
+    RUMC                            134    3  2026-07-09         83
+    Redeemer Health                  25   10  2026-05-07        146
+    Inspira Medical Centers          --   --   ABSENT ENTIRELY
+
+Inspira has 155 contractors in the API and no rows here at all, and the rows
+that do exist are seven weeks to five months old. For a field coordinators
+actively maintain, showing a five-month-old value is worse than showing
+nothing, because it looks current. Reads should come from the API.
 
 VNDLY has it, as a CONTRACTOR custom field named "RTO", writable through the
 one contractor write endpoint:
