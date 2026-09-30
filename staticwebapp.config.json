@@ -49,6 +49,13 @@
       "allowedRoles": [
         "anonymous"
       ]
+    },
+    {
+      "_comment": "Catch-all, LAST so every anonymous exception above still wins. Without it only /, /*.html and /api/* were gated, and app_location is \"/\" on all four workflows -- so the repo root is the deployed site and everything else was served anonymously. Verified against production: MERGE_PLAN.md, DAN_UI_FEEDBACK.md, NON_MSP_FILTER_AUDIT.md, BULLHORN_PORT_SPEC.md, CLAUDE.md, staticwebapp.config.json, .github/workflows/* and tools/* all returned 200 with no session, carrying client names, headcounts, revenue figures and database names. ghr-commissions already runs this exact rule in production.",
+      "route": "/*",
+      "allowedRoles": [
+        "authenticated"
+      ]
     }
   ],
   "responseOverrides": {

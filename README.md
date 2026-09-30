@@ -2,6 +2,21 @@
 
 ## Version History
 
+### 2.21.6 - The site stops serving the repo it is deployed from
+- Only `/`, `/*.html` and `/api/*` were gated. `app_location` is `/` on all four
+  workflows, so the repo root **is** the deployed site and everything else was served
+  anonymously. Verified against production with no session: `MERGE_PLAN.md`,
+  `DAN_UI_FEEDBACK.md`, `NON_MSP_FILTER_AUDIT.md`, `BULLHORN_PORT_SPEC.md`, `CLAUDE.md`,
+  `staticwebapp.config.json`, `.github/workflows/*` and `tools/*` all returned **200**.
+  Those carry client names, headcounts, revenue figures and database and table names
+- One `"/*"` → `authenticated` rule, placed **last** so every anonymous exception above
+  still wins: `/api/health`, `/.auth/*`, `/favicon.ico`. `ghr-commissions` already runs
+  this exact rule in production
+- Config only. No UI and no code changed
+- Tested on the non-MSP prototype before coming here: the documents went 200 → 302, while
+  `/api/health` and `/favicon.ico` stayed 200, and a real Logic App run still
+  authenticated through its `x-api-key` and rebuilt both caches
+
 ### 2.21.5 - Money formatting, and a settings file that was being published
 Bug fixes only; the UI work from the 2026-09-30 feedback stays on the prototype.
 
