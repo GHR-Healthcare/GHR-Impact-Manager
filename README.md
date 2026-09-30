@@ -2,6 +2,32 @@
 
 ## Version History
 
+### 2.34.0 - Trend and Financials come off the request path
+- **A payload cache in `impactmgr.endpoint_cache`, refreshed on a schedule**, following
+  the pattern the sibling `ghr-salespulse` app already uses for its placement and
+  contact-count caches. The request path becomes one `SELECT` instead of a 17-20s
+  aggregate
+- **Why those two.** Measured on the deployed non-MSP instance: `trend-data` 9.3s ->
+  16.8s once the scope widened, `financial-data` 9.2s -> 19.9s and intermittently
+  **HTTP 500** -- the "Couldn't load financial data" the divisions were seeing. Both are
+  four-week / monthly aggregates that don't move within a day
+- **The diagnosis came from salespulse's own notes**, which hit this wall first: *"with
+  ~974 corps in scope SQL Server stops seeking on the index and scans instead: measured
+  104 SECONDS cold. A per-page OUTER APPLY was not a fix either -- just a different bad
+  plan."* That is our shape exactly; the trend query carries two OUTER APPLYs evaluated
+  per placement row, and widening the scope pushed it over the same cliff
+- `POST /api/cache/refresh` rebuilds; `GET` reports what is cached and how old. Auth is
+  a signed-in user **or** `CACHE_REFRESH_API_KEY`, because a timer has no email domain
+  to check -- the same split salespulse uses
+- **Fail-open throughout.** A missing table, an unconfigured app DB or an unparseable
+  row all mean "compute live", which is exactly today's behaviour. A cache older than
+  26 hours is ignored, so a stopped scheduler degrades rather than serving stale numbers
+- **A partial build never overwrites a good cache** -- if one source errors, the previous
+  payload stands rather than a half-empty month being served as fact
+- Only the **default** 13-month window is cached: `fromMonth`/`toMonth` produce a
+  different answer, and a cache keyed on route alone would have handed the default range
+  to someone who asked for one quarter
+
 ### 2.33.1 - Trend and Financials stop running their two sources one after the other
 - **The two source branches now run concurrently.** Bullhorn and Symplr hit different
   databases on their own connections and share no state, so sequencing them only ever

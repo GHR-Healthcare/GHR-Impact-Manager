@@ -3,10 +3,12 @@ from concurrent.futures import ThreadPoolExecutor
 import pyodbc
 import os
 import json
+import time
 import re
 from datetime import datetime
 from shared_code.auth import require_allowed_domain
 from shared_code.data_source import is_non_msp, get_bullhorn_conn, get_symplr_conn, get_appdb_conn
+from shared_code.endpoint_cache import cache_key, read_cache, write_cache
 from shared_code.bullhorn_systems import (
     build_system_case_expr,
     build_scope_filter,
@@ -221,8 +223,21 @@ def _symplr_financial_data(date_from_sql: str, date_to_sql: str):
     return rows
 
 
-def _non_msp_financial(req: func.HttpRequest, date_from_sql: str, date_to_sql: str) -> func.HttpResponse:
+def _non_msp_financial(req: func.HttpRequest, date_from_sql: str, date_to_sql: str,
+                       cacheable: bool = False) -> func.HttpResponse:
     """Run Bullhorn + Symplr financial queries independently, union the results."""
+    # Served from the cache table when one is fresh. This is the endpoint that
+    # was intermittently returning HTTP 500 -- 9.2s before the scope widened,
+    # 19.9s after, which is close enough to the gateway limit that a cold plan
+    # tips it over. Monthly billings do not move within a day.
+    key = cache_key('financial-data', 'non_msp')
+    cached = read_cache(key) if cacheable else None
+    if cached is not None:
+        print(f"financial-data: served from cache ({cached.get('cachedAt')})")
+        return func.HttpResponse(json.dumps(cached, default=str),
+                                 mimetype="application/json", status_code=200)
+
+    started = time.time()
     monthly_data = []
     errors = []
 
@@ -249,8 +264,14 @@ def _non_msp_financial(req: func.HttpRequest, date_from_sql: str, date_to_sql: s
             import traceback; traceback.print_exc()
             errors.append(f"symplr: {e}")
     print(f"Returning {len(monthly_data)} non-MSP financial rows (errors: {errors or 'none'})")
+    payload = {'monthlyData': monthly_data}
+    # Warm from a live build, best-effort, and only when both branches
+    # succeeded -- a partial month would otherwise be served for a day.
+    if cacheable and not errors:
+        write_cache(key, payload, build_ms=int((time.time() - started) * 1000),
+                    refreshed_by='live-request')
     return func.HttpResponse(
-        json.dumps({'monthlyData': monthly_data}, default=str),
+        json.dumps(payload, default=str),
         mimetype="application/json",
         status_code=200,
     )
@@ -300,7 +321,11 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             date_to = "DATEADD(MONTH, 1, DATEFROMPARTS(YEAR(GETDATE()), MONTH(GETDATE()), 1))"
 
         if is_non_msp():
-            return _non_msp_financial(req, date_from, date_to)
+            # Only the default range is cacheable. fromMonth / toMonth produce a
+            # different answer, and a cache keyed on route alone would hand the
+            # default thirteen months to someone who asked for one quarter.
+            default_range = not from_month and not to_month
+            return _non_msp_financial(req, date_from, date_to, cacheable=default_range)
 
         conn = pyodbc.connect(
             f"DRIVER={{ODBC Driver 17 for SQL Server}};"

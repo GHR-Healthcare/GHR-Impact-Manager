@@ -3,8 +3,10 @@ from concurrent.futures import ThreadPoolExecutor
 import pyodbc
 import os
 import json
+import time
 from shared_code.auth import require_allowed_domain
 from shared_code.data_source import is_non_msp, get_bullhorn_conn, get_symplr_conn, get_appdb_conn
+from shared_code.endpoint_cache import cache_key, read_cache, write_cache
 from shared_code.bullhorn_systems import (
     build_system_case_expr,
     build_scope_filter,
@@ -490,6 +492,18 @@ def _non_msp_trend(req: func.HttpRequest) -> func.HttpResponse:
     and unions the results. Either side failing is logged but not fatal — the
     other source still contributes its rows.
     """
+    # Served from the cache table when one is fresh. This endpoint was measured
+    # at 16.8s on the widened non-MSP book and is a four-week lookback plus a
+    # four-week projection -- it does not move within a day, so recomputing it
+    # per request was buying nothing. See shared_code/endpoint_cache.
+    key = cache_key('trend-data', 'non_msp')
+    cached = read_cache(key)
+    if cached is not None:
+        print(f"trend-data: served from cache ({cached.get('cachedAt')})")
+        return func.HttpResponse(json.dumps(cached, default=str),
+                                 mimetype="application/json", status_code=200)
+
+    started = time.time()
     assignments = []
     weekly_revenue = []
     errors = []
@@ -532,13 +546,20 @@ def _non_msp_trend(req: func.HttpRequest) -> func.HttpResponse:
             errors.append(f"symplr: {e}")
 
     print(f"Returning {len(assignments)} non-MSP trend assignments, 0 pending, {len(weekly_revenue)} weekly revenue rows (errors: {errors or 'none'})")
+    payload = {
+        'assignments': assignments,
+        'pending': [],
+        'weekly_revenue': weekly_revenue,
+        'errors': errors,
+    }
+    # Warm the cache from a live build so the next caller is fast even before a
+    # scheduler exists. Best-effort and never fails the response. Skipped when a
+    # branch errored, so a half-empty result cannot be served for a day.
+    if not errors:
+        write_cache(key, payload, build_ms=int((time.time() - started) * 1000),
+                    refreshed_by='live-request')
     return func.HttpResponse(
-        json.dumps({
-            'assignments': assignments,
-            'pending': [],
-            'weekly_revenue': weekly_revenue,
-            'errors': errors,
-        }, default=str),
+        json.dumps(payload, default=str),
         mimetype="application/json",
         status_code=200,
     )
