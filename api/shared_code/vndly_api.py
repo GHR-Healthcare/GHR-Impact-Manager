@@ -50,7 +50,17 @@ human-curated free text following a loose convention:
     "Approved RTO: 7/17- 20, 7/28, 7/30, 8/3, 8/5, 8/26-8/28 and 9/4 - 9/14"
     "Approved break - 5/31-6/6"
 
-so this field is NOT an empty slot waiting for the app to fill it. PATCH
+Inspira (ghrmspinspira, same date) is the opposite: 155 contractors, RTO
+populated on 2 of the first 100, with no convention at all -- one value is
+literally "none". Same field name, wildly different usage, so write risk is a
+per-tenant question rather than a global one: overwriting at Cooper destroys
+real work, at Inspira it mostly does not.
+
+Note also that an explicit "none" is DATA. It means the coordinator asked and
+the answer was no time off, which is not the same as nobody having asked.
+Treating blank and "none" alike throws that away.
+
+So this field is NOT an empty slot waiting for the app to fill it. PATCH
 replaces the whole value, which means a naive write destroys a coordinator's
 list. Anything that writes here must read the current value first and decide
 deliberately -- append, or refuse when the existing text is not something this
