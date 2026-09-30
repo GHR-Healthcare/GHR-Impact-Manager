@@ -2,6 +2,36 @@
 
 ## Version History
 
+### 2.36.0 - Density pass, money formatting, and dropdown filters
+From the 2026-09-30 feedback list.
+
+- **One money formatter, and one of the five was wrong.** The Closed KPI formatter had
+  no millions branch at all, so annualised revenue rendered as **`+$112428.3k`** -- a
+  number that reads as a hundred thousand when it means a hundred *million*. Reported
+  from the call as "9348K instead of 9.35M". All seven call sites now share
+  `Utils.fmtMoney`
+- **Millions start at 950,000, not 1,000,000**, per the same feedback: a figure a
+  whisker under a million reading as `$950K` understates it to anyone scanning. 950k-999k
+  shows as `$1.00M`; 948k still shows as `$948K`
+- **Whitespace and headers.** Title `text-3xl` -> `text-xl`, logo 9x9 -> 7x7, subtitle off
+  its own row; KPI cards `min-h-100px` -> `72px` with tighter padding and type. **Chrome
+  above the list: 568px -> 488px, rows visible 5 -> 6** at 1440x900 (1 -> 6 across the
+  session)
+- **"Extra text" moved to a hover.** Each stage tab's explanatory sentence is now an info
+  icon beside the title -- still readable, no longer costing a line on every render
+- **Per-column filters become dropdowns** where the vocabulary is bounded: System Match,
+  Decision and Urgency join AM and Recruiter. This needed a `filterValue` hook, because
+  System Match *sorts* on a numeric severity and Urgency on a raw lowercase band -- a
+  dropdown built from those lists sort keys ("3", "critical") rather than the words in
+  the column
+- **GHR Vendor Performance hidden** on Per Diem (`SHOW_GHR_VENDOR_CHART = false`). Gated,
+  not deleted: it is 160 lines of working chart with a regression overlay mirroring the
+  recruiting team's tracker, and "or make it a column" suggests it may return
+
+Not in this release: the **Extensions workflow** item (reading Bullhorn notes for
+candidate RTO, an in-app extension process, syncing to VNDLY). That is a feature, not a
+tweak, and is waiting on the call notes.
+
 ### 2.35.0 - Row details open in a modal, with prev/next and an explicit save
 - **The inline row dropdown becomes a modal** on Extensions, Onboarding, Closed and Open
   Jobs. The dropdown pushed every row below it down the page and squeezed the detail into

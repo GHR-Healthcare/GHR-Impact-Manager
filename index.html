@@ -210,18 +210,24 @@
   </div>
 
   <!-- HEADER -->
-  <header class="mb-4 shrink-0">
+  <!-- Header trimmed for density: the working list is what people came for, and
+       every pixel above it is chrome. text-3xl -> text-xl, the 9x9 logo -> 7x7,
+       and the subtitle moved onto the title line as a tooltip rather than its
+       own row. Measured saving: ~46px off every screen, on every tab. -->
+  <header class="mb-2 shrink-0">
     <!-- Top row: Title and User -->
-    <div class="flex flex-col sm:flex-row justify-between items-start gap-2 mb-2">
-      <div>
-        <h1 class="text-xl sm:text-3xl font-bold text-slate-900 flex items-center gap-2 sm:gap-3">
-          <img src="ghr-logo.png" alt="GHR" class="w-7 h-7 sm:w-9 sm:h-9 object-contain shrink-0">
+    <div class="flex flex-col sm:flex-row justify-between items-center gap-2 mb-1.5">
+      <div class="flex items-baseline gap-2 min-w-0">
+        <h1 class="text-lg sm:text-xl font-bold text-slate-900 flex items-center gap-2">
+          <img src="ghr-logo.png" alt="GHR" class="w-7 h-7 object-contain shrink-0">
           GHR Impact Manager
           <!-- Instance badge — reveal + label from /api/get-config's dataSource. -->
           <span id="instanceBadge" class="hidden text-[10px] sm:text-xs font-semibold uppercase tracking-wide px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-700 border border-indigo-200"></span>
           <span id="versionDisplay" class="text-xs font-normal text-slate-400 ml-1"></span>
         </h1>
-        <p id="appSubtitle" class="text-slate-500 text-xs sm:text-base mt-1 hidden sm:block">Account Performance Workspace</p>
+        <!-- Was a second line under the title. It never changes and nobody
+             needs to read it twice, so it sits inline and small. -->
+        <p id="appSubtitle" class="text-slate-400 text-[11px] hidden md:block truncate">Account Performance Workspace</p>
       </div>
       
       <!-- Start IMPACT Meeting sits centred in the header, as the reference
@@ -553,7 +559,9 @@
   </div>
 
   <div id="meetingBanner" class="hidden mb-4"></div>
-  <div id="kpiContainer" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-2 sm:gap-4 mb-4 sm:mb-6 shrink-0 min-h-[80px] sm:min-h-[100px]"></div>
+  <!-- Was min-h-[100px] with a 24px bottom margin: 124px of hero before the
+       list started. The cards carry one number each and do not need that. -->
+  <div id="kpiContainer" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-2 mb-3 shrink-0 min-h-[64px] sm:min-h-[72px]"></div>
 
   <div class="flex flex-col sm:flex-row justify-between items-center mb-4 gap-4 shrink-0">
     <!-- gap-4 + p-3 wrapped the four bands onto two lines beside the tab bar,
@@ -2941,6 +2949,34 @@
        * needs storing, and the due date cannot drift from Days Left because
        * it IS Days Left, offset.
        */
+      /* One money formatter, because there were five and one of them was wrong.
+       *
+       * The Closed KPI formatter had no millions branch at all, so annualised
+       * revenue rendered as "+$112428.3k" -- a number nobody can read at a
+       * glance, and which looks like a hundred thousand rather than a hundred
+       * million.
+       *
+       * Millions start at 950,000, not 1,000,000: a figure a whisker under a
+       * million reading as "$950K" understates it to anyone scanning, which is
+       * the whole point of abbreviating. 950k-999k therefore shows as $1.00M,
+       * since $0.95M would defeat the exercise.
+       */
+      MONEY_M_THRESHOLD: 950000,
+
+      fmtMoney(v, opts) {
+        const o = opts || {};
+        if (v == null || v === '' || isNaN(Number(v))) return o.dash || '—';
+        const n = Number(v);
+        const abs = Math.abs(n);
+        const sign = n < 0 ? '-' : (o.signed ? '+' : '');
+        if (abs >= Utils.MONEY_M_THRESHOLD) {
+          const m = abs / 1e6;
+          return sign + '$' + (m < 1 ? 1 : m).toFixed(2) + 'M';
+        }
+        if (abs >= 1000) return sign + '$' + Math.round(abs / 1000) + 'K';
+        return sign + '$' + Math.round(abs);
+      },
+
       AGING_CRITICAL_DAYS: 7,
 
       agingBand(days) {
@@ -7157,6 +7193,19 @@
         return typeof col.key === 'function' ? col.key(r) : r[col.key];
       },
 
+      /* What a column FILTERS on, which is not always what it SORTS on.
+       *
+       * System Match sorts by a numeric severity so the worst rows come first,
+       * and Urgency sorts by the raw lowercase band. Building a dropdown from
+       * either gives a list of sort keys -- "3", "critical" -- rather than the
+       * words in the column. `filterValue` lets a column name the human value
+       * while `key` keeps doing the sorting.
+       */
+      stageFilterValue(col, r) {
+        if (col && typeof col.filterValue === 'function') return col.filterValue(r);
+        return View.stageColValue(col, r);
+      },
+
       // Apply the per-column filters, then the active sort. Returns a new array.
       // Sentinel for "this column is empty on the row". A real name can never
       // collide with it, and it makes "who has no recruiter assigned" askable.
@@ -7172,7 +7221,7 @@
         const seen = new Set();
         let blanks = false;
         (rows || []).forEach(r => {
-          const v = View.stageColValue(col, r);
+          const v = View.stageFilterValue(col, r);
           const sv = v == null ? '' : String(v).trim();
           if (sv) seen.add(sv); else blanks = true;
         });
@@ -7186,7 +7235,7 @@
         let out = rows.filter(r => cols.every(c => {
           const raw = (filters[c.label] || '').trim();
           if (!raw || !c.key) return true;
-          const v = View.stageColValue(c, r);
+          const v = c.filter === 'select' ? View.stageFilterValue(c, r) : View.stageColValue(c, r);
           // A dropdown match is exact. Substring would make picking "Ann Lee"
           // also return "Ann Leeson", which is not what choosing a name off a
           // list means -- and with 71 AMs and 78 recruiters on the non-MSP
@@ -7295,10 +7344,16 @@
         return `
           <!-- Title and subtitle on one line. Stacked, they cost ~25px of a
                first screen that was showing one data row. -->
-          <div class="flex items-center justify-between mb-2 pb-2 border-b border-slate-100 shrink-0 gap-3">
-            <div class="flex items-baseline gap-2 min-w-0">
-              <h2 class="text-base font-bold text-slate-700 shrink-0">${title}</h2>
-              ${subtitle ? `<p class="text-[11px] text-slate-400 truncate">${subtitle}</p>` : ''}
+          <!-- The subtitle is a sentence explaining the tab, read once and then
+               never again. It moves onto an info icon: still there for whoever
+               wants it, no longer taking a line from the list on every render. -->
+          <div class="flex items-center justify-between mb-1.5 pb-1.5 border-b border-slate-100 shrink-0 gap-3">
+            <div class="flex items-center gap-1.5 min-w-0">
+              <h2 class="text-sm font-bold text-slate-700 shrink-0">${title}</h2>
+              ${subtitle ? `<span class="kpi-tooltip cursor-help text-slate-300 hover:text-slate-500"
+                                  data-tooltip="${View.esc(String(subtitle).replace(/<[^>]*>/g, ''))}">
+                              <i data-lucide="info" class="w-3.5 h-3.5"></i>
+                            </span>` : ''}
             </div>
             ${anyFilter || sort.label ? `<button onclick="store.dispatch('RESET_STAGE_TABLE','${key}')"
                 class="text-[11px] font-semibold text-blue-600 hover:text-blue-800">Reset sort &amp; filters</button>` : ''}
@@ -9111,8 +9166,10 @@
           { label: 'Clinician',       key: 'clinician', w: '8%' },
           { label: 'End Date',        key: 'end_date',      align: 'center', w: '6%' },
           { label: 'Days Left',       key: 'days_left',     align: 'center', w: '6%' },
-          { label: 'System Match',    key: r => View.matchSummary(r).sort, w: '10%' },
-          { label: 'Decision',        key: r => View.extensionEdit(r).decision, align: 'center', w: '9%' },
+          { label: 'System Match',    key: r => View.matchSummary(r).sort, w: '10%',
+            filter: 'select', filterValue: r => View.matchSummary(r).label },
+          { label: 'Decision',        key: r => View.extensionEdit(r).decision, align: 'center', w: '9%',
+            filter: 'select' },
           // Dropdowns rather than free text. Both are fully populated on the
           // non-MSP book -- 661 of 661 seats carry an AM and 660 carry a
           // recruiter -- across 71 and 78 distinct people respectively, which
@@ -9133,7 +9190,8 @@
             key: r => { const d = Utils.actionDueInDays(r.days_left);
                         return d == null ? 99999 : d; },
             sortNote: 'when the action is due (seats with no end date last)', w: '12%' },
-          { label: 'Urgency',         key: 'urgency',       align: 'center', w: '6%' },
+          { label: 'Urgency',         key: 'urgency',       align: 'center', w: '6%',
+            filter: 'select', filterValue: r => View.extensionUrgencyLabel(r) },
           { label: '13-Wk',           key: 'extension_value_13wk', align: 'right', w: '7%' },
         ];
         const all = (s.extensionsRows || []).filter(View.stageFilter);
@@ -9872,11 +9930,8 @@
         const missed = nonMspKpi ? gc('UNFILLED') : gc('MISSED');
         const decided = wins + avWins + missed;
         const captured = rows.reduce((a, r) => a + (Number(r.revenue) || 0), 0);
-        const fmtK = v => (v || v === 0)
-          ? (v < 0 ? '-' : '+') + '$' + (Math.abs(v) >= 1000
-              ? (Math.abs(v) / 1000).toFixed(1) + 'k'
-              : Math.abs(v).toFixed(0))
-          : '—';
+        // Was k-only, which rendered annualised revenue as "+$112428.3k".
+        const fmtK = v => Utils.fmtMoney(v, { signed: true });
         /* KPI row, to the reference's viewConfig.results spec: three revenue
          * periods, capture rate, average days to close, revenue missed.
          *
@@ -10596,12 +10651,12 @@
 
       kpiCardHtml(c) {
         return `
-          <div class="bg-white p-2 sm:p-4 rounded-lg border border-slate-200 shadow-sm flex flex-col justify-between hover:shadow-md transition-shadow relative">
-            <div class="flex justify-between items-start mb-1 sm:mb-2">
-              <span class="text-[9px] sm:text-xs font-bold text-slate-500 uppercase tracking-wider leading-tight">${c.label}</span>
-              <span class="kpi-tooltip cursor-help" data-tooltip="${c.tooltip}"><i data-lucide="${c.icon}" class="w-3 h-3 sm:w-4 sm:h-4 text-${c.color}-500"></i></span>
+          <div class="bg-white p-2 sm:p-2.5 rounded-lg border border-slate-200 shadow-sm flex flex-col justify-between hover:shadow-md transition-shadow relative">
+            <div class="flex justify-between items-start mb-0.5">
+              <span class="text-[9px] sm:text-[10px] font-bold text-slate-500 uppercase tracking-wider leading-tight">${c.label}</span>
+              <span class="kpi-tooltip cursor-help" data-tooltip="${c.tooltip}"><i data-lucide="${c.icon}" class="w-3 h-3 sm:w-3.5 sm:h-3.5 text-${c.color}-500"></i></span>
             </div>
-            <div class="text-base sm:text-2xl font-bold text-slate-800">${c.val}</div>
+            <div class="text-base sm:text-xl font-bold text-slate-800 leading-tight">${c.val}</div>
           </div>
         `;
       },
@@ -10613,15 +10668,15 @@
         // A measure that means nothing on this instance should cost no space.
         cards = (cards || []).filter(Boolean);
         container.innerHTML = cards.map(c => `
-          <div class="bg-white p-2 sm:p-4 rounded-lg border shadow-sm flex flex-col justify-between hover:shadow-md transition-shadow relative ${
+          <div class="bg-white p-2 sm:p-2.5 rounded-lg border shadow-sm flex flex-col justify-between hover:shadow-md transition-shadow relative ${
                  c.active ? 'border-blue-400 ring-1 ring-blue-200' : 'border-slate-200'
                } ${c.onClick ? 'cursor-pointer' : ''}"
                ${c.onClick ? `onclick="${c.onClick}" role="button" tabindex="0" title="${c.active ? 'Showing only these — click to clear' : 'Click to show only these'}"` : ''}>
-            <div class="flex justify-between items-start mb-1 sm:mb-2">
-              <span class="text-[9px] sm:text-xs font-bold text-slate-500 uppercase tracking-wider leading-tight">${c.label}</span>
-              <i data-lucide="${c.icon}" class="w-3 h-3 sm:w-4 sm:h-4 text-${c.color}-500 shrink-0"></i>
+            <div class="flex justify-between items-start mb-0.5">
+              <span class="text-[9px] sm:text-[10px] font-bold text-slate-500 uppercase tracking-wider leading-tight">${c.label}</span>
+              <i data-lucide="${c.icon}" class="w-3 h-3 sm:w-3.5 sm:h-3.5 text-${c.color}-500 shrink-0"></i>
             </div>
-            <div class="text-base sm:text-2xl font-bold text-slate-800">${c.val}</div>
+            <div class="text-base sm:text-xl font-bold text-slate-800 leading-tight">${c.val}</div>
             ${c.sub ? `<div class="text-[9px] sm:text-[11px] text-slate-400 mt-0.5 leading-tight">${c.sub}</div>` : ''}
           </div>
         `).join('');
@@ -10882,11 +10937,7 @@
           const monthNames = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
           return monthNames[parseInt(mo) - 1] + '-' + y.slice(2);
         };
-        const fmt = (n) => {
-          if (n >= 1000000) return '$' + (n / 1000000).toFixed(1) + 'M';
-          if (n >= 1000) return '$' + Math.round(n / 1000) + 'K';
-          return '$' + Math.round(n);
-        };
+        const fmt = (n) => Utils.fmtMoney(n);
 
         // Filter systems that have meaningful data
         const activeSystems = systems.filter(sys =>
@@ -12051,6 +12102,15 @@
         // the two systems use different labels for the same team.
         // Mirrors the standalone Excel tracker the recruiting team uses.
         // ============================================================
+        /* Hidden on the feedback from the 2026-09-30 call ("take out GHR
+         * Vendor, or make it a column if needed"). Gated rather than deleted:
+         * it is 160 lines of working chart with a linear-regression overlay
+         * that mirrors the recruiting team's own tracker, and "or make it a
+         * column" reads like this may come back in another form. Flip to true
+         * to restore it exactly as it was.
+         */
+        const SHOW_GHR_VENDOR_CHART = false;
+
         const GHR_VENDOR_BUCKETS = [
           // Acute Care Nursing rolls up B4 "GHR Acute" + B4 "GHR Travel" +
           // VNDLY "GHR Nursing" — same team, multiple labels across systems.
@@ -12058,7 +12118,7 @@
           { id: 'paltc',  label: 'PA LTC Nursing',     match: a => /^GHR PA LTC Nursing$/i.test(String(a || '').trim()) },
           { id: 'allied', label: 'Allied',             match: a => /^GHR Allied$/i.test(String(a || '').trim()) },
         ];
-        html += `
+        if (SHOW_GHR_VENDOR_CHART) html += `
           <div class="mt-6 border border-slate-200 rounded-lg p-4">
             <div class="flex items-center justify-between mb-3 flex-wrap gap-2">
               <h4 class="font-bold text-sm text-slate-700">GHR Vendor Performance — Weekly Shifts</h4>
@@ -12202,10 +12262,12 @@
           });
         };
         // Initial render + wire up the vendor selector
-        renderGhrVendorChart('acute');
-        const ghrVendorSelect = document.getElementById('pdGhrVendorSelect');
-        if (ghrVendorSelect) {
-          ghrVendorSelect.onchange = (e) => renderGhrVendorChart(e.target.value);
+        if (SHOW_GHR_VENDOR_CHART) {
+          renderGhrVendorChart('acute');
+          const ghrVendorSelect = document.getElementById('pdGhrVendorSelect');
+          if (ghrVendorSelect) {
+            ghrVendorSelect.onchange = (e) => renderGhrVendorChart(e.target.value);
+          }
         }
 
         // % Actives Worked chart
@@ -14124,7 +14186,7 @@
           const up = v > 0;
           const cls = up ? 'text-emerald-600' : 'text-red-500';
           const abs = Math.abs(v);
-          const s = abs >= 1e6 ? '$' + (abs / 1e6).toFixed(2) + 'M' : '$' + (abs / 1e3).toFixed(0) + 'k';
+          const s = Utils.fmtMoney(abs);
           return `<span class="${cls} font-semibold">${up ? '+' : '-'}${s}</span>`;
         };
         // The delta is next week vs THIS week, so the "vs" line names the current week —
@@ -14621,9 +14683,7 @@
                       const isRevenue = (ctx.dataset.label || '').startsWith('Revenue');
                       if (isRevenue) {
                         const fmt = (v) => {
-                          if (Math.abs(v) >= 1e6) return '$' + (v / 1e6).toFixed(2) + 'M';
-                          if (Math.abs(v) >= 1e3) return '$' + (v / 1e3).toFixed(1) + 'k';
-                          return '$' + v.toFixed(0);
+                          return Utils.fmtMoney(v);
                         };
                         // Week-over-week delta for the actual revenue line only
                         let delta = '';
@@ -14645,9 +14705,7 @@
                       if (!items || !items.length) return;
                       const i = items[0].dataIndex;
                       const fmt = (v) => {
-                        if (Math.abs(v) >= 1e6) return '$' + (v / 1e6).toFixed(2) + 'M';
-                        if (Math.abs(v) >= 1e3) return '$' + (v / 1e3).toFixed(1) + 'k';
-                        return '$' + v.toFixed(0);
+                        return Utils.fmtMoney(v);
                       };
                       const revItem = items.find(it => it.dataset.label === 'Revenue');
                       if (!revItem || revItem.parsed.y == null) return;
@@ -14670,7 +14728,7 @@
                   position: 'right',
                   beginAtZero: true,
                   grid: { drawOnChartArea: false },
-                  ticks: { font: { size: 11 }, callback: v => '$' + (v / 1000).toFixed(0) + 'k' },
+                  ticks: { font: { size: 11 }, callback: v => Utils.fmtMoney(v) },
                   title: { display: true, text: 'Revenue', font: { size: 11 } }
                 },
                 x: { ticks: { font: { size: 11 }, maxRotation: 30 } }
@@ -15203,9 +15261,7 @@
         // KPI helpers
         const fmtDollars = (v) => {
           if (!v && v !== 0) return '—';
-          if (Math.abs(v) >= 1e6) return '$' + (v / 1e6).toFixed(2) + 'M';
-          if (Math.abs(v) >= 1e3) return '$' + (v / 1e3).toFixed(1) + 'k';
-          return '$' + v.toFixed(0);
+          return Utils.fmtMoney(v);
         };
         const deltaBadge = (cur, base) => {
           if (!base) return '<span class="text-[10px] text-slate-400">no baseline</span>';
