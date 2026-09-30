@@ -2,6 +2,31 @@
 
 ## Version History
 
+### 2.35.0 - Row details open in a modal, with prev/next and an explicit save
+- **The inline row dropdown becomes a modal** on Extensions, Onboarding, Closed and Open
+  Jobs. The dropdown pushed every row below it down the page and squeezed the detail into
+  the width of a table already carrying twelve columns. The modal gets the viewport, the
+  list stays still underneath, and subtabs have somewhere to live
+- **Prev / Next step through the list**, with an "N of M" counter. The order is read from
+  the DOM rather than recomputed, so it follows the active sort, filters and grouping --
+  Next means "the next one you can actually see". Arrow keys work; Esc closes
+- **Save and Cancel are explicit.** Edits live in the inputs until saved, so closing a
+  dirty record asks before discarding rather than losing the work silently
+- **Autosave stands down while the modal is open.** This was a real conflict, not a
+  theoretical one: a delegated `change` listener saved on every edit, so changing Client
+  Decision wrote to the database *before* the user could press Cancel, and Cancel reverted
+  nothing. Verified by tracing dispatches -- two `SAVE_EXTENSION` calls became one. The
+  inline dropdown and production MSP still autosave, unchanged
+- **One write path, not two.** The modal reuses each view's own save, which reads the same
+  inputs wherever they are rendered, so the two presentations cannot drift
+- The detail bodies were split out of their `<tr>` wrappers (`extensionDetailBody`,
+  `onboardingDetailBody`) so the same markup serves both. `toggleStageRow` is untouched,
+  so the dropdown still works and is one line away
+- Closed and Open Jobs have no editable state, so their footer says the record is
+  read-only instead of offering a Save that would do nothing
+- Production MSP keeps its in-place expand: the switch is inside the `TOGGLE_ROW` handler,
+  after the `!impactUi()` early return, so it cannot reach that build
+
 ### 2.34.0 - Trend and Financials come off the request path
 - **A payload cache in `impactmgr.endpoint_cache`, refreshed on a schedule**, following
   the pattern the sibling `ghr-salespulse` app already uses for its placement and

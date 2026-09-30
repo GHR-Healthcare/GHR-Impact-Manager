@@ -743,6 +743,52 @@
   </div>
 
   <!-- ACTION MODAL -->
+  <!-- Row detail modal.
+       Replaces the inline row dropdown on the stage tables and Open Jobs. The
+       dropdown pushed every row below it down the page and, on a table already
+       carrying 12 columns, left the detail squeezed into the same width as the
+       row. A modal gets the full viewport, keeps the list still underneath, and
+       gives the detail somewhere to put subtabs without fighting the table.
+
+       Prev/Next step through the list in the order it is displayed, so a
+       reviewer can work a filtered set without closing and reopening. Save and
+       Cancel are explicit: edits live in the inputs until saved, so closing a
+       dirty record asks first rather than discarding silently. -->
+  <div id="rowDetailModal" class="hidden fixed inset-0 bg-black/50 z-[95] flex items-center justify-center backdrop-blur-sm p-3 sm:p-6">
+    <div class="bg-white rounded-xl shadow-2xl w-full max-w-[1200px] max-h-[92vh] flex flex-col border border-slate-200 overflow-hidden">
+      <div class="flex items-start justify-between gap-4 px-5 py-3 border-b border-slate-200 shrink-0">
+        <div class="min-w-0" id="rowDetailModalTitle"></div>
+        <div class="flex items-center gap-1.5 shrink-0">
+          <span class="text-[11px] text-slate-400 mr-1 tabular-nums" id="rowDetailModalPos"></span>
+          <button id="rowDetailPrev" title="Previous record (&larr;)"
+                  onclick="store.dispatch('STEP_ROW_DETAIL',-1)"
+                  class="px-2 py-1 rounded-md border border-slate-200 text-slate-500 hover:bg-slate-50 disabled:opacity-40 disabled:hover:bg-white">
+            <i data-lucide="chevron-left" class="w-4 h-4"></i>
+          </button>
+          <button id="rowDetailNext" title="Next record (&rarr;)"
+                  onclick="store.dispatch('STEP_ROW_DETAIL',1)"
+                  class="px-2 py-1 rounded-md border border-slate-200 text-slate-500 hover:bg-slate-50 disabled:opacity-40 disabled:hover:bg-white">
+            <i data-lucide="chevron-right" class="w-4 h-4"></i>
+          </button>
+          <button title="Close (Esc)" onclick="store.dispatch('CLOSE_ROW_DETAIL')"
+                  class="ml-1 px-2 py-1 rounded-md border border-slate-200 text-slate-500 hover:bg-slate-50">
+            <i data-lucide="x" class="w-4 h-4"></i>
+          </button>
+        </div>
+      </div>
+      <div id="rowDetailModalBody" class="overflow-y-auto flex-1 bg-slate-50 px-4 py-4"></div>
+      <div class="flex items-center justify-between gap-3 px-5 py-3 border-t border-slate-200 bg-white shrink-0">
+        <span class="text-[11px] text-slate-400" id="rowDetailModalHint"></span>
+        <div class="flex items-center gap-2">
+          <button onclick="store.dispatch('CLOSE_ROW_DETAIL')"
+                  class="px-3 py-1.5 rounded-md border border-slate-300 text-slate-600 text-xs font-semibold hover:bg-slate-50">Cancel</button>
+          <button id="rowDetailSave" onclick="store.dispatch('SAVE_ROW_DETAIL')"
+                  class="px-3 py-1.5 rounded-md bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold shadow-sm">Save</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <div id="actionModal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center z-50 backdrop-blur-sm">
     <div class="bg-white p-6 rounded-lg shadow-2xl w-[500px] border border-slate-200 max-h-[90vh] flex flex-col">
       <h3 class="text-lg font-bold mb-4 text-slate-800 shrink-0" id="modalTitle">Confirm Action</h3>
@@ -940,6 +986,21 @@
      * endpoint inherits it. Only /api/ calls are inspected; /.auth/me is
      * meant to be read directly.
      */
+    // Keyboard for the row detail modal: Esc closes, arrows step. Bound once,
+    // and ignored while focus is in a field so arrow keys still move a caret.
+    document.addEventListener('keydown', (ev) => {
+      const st = window.store?.state;
+      if (!st || !st.rowDetail) return;
+      const tag = (ev.target && ev.target.tagName || '').toLowerCase();
+      if (tag === 'input' || tag === 'textarea' || tag === 'select') {
+        if (ev.key === 'Escape') ev.target.blur();
+        return;
+      }
+      if (ev.key === 'Escape') { ev.preventDefault(); window.store.dispatch('CLOSE_ROW_DETAIL'); }
+      else if (ev.key === 'ArrowLeft') { ev.preventDefault(); window.store.dispatch('STEP_ROW_DETAIL', -1); }
+      else if (ev.key === 'ArrowRight') { ev.preventDefault(); window.store.dispatch('STEP_ROW_DETAIL', 1); }
+    });
+
     const SESSION_EXPIRED = 'SESSION_EXPIRED';
     (() => {
       const nativeFetch = window.fetch.bind(window);
@@ -5813,6 +5874,19 @@
        * decline) routes through here, so this is the single place that has to
        * know the row's shape.
        */
+      /* Repaint whichever surface is actually showing this record.
+       *
+       * rowUpdate() was written for the inline dropdown and repaints a table
+       * row. With the modal open the row underneath is collapsed, so the
+       * subtab strip, the Active/Declined toggle and a lever toggle would all
+       * have repainted something invisible and left the modal stale.
+       */
+      rowRefresh(id) {
+        const rd = window.store.state.rowDetail;
+        if (rd && String(rd.id) === String(id)) { View.rowDetailModal(); return; }
+        View.rowUpdate(id);
+      },
+
       rowUpdate(id) {
         const job = window.store.state.jobs.find(j => j.id === id);
         if (!job) return;
@@ -8089,6 +8163,127 @@
       STAGE_EXPANDED_SET: { closed: 'expandedClosed', extensions: 'expandedExtensions', onboarding: 'expandedOnboarding', list: 'expandedRows' },
       STAGE_ROWS_KEY: { closed: 'closedRows', extensions: 'extensionsRows', onboarding: 'onboardingRows', list: 'jobs' },
 
+      /* ---- Row detail modal ---------------------------------------------
+       *
+       * The same detail content the inline dropdown rendered, in a modal. The
+       * dropdown is still there and still works -- toggleStageRow is untouched
+       * -- so this is a change of presentation, not of what is shown.
+       */
+
+      // The ids currently on screen, in display order, read from the DOM
+      // rather than recomputed. The table is still rendered behind the modal,
+      // so this automatically respects the active sort, filters and grouping:
+      // Next means "the next one the reviewer can see", which is the only
+      // definition that matches what they are looking at.
+      rowDetailIds(view) {
+        const host = { extensions: '#extensionsContent', onboarding: '#onboardingContent',
+                       closed: '#closedContent', list: '#listContent' }[view];
+        if (!host) return [];
+        return [...document.querySelectorAll(`${host} tbody tr[data-row-key]`)]
+          .map(tr => tr.getAttribute('data-row-key'));
+      },
+
+      rowDetailRecord(view, id) {
+        const s = window.store.state;
+        return (s[View.STAGE_ROWS_KEY[view]] || []).find(x => String(x.id) === String(id));
+      },
+
+      // Title line per view: what identifies this record to someone reading it.
+      rowDetailHeading(view, r) {
+        const sub = t => `<div class="text-[11px] text-slate-500 truncate">${t}</div>`;
+        if (view === 'extensions' || view === 'onboarding') {
+          return `<div class="text-sm font-bold text-slate-800 truncate">${
+                    View.esc(r.clinician || r.worker_name || r.full_name || 'Record')}</div>`
+               + sub(`${View.esc(r.facility || r.health_system || '')}${
+                    r.role ? ' · ' + View.esc(r.role) : ''}`);
+        }
+        if (view === 'closed') {
+          return `<div class="text-sm font-bold text-slate-800 truncate">${View.esc(r.facility || r.health_system || 'Closed job')}</div>`
+               + sub(`${View.esc(r.role || r.category || '')} · ${View.esc(View.closedOutcomeLabel(r) || '')}`);
+        }
+        return `<div class="text-sm font-bold text-slate-800 truncate">${View.esc(r.facility || 'Job')}</div>`
+             + sub(`${View.esc(r.specialty || '')}${r.id ? ' · #' + View.esc(String(r.id)) : ''}`);
+      },
+
+      rowDetailBody(view, r) {
+        if (view === 'extensions') return View.extensionDetailBody(r, { inModal: true });
+        if (view === 'onboarding') return View.onboardingDetailBody(r, { inModal: true });
+        if (view === 'closed') return View.closedDetail(r);
+        return View.jobDetailHtml(r);   // already carries its own subtab strip
+      },
+
+      // Views whose detail writes through a Save button. Closed and Open Jobs
+      // have no editable state of their own, so the footer says so rather than
+      // offering a Save that would do nothing.
+      ROW_DETAIL_SAVEABLE: { extensions: 'SAVE_EXTENSION', onboarding: 'SAVE_ONBOARDING' },
+
+      rowDetailModal() {
+        const s = window.store.state;
+        const el = $('rowDetailModal');
+        if (!el) return;
+        const rd = s.rowDetail;
+        if (!rd) { el.classList.add('hidden'); return; }
+        const r = View.rowDetailRecord(rd.view, rd.id);
+        if (!r) { el.classList.add('hidden'); return; }
+
+        const ids = View.rowDetailIds(rd.view);
+        const idx = ids.indexOf(String(rd.id));
+        $('rowDetailModalTitle').innerHTML = View.rowDetailHeading(rd.view, r);
+        $('rowDetailModalPos').textContent = idx >= 0 ? `${idx + 1} of ${ids.length}` : '';
+        const prev = $('rowDetailPrev'), next = $('rowDetailNext');
+        if (prev) prev.disabled = idx <= 0;
+        if (next) next.disabled = idx < 0 || idx >= ids.length - 1;
+
+        $('rowDetailModalBody').innerHTML = View.rowDetailBody(rd.view, r);
+
+        const saveable = View.ROW_DETAIL_SAVEABLE[rd.view];
+        const save = $('rowDetailSave');
+        if (save) save.classList.toggle('hidden', !saveable);
+        $('rowDetailModalHint').textContent = saveable
+          ? 'Changes are saved to the database when you press Save.'
+          : 'This record is read-only here.';
+
+        el.classList.remove('hidden');
+        lucide.createIcons();
+      },
+
+      /* Has anything in the open modal been edited?
+       *
+       * Compared against the saved state rather than tracked with listeners,
+       * so it stays right however the inputs were changed -- including by the
+       * step checkboxes, which write nothing until Save.
+       */
+      rowDetailDirty() {
+        const s = window.store.state;
+        const rd = s.rowDetail;
+        if (!rd || !View.ROW_DETAIL_SAVEABLE[rd.view]) return false;
+        const id = rd.id;
+        const val = sel => (document.querySelector(`${sel}[data-id="${id}"]`)?.value || '').trim();
+        if (rd.view === 'extensions') {
+          const r = View.rowDetailRecord('extensions', id);
+          if (!r) return false;
+          const e = View.extensionEdit(r);
+          if (val('.ext-decision') !== (e.decision || '')) return true;
+          if (val('.ext-notes') !== (e.notes || '')) return true;
+          if (val('.ext-new-end') !== (e.newEnd || '')) return true;
+          if (val('.ext-rto') !== (e.rto || '')) return true;
+          if (val('.ext-flag') !== (e.isExt || '')) return true;
+          if (val('.ext-reason') !== (e.reason || '')) return true;
+          let stepsChanged = false;
+          document.querySelectorAll(`.ext-step[data-id="${id}"]`).forEach(cb => {
+            if (!!e.steps[cb.dataset.step] !== cb.checked) stepsChanged = true;
+          });
+          return stepsChanged;
+        }
+        const r = View.rowDetailRecord('onboarding', id);
+        if (!r) return false;
+        const e = View.onboardingEdit(r);
+        if (val('.onb-start') !== (e.currentStart || '').slice(0, 10)) return true;
+        if (val('.onb-category') !== (e.delayCategory || '')) return true;
+        if (val('.onb-context') !== (e.context || '')) return true;
+        return false;
+      },
+
       stageDetailRow(view, r) {
         if (view === 'list') {
           return `<tr data-detail-for="${r.id}"><td colspan="${View.stageColCount.list}" class="p-0">${View.jobDetailHtml(r)}</td></tr>`;
@@ -8735,7 +8930,23 @@
                title="${View.esc(b.action)}">${View.esc(b.action)}</div>`;
       },
 
+      // The expanded-row form: the shared body in a table row.
       extensionDetail(r) {
+        return `
+          <tr class="bg-slate-50" data-detail-for="${r.id}">
+            <td colspan="${View.stageColCount.extensions}" class="px-4 py-4 border-b border-slate-200">
+              ${View.extensionDetailBody(r)}
+            </td>
+          </tr>`;
+      },
+
+      /* The detail content itself, free of the table-row wrapper.
+       *
+       * Split out so the same markup can render inside an expanded row OR in
+       * the row modal. The wrapper above is the only part that assumes a
+       * table; everything below is self-contained.
+       */
+      extensionDetailBody(r, opts) {
         const e = View.extensionEdit(r);
         const ball = View.extensionBall(r);
         const meta = window.store.state.workspaceState?.extension?.[r.id];
@@ -8760,8 +8971,6 @@
           ? !!(r.match_original_end && r.match_end_date && r.match_end_date > r.match_original_end)
           : !!r.is_extension;
         return `
-          <tr class="bg-slate-50" data-detail-for="${r.id}">
-            <td colspan="${View.stageColCount.extensions}" class="px-4 py-4 border-b border-slate-200">
               <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
                 ${View.systemMatchPanel(r)}
                 <div>
@@ -8864,10 +9073,14 @@
                                placeholder="Why the seat is not extending">
                       </div>` : ''}
                     <div class="flex items-center gap-3 mt-3">
-                      <button onclick="store.dispatch('SAVE_EXTENSION','${r.id}')"
+                      ${/* The modal has its own Save in the footer; two save
+                            buttons on one record is an invitation to press the
+                            wrong one. The inline button stays for the expanded
+                            row, which has no footer. */''}
+                      ${opts && opts.inModal ? '' : `<button onclick="store.dispatch('SAVE_EXTENSION','${r.id}')"
                               class="px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-md text-xs font-semibold shadow-sm">
                         Save Extension Update
-                      </button>
+                      </button>`}
                       ${meta?.updatedBy ? `<span class="text-[10px] text-slate-400">Last saved by ${meta.updatedBy}${
                         meta.updatedAt ? ' · ' + new Date(meta.updatedAt).toLocaleString() : ''}</span>` : ''}
                     </div>
@@ -8878,9 +9091,7 @@
                 </div>
               </div>
               <!-- Rate & GM moved into the record above (View.rateGmInline).
-                   It used to render here as a full-width strip. -->
-            </td>
-          </tr>`;
+                   It used to render here as a full-width strip. -->`;
       },
 
       extensions() {
@@ -8987,7 +9198,9 @@
             const open = s.expandedExtensions.has(r.id);
             const e = View.extensionEdit(r);
             body += `
-              <tr data-row-key="${r.id}" class="hover:bg-slate-50 border-b border-slate-100 cursor-pointer" onclick="store.dispatch('TOGGLE_EXTENSION_ROW','${r.id}')">
+              <!-- was: store.dispatch('TOGGLE_EXTENSION_ROW', ...) -- the inline dropdown.
+                   Kept working (toggleStageRow is untouched); the row now opens the modal. -->
+              <tr data-row-key="${r.id}" class="hover:bg-slate-50 border-b border-slate-100 cursor-pointer" onclick="store.dispatch('OPEN_ROW_DETAIL',{view:'extensions',id:'${r.id}'})">
                 <td class="px-3 py-1.5">${View.stageIdCell(r)}</td>
                 <!-- max-w-0 forced Assignment to the narrowest possible box, so
                      every facility read "Lancaster G...". It is the column people
@@ -9400,7 +9613,19 @@
           </tr>`;
       },
 
+      // The expanded-row form: the shared body in a table row.
       onboardingDetail(r) {
+        return `
+          <tr class="bg-slate-50" data-detail-for="${r.id}">
+            <td colspan="${View.stageColCount.onboarding}" class="px-4 py-4 border-b border-slate-200">
+              ${View.onboardingDetailBody(r)}
+            </td>
+          </tr>`;
+      },
+
+      // Same content, free of the table-row wrapper, so the row modal can use
+      // it. See extensionDetailBody for why the split exists.
+      onboardingDetailBody(r, opts) {
         const e = View.onboardingEdit(r);
         const slip = View.onboardingSlip(r);
         const ball = View.onboardingBall(r);
@@ -9412,8 +9637,6 @@
             <div class="text-sm font-bold text-slate-800 mt-0.5">${value}</div>
           </div>`;
         return `
-          <tr class="bg-slate-50" data-detail-for="${r.id}">
-            <td colspan="${View.stageColCount.onboarding}" class="px-4 py-4 border-b border-slate-200">
               <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
                 <div>
                   <h5 class="text-xs font-bold uppercase tracking-wide text-slate-500 mb-1">Start Status</h5>
@@ -9462,10 +9685,10 @@
                   <textarea class="onb-context w-full bg-white border border-slate-300 rounded-md px-3 py-2 text-xs h-20"
                             data-id="${r.id}" placeholder="Why did the date move? What changed since the last review?">${e.context}</textarea>
                   <div class="flex items-center gap-3 mt-3">
-                    <button onclick="store.dispatch('SAVE_ONBOARDING','${r.id}')"
+                    ${opts && opts.inModal ? '' : `<button onclick="store.dispatch('SAVE_ONBOARDING','${r.id}')"
                             class="px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-md text-xs font-semibold shadow-sm">
                       Save Start Update
-                    </button>
+                    </button>`}
                     ${meta?.updatedBy ? `<span class="text-[10px] text-slate-400">Last saved by ${meta.updatedBy}${
                       meta.updatedAt ? ' · ' + new Date(meta.updatedAt).toLocaleString() : ''}</span>` : ''}
                   </div>
@@ -9473,9 +9696,7 @@
                 ${View.onboardingMovement(r)}
               </div>
               <!-- Rate & GM moved into the record above (View.rateGmInline).
-                   It used to render here as a full-width strip. -->
-            </td>
-          </tr>`;
+                   It used to render here as a full-width strip. -->`;
       },
 
       onboarding() {
@@ -9562,7 +9783,8 @@
             const e = View.onboardingEdit(r);
             const slip = View.onboardingSlip(r);
             body += `
-              <tr data-row-key="${r.id}" class="hover:bg-slate-50 border-b border-slate-100 cursor-pointer" onclick="store.dispatch('TOGGLE_ONBOARDING_ROW','${r.id}')">
+              <!-- was: store.dispatch('TOGGLE_ONBOARDING_ROW', ...) -->
+              <tr data-row-key="${r.id}" class="hover:bg-slate-50 border-b border-slate-100 cursor-pointer" onclick="store.dispatch('OPEN_ROW_DETAIL',{view:'onboarding',id:'${r.id}'})">
                 <td class="px-3 py-2">${View.stageIdCell(r)}</td>
                 <td class="px-3 py-2 max-w-0">${View.stageSystemCell(r, { spec: r.role || '' })}</td>
                 <td class="px-3 py-2">
@@ -9855,7 +10077,7 @@
             const share = View.closedSharePct(r);
             body += `
               <tr data-row-key="${r.id}" class="hover:bg-slate-50 border-b border-slate-100 ${closedExpandable ? 'cursor-pointer' : ''}"
-                  ${closedExpandable ? `onclick="store.dispatch('TOGGLE_CLOSED_ROW','${r.id}')"` : ''}>
+                  ${closedExpandable ? `onclick="store.dispatch('OPEN_ROW_DETAIL',{view:'closed',id:'${r.id}'})"` : ''}>
                 <td class="px-3 py-2">${View.stageIdCell(r)}</td>
                 <td class="px-3 py-2 font-semibold text-slate-700">${r.category || '—'}</td>
                 <td class="px-3 py-2 max-w-0">${View.stageSystemCell(r, { spec: r.role || r.specialty || '' })}</td>
@@ -15404,6 +15626,8 @@
         // Analysis strips default open; collapsed state is per stage view.
         intelOpen: {},
         onboardingRows: [], onboardingMeta: null, onboardingLoaded: false, onboardingError: null,
+        // { view, id } while the row detail modal is open, else null.
+        rowDetail: null,
         closedRows: [], closedMeta: null, closedLoaded: false, closedError: null,
         // stageShell gates every stage table on a <key>Loaded flag; Open Jobs
         // renders through the same shell now, so it needs one too.
@@ -15675,7 +15899,7 @@
                   if (s.meeting) {
                     window.store.dispatch('LOG_MEETING_ACTION', `${name || 'Candidate'} marked “${stage}” on job ${jobId}`);
                   }
-                  View.rowUpdate(jobId);
+                  View.rowRefresh(jobId);
                 } catch (e) {
                   console.warn('Interview save failed:', e);
                   window.showToast?.('Could not save: ' + (e.message || e), 'error');
@@ -15791,6 +16015,49 @@
               break;
             }
 
+            /* ---- Row detail modal ---- */
+            case 'OPEN_ROW_DETAIL': {
+              const { view, id } = payload;
+              if (!s.rowSubView[id]) s.rowSubView[id] = 'active';
+              if (!s.rowDetailTab[id]) s.rowDetailTab[id] = 'levers';
+              s.rowDetail = { view, id: String(id) };
+              View.rowDetailModal();
+              break;
+            }
+            case 'CLOSE_ROW_DETAIL': {
+              // Edits live in the inputs until Save, so closing a dirty record
+              // would discard them without saying so. Ask once rather than lose
+              // someone's work silently.
+              if (View.rowDetailDirty() &&
+                  !window.confirm('Discard the unsaved changes on this record?')) break;
+              s.rowDetail = null;
+              View.rowDetailModal();
+              break;
+            }
+            case 'STEP_ROW_DETAIL': {
+              if (!s.rowDetail) break;
+              if (View.rowDetailDirty() &&
+                  !window.confirm('Discard the unsaved changes on this record?')) break;
+              const ids = View.rowDetailIds(s.rowDetail.view);
+              const i = ids.indexOf(String(s.rowDetail.id));
+              const next = i + (Number(payload) || 0);
+              if (i < 0 || next < 0 || next >= ids.length) break;
+              s.rowDetail = { view: s.rowDetail.view, id: ids[next] };
+              View.rowDetailModal();
+              break;
+            }
+            case 'SAVE_ROW_DETAIL': {
+              if (!s.rowDetail) break;
+              const action = View.ROW_DETAIL_SAVEABLE[s.rowDetail.view];
+              if (!action) { s.rowDetail = null; View.rowDetailModal(); break; }
+              // Reuse the view's own save. It reads the same inputs whether
+              // they are in an expanded row or in the modal, so there is one
+              // write path rather than two that can drift.
+              this.dispatch(action, s.rowDetail.id);
+              s.rowDetail = null;
+              View.rowDetailModal();
+              break;
+            }
             case 'TOGGLE_EXTENSION_ROW': {
               // Inserts or removes one detail row; never re-renders the
               // table, so the scroll position cannot be lost.
@@ -16186,9 +16453,16 @@
                 View.rowUpdate(id);
                 break;
               }
-              // The same surgical insert/remove the stage tabs use, so opening
-              // a job cannot lose the scroll position either.
-              View.toggleStageRow('list', id);
+              /* The redesigned list opens the modal. Switched here rather than
+               * in the row markup so production MSP -- which returns above on
+               * !impactUi() and keeps its legacy in-place expand -- cannot be
+               * affected by the change at all.
+               *
+               * The inline dropdown still works and is one line away:
+               *   View.toggleStageRow('list', id);
+               */
+              s.rowDetail = { view: 'list', id: String(id) };
+              View.rowDetailModal();
               break;
             }
 
@@ -16217,7 +16491,7 @@
               });
 
               if (s.view === 'hotjobs') View.hotJobs();
-              else View.rowUpdate(id);
+              else View.rowRefresh(id);
 
               break;
             }
@@ -16246,7 +16520,7 @@
 
             case 'SET_SUB_VIEW': {
               s.rowSubView[payload.id] = payload.view;
-              View.rowUpdate(payload.id);
+              View.rowRefresh(payload.id);
               break;
             }
 
@@ -16268,7 +16542,7 @@
 
             case 'SET_DETAIL_TAB': {
               s.rowDetailTab[payload.id] = payload.tab;
-              View.rowUpdate(payload.id);
+              View.rowRefresh(payload.id);
               break;
             }
 
@@ -16535,7 +16809,7 @@
               }));
               // Data now saved via recordChange() function
 
-              View.rowUpdate(job.id);
+              View.rowRefresh(job.id);
               this.dispatch('CLOSE_MODAL');
               break;
             }
@@ -16558,7 +16832,7 @@
                 time: ''
               });
 
-              View.rowUpdate(payload.id);
+              View.rowRefresh(payload.id);
               break;
             }
 
@@ -16726,6 +17000,19 @@
         const t = e.target;
         const id = t && t.dataset ? t.dataset.id : null;
         if (!id || !t.classList) return;
+        /* Stand down while the row detail modal owns this record.
+         *
+         * The modal offers an explicit Save and Cancel, and autosaving on
+         * change makes Cancel a lie: the value is already in the database
+         * before the user decides to discard it. Verified -- changing Client
+         * Decision fired SAVE_EXTENSION on its own, so a Cancel afterwards
+         * reverted nothing.
+         *
+         * The inline dropdown has no footer and still relies on this, as does
+         * production MSP, so the behaviour is unchanged everywhere else.
+         */
+        const rd = window.store.state.rowDetail;
+        if (rd && String(rd.id) === String(id)) return;
         const has = c => t.classList.contains(c);
         if (has('ext-step') || has('ext-decision') || has('ext-notes')) {
           window.store.dispatch('SAVE_EXTENSION', id);
