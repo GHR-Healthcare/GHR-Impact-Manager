@@ -2,6 +2,25 @@
 
 ## Version History
 
+### 2.38.0 - Extensions endpoint: parallel feeds and a cache
+
+- **extensions-data was returning a 500.** Measured warm at 21-23s, and the first
+  request after a deploy took **43.6s** -- past the 45s SWA gateway timeout, so the tab
+  got an error rather than a slow answer. The B4 and VNDLY branches were running
+  sequentially on one cursor despite being independent reads
+- **The two branches now run concurrently**, each on its own connection, as
+  `GetTrendData` and `GetFinancialData` already do. A pyodbc connection cannot be
+  shared across threads, and sharing the single cursor was the serialisation being
+  fixed
+- **Cached through `shared_code/endpoint_cache`**, default window only. `horizon` and
+  `includeAffiliate` both change the result, so a key on the route alone would hand a
+  45-day default to a caller who asked for 90 -- the exact bug the financial-data cache
+  shipped with
+- **Header: the book subtitle moved back under the title.** The density pass had put it
+  on the title line, where it sat beside the version number and read as part of it
+- **"Symplr Education" is now just "Symplr".** Non-Acute comes through the same source,
+  so naming only Education understated the book
+
 ### 2.37.1 - Scope the B4 extension report to GHR
 
 - The Network Activity Report is registry-level and lists every vendor in the program

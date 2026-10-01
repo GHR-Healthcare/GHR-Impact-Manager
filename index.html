@@ -217,7 +217,11 @@
   <header class="mb-2 shrink-0">
     <!-- Top row: Title and User -->
     <div class="flex flex-col sm:flex-row justify-between items-center gap-2 mb-1.5">
-      <div class="flex items-baseline gap-2 min-w-0">
+      <!-- Stacked, not inline. The density pass put the subtitle on the title
+           line to save a row, but it then sat beside the version number and
+           read as part of it rather than as a description of the book. It goes
+           back under the title; leading-tight keeps the row cost near zero. -->
+      <div class="flex flex-col justify-center min-w-0">
         <h1 class="text-lg sm:text-xl font-bold text-slate-900 flex items-center gap-2">
           <img src="ghr-logo.png" alt="GHR" class="w-7 h-7 object-contain shrink-0">
           GHR Impact Manager
@@ -225,9 +229,7 @@
           <span id="instanceBadge" class="hidden text-[10px] sm:text-xs font-semibold uppercase tracking-wide px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-700 border border-indigo-200"></span>
           <span id="versionDisplay" class="text-xs font-normal text-slate-400 ml-1"></span>
         </h1>
-        <!-- Was a second line under the title. It never changes and nobody
-             needs to read it twice, so it sits inline and small. -->
-        <p id="appSubtitle" class="text-slate-400 text-[11px] hidden md:block truncate">Account Performance Workspace</p>
+        <p id="appSubtitle" class="text-slate-400 text-[11px] hidden md:block truncate leading-tight">Account Performance Workspace</p>
       </div>
       
       <!-- Start IMPACT Meeting sits centred in the header, as the reference
@@ -976,7 +978,7 @@
     const $ = (id) => document.getElementById(id);
 
     // App version - loaded from environment variable via API, with fallback
-    let APP_VERSION = '2.37.1';
+    let APP_VERSION = '2.38.0';
 
     const API_BASE_URL = '/api';
 
@@ -1604,7 +1606,7 @@
                     const subtitle = document.getElementById('appSubtitle');
                     if (subtitle) {
                         subtitle.textContent = isNonMspHeader
-                          ? 'Non-MSP · Bullhorn + Symplr Education book'
+                          ? 'Non-MSP · Bullhorn + Symplr book'
                           : 'Account Performance Workspace';
                     }
                     // Re-run viewToggle so Pending / Per Diem buttons hide on

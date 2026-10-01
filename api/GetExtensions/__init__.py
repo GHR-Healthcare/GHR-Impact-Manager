@@ -2,6 +2,9 @@ import azure.functions as func
 import pyodbc
 import os
 import json
+from concurrent.futures import ThreadPoolExecutor
+import time
+from shared_code.endpoint_cache import cache_key, read_cache, write_cache
 from shared_code.rate_scope import value_13wk
 from shared_code.auth import require_allowed_domain
 from shared_code.data_source import (
@@ -993,10 +996,27 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                 json.dumps({'error': str(e)}),
                 mimetype='application/json', status_code=500)
 
+    # Served from the cache table when one is fresh. Measured warm at 21-23s,
+    # and the first request after a deploy took 43.6s -- past the 45s SWA
+    # gateway timeout, so the tab got a 500 rather than a slow answer.
+    #
+    # Only the DEFAULT window is cached. horizon and includeAffiliate both
+    # change the result, and a key on the route alone would hand a 45-day
+    # default to someone who asked for 90 -- the exact bug the financial-data
+    # cache shipped with and had to be fixed for.
+    cacheable = (horizon == EXTENSION_HORIZON_DAYS and not include_affiliate)
+    key = cache_key('extensions-data', 'msp')
+    if cacheable:
+        cached = read_cache(key)
+        if cached is not None:
+            print(f"extensions-data: served from cache ({cached.get('cachedAt') if isinstance(cached, dict) else 'list'})")
+            return func.HttpResponse(json.dumps(cached, default=str),
+                                     mimetype='application/json', status_code=200)
     conn = None
     rows, errors = [], []
+    started = time.time()
     try:
-        conn = pyodbc.connect(
+        _CONN_STR = (
             f"DRIVER={{ODBC Driver 17 for SQL Server}};"
             f"SERVER={os.environ['DB_HOST']};"
             f"DATABASE={os.environ['POSITIONS_DB']};"
@@ -1004,6 +1024,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             f"PWD={os.environ['DB_PASSWORD']};"
             f"TrustServerCertificate=yes"
         )
+        conn = pyodbc.connect(_CONN_STR)
         cursor = conn.cursor()
         cursor.execute('SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED')
 
@@ -1011,21 +1032,55 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
         # they cover different workers, and once a system is fully cut over B4
         # simply stops producing rows for it. Same treatment GetFinancialData
         # applies for the transitioned systems (RUMC, Holy Redeemer, Cooper).
-        for label, fn in (('B4', _b4_rows), ('VNDLY', _vndly_rows)):
+        #
+        # Run concurrently, as GetTrendData and GetFinancialData already do.
+        # Measured warm before this change: 21-23s, with the first request
+        # after a deploy taking 43.6s and the SWA gateway giving up at 45 --
+        # the tab returned a 500. The two branches are independent reads, and
+        # neither depends on the other's rows.
+        #
+        # Each thread opens its own connection: a pyodbc connection is not
+        # safe to share across threads, and the two branches would otherwise
+        # serialise on the single cursor anyway, which is the thing being
+        # fixed.
+        def _run(label, fn):
+            own = None
             try:
-                rows.extend(fn(cursor, horizon, include_affiliate))
+                own = pyodbc.connect(_CONN_STR)
+                cur = own.cursor()
+                cur.execute('SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED')
+                return label, fn(cur, horizon, include_affiliate), None
             except Exception as e:
-                print(f"Extensions: {label} branch failed: {e}")
                 import traceback
                 traceback.print_exc()
-                errors.append(f'{label}: {e}')
+                return label, [], f'{label}: {e}'
+            finally:
+                if own:
+                    try:
+                        own.close()
+                    except Exception:
+                        pass
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            for label, got, err in pool.map(lambda a: _run(*a),
+                                            (('B4', _b4_rows), ('VNDLY', _vndly_rows))):
+                if err:
+                    print(f"Extensions: {label} branch failed: {err}")
+                    errors.append(err)
+                rows.extend(got)
 
         rows = _serialize(rows)
         rows.sort(key=lambda r: (r.get('days_left') if r.get('days_left') is not None else 9999))
         b4n = sum(1 for r in rows if r['source_system'] == 'B4')
         vnn = sum(1 for r in rows if r['source_system'] == 'VNDLY')
         print(f"Extensions: {len(rows)} rows (B4 {b4n}, VNDLY {vnn}; horizon {horizon}d, "
-              f"affiliate={include_affiliate}; errors: {errors or 'none'})")
+              f"affiliate={include_affiliate}; {int((time.time()-started)*1000)}ms; "
+              f"errors: {errors or 'none'})")
+        # Best-effort warm, never fails the response. Skipped when a branch
+        # errored so a half-empty book cannot be served for a day.
+        if cacheable and not errors:
+            write_cache(key, rows, build_ms=int((time.time() - started) * 1000),
+                        refreshed_by='live-request')
         return func.HttpResponse(
             json.dumps(rows, default=str),
             mimetype="application/json",
