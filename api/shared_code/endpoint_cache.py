@@ -117,7 +117,15 @@ def read_cache(key, max_age_seconds=DEFAULT_MAX_AGE_SECONDS):
         payload = json.loads(row[0])
         # Stamped so the UI can say how fresh this is rather than implying it
         # is live. The endpoints pass this straight through.
-        payload['cachedAt'] = refreshed_at.isoformat() if refreshed_at else None
+        #
+        # Only an object can carry the stamp. extensions-data returns a bare
+        # JSON array, and stamping it raised TypeError on every read -- which
+        # the except below swallowed, so the cache wrote correctly, reported
+        # itself healthy in cache_status, and never served a single request.
+        # Fail-open is right here, but it hid this completely; the only visible
+        # symptom was that a cached endpoint stayed as slow as an uncached one.
+        if isinstance(payload, dict):
+            payload['cachedAt'] = refreshed_at.isoformat() if refreshed_at else None
         return payload
     except Exception as e:
         print(f'endpoint_cache: read {key} failed, computing live: {e}')

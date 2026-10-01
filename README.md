@@ -2,6 +2,15 @@
 
 ## Version History
 
+### 2.38.1 - The extensions cache was writing and never serving
+
+- `read_cache` stamped `cachedAt` onto the payload unconditionally. `extensions-data`
+  returns a bare JSON **array**, so that raised `TypeError` on every read -- and the
+  fail-open `except` swallowed it and computed live. The cache wrote correctly, 845KB,
+  and reported itself healthy in `cache_status`; the only visible symptom was that a
+  cached endpoint stayed exactly as slow as an uncached one. Only an object can carry
+  the stamp, so only an object gets it now
+
 ### 2.38.0 - Extensions endpoint: parallel feeds and a cache
 
 - **extensions-data was returning a 500.** Measured warm at 21-23s, and the first
