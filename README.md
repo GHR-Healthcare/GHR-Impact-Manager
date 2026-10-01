@@ -2,6 +2,33 @@
 
 ## Version History
 
+### 2.41.0 - VNDLY seats reach Bullhorn
+
+Every VNDLY seat on the Extensions tab read "No Bullhorn record joins to this seat" --
+0 of 90 linked, no recruiter, no System Match. The bridge was there all along:
+**`BH_PLACEMENT_RAW.customText56` holds the VNDLY work order** (`WO00270`), matching
+`STAGING_VNDLY_WORKORDERS.[Work Order Id]`.
+
+- **It cannot be joined on its own.** `[Work Order Id]` restarts per tenant: of 973
+  ids, 376 are unique to one tenant but **370 appear in two and 227 in three**, so a
+  bare join would have sent the majority of seats to the wrong health system. The
+  `WOSystemKey` prefix names the tenant (CUH / IHN / RH / RUMC) and the B4 crosswalk
+  maps a Bullhorn client to the same health systems, so the real key is the work order
+  id *plus that tenant's clients*. The two systems spell the names differently --
+  VNDLY's "Redeemer Health" and "RUMC" against the crosswalk's "Holy Redeemer Hospital"
+  and "Richmond University Medical Center" -- so the mapping is explicit
+- **Result:** 106 of 298 work orders in the window reach a placement, and 97 of those
+  resolve to a single candidate. The extra placements on the other 9 are a seat that
+  changed hands; the clinician-name comparison picks the right one, and where even that
+  disagrees the System Match panel reports the mismatch rather than hiding it. Those
+  seats now carry a recruiter and a real end-date comparison
+- **Built as a temp table, not a CTE.** SQL Server inlines a CTE, so as one the link
+  set was re-evaluated once per work order and the query took **103 seconds**. Built
+  once into `#bh_wo` it is **3.4s** for the same 106 links
+- The old comment asserting no link exists is kept and corrected: what it tested was
+  right, its conclusion was not. Every attempt had looked for a VNDLY-side key pointing
+  at Bullhorn, never a custom field on the Bullhorn side carrying a VNDLY id
+
 ### 2.40.1 - The cache was caching a URL nobody asks for
 
 - **MSP requests `extensions-data` and `onboarding-data` with `?includeAffiliate=1`**,

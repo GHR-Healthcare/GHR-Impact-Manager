@@ -373,6 +373,59 @@ def _vndly_rows(cursor, horizon, include_affiliate):
     """
     status_list = ', '.join("'" + s.replace("'", "''") + "'" for s in VNDLY_ACTIVE_STATUSES)
     vendor_filter = '' if include_affiliate else f'AND {VNDLY_GHR_PREDICATE}'
+    # The VNDLY <-> Bullhorn link set, materialised.
+    #
+    # BH_PLACEMENT_RAW.customText56 holds the VNDLY work order as 'WO00270' and
+    # matches STAGING_VNDLY_WORKORDERS.[Work Order Id] exactly. It CANNOT be
+    # joined on its own: [Work Order Id] restarts per tenant, and of 973 ids,
+    # 376 are unique to one tenant while 370 appear in two and 227 in three --
+    # a bare join sends the majority of seats to the wrong health system.
+    #
+    # The WOSystemKey prefix names the tenant (CUH / IHN / RH / RUMC) and the B4
+    # crosswalk maps a Bullhorn client to those same health systems, so
+    # (work order id + that tenant's clients) is the real key. The two systems
+    # spell the names differently -- VNDLY's "Redeemer Health" and "RUMC"
+    # against the crosswalk's "Holy Redeemer Hospital" and "Richmond University
+    # Medical Center" -- so the mapping is explicit rather than a string match.
+    #
+    # A temp table, not a CTE: SQL Server inlines a CTE, so as one this was
+    # re-evaluated once per work order and the query took 103s. Built once into
+    # #bh_wo it is 3.4s for the same 106 links.
+    cursor.execute("""
+        SET NOCOUNT ON;
+        IF OBJECT_ID('tempdb..#bh_wo') IS NOT NULL DROP TABLE #bh_wo;
+        SELECT
+            CASE LTRIM(RTRIM(x.Health_System))
+                 WHEN 'Cooper University Healthcare'       THEN 'CUH'
+                 WHEN 'Inspira Medical Centers, Inc.'      THEN 'IHN'
+                 WHEN 'Richmond University Medical Center' THEN 'RUMC'
+                 WHEN 'Holy Redeemer Hospital'             THEN 'RH'
+            END                                            AS tenant,
+            LTRIM(RTRIM(bp.customText56))                  AS woid,
+            pd.Source_Placement_ID                         AS match_id,
+            CAST(pd.DateBegin AS DATE)                     AS match_start_date,
+            CAST(pd.DateEnd AS DATE)                       AS match_end_date,
+            NULLIF(LTRIM(RTRIM(pd.Status)), '')            AS match_status,
+            NULLIF(LTRIM(RTRIM(cd.CandidateName)), '')     AS match_clinician,
+            CAST(pd.DateOriginalEnd AS DATE)               AS match_original_end,
+            NULLIF(LTRIM(RTRIM(pd.Recruiter)), '')         AS bh_recruiter,
+            pd.DateEnd                                     AS order_end
+        INTO #bh_wo
+        FROM dbo.BH_PLACEMENT_RAW bp WITH (NOLOCK)
+        JOIN dbo.BH_PLACEMENT_RAW_TO_B4HealthOrder x WITH (NOLOCK)
+          ON x.clientCorporationID = bp.clientCorporationID
+         AND LTRIM(RTRIM(x.Health_System)) IN (
+               'Cooper University Healthcare', 'Inspira Medical Centers, Inc.',
+               'Richmond University Medical Center', 'Holy Redeemer Hospital')
+        JOIN dbo.PLACEMENT_DIM pd WITH (NOLOCK)
+          ON pd.Source_Placement_ID = bp.placementID
+        LEFT JOIN dbo.CANDIDATE_DIM cd WITH (NOLOCK)
+          ON cd.Source_Candidate_ID = bp.candidateID
+        WHERE NULLIF(LTRIM(RTRIM(bp.customText56)), '') IS NOT NULL;
+        CREATE INDEX ix_bhwo ON #bh_wo (tenant, woid);
+    """)
+
+
     cursor.execute(f'''
         WITH ext_mods AS (
             -- Extension activity is an EVENT in the modifications feed, not a
@@ -502,20 +555,30 @@ def _vndly_rows(cursor, horizon, include_affiliate):
             -- No System Match on VNDLY: there is no identifier path from a
             -- VNDLY work order to a Bullhorn placement. PLACEMENT_DIM.VMSReqID
             -- looked like the bridge but is a B4 contract number -- 5,068 of
-            -- its 5,069 values resolve to B4HealthOrder and none to a work
-            -- order. STAGING_VNDLY_CONTRACTOR_XREF.[Client Contractor] looked
-            -- like a Bullhorn candidate ID and is the client's own contractor
-            -- number: zero of 283 match a Bullhorn candidate. Reported as
-            -- unlinked rather than compared against a guess.
-            NULL                                         AS match_system,
-            NULL                                         AS match_id,
-            NULL                                         AS match_start_date,
-            NULL                                         AS match_end_date,
-            NULL                                         AS match_status,
-            NULL                                         AS match_clinician,
-            -- Recruiter lives on the ATS record, which is only reachable
-            -- through the crosswalk B4 has and VNDLY does not.
-            NULL                                         AS recruiter,
+            /* VNDLY seats reach Bullhorn now, through #bh_wo above. The bridge
+             * is BH_PLACEMENT_RAW.customText56, a Bullhorn custom field holding
+             * the VNDLY work order.
+             *
+             * The earlier reasoning is kept because it was right about what it
+             * tested and wrong only in its conclusion: PLACEMENT_DIM.VMSReqID is
+             * a B4 contract number (5,068 of 5,069 resolve to B4HealthOrder,
+             * none to a work order) and STAGING_VNDLY_CONTRACTOR_XREF.
+             * [Client Contractor] is the client's own contractor number (zero of
+             * 283 match a Bullhorn candidate). Both still hold.
+             *
+             * What it never covered was a custom field on the BULLHORN side
+             * carrying a VNDLY id -- every attempt looked for a VNDLY-side key
+             * pointing at Bullhorn. When a link appears not to exist, check the
+             * other system's custom fields before concluding it.
+             */
+            CASE WHEN bh.match_id IS NOT NULL THEN 'Bullhorn' END AS match_system,
+            CAST(bh.match_id AS NVARCHAR(50))            AS match_id,
+            bh.match_start_date                          AS match_start_date,
+            bh.match_end_date                            AS match_end_date,
+            bh.match_status                              AS match_status,
+            bh.match_clinician                           AS match_clinician,
+            -- Reachable now that the work order resolves to a placement.
+            bh.bh_recruiter                              AS recruiter,
             NULL                                         AS source_is_extension,
             /* VNDLY keeps RTO on the contractor, reached through the work-order
              * cross-reference. 58 of the 296 work orders ending in the window
@@ -531,7 +594,7 @@ def _vndly_rows(cursor, horizon, include_affiliate):
                 AND NULLIF(LTRIM(RTRIM(ct.[RTO])), '') IS NOT NULL
             )                                            AS recorded_rto,
             NULL                                         AS match_is_extension,
-            CAST(NULL AS DATE)                           AS match_original_end,
+            bh.match_original_end                        AS match_original_end,
             -- VNDLY is the one MSP source that states the seat's original end
             -- date outright, so an in-place extension is a fact here rather
             -- than an inference.
@@ -544,6 +607,28 @@ def _vndly_rows(cursor, horizon, include_affiliate):
             CAST(NULL AS INT)                            AS b4_report_extended,
             CAST(NULL AS INT)                            AS b4_report_declined
         FROM dbo.STAGING_VNDLY_WORKORDERS w WITH (NOLOCK)
+        /* Of 298 work orders ending in the window, 106 reach a placement and
+         * 97 of those resolve to a single candidate -- the extra placements on
+         * the other 9 are a seat that changed hands. The name comparison picks
+         * the placement for the contractor VNDLY has; where even that
+         * disagrees the System Match panel reports the clinician mismatch
+         * rather than hiding it.
+         */
+        OUTER APPLY (
+            SELECT TOP 1
+                b.match_id, b.match_start_date, b.match_end_date,
+                b.match_status, b.match_clinician, b.match_original_end,
+                b.bh_recruiter
+            FROM #bh_wo b
+            WHERE b.tenant = LEFT(w.WOSystemKey, CHARINDEX('-', w.WOSystemKey + '-') - 1)
+              AND b.woid   = LTRIM(RTRIM(w.[Work Order Id]))
+            ORDER BY
+                CASE WHEN b.match_clinician IS NOT NULL
+                       AND NULLIF(LTRIM(RTRIM(w.[Contractor Last Name])), '') IS NOT NULL
+                       AND b.match_clinician LIKE '%' + LTRIM(RTRIM(w.[Contractor Last Name])) + '%'
+                     THEN 0 ELSE 1 END,
+                b.order_end DESC
+        ) bh
         LEFT JOIN ext_mods x ON x.wo = w.WOSystemKey
         LEFT JOIN ext_latest xl ON xl.wo = w.WOSystemKey
         LEFT JOIN ext_status  xs ON xs.wo = w.WOSystemKey
