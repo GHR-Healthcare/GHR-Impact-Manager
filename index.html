@@ -976,7 +976,7 @@
     const $ = (id) => document.getElementById(id);
 
     // App version - loaded from environment variable via API, with fallback
-    let APP_VERSION = '2.18.0';
+    let APP_VERSION = '2.36.4';
 
     const API_BASE_URL = '/api';
 
@@ -10107,10 +10107,18 @@
          * outcome, owner) is exactly as meaningful on direct business.
          */
         const closedExpandable = true;
-        const CLOSED_GROUPS = closedExpandable
-          ? [['GHR WON', 'Filled · GHR'], ['AFFILIATE WON', 'Filled · Affiliate Network'],
-             ['MISSED', 'Unfilled · Expired'], ['CANCELED', 'Canceled & Declined']]
-          : [['FILLED', 'Filled'], ['UNFILLED', 'Unfilled'], ['CANCELED', 'Canceled & Declined']];
+        /* The group vocabulary is a property of the BOOK, not of whether the
+         * row opens. These were the same flag, so making Closed expandable on
+         * non-MSP also switched it to the MSP group names -- and non-MSP rows
+         * carry FILLED / UNFILLED / CANCELED, so 778 of 883 matched nothing
+         * and silently vanished from the table. Caught because the row count
+         * fell to exactly the CANCELED count.
+         */
+        const nonMspClosed = s.dataSource === 'non_msp';
+        const CLOSED_GROUPS = nonMspClosed
+          ? [['FILLED', 'Filled'], ['UNFILLED', 'Unfilled'], ['CANCELED', 'Canceled & Declined']]
+          : [['GHR WON', 'Filled · GHR'], ['AFFILIATE WON', 'Filled · Affiliate Network'],
+             ['MISSED', 'Unfilled · Expired'], ['CANCELED', 'Canceled & Declined']];
         // Signed, unlike the plain `money` already in this scope: on Closed the
         // sign is the point. A GHR win is revenue earned, an affiliate win or
         // an unfilled seat is revenue lost.

@@ -2,6 +2,20 @@
 
 ## Version History
 
+### 2.36.4 - Restore the 778 Closed rows 2.36.3 hid on non-MSP
+
+- **Making Closed expandable on non-MSP silently dropped 88% of the table.** One flag
+  was doing two unrelated jobs: gating whether a row opens, *and* choosing the group
+  vocabulary. Turning it on in 2.36.3 also switched non-MSP to the MSP group names
+  (`GHR WON` / `AFFILIATE WON` / `MISSED`), but non-MSP rows carry
+  `FILLED` / `UNFILLED` / `CANCELED` -- so 778 of 883 rows matched no group and
+  vanished from the page. The API was returning all 883 the whole time. The group
+  list is a property of the book and is now keyed on the data source; expandability
+  is independent of it
+- **How it surfaced:** the re-audit counted 105 rendered rows against 883 from the
+  endpoint, and 105 was *exactly* the CANCELED count -- the signature of a group
+  filter, not of a lost query
+
 ### 2.36.3 - UI pass across both prototypes
 Found by walking every tab on both prototype instances and opening a row modal on each.
 
