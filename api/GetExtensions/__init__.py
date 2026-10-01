@@ -174,6 +174,40 @@ def _b4_rows(cursor, horizon, include_affiliate):
             WHERE NULLIF(LTRIM(RTRIM(cs.RTO)), '') IS NOT NULL
         ) z WHERE rn = 1;
         CREATE INDEX ix_b4rto ON #b4_rto (contract_id);
+
+        IF OBJECT_ID('tempdb..#b4_ext') IS NOT NULL DROP TABLE #b4_ext;
+        SELECT parent, MAX(rp) AS rp, MAX(re) AS re, MAX(rd) AS rd
+        INTO #b4_ext
+        FROM (
+            SELECT LTRIM(RTRIM(c.Parent_Contract_ID)) AS parent,
+                   CASE WHEN LTRIM(RTRIM(x.AssignmentType))='Extension Offer Pending'
+                        THEN 1 ELSE 0 END AS rp,
+                   CASE WHEN LTRIM(RTRIM(x.AssignmentType))='Future Extension Accepted'
+                        THEN 1 ELSE 0 END AS re,
+                   CASE WHEN LTRIM(RTRIM(x.AssignmentType))='Extension Offer Declined'
+                        THEN 1 ELSE 0 END AS rd
+            FROM dhc.B4HealthExtensionsOrder x WITH (NOLOCK)
+            JOIN dhc.B4HealthOrder c WITH (NOLOCK)
+              ON LTRIM(RTRIM(c.Contract_ID)) = LTRIM(RTRIM(x.AssignmentID))
+            WHERE x.Agency LIKE '%GHR%' AND c.Parent_Contract_ID IS NOT NULL
+        ) z GROUP BY parent;
+        CREATE INDEX ix_b4ext ON #b4_ext (parent);
+
+        IF OBJECT_ID('tempdb..#b4_chain') IS NOT NULL DROP TABLE #b4_chain;
+        SELECT parent, MAX(aw) AS aw, MAX(op) AS op
+        INTO #b4_chain
+        FROM (
+            SELECT LTRIM(RTRIM(cs.Parent_Contract_Assignment_ID)) AS parent,
+                   CASE WHEN cs.Date_Awarded IS NOT NULL THEN 1 ELSE 0 END AS aw,
+                   CASE WHEN cs.Date_Awarded IS NULL AND cs.Offer_Date IS NOT NULL
+                         AND cs.Agency_Decline_Date IS NULL
+                         AND cs.Hospital_Decline_Date IS NULL
+                         AND cs.Agency_Retracted_Date IS NULL
+                        THEN 1 ELSE 0 END AS op
+            FROM dhc.B4Health_Contract_Submissions cs WITH (NOLOCK)
+            WHERE cs.Parent_Contract_Assignment_ID IS NOT NULL
+        ) z GROUP BY parent;
+        CREATE INDEX ix_b4chain ON #b4_chain (parent);
     """)
 
 
@@ -259,94 +293,30 @@ def _b4_rows(cursor, horizon, include_affiliate):
             -- contract -- so the VNDLY status column is null on this source.
             CAST(NULL AS NVARCHAR(50))                  AS mod_status,
             CAST(NULL AS NVARCHAR(100))                 AS mod_reason,
-            /* The spec reaches this through the Network Activity Report:
+            /* The spec reaches these through the Network Activity Report:
              * filter to the extensions tab, take assignment type "extension
-             * offer pending" for GHR divisions, then crosswalk the names back
-             * to the forecast ends. The warehouse carries the same facts with
-             * a real key -- an extension in B4 IS a child contract whose
+             * offer pending" for GHR divisions, then crosswalk names back to
+             * the forecast ends. The warehouse carries the same facts with a
+             * real key -- an extension in B4 IS a child contract whose
              * Parent_Contract_Assignment_ID is this assignment -- so the match
-             * is exact instead of by name, and nothing is exported by hand.
+             * is exact rather than by name and nothing is exported by hand.
              *
-             * Measured against the live 45-day window: 687 seats ending, 128
-             * with a child submission, 38 offer-pending, 87 already awarded.
+             * Resolved once into #b4_ext / #b4_chain. As five correlated EXISTS
+             * they cost 10.0s for 444 rows; pre-aggregated and joined, 1.6s for
+             * the same answers.
              *
-             * Awarded is tested first and wins: once the extension is awarded
-             * the seat is no longer awaiting anyone.
+             * The report is registry-level and lists every vendor in the
+             * program, so it is scoped to GHR agencies -- an affiliate picking
+             * up a GHR seat's extension must never read as GHR extending it.
+             *
+             * Awarded is tested before pending in _extension_stage: once the
+             * extension is awarded the seat is no longer awaiting anyone.
              */
-            CASE WHEN EXISTS (
-                SELECT 1 FROM dhc.B4Health_Contract_Submissions cs WITH (NOLOCK)
-                WHERE LTRIM(RTRIM(cs.Parent_Contract_Assignment_ID)) = LTRIM(RTRIM(o.Contract_ID))
-                  AND cs.Date_Awarded IS NOT NULL
-            ) THEN 1 ELSE 0 END                         AS b4_ext_awarded,
-            CASE WHEN EXISTS (
-                SELECT 1 FROM dhc.B4Health_Contract_Submissions cs WITH (NOLOCK)
-                WHERE LTRIM(RTRIM(cs.Parent_Contract_Assignment_ID)) = LTRIM(RTRIM(o.Contract_ID))
-                  AND cs.Date_Awarded IS NULL
-                  AND cs.Offer_Date IS NOT NULL
-                  AND cs.Agency_Decline_Date IS NULL
-                  AND cs.Hospital_Decline_Date IS NULL
-                  AND cs.Agency_Retracted_Date IS NULL
-            ) THEN 1 ELSE 0 END                         AS b4_ext_offer_pending,
-            /* dhc.B4HealthExtensionsOrder is the Network Activity Report
-             * the spec names, landed in the warehouse (205 rows, loaded
-             * 2026-10-01). It states AssignmentType outright, so it outranks
-             * the contract-chain inference below.
-             *
-             * Its AssignmentID is the CHILD contract -- the extension itself,
-             * status "With Requests", carrying the extended end date -- not the
-             * seat that is ending. Joining it straight to Contract_ID looked
-             * like it worked (205 of 205 matched) but landed every designation
-             * on the wrong row: none of the 29 pending offers sat on an order
-             * ending inside 45 days, because the child's end date is the
-             * extended one. The hop through Parent_Contract_ID is what puts the
-             * designation on the seat a reviewer is actually looking at.
-             *
-             * Scoped to GHR agencies: the report is registry-level and lists
-             * every vendor in the program (AppleOne, LanceSoft, BAYADA, Triage
-             * and the rest), which is not GHR's book. All 96 extensions on GHR
-             * seats in the window are already GHR's own -- the tab is fed from
-             * Bullhorn, so an affiliate's extension would not reach it -- so
-             * this changes no row today. It is here so an affiliate picking up
-             * a GHR seat's extension can never be read as GHR extending it.
-             *
-             * Verified against the live window: 87 accepted, 28 offer pending,
-             * 10 declined. The 87 is the same 87 the contract chain finds
-             * independently below, which is the check that this join is right.
-             */
-            CASE WHEN EXISTS (
-                SELECT 1 FROM dhc.B4HealthExtensionsOrder x WITH (NOLOCK)
-                JOIN dhc.B4HealthOrder c WITH (NOLOCK)
-                  ON LTRIM(RTRIM(c.Contract_ID)) = LTRIM(RTRIM(x.AssignmentID))
-                WHERE LTRIM(RTRIM(c.Parent_Contract_ID)) = LTRIM(RTRIM(o.Contract_ID))
-                  AND LTRIM(RTRIM(x.AssignmentType)) = 'Extension Offer Pending'
-                  AND x.Agency LIKE '%GHR%'
-            ) THEN 1 ELSE 0 END                         AS b4_report_offer_pending,
-            CASE WHEN EXISTS (
-                SELECT 1 FROM dhc.B4HealthExtensionsOrder x WITH (NOLOCK)
-                JOIN dhc.B4HealthOrder c WITH (NOLOCK)
-                  ON LTRIM(RTRIM(c.Contract_ID)) = LTRIM(RTRIM(x.AssignmentID))
-                WHERE LTRIM(RTRIM(c.Parent_Contract_ID)) = LTRIM(RTRIM(o.Contract_ID))
-                  AND LTRIM(RTRIM(x.AssignmentType)) = 'Future Extension Accepted'
-                  AND x.Agency LIKE '%GHR%'
-            ) THEN 1 ELSE 0 END                         AS b4_report_extended,
-            /* The report carries a fourth state the spec's list does not:
-             * Extension Offer Declined, on 10 seats in the window. Folding it
-             * into "Pending Extension Review" would put a settled decision back
-             * on the chase list, so it gets its own designation.
-             *
-             * This is also what the first version of this query got wrong: it
-             * matched AssignmentType LIKE '%extension%' AND NOT LIKE '%pending%'
-             * for "extended", which quietly swept all 72 declined rows in with
-             * the accepted ones.
-             */
-            CASE WHEN EXISTS (
-                SELECT 1 FROM dhc.B4HealthExtensionsOrder x WITH (NOLOCK)
-                JOIN dhc.B4HealthOrder c WITH (NOLOCK)
-                  ON LTRIM(RTRIM(c.Contract_ID)) = LTRIM(RTRIM(x.AssignmentID))
-                WHERE LTRIM(RTRIM(c.Parent_Contract_ID)) = LTRIM(RTRIM(o.Contract_ID))
-                  AND LTRIM(RTRIM(x.AssignmentType)) = 'Extension Offer Declined'
-                  AND x.Agency LIKE '%GHR%'
-            ) THEN 1 ELSE 0 END                         AS b4_report_declined
+            ISNULL(ch.aw, 0)                            AS b4_ext_awarded,
+            ISNULL(ch.op, 0)                            AS b4_ext_offer_pending,
+            ISNULL(e.rp, 0)                             AS b4_report_offer_pending,
+            ISNULL(e.re, 0)                             AS b4_report_extended,
+            ISNULL(e.rd, 0)                             AS b4_report_declined
         FROM dhc.B4HealthOrder o WITH (NOLOCK)
         -- The crosswalk maps keys and nothing else. Its own status and date
         -- columns are a snapshot frozen at load time and must not be compared
@@ -367,6 +337,8 @@ def _b4_rows(cursor, horizon, include_affiliate):
         -- once and joined, the same 292 links take 2.7s.
         LEFT JOIN #b4_bh  bh ON bh.contract_id = LTRIM(RTRIM(o.Contract_ID))
         LEFT JOIN #b4_rto rt ON rt.contract_id = LTRIM(RTRIM(o.Contract_ID))
+        LEFT JOIN #b4_ext   e  ON e.parent  = LTRIM(RTRIM(o.Contract_ID))
+        LEFT JOIN #b4_chain ch ON ch.parent = LTRIM(RTRIM(o.Contract_ID))
         WHERE o.End_Date BETWEEN CAST(GETDATE() AS DATE)
                              AND DATEADD(DAY, ?, CAST(GETDATE() AS DATE))
             AND o.Contract_Status NOT IN ({status_list})

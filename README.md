@@ -2,6 +2,15 @@
 
 ## Version History
 
+### 2.41.2 - The last of the per-row work in the extensions build
+
+- **The five B4 extension signals were correlated `EXISTS`**, one set per row: **10.0s
+  for 444 rows**, against **1.6s** pre-aggregated into `#b4_ext` / `#b4_chain` for the
+  same answers (15 offer-pending, 72 accepted, 9 declined, 87 awarded, 38 chain-pending)
+- With the crosswalk fix in 2.41.1 this is the third correlated construct replaced in
+  this endpoint. The pattern is consistent: SQL Server re-runs a correlated subquery and
+  inlines a CTE, so any set consulted once per row has to be materialised
+
 ### 2.41.1 - The extensions build was correlated per row
 
 The cold build was 35-41s and had twice returned a 500 at the 45s gateway. It scaled
