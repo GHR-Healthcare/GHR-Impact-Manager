@@ -578,6 +578,17 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
     if is_non_msp():
         return _non_msp_trend(req)
 
+    # The MSP branch runs its queries sequentially and was measured warm at
+    # 14.0s. It takes no parameters, so the whole response is cacheable --
+    # unlike extensions/closed/onboarding, there is no default window to guard.
+    _started = time.time()
+    _key = cache_key('trend-data', 'msp')
+    _cached = read_cache(_key)
+    if _cached is not None:
+        print('trend-data(msp): served from cache')
+        return func.HttpResponse(json.dumps(_cached, default=str),
+                                 mimetype='application/json', status_code=200)
+
     try:
         conn = pyodbc.connect(
             f"DRIVER={{ODBC Driver 17 for SQL Server}};"
@@ -857,13 +868,17 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
 
         print(f"Returning {len(assignments)} trend assignments, {len(pending)} pending, {len(weekly_revenue)} weekly revenue rows (errors: {errors or 'none'})")
 
+        _payload = {
+            'assignments': assignments,
+            'pending': pending,
+            'weekly_revenue': weekly_revenue,
+            'errors': errors,
+        }
+        if not errors:
+            write_cache(_key, _payload, build_ms=int((time.time() - _started) * 1000),
+                        refreshed_by='live-request')
         return func.HttpResponse(
-            json.dumps({
-                'assignments': assignments,
-                'pending': pending,
-                'weekly_revenue': weekly_revenue,
-                'errors': errors,
-            }, default=str),
+            json.dumps(_payload, default=str),
             mimetype="application/json",
             status_code=200
         )

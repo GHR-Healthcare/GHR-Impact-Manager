@@ -2,6 +2,23 @@
 
 ## Version History
 
+### 2.39.0 - Cache the three remaining slow endpoints
+
+Warm measurements before this change: onboarding-data **15.8s** (MSP), trend-data
+**14.0s** (MSP), closed-data **10.3s** (non-MSP).
+
+- **onboarding-data and closed-data** now read and warm the endpoint cache, default
+  window only. Both take parameters that change the result -- lookback/lookahead and
+  from/to/days -- so a key on the route alone would serve the default to a caller who
+  asked for something else
+- **trend-data's MSP branch** is cached too. It takes no parameters at all, so unlike
+  the others there is no default window to guard. The existing cache block sat inside
+  `_non_msp_trend()`, which only ever runs on the non-MSP path -- so MSP had never been
+  cached despite the endpoint appearing to have caching
+- **Caveat:** the scheduler (`RefreshCache`) still only knows `trend-data` and
+  `financial-data` on non-MSP. The new keys are warmed by the first live request after
+  expiry, so that one caller still pays the full build
+
 ### 2.38.1 - The extensions cache was writing and never serving
 
 - `read_cache` stamped `cachedAt` onto the payload unconditionally. `extensions-data`

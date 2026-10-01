@@ -2,6 +2,8 @@ import azure.functions as func
 import pyodbc
 import os
 import json
+import time
+from shared_code.endpoint_cache import cache_key, read_cache, write_cache
 import datetime
 from shared_code.auth import require_allowed_domain
 from shared_code.vndly_reasons import canonical_reason, reason_category
@@ -923,10 +925,27 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
     except (TypeError, ValueError):
         lookback = default_lookback
 
+    # Measured warm at 10.3s on non-MSP. Default window only -- an explicit
+    # from/to or days changes the result, and a key on the route alone would
+    # serve the default to a caller who asked for something else.
+    _started = time.time()
+    _cacheable = not (req.params.get('from') or req.params.get('to') or req.params.get('days'))
+    _key = cache_key('closed-data', 'non_msp' if non_msp else 'msp')
+    if _cacheable:
+        _cached = read_cache(_key)
+        if _cached is not None:
+            print('closed-data: served from cache')
+            return func.HttpResponse(json.dumps(_cached, default=str),
+                                     mimetype='application/json', status_code=200)
+
     if non_msp:
         try:
+            _payload = _non_msp_payload(lookback)
+            if _cacheable:
+                write_cache(_key, _payload, build_ms=int((time.time() - _started) * 1000),
+                            refreshed_by='live-request')
             return func.HttpResponse(
-                json.dumps(_non_msp_payload(lookback), default=str),
+                json.dumps(_payload, default=str),
                 mimetype='application/json', status_code=200)
         except Exception as e:
             print(f'Closed(non_msp) error: {e}')
@@ -1039,7 +1058,11 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             },
         }
         print(f"Closed: {len(rows)} rows in {abs(lookback)}d {counts}; "
-              f"undated excluded {undated}; errors: {errors or 'none'}")
+              f"undated excluded {undated}; {int((time.time()-_started)*1000)}ms; "
+              f"errors: {errors or 'none'}")
+        if _cacheable and not errors:
+            write_cache(_key, payload, build_ms=int((time.time() - _started) * 1000),
+                        refreshed_by='live-request')
         return func.HttpResponse(
             json.dumps(payload, default=str),
             mimetype="application/json",
