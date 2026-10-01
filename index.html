@@ -978,7 +978,7 @@
     const $ = (id) => document.getElementById(id);
 
     // App version - loaded from environment variable via API, with fallback
-    let APP_VERSION = '2.39.2';
+    let APP_VERSION = '2.40.0';
 
     const API_BASE_URL = '/api';
 
@@ -3018,14 +3018,34 @@
       extensionStage(r) {
         const saved = window.store.state.workspaceState?.extension?.[r.id]?.state;
         const manual = (saved && saved.stage) || '';
+        const derived = r.extension_stage || Utils.EXT_STAGES[0];
+        const why = r.extension_stage_why || 'no approval activity recorded yet';
+
         if (manual && Utils.EXT_STAGES.includes(manual)) {
+          /* The manual value holds only until the source systems move PAST it.
+           *
+           * "Awaiting Client Approval" exists because no VMS can see that the
+           * PMO has the extension in front of the client -- it fills a gap, it
+           * does not overrule the VMS. Letting it win unconditionally meant a
+           * seat set by hand stayed on that status forever: VNDLY could report
+           * the offer out to the vendor, or B4 could record the extension
+           * accepted, and the tab would still read "Awaiting Client" because a
+           * person had typed it once. That is the opposite of a status that
+           * follows the source systems.
+           *
+           * So: compare positions in the pipeline. If the source has advanced
+           * beyond the hand-set value, the source wins and says so. If it has
+           * not, the hand-set value stands.
+           */
+          const mi = Utils.EXT_STAGES.indexOf(manual);
+          const di = Utils.EXT_STAGES.indexOf(derived);
+          if (di > mi) {
+            return { stage: derived, manual: false, superseded: manual,
+                     why: `${why} — overtook "${manual}" set by hand` };
+          }
           return { stage: manual, why: 'set by hand on this tab', manual: true };
         }
-        return {
-          stage: r.extension_stage || Utils.EXT_STAGES[0],
-          why: r.extension_stage_why || 'no approval activity recorded yet',
-          manual: false,
-        };
+        return { stage: derived, why, manual: false };
       },
 
       /* One day is "1 day". Every surface that prints a day count goes through
@@ -9229,10 +9249,15 @@
                           <option value="" ${e.stage ? '' : 'selected'}>Auto &mdash; ${View.esc(st.stage)}</option>
                           ${Utils.EXT_STAGES.map(d => `<option ${e.stage === d ? 'selected' : ''}>${d}</option>`).join('')}
                         </select>
-                        <p class="text-[10px] text-slate-400 mt-1">${
+                        ${st.superseded ? `
+                          <p class="text-[10px] text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1 mt-1 leading-snug">
+                            Showing <b>${View.esc(st.stage)}</b> from the source system, which has moved past the
+                            <b>${View.esc(st.superseded)}</b> set here. Your selection is still stored &mdash; it takes
+                            effect again only if the source falls back behind it.</p>`
+                        : `<p class="text-[10px] text-slate-400 mt-1">${
                           st.manual
                             ? 'Set by hand. Choose Auto to follow the VMS again.'
-                            : `Derived: ${View.esc(st.why)}. Switch to Awaiting Client Approval once the PMO has it in front of the client.`}</p>
+                            : `Derived: ${View.esc(st.why)}. Switch to Awaiting Client Approval once the PMO has it in front of the client.`}</p>`}
                       </div>
                       <div>
                         <label class="block text-[10px] font-semibold text-slate-500 uppercase tracking-wide mb-1">Shared Notes</label>

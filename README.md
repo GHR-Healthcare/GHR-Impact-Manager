@@ -2,6 +2,29 @@
 
 ## Version History
 
+### 2.40.0 - RTO from both VMS books; the source can overtake a hand-set status
+
+- **RTO now reaches the app.** It read 0 on all 404 seats, and the "Gather RTO"
+  checkpoint said "not in data" for everyone. The Bullhorn path cannot supply it --
+  `BH_PLACEMENT_RAW` holds Blocks 1-5 and 10, so `customTextBlock9` never reaches the
+  warehouse -- but both VMS books record it themselves. **B4** keeps it on the contract
+  submission (18 of the 314 GHR seats in the live window); **VNDLY** keeps it on the
+  contractor, reached through the work-order cross-reference (58 of 296). Shown as
+  written -- "Approved RTO: 6/1-6/5" -- rather than parsed into dates it may not be
+- **A hand-set designation no longer outranks the source forever.** "Awaiting Client
+  Approval" exists because no VMS can see that the PMO has the extension in front of
+  the client; it fills a gap, it does not overrule the VMS. Letting it win
+  unconditionally meant a seat set by hand kept that status permanently -- VNDLY could
+  report the offer out to the vendor, or B4 record the extension accepted, and the tab
+  would still read "Awaiting Client" because someone typed it once. The two are now
+  compared by position in the pipeline: if the source has moved past the hand-set
+  value, the source wins and the record says so. The selection is kept, not discarded,
+  and takes effect again if the source falls back behind it
+- **Cache keys carry a payload-shape version.** A deploy does not clear the cache
+  table, so a shape change was invisible for up to 26 hours -- the endpoint kept
+  serving the old payload built by the old code, which is exactly what adding
+  `recorded_rto` would have done
+
 ### 2.39.2 - Two defects the modal pass turned up
 
 - **Lever labels rendered straight across their card border.** Two lever panels sit

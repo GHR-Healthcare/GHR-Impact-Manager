@@ -187,7 +187,23 @@ def _b4_rows(cursor, horizon, include_affiliate):
             bh.match_is_extension                       AS match_is_extension,
             bh.match_original_end                       AS match_original_end,
             bh.source_is_extension                      AS source_is_extension,
-            bh.recorded_rto                             AS recorded_rto,
+            /* RTO for MSP, at last. The Bullhorn path cannot supply it --
+             * BH_PLACEMENT_RAW holds Blocks 1-5 and 10 only, so customTextBlock9
+             * never reaches the warehouse and bh.recorded_rto is always null
+             * here. B4 records it on the contract submission itself, which is a
+             * better source anyway: it is the VMS's own field, not an ATS copy.
+             *
+             * COALESCE so the Bullhorn value still wins if that path is ever
+             * given the block. 18 of the 314 GHR seats in the live window carry
+             * one; the tab showed 0 before this.
+             */
+            COALESCE(bh.recorded_rto, (
+                SELECT TOP 1 NULLIF(LTRIM(RTRIM(cs.RTO)), '')
+                FROM dhc.B4Health_Contract_Submissions cs WITH (NOLOCK)
+                WHERE LTRIM(RTRIM(cs.Contract_Assignment_ID)) = LTRIM(RTRIM(o.Contract_ID))
+                  AND NULLIF(LTRIM(RTRIM(cs.RTO)), '') IS NOT NULL
+                ORDER BY cs.Date_Loaded DESC
+            ))                                          AS recorded_rto,
             -- B4 carries no original end date; the parent-contract chain in
             -- parent_ref is the only extension evidence on this source.
             CAST(NULL AS DATE)                          AS original_end_date,
@@ -501,7 +517,19 @@ def _vndly_rows(cursor, horizon, include_affiliate):
             -- through the crosswalk B4 has and VNDLY does not.
             NULL                                         AS recruiter,
             NULL                                         AS source_is_extension,
-            NULL                                         AS recorded_rto,
+            /* VNDLY keeps RTO on the contractor, reached through the work-order
+             * cross-reference. 58 of the 296 work orders ending in the window
+             * carry one. Text, not dates -- "Approved RTO: 6/1-6/5" -- matching
+             * how Bullhorn stores it, so it is shown as written rather than
+             * parsed into something it may not be.
+             */
+            (SELECT TOP 1 NULLIF(LTRIM(RTRIM(ct.[RTO])), '')
+               FROM dbo.STAGING_VNDLY_CONTRACTOR_XREF xr WITH (NOLOCK)
+               JOIN dbo.STAGING_VNDLY_CONTRACTORS ct WITH (NOLOCK)
+                 ON LTRIM(RTRIM(ct.[System ID])) = LTRIM(RTRIM(xr.[Contractor System Id]))
+              WHERE LTRIM(RTRIM(xr.WOSystemKey)) = LTRIM(RTRIM(w.WOSystemKey))
+                AND NULLIF(LTRIM(RTRIM(ct.[RTO])), '') IS NOT NULL
+            )                                            AS recorded_rto,
             NULL                                         AS match_is_extension,
             CAST(NULL AS DATE)                           AS match_original_end,
             -- VNDLY is the one MSP source that states the seat's original end

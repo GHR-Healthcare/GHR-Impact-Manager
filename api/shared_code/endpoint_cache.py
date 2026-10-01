@@ -82,9 +82,20 @@ def ensure_table(conn):
         return False
 
 
+# Bump when a cached payload's SHAPE changes -- a new field, a renamed one, a
+# different structure. A deploy does not clear the cache table, so without this
+# a shape change is invisible for up to 26 hours: the endpoint returns the old
+# payload, built by the old code, and looks like the deploy did nothing. That is
+# exactly what adding recorded_rto to extensions-data would have done.
+#
+# Changing this string makes every existing entry unreachable, so the next
+# request to each endpoint rebuilds. Old rows age out on their own.
+PAYLOAD_SHAPE = 'v2'
+
+
 def cache_key(route, data_source):
     """One entry per route per book -- MSP and non-MSP are different answers."""
-    return f'{route}:{data_source}'
+    return f'{route}:{data_source}:{PAYLOAD_SHAPE}'
 
 
 def read_cache(key, max_age_seconds=DEFAULT_MAX_AGE_SECONDS):
