@@ -976,7 +976,7 @@
     const $ = (id) => document.getElementById(id);
 
     // App version - loaded from environment variable via API, with fallback
-    let APP_VERSION = '2.36.4';
+    let APP_VERSION = '2.36.5';
 
     const API_BASE_URL = '/api';
 
@@ -7652,13 +7652,13 @@
         // the chart lives in Section 1 alongside the figures it plots.
         const barMax = Math.max(hasDtc ? dtc : 0, cmp ? cmp.median : 0) || 1;
         const bar = (label, val, cls) => `
-          <div class="grid grid-cols-[104px_1fr_52px] items-center gap-2 my-1.5 text-[11px]">
+          <div class="grid grid-cols-[132px_1fr_52px] items-center gap-2 my-1.5 text-[11px]">
             <span class="text-slate-500 truncate">${label}</span>
             <span class="h-2.5 bg-slate-100 rounded-full overflow-hidden">
               <span class="block h-full rounded-full ${cls}"
                     style="width:${Math.max(8, Math.round((val / barMax) * 100))}%"></span>
             </span>
-            <span class="text-slate-600 text-right tabular-nums">${val} days</span>
+            <span class="text-slate-600 text-right tabular-nums">${Math.round(val)} days</span>
           </div>`;
 
         /* Two sections, not three. The feedback's success test is that the
@@ -7699,7 +7699,7 @@
                              (rr.pct >= 67 ? 'Above' : rr.pct <= 33 ? 'Below' : 'At market')) : none,
                              rr ? `${rr.pct}th percentile &middot; ${View.esc(rr.scope)}`
                                 : View.esc(View.rateNoRankReason(r)))}
-            ${View.panelTile('Days to Close', hasDtc ? dtc : none)}
+            ${View.panelTile('Days to Close', hasDtc ? `${Math.round(dtc)} days` : none)}
             ${View.panelTile('Comparable Median', cmp ? `${cmp.median} days` : none,
                              cmp ? `${cmp.n} peers &middot; ${View.esc(cmp.scope)}` : 'fewer than 3 comparable closes')}
           </div>
@@ -8244,7 +8244,8 @@
       // definition that matches what they are looking at.
       rowDetailIds(view) {
         const host = { extensions: '#extensionsContent', onboarding: '#onboardingContent',
-                       closed: '#closedContent', list: '#listContent' }[view];
+                       closed: '#closedContent', list: '#listContent',
+                       pending: '#pendingContent' }[view];
         if (!host) return [];
         return [...document.querySelectorAll(`${host} tbody tr[data-row-key]`)]
           .map(tr => tr.getAttribute('data-row-key'));
@@ -8252,6 +8253,14 @@
 
       rowDetailRecord(view, id) {
         const s = window.store.state;
+        /* Pending submissions have no id of their own -- the table builds a
+         * composite __key from source/clinician/date, which is what lands in
+         * data-row-key. Match on that or nothing is ever found.
+         */
+        if (view === 'pending') {
+          return ((s.pendingData && s.pendingData.submissions) || [])
+            .find(x => String(x.__key) === String(id));
+        }
         return (s[View.STAGE_ROWS_KEY[view]] || []).find(x => String(x.id) === String(id));
       },
 
@@ -8263,6 +8272,12 @@
                     View.esc(r.clinician || r.worker_name || r.full_name || 'Record')}</div>`
                + sub(`${View.esc(r.facility || r.health_system || '')}${
                     r.role ? ' · ' + View.esc(r.role) : ''}`);
+        }
+        if (view === 'pending') {
+          return `<div class="text-sm font-bold text-slate-800 truncate">${
+                    View.esc(r.worker_name || r.full_name || 'Submission')}</div>`
+               + sub(`${View.esc(r.facility || r.healthSystem || '')}${
+                    r.status ? ' · ' + View.esc(r.status) : ''}`);
         }
         if (view === 'closed') {
           return `<div class="text-sm font-bold text-slate-800 truncate">${View.esc(r.facility || r.health_system || 'Closed job')}</div>`
@@ -8276,6 +8291,7 @@
         if (view === 'extensions') return View.extensionDetailBody(r, { inModal: true });
         if (view === 'onboarding') return View.onboardingDetailBody(r, { inModal: true });
         if (view === 'closed') return View.closedDetail(r);
+        if (view === 'pending') return View.pendingDetailBody(r, View.pendingPeers(r));
         return View.jobDetailHtml(r);   // already carries its own subtab strip
       },
 
@@ -9609,7 +9625,12 @@
         return 'Confirm the submission status in the source system';
       },
 
-      pendingDetail(r, colCount, peers) {
+      /* Split so the row-detail modal can render exactly the body the
+       * expanded row does. The modal is the primary surface on the
+       * redesigned UI, and Pending was the only tab left expanding in
+       * place -- same treatment as extensionDetailBody / onboardingDetailBody.
+       */
+      pendingDetailBody(r, peers) {
         const age = View.pendingStageAge(r);
         const src = r.is_ghr ? 'GHR' : 'Affiliate';
         const mine = (peers || []).filter(x => x.is_ghr).length;
@@ -9621,9 +9642,6 @@
         const nonMsp = window.store.state.dataSource === 'non_msp';
 
         return `
-          <tr data-detail-for="${r.__key}">
-            <td colspan="${colCount}" class="p-0">
-              <div class="p-4 bg-slate-50 border-t border-slate-100">
                 <div class="grid grid-cols-1 xl:grid-cols-3 gap-3">
                   ${panel(`
                     ${View.panelHead('Submission feed')}
@@ -9678,6 +9696,15 @@
                       ${View.panelTile('Source', View.esc(r.source_system || '—'))}
                     </div>`)}
                 </div>
+`;
+      },
+
+      pendingDetail(r, colCount, peers) {
+        return `
+          <tr data-detail-for="${r.__key}">
+            <td colspan="${colCount}" class="p-0">
+              <div class="p-4 bg-slate-50 border-t border-slate-100">
+                ${View.pendingDetailBody(r, peers)}
               </div>
             </td>
           </tr>`;
@@ -10173,7 +10200,9 @@
                 <td class="px-3 py-2 font-medium text-slate-700">${View.esc(View.closedFilledBy(r))}</td>
                 ${closedExpandable ? `<td class="px-3 py-2 text-center font-semibold ${
                   share == null ? 'text-slate-300' : 'text-blue-600'}">${share == null ? '—' : share + '%'}</td>` : ''}
-                <td class="px-3 py-2 text-center text-slate-700">${r.days_to_close == null ? '—' : r.days_to_close}</td>
+                <td class="px-3 py-2 text-center text-slate-700">${
+                  r.days_to_close == null || !isFinite(Number(r.days_to_close))
+                    ? '—' : Math.round(Number(r.days_to_close))}</td>
                 <td class="px-3 py-2">${View.rateRankCell(r)}</td>
                 <td class="px-3 py-2 text-right font-semibold ${
                   (Number(r.revenue) || 0) < 0 ? 'text-red-600' : (r.revenue ? 'text-emerald-700' : 'text-slate-400')
@@ -16057,9 +16086,21 @@
             }
 
             case 'TOGGLE_PENDING_ROW': {
-              if (s.expandedPending.has(payload)) s.expandedPending.delete(payload);
-              else s.expandedPending.add(payload);
-              View.pending();
+              if (!Utils.impactUi()) {
+                // Production MSP keeps the legacy in-place expand, untouched.
+                if (s.expandedPending.has(payload)) s.expandedPending.delete(payload);
+                else s.expandedPending.add(payload);
+                View.pending();
+                break;
+              }
+              /* Pending was the last tab still expanding in place on the
+               * redesigned UI, so a reviewer working down the list got a
+               * different interaction here than on every other tab. Same
+               * switch point as TOGGLE_ROW: gated on impactUi() so production
+               * MSP returns above and cannot be affected.
+               */
+              s.rowDetail = { view: 'pending', id: String(payload) };
+              View.rowDetailModal();
               break;
             }
 

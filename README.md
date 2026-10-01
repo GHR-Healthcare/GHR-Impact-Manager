@@ -2,6 +2,22 @@
 
 ## Version History
 
+### 2.36.5 - Pending opens the modal; days-to-close reads as days
+
+- **Pending was the last tab still expanding in place.** Every other tab on the
+  redesigned UI opens the row-detail modal, so a reviewer working down the list got
+  a different interaction on this one surface. `pendingDetailBody` is now split out
+  of its `<tr>` wrapper -- the same treatment `extensionDetailBody` and
+  `onboardingDetailBody` already had -- and the modal renders it. Pending rows have
+  no id of their own, so the record is matched on the composite `__key` the table
+  builds. Gated on `impactUi()` at the same switch point as `TOGGLE_ROW`, so
+  production MSP keeps its legacy in-place expand and is provably untouched
+- **"Days to Close 55.88"** rendered the raw fraction with no unit, directly beside a
+  tile reading "0 days". Rounded to whole days and labelled, in the tile, the
+  comparison bars and the Closed table cell
+- **"Comparable Median" was clipped to "Comparable Medi…"** in the bar chart -- the
+  label column was 104px. Widened to 132px
+
 ### 2.36.4 - Restore the 778 Closed rows 2.36.3 hid on non-MSP
 
 - **Making Closed expandable on non-MSP silently dropped 88% of the table.** One flag
