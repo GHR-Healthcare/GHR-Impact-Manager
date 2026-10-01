@@ -38,6 +38,32 @@
        one record on a 900px screen. */
     .clamp-2 { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
                overflow: hidden; }
+    /* Scroll cue for the row-detail modal body.
+     *
+     * The modal caps at 92vh, so on a laptop the detail is often taller than
+     * the box and the last row is sliced mid-label -- it reads as a rendering
+     * fault rather than as "there is more below". This is the pure-CSS
+     * approach: the two `local` gradients travel with the content and mask the
+     * shadow when you are at an end, while the two `scroll` radials stay put,
+     * so a shadow appears at the top only when content is above and at the
+     * bottom only when content is below. No JS, no scroll listener.
+     *
+     * The gradient colour must match the body background (slate-50) or the
+     * mask shows as a band.
+     */
+    .scroll-cue {
+      background-color: #f8fafc;
+      background-image:
+        linear-gradient(#f8fafc 30%, rgba(248,250,252,0)),
+        linear-gradient(rgba(248,250,252,0), #f8fafc 70%),
+        radial-gradient(farthest-side at 50% 0,   rgba(15,23,42,.13), rgba(15,23,42,0)),
+        radial-gradient(farthest-side at 50% 100%, rgba(15,23,42,.13), rgba(15,23,42,0));
+      background-position: 0 0, 0 100%, 0 0, 0 100%;
+      background-size: 100% 22px, 100% 22px, 100% 9px, 100% 9px;
+      background-repeat: no-repeat;
+      background-attachment: local, local, scroll, scroll;
+    }
+
     .clamp-1 { display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical;
                overflow: hidden; }
     .fade-in { animation: fadeIn 0.2s ease-in-out; }
@@ -786,7 +812,7 @@
           </button>
         </div>
       </div>
-      <div id="rowDetailModalBody" class="overflow-y-auto flex-1 bg-slate-50 px-4 py-4"></div>
+      <div id="rowDetailModalBody" class="overflow-y-auto flex-1 bg-slate-50 scroll-cue px-4 py-4"></div>
       <div class="flex items-center justify-between gap-3 px-5 py-3 border-t border-slate-200 bg-white shrink-0">
         <span class="text-[11px] text-slate-400" id="rowDetailModalHint"></span>
         <div class="flex items-center gap-2">
@@ -978,7 +1004,7 @@
     const $ = (id) => document.getElementById(id);
 
     // App version - loaded from environment variable via API, with fallback
-    let APP_VERSION = '2.41.2';
+    let APP_VERSION = '2.41.3';
 
     const API_BASE_URL = '/api';
 
@@ -7943,7 +7969,11 @@
         const showMarket = window.store.state.dataSource !== 'non_msp';
         return `
           <div class="p-4 bg-slate-50 border-t border-slate-100">
-            <div class="grid grid-cols-1 ${showMarket ? 'xl:grid-cols-2' : ''} gap-3">
+            <!-- lg, not xl: the modal is max-w-1200 and still ~976px wide at a
+                 1024px viewport, so from lg there is room for two panels. At xl
+                 the whole 1024-1280 band -- ordinary laptop width -- stacked
+                 them and turned a modal that fits into one that scrolls. -->
+            <div class="grid grid-cols-1 ${showMarket ? 'lg:grid-cols-2' : ''} gap-3">
               ${section1}${showMarket ? section2 : ''}
             </div>
           </div>`;
@@ -9821,7 +9851,9 @@
         const nonMsp = window.store.state.dataSource === 'non_msp';
 
         return `
-                <div class="grid grid-cols-1 xl:grid-cols-3 gap-3">
+                <!-- lg for the same reason as Closed: three ~310px panels fit
+                     inside the modal well before a 1280px viewport. -->
+                <div class="grid grid-cols-1 lg:grid-cols-3 gap-3">
                   ${panel(`
                     ${View.panelHead('Submission feed')}
                     <h5 class="text-xs font-bold uppercase tracking-wide text-slate-600">Clinician Status</h5>

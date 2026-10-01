@@ -2,6 +2,23 @@
 
 ## Version History
 
+### 2.41.3 - Modal pass after the dropdown-to-popup switch
+
+Walked every modal on both apps at 1440, 1280 and 1100px.
+
+- **The body gave no sign it scrolled.** The modal caps at 92vh, so on a laptop the
+  detail is often taller than the box and the last row was sliced mid-label -- it read
+  as a rendering fault rather than as "there is more below". A pure-CSS scroll cue now
+  shows a soft shadow at the top only when content is above and at the bottom only when
+  content is below: the `local` gradients travel with the content and mask the shadow at
+  each end, the `scroll` radials stay put. No JS, no scroll listener
+- **Closed and Pending stacked to one column across the whole 1024-1280 band** --
+  ordinary laptop width -- because their grids broke at `xl`. The modal is `max-w-1200`
+  and still ~976px wide at a 1024px viewport, so there is room for two and three panels
+  from `lg`. Lowering the breakpoint turns a modal that scrolled into one that fits
+- The list modal's own grids are left at `xl`: that renderer is shared with production
+  MSP's legacy in-place expand, and this is not a production-MSP change
+
 ### 2.41.2 - The last of the per-row work in the extensions build
 
 - **The five B4 extension signals were correlated `EXISTS`**, one set per row: **10.0s
