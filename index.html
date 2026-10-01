@@ -978,7 +978,7 @@
     const $ = (id) => document.getElementById(id);
 
     // App version - loaded from environment variable via API, with fallback
-    let APP_VERSION = '2.40.0';
+    let APP_VERSION = '2.40.1';
 
     const API_BASE_URL = '/api';
 
@@ -8021,8 +8021,10 @@
       extStepEvidence(r, key, done) {
         let text = null, origin = null;
         if (key === 'gatherRTO') {
-          // What someone typed here wins over the book. On MSP the book has
-          // nothing at all, so this is the only place RTO can live.
+          // What someone typed here wins over the book. The book is no longer
+          // empty on MSP: since 2.40.0 B4 supplies RTO from the contract
+          // submission and VNDLY from the contractor record, so this field is
+          // a correction to the source rather than the only copy of it.
           const mine = (View.extensionEdit(r).rto || '').trim();
           if (mine) { text = mine; origin = 'Recorded here'; }
           else { text = r.recorded_rto; origin = r.source_system; }

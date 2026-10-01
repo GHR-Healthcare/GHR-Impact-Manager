@@ -2,6 +2,17 @@
 
 ## Version History
 
+### 2.40.1 - The cache was caching a URL nobody asks for
+
+- **MSP requests `extensions-data` and `onboarding-data` with `?includeAffiliate=1`**,
+  and the cache only stored the bare default -- so on MSP the cache was never read.
+  Measured on the live prototype: the uncalled default served in **265ms** while the
+  URL the app actually calls took **41s, then 35s**, close enough to the 45s gateway
+  timeout to fail outright. The 21s-to-250ms win reported in 2.38.1/2.39.0 was real for
+  the default URL and did not reach the MSP app
+- The parameter is part of the key now rather than a reason to refuse caching, so both
+  variants are cached. `cache_key` takes a `variant`
+
 ### 2.40.0 - RTO from both VMS books; the source can overtake a hand-set status
 
 - **RTO now reaches the app.** It read 0 on all 404 seats, and the "Gather RTO"

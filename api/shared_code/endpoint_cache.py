@@ -93,9 +93,21 @@ def ensure_table(conn):
 PAYLOAD_SHAPE = 'v2'
 
 
-def cache_key(route, data_source):
-    """One entry per route per book -- MSP and non-MSP are different answers."""
-    return f'{route}:{data_source}:{PAYLOAD_SHAPE}'
+def cache_key(route, data_source, variant=None):
+    """
+    One entry per route per book -- MSP and non-MSP are different answers --
+    and per `variant` where a parameter changes the payload.
+
+    `variant` exists because caching only the bare URL cached a URL nobody
+    asks for. MSP requests extensions-data and onboarding-data with
+    ?includeAffiliate=1, so the default-only cache was never read on that
+    book: those endpoints stayed at 35-41s while the uncalled default served
+    in 265ms. Encode the parameter in the key instead of refusing to cache it.
+    """
+    base = f'{route}:{data_source}'
+    if variant:
+        base = f'{base}:{variant}'
+    return f'{base}:{PAYLOAD_SHAPE}'
 
 
 def read_cache(key, max_age_seconds=DEFAULT_MAX_AGE_SECONDS):

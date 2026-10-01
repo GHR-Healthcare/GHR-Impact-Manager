@@ -731,9 +731,9 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
     # something else.
     _started = time.time()
     _cacheable = (lookback == ONBOARDING_LOOKBACK_DAYS
-                  and lookahead == ONBOARDING_LOOKAHEAD_DAYS
-                  and not include_affiliate)
-    _key = cache_key('onboarding-data', 'non_msp' if is_non_msp() else 'msp')
+                  and lookahead == ONBOARDING_LOOKAHEAD_DAYS)
+    _key = cache_key('onboarding-data', 'non_msp' if is_non_msp() else 'msp',
+                     'aff1' if include_affiliate else 'aff0')
     if _cacheable:
         _cached = read_cache(_key)
         if _cached is not None:

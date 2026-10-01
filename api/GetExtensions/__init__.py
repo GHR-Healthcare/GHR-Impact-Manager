@@ -1032,8 +1032,9 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
     # change the result, and a key on the route alone would hand a 45-day
     # default to someone who asked for 90 -- the exact bug the financial-data
     # cache shipped with and had to be fixed for.
-    cacheable = (horizon == EXTENSION_HORIZON_DAYS and not include_affiliate)
-    key = cache_key('extensions-data', 'msp')
+    cacheable = (horizon == EXTENSION_HORIZON_DAYS)
+    key = cache_key('extensions-data', 'msp',
+                    'aff1' if include_affiliate else 'aff0')
     if cacheable:
         cached = read_cache(key)
         if cached is not None:
