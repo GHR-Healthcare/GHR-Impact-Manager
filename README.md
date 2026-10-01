@@ -2,6 +2,13 @@
 
 ## Version History
 
+### 2.36.6 - One day is "1 day"
+
+- Four surfaces printed a raw day count and read "1 days": the Pending stage age, the
+  Closed days-to-close tile, the comparable-median tile and the comparison bars.
+  `Utils.days(n)` now owns rounding and the plural, and all four call it, so they
+  cannot drift apart
+
 ### 2.36.5 - Pending opens the modal; days-to-close reads as days
 
 - **Pending was the last tab still expanding in place.** Every other tab on the

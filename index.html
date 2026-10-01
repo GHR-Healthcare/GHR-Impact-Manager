@@ -976,7 +976,7 @@
     const $ = (id) => document.getElementById(id);
 
     // App version - loaded from environment variable via API, with fallback
-    let APP_VERSION = '2.36.5';
+    let APP_VERSION = '2.36.6';
 
     const API_BASE_URL = '/api';
 
@@ -2978,6 +2978,16 @@
       },
 
       AGING_CRITICAL_DAYS: 7,
+
+      /* One day is "1 day". Every surface that prints a day count goes through
+       * here so they cannot disagree about rounding or the plural.
+       */
+      days(n) {
+        const v = Number(n);
+        if (!isFinite(v)) return '—';
+        const r = Math.round(v);
+        return `${r} day${r === 1 ? '' : 's'}`;
+      },
 
       agingBand(days) {
         if (days == null) return 'low';
@@ -7658,7 +7668,7 @@
               <span class="block h-full rounded-full ${cls}"
                     style="width:${Math.max(8, Math.round((val / barMax) * 100))}%"></span>
             </span>
-            <span class="text-slate-600 text-right tabular-nums">${Math.round(val)} days</span>
+            <span class="text-slate-600 text-right tabular-nums">${Utils.days(val)}</span>
           </div>`;
 
         /* Two sections, not three. The feedback's success test is that the
@@ -7699,8 +7709,8 @@
                              (rr.pct >= 67 ? 'Above' : rr.pct <= 33 ? 'Below' : 'At market')) : none,
                              rr ? `${rr.pct}th percentile &middot; ${View.esc(rr.scope)}`
                                 : View.esc(View.rateNoRankReason(r)))}
-            ${View.panelTile('Days to Close', hasDtc ? `${Math.round(dtc)} days` : none)}
-            ${View.panelTile('Comparable Median', cmp ? `${cmp.median} days` : none,
+            ${View.panelTile('Days to Close', hasDtc ? Utils.days(dtc) : none)}
+            ${View.panelTile('Comparable Median', cmp ? Utils.days(cmp.median) : none,
                              cmp ? `${cmp.n} peers &middot; ${View.esc(cmp.scope)}` : 'fewer than 3 comparable closes')}
           </div>
           ${(hasDtc && cmp) ? `
@@ -9651,7 +9661,7 @@
                       ${View.panelTile('Clinician', View.esc(r.worker_name || r.full_name || '—'))}
                       ${View.panelTile('Source', src)}
                       ${View.panelTile('Stage', View.esc(r.status || '—'))}
-                      ${View.panelTile('Stage Age', age == null ? none : `${age} days`,
+                      ${View.panelTile('Stage Age', age == null ? none : Utils.days(age),
                                        r.submission_date ? 'since submission' : 'no submission date')}
                     </div>
                     <div class="mt-2 border-l-[3px] border-blue-500 bg-blue-50 rounded px-2.5 py-2 text-[11px] text-slate-700">
