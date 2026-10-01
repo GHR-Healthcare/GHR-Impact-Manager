@@ -978,7 +978,7 @@
     const $ = (id) => document.getElementById(id);
 
     // App version - loaded from environment variable via API, with fallback
-    let APP_VERSION = '2.39.1';
+    let APP_VERSION = '2.39.2';
 
     const API_BASE_URL = '/api';
 
@@ -6062,7 +6062,12 @@
                       ${v.done ? '<i data-lucide="check" class="text-white w-3.5 h-3.5"></i>' : ''}
                     </div>
                     <div class="min-w-0">
-                      <span class="block text-sm font-semibold text-slate-700 leading-snug">${CONSTANTS.LEVER_LABELS[k]}</span>
+                      <!-- break-words: two lever panels sit side by side and each
+                           splits into two cards, so a card is ~140px and its label
+                           box ~86px after the checkbox and padding. "Requirements"
+                           needs ~100px at this size, so it rendered straight across
+                           the card's right border. -->
+                      <span class="block text-sm font-semibold text-slate-700 leading-snug break-words">${CONSTANTS.LEVER_LABELS[k]}</span>
                       ${v.done && v.user ? `<span class="block text-[11px] text-slate-400 truncate mt-0.5" title="${View.esc(v.user)}">${View.esc(v.user)}</span>` : ''}
                     </div>
                   </div>`;
@@ -9684,8 +9689,20 @@
               </span>
             </div>`).join('')}</div>`;
         } else if (moves) {
-          body = `<p class="text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 rounded px-2 py-1.5">
-                    No start-date movement recorded.</p>`;
+          /* An empty moves list does NOT mean the start never moved. The source
+           * can count moves without itemising them, and this panel sat beside
+           * "Total Moves 3" and "Net Slip +28 days" asserting in green that
+           * there had been no movement -- flatly contradicting the two tiles
+           * next to it. Green is also the wrong tone for a seat that has
+           * slipped; it only earns that when the count agrees there was none.
+           */
+          const moved = Number(r.move_count) || 0;
+          body = moved > 0
+            ? `<p class="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded px-2 py-1.5">
+                 ${moved} move${moved === 1 ? '' : 's'} counted, but ${View.esc(r.source_system || 'the source')}
+                 did not record the individual changes, so they cannot be listed here.</p>`
+            : `<p class="text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 rounded px-2 py-1.5">
+                 No start-date movement recorded.</p>`;
         } else {
           body = `<p class="text-xs text-slate-400 italic">
                     ${View.esc(r.source_system || 'This source')} records how often a start moved, but not each

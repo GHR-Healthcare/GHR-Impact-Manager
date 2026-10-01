@@ -2,6 +2,18 @@
 
 ## Version History
 
+### 2.39.2 - Two defects the modal pass turned up
+
+- **Lever labels rendered straight across their card border.** Two lever panels sit
+  side by side and each splits into two cards, so a card is ~140px and its label box
+  ~86px after the checkbox and padding -- "Requirements" needs ~100px at that size.
+  The labels break now instead of overflowing
+- **Onboarding's movement panel contradicted the tiles beside it.** With an empty moves
+  list it showed, in green, "No start-date movement recorded" -- while "Total Moves 3"
+  and "Net Slip +28 days" sat immediately above. An empty list does not mean the start
+  never moved: the source can count moves without itemising them. It now says so, and
+  only claims no movement when the count agrees
+
 ### 2.39.1 - Modal layout: remove the dead space
 
 Walked every modal on both apps and measured where the room was going.
