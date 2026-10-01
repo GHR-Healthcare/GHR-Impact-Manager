@@ -2,6 +2,29 @@
 
 ## Version History
 
+### 2.36.3 - UI pass across both prototypes
+Found by walking every tab on both prototype instances and opening a row modal on each.
+
+- **Closed rows now open on non-MSP too.** They were hard-gated to MSP because the
+  detail's second section is vendor share and bid activity, which do not exist on the
+  non-MSP book. Rather than withhold the whole record, that section is dropped on
+  non-MSP and section one -- revenue, bill rate, rate rank, days to close against
+  comparables, outcome, owner -- takes the full width. It is just as meaningful on
+  direct business
+- **Billings headline used the month in progress.** On 1 October it read
+  **"Total Billings (Oct-26) $0 ▼100%"** -- a day-old month compared against a full
+  September. It now uses the last *complete* month and says so. The tables below still
+  show every month including the partial one; only the summary has to compare like with
+  like
+- **The filter row crushed instead of wrapping.** Eleven `flex-1` controls with no
+  minimum width squeezed until `Min`/`Max` rendered as "Mi"/"Ma". A 132px floor makes
+  the row wrap, which is what `flex-wrap` was there for
+- **"Start IMPACT Meeting" wrapped to two lines** in the cramped header; now
+  `whitespace-nowrap shrink-0`
+- **The system/facility cell was five stacked lines**, making it the tallest cell in
+  every table and holding Open Jobs to four rows on a 900px screen. The relationship
+  badge moves onto the system line, where it reads as an attribute of the system
+
 ### 2.36.0 - Density pass, money formatting, and dropdown filters
 From the 2026-09-30 feedback list.
 

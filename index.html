@@ -235,7 +235,7 @@
            viewToggle() reveals it. -->
       <div id="meetingStartSlot" class="hidden justify-center order-last w-full lg:order-none lg:w-auto lg:flex-1">
         <button id="btnStartMeeting" onclick="store.dispatch('OPEN_MEETING_SETUP')"
-                class="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white px-5 rounded-md shadow-sm text-sm font-semibold transition-colors h-[38px]"
+                class="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white px-5 rounded-md shadow-sm text-sm font-semibold transition-colors h-[38px] whitespace-nowrap shrink-0"
                 data-tip-left data-tip="Start an IMPACT meeting" aria-label="Start an IMPACT meeting">
           <i data-lucide="play-circle" class="w-4 h-4"></i> Start IMPACT Meeting
         </button>
@@ -276,41 +276,41 @@
       <div class="flex flex-wrap items-end gap-3 w-full lg:w-auto lg:min-w-[50%]" id="controlsArea">
         <!-- Division: first slot on non-MSP (dataSource === 'non_msp'), hidden on MSP.
              Shown/hidden by View.initFilters based on window.store.state.dataSource. -->
-        <div class="multi-select-container relative w-[calc(50%-6px)] sm:flex-1 min-h-[58px] hidden" id="teamFilterContainer">
+        <div class="multi-select-container relative w-[calc(50%-6px)] sm:flex-1 sm:min-w-[132px] min-h-[58px] hidden" id="teamFilterContainer">
         </div>
-        <div class="multi-select-container relative w-[calc(50%-6px)] sm:flex-1 min-h-[58px] hidden" id="divisionFilterContainer">
+        <div class="multi-select-container relative w-[calc(50%-6px)] sm:flex-1 sm:min-w-[132px] min-h-[58px] hidden" id="divisionFilterContainer">
           <label class="block text-xs font-bold text-slate-500 mb-1 ml-1 uppercase tracking-wider">Division</label>
           <div class="w-full bg-white border border-slate-300 rounded-md px-3 py-2 text-sm text-slate-400">Loading...</div>
         </div>
-        <div class="multi-select-container relative w-[calc(50%-6px)] sm:flex-1 min-h-[58px]" id="systemFilterContainer">
+        <div class="multi-select-container relative w-[calc(50%-6px)] sm:flex-1 sm:min-w-[132px] min-h-[58px]" id="systemFilterContainer">
           <label class="block text-xs font-bold text-slate-500 mb-1 ml-1 uppercase tracking-wider">System</label>
           <div class="w-full bg-white border border-slate-300 rounded-md px-3 py-2 text-sm text-slate-400">Loading...</div>
         </div>
-        <div class="multi-select-container relative w-[calc(50%-6px)] sm:flex-1 min-h-[58px]" id="facilityFilterContainer">
+        <div class="multi-select-container relative w-[calc(50%-6px)] sm:flex-1 sm:min-w-[132px] min-h-[58px]" id="facilityFilterContainer">
           <label class="block text-xs font-bold text-slate-500 mb-1 ml-1 uppercase tracking-wider">Facility</label>
           <div class="w-full bg-white border border-slate-300 rounded-md px-3 py-2 text-sm text-slate-400">Loading...</div>
         </div>
-        <div class="multi-select-container relative w-[calc(50%-6px)] sm:flex-1 min-h-[58px]" id="categoryFilterContainer">
+        <div class="multi-select-container relative w-[calc(50%-6px)] sm:flex-1 sm:min-w-[132px] min-h-[58px]" id="categoryFilterContainer">
           <label class="block text-xs font-bold text-slate-500 mb-1 ml-1 uppercase tracking-wider">Category</label>
           <div class="w-full bg-white border border-slate-300 rounded-md px-3 py-2 text-sm text-slate-400">Loading...</div>
-        </div><div class="multi-select-container relative w-[calc(50%-6px)] sm:flex-1 min-h-[58px]" id="serviceLineFilterContainer" hidden>
+        </div><div class="multi-select-container relative w-[calc(50%-6px)] sm:flex-1 sm:min-w-[132px] min-h-[58px]" id="serviceLineFilterContainer" hidden>
           <label class="block text-xs font-bold text-slate-500 mb-1 ml-1 uppercase tracking-wider">Service Line</label>
           <div class="w-full bg-white border border-slate-300 rounded-md px-3 py-2 text-sm text-slate-400">Loading...</div>
         </div>
-        <div class="multi-select-container relative w-[calc(50%-6px)] sm:flex-1 min-h-[58px]" id="specialtyFilterContainer">
+        <div class="multi-select-container relative w-[calc(50%-6px)] sm:flex-1 sm:min-w-[132px] min-h-[58px]" id="specialtyFilterContainer">
           <label class="block text-xs font-bold text-slate-500 mb-1 ml-1 uppercase tracking-wider">Specialty</label>
           <div class="w-full bg-white border border-slate-300 rounded-md px-3 py-2 text-sm text-slate-400">Loading...</div>
         </div>
-        <div class="multi-select-container relative w-[calc(50%-6px)] sm:flex-1 min-h-[58px] hidden" id="professionFilterContainer">
+        <div class="multi-select-container relative w-[calc(50%-6px)] sm:flex-1 sm:min-w-[132px] min-h-[58px] hidden" id="professionFilterContainer">
           <label class="block text-xs font-bold text-slate-500 mb-1 ml-1 uppercase tracking-wider">Profession</label>
           <div class="w-full bg-white border border-slate-300 rounded-md px-3 py-2 text-sm text-slate-400">Loading...</div>
         </div>
-        <div class="multi-select-container relative w-[calc(50%-6px)] sm:flex-1 min-h-[58px] hidden" id="regionFilterContainer">
+        <div class="multi-select-container relative w-[calc(50%-6px)] sm:flex-1 sm:min-w-[132px] min-h-[58px] hidden" id="regionFilterContainer">
           <label class="block text-xs font-bold text-slate-500 mb-1 ml-1 uppercase tracking-wider">State</label>
           <div class="w-full bg-white border border-slate-300 rounded-md px-3 py-2 text-sm text-slate-400">Loading...</div>
         </div>
 
-        <div class="relative w-[calc(50%-6px)] sm:flex-1">
+        <div class="relative w-[calc(50%-6px)] sm:flex-1 sm:min-w-[132px]">
           <label class="block text-xs font-bold text-slate-500 mb-1 ml-1 uppercase tracking-wider">Search ID</label>
           <div class="relative">
             <input type="text" placeholder="Job ID..." 
@@ -320,7 +320,7 @@
           </div>
         </div>
 
-        <div class="relative w-[calc(50%-6px)] sm:flex-1">
+        <div class="relative w-[calc(50%-6px)] sm:flex-1 sm:min-w-[132px]">
           <label class="block text-xs font-bold text-slate-500 mb-1 ml-1 uppercase tracking-wider">Days Age</label>
           <div class="flex gap-1">
             <input type="number" id="minAge" placeholder="Min"
@@ -6322,12 +6322,20 @@
                + (x.incumbent ? `<span class="text-[9px] text-slate-400 ml-1">via ${View.esc(x.incumbent)}</span>` : '');
         })();
         const eyebrow = o.eyebrow || r.health_system || r.healthSystem || '—';
+        /* Four lines, not five. The relationship badge had a row to itself
+         * between the specialty and the unit/shift line, which made this the
+         * tallest cell in the table and held Open Jobs to four rows on a
+         * 900px screen. It sits on the system line instead, where it reads as
+         * an attribute of the system -- which is what it is.
+         */
         return `
-          <div class="text-[10px] uppercase tracking-wide text-slate-400 truncate" title="${View.esc(eyebrow)}">${View.esc(eyebrow)}</div>
-          <div class="font-bold text-sm text-slate-700 truncate" title="${View.esc(r.facility || '')}">${View.esc(r.facility || '—')}</div>
+          <div class="flex items-center gap-1.5 min-w-0">
+            <span class="text-[10px] uppercase tracking-wide text-slate-400 truncate" title="${View.esc(eyebrow)}">${View.esc(eyebrow)}</span>
+            ${rel ? `<span class="shrink-0">${rel}</span>` : ''}
+          </div>
+          <div class="font-bold text-sm text-slate-700 truncate leading-tight" title="${View.esc(r.facility || '')}">${View.esc(r.facility || '—')}</div>
           <div class="text-[10px] uppercase tracking-wide text-blue-600 truncate" title="${View.esc(o.spec || '')}">${View.esc(o.spec || '')}</div>
-          ${rel ? `<div class="flex items-center mt-0.5 min-w-0">${rel}</div>` : ''}
-          ${o.extra ? `<div class="text-[10px] text-slate-400 truncate mt-0.5" title="${View.esc(o.extraTitle || o.extra)}">${o.extra}</div>` : ''}`;
+          ${o.extra ? `<div class="text-[10px] text-slate-400 truncate" title="${View.esc(o.extraTitle || o.extra)}">${o.extra}</div>` : ''}`;
       },
 
       SOURCE_BADGE: {
@@ -7840,10 +7848,14 @@
          * `);
          */
 
+        // Non-MSP has no vendor panel and no bids, so section two would be a
+        // box explaining its own absence. Section one takes the full width
+        // instead.
+        const showMarket = window.store.state.dataSource !== 'non_msp';
         return `
           <div class="p-4 bg-slate-50 border-t border-slate-100">
-            <div class="grid grid-cols-1 xl:grid-cols-2 gap-3">
-              ${section1}${section2}
+            <div class="grid grid-cols-1 ${showMarket ? 'xl:grid-cols-2' : ''} gap-3">
+              ${section1}${showMarket ? section2 : ''}
             </div>
           </div>`;
       },
@@ -10084,7 +10096,17 @@
         // The old table was a flat list, which left the question the stage
         // exists to answer -- how much did we win this week -- to be worked
         // out by reading every row.
-        const closedExpandable = s.dataSource !== 'non_msp';
+        /* Closed rows open on BOTH books now.
+         *
+         * This was MSP-only because the detail's second section is vendor
+         * share and bid activity, neither of which exists on the non-MSP
+         * book -- so opening a row there would have shown a panel whose only
+         * message was "not relevant here". The answer is to drop that section
+         * on non-MSP rather than to withhold the whole record: section one
+         * (revenue, bill rate, rate rank, days to close against comparables,
+         * outcome, owner) is exactly as meaningful on direct business.
+         */
+        const closedExpandable = true;
         const CLOSED_GROUPS = closedExpandable
           ? [['GHR WON', 'Filled · GHR'], ['AFFILIATE WON', 'Filled · Affiliate Network'],
              ['MISSED', 'Unfilled · Expired'], ['CANCELED', 'Canceled & Declined']]
@@ -11072,8 +11094,25 @@
         };
 
         // ====== KPI SUMMARY CARDS ======
-        const latestMonth = months[months.length - 1];
-        const prevMonth = months.length > 1 ? months[months.length - 2] : null;
+        /* The headline KPI uses the last COMPLETE month, not the newest one.
+         *
+         * `months` ends with the month in progress, so on the 1st of October
+         * the card read "Total Billings (Oct-26) $0 -100%". Both halves are
+         * misleading: the month is a day old, and comparing a day against a
+         * full September guarantees a collapse. A billings headline that
+         * reports a catastrophe every month-start trains people to ignore it.
+         *
+         * The tables below still show every month including the partial one --
+         * that detail is wanted. It is only the summary figure that has to
+         * compare like with like.
+         */
+        const nowMonth = new Date().toISOString().slice(0, 7);
+        const newestMonth = months[months.length - 1];
+        const partialMonth = newestMonth === nowMonth;
+        const latestMonth = (partialMonth && months.length > 1)
+          ? months[months.length - 2] : newestMonth;
+        const latestIdx = months.indexOf(latestMonth);
+        const prevMonth = latestIdx > 0 ? months[latestIdx - 1] : null;
 
         let totalGhrBilling = 0, totalAffBilling = 0, totalGhrHC = 0, totalAffHC = 0;
         let prevTotalBilling = 0;
@@ -11131,10 +11170,14 @@
 `;
 
         this.renderKpiCards(isNonMspFin ? [
-          { label: `Total Billings (${monthLabel(latestMonth)})`, val: fmt(totalBilling) + (billingChange !== null ? ` <span class="${changeColor} text-xs font-normal">${parseFloat(billingChange) >= 0 ? '▲' : '▼'} ${Math.abs(billingChange)}%</span>` : ''), icon: 'dollar-sign', color: 'slate' },
+          { label: `Total Billings (${monthLabel(latestMonth)})${partialMonth ? ' <span class="normal-case font-normal text-slate-400">· last full month</span>' : ''}`,
+            val: fmt(totalBilling) + (billingChange !== null ? ` <span class="${changeColor} text-xs font-normal">${parseFloat(billingChange) >= 0 ? '▲' : '▼'} ${Math.abs(billingChange)}%</span>` : ''),
+            icon: 'dollar-sign', color: 'slate' },
           { label: 'Headcount', val: totalGhrHC.toLocaleString(), icon: 'user-check', color: 'blue' },
         ] : [
-          { label: `Total Billings (${monthLabel(latestMonth)})`, val: fmt(totalBilling) + (billingChange !== null ? ` <span class="${changeColor} text-xs font-normal">${parseFloat(billingChange) >= 0 ? '▲' : '▼'} ${Math.abs(billingChange)}%</span>` : ''), icon: 'dollar-sign', color: 'slate' },
+          { label: `Total Billings (${monthLabel(latestMonth)})${partialMonth ? ' <span class="normal-case font-normal text-slate-400">· last full month</span>' : ''}`,
+            val: fmt(totalBilling) + (billingChange !== null ? ` <span class="${changeColor} text-xs font-normal">${parseFloat(billingChange) >= 0 ? '▲' : '▼'} ${Math.abs(billingChange)}%</span>` : ''),
+            icon: 'dollar-sign', color: 'slate' },
           { label: 'GHR Billings', val: fmt(totalGhrBilling), icon: 'building-2', color: 'blue' },
           { label: 'Affiliate Billings', val: fmt(totalAffBilling), icon: 'users', color: 'purple' },
           { label: 'GHR Fill Rate', val: `${fillRate}%`, icon: 'pie-chart', color: 'emerald' },
