@@ -2,6 +2,7 @@ import azure.functions as func
 import pyodbc
 import os
 import json
+from shared_code.rate_scope import value_13wk
 from shared_code.auth import require_allowed_domain
 from shared_code.data_source import (
     is_non_msp, get_bullhorn_conn, get_symplr_conn, get_appdb_conn,
@@ -757,7 +758,7 @@ def _serialize(rows):
         rate, hrs = r.get('bill_rate'), r.get('hours_per_week')
         # 13-week forward value of the seat if it extends. Left null rather
         # than assuming a standard week when hours aren't known.
-        r['extension_value_13wk'] = round(rate * hrs * 13, 2) if rate and hrs else None
+        r['extension_value_13wk'] = value_13wk(rate, hrs, r.get('time_type'))
         r['urgency'] = _urgency(r.get('days_left'))
         r['match'] = _match_panel(r)
         # `is_extension` on the row is per-source evidence that this seat has

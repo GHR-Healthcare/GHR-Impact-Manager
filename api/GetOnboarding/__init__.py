@@ -3,6 +3,7 @@ import pyodbc
 import os
 import json
 from datetime import date
+from shared_code.rate_scope import value_13wk
 from shared_code.auth import require_allowed_domain
 from shared_code.data_source import (
     is_non_msp, get_bullhorn_conn, get_symplr_conn, get_appdb_conn,
@@ -702,7 +703,7 @@ def _finalize(rows):
             r['delay_measure'] = 'flagged'
             r['movement_tracked'] = False
         rate, hrs = r.get('bill_rate'), r.get('hours_per_week')
-        r['value_13wk'] = round(rate * hrs * 13, 2) if rate and hrs else None
+        r['value_13wk'] = value_13wk(rate, hrs, r.get('position_type'))
         out.append(r)
     return out
 

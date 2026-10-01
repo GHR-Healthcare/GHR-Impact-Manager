@@ -264,7 +264,7 @@ def _closed_window(req, non_msp):
 # Engagement-type axis for RATE RANK, shared with GetPositions so an open
 # job and a closed one rank on the same vocabulary. See shared_code/
 # rate_scope.py for why 'Contract (Nursing)' is deliberately unmapped.
-from shared_code.rate_scope import rate_category as _rate_category
+from shared_code.rate_scope import rate_category as _rate_category, value_13wk
 
 
 def _filled_by_and_revenue(row):
@@ -849,8 +849,8 @@ def _aggregate_non_msp(rows, lookback, errors):
         r['specialty'] = (r.pop('specialty_raw', None) or '')
         r['region'] = normalize_state(r.get('region'))
         r['agency'] = 'GHR'
-        rate, hrs = r.get('bill_rate'), r.get('hours_per_week')
-        r['value_13wk'] = round(rate * hrs * 13, 2) if rate and hrs else None
+        r['value_13wk'] = value_13wk(r.get('bill_rate'), r.get('hours_per_week'),
+                                    r.get('category'))
         r['filled_by'], r['revenue'] = _filled_by_and_revenue(r)
 
     rows.sort(key=lambda r: r.get('closed_on') or '', reverse=True)
@@ -992,8 +992,8 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             # VNDLY carries no specialty field at all.
             r['specialty'] = (r.get('specialty') or r.get('care_type') or '') or ''
             r['rate_category'] = _rate_category(r.get('category'))
-            rate, hrs = r.get('bill_rate'), r.get('hours_per_week')
-            r['value_13wk'] = round(rate * hrs * 13, 2) if rate and hrs else None
+            r['value_13wk'] = value_13wk(r.get('bill_rate'), r.get('hours_per_week'),
+                                        r.get('category'))
             r['filled_by'], r['revenue'] = _filled_by_and_revenue(r)
 
             if not r.get('closed_on'):
