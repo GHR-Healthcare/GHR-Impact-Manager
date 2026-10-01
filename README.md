@@ -2,6 +2,15 @@
 
 ## Version History
 
+### 2.37.1 - Scope the B4 extension report to GHR
+
+- The Network Activity Report is registry-level and lists every vendor in the program
+  -- AppleOne, LanceSoft, BAYADA, Triage and the rest -- which is not GHR's book. The
+  three designation lookups now require a GHR agency. No row changes today: all 96
+  extensions on GHR seats in the window are already GHR's own, because the tab is fed
+  from Bullhorn and an affiliate's extension never reaches it. It is there so an
+  affiliate picking up a GHR seat's extension can never read as GHR extending it
+
 ### 2.37.0 - Extension designations, from VNDLY and B4
 
 Aligns the Extensions tab to the Extension Criteria spec. Nothing was removed: the

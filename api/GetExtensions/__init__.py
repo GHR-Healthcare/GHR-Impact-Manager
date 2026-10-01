@@ -234,6 +234,14 @@ def _b4_rows(cursor, horizon, include_affiliate):
              * extended one. The hop through Parent_Contract_ID is what puts the
              * designation on the seat a reviewer is actually looking at.
              *
+             * Scoped to GHR agencies: the report is registry-level and lists
+             * every vendor in the program (AppleOne, LanceSoft, BAYADA, Triage
+             * and the rest), which is not GHR's book. All 96 extensions on GHR
+             * seats in the window are already GHR's own -- the tab is fed from
+             * Bullhorn, so an affiliate's extension would not reach it -- so
+             * this changes no row today. It is here so an affiliate picking up
+             * a GHR seat's extension can never be read as GHR extending it.
+             *
              * Verified against the live window: 87 accepted, 28 offer pending,
              * 10 declined. The 87 is the same 87 the contract chain finds
              * independently below, which is the check that this join is right.
@@ -244,6 +252,7 @@ def _b4_rows(cursor, horizon, include_affiliate):
                   ON LTRIM(RTRIM(c.Contract_ID)) = LTRIM(RTRIM(x.AssignmentID))
                 WHERE LTRIM(RTRIM(c.Parent_Contract_ID)) = LTRIM(RTRIM(o.Contract_ID))
                   AND LTRIM(RTRIM(x.AssignmentType)) = 'Extension Offer Pending'
+                  AND x.Agency LIKE '%GHR%'
             ) THEN 1 ELSE 0 END                         AS b4_report_offer_pending,
             CASE WHEN EXISTS (
                 SELECT 1 FROM dhc.B4HealthExtensionsOrder x WITH (NOLOCK)
@@ -251,6 +260,7 @@ def _b4_rows(cursor, horizon, include_affiliate):
                   ON LTRIM(RTRIM(c.Contract_ID)) = LTRIM(RTRIM(x.AssignmentID))
                 WHERE LTRIM(RTRIM(c.Parent_Contract_ID)) = LTRIM(RTRIM(o.Contract_ID))
                   AND LTRIM(RTRIM(x.AssignmentType)) = 'Future Extension Accepted'
+                  AND x.Agency LIKE '%GHR%'
             ) THEN 1 ELSE 0 END                         AS b4_report_extended,
             /* The report carries a fourth state the spec's list does not:
              * Extension Offer Declined, on 10 seats in the window. Folding it
@@ -268,6 +278,7 @@ def _b4_rows(cursor, horizon, include_affiliate):
                   ON LTRIM(RTRIM(c.Contract_ID)) = LTRIM(RTRIM(x.AssignmentID))
                 WHERE LTRIM(RTRIM(c.Parent_Contract_ID)) = LTRIM(RTRIM(o.Contract_ID))
                   AND LTRIM(RTRIM(x.AssignmentType)) = 'Extension Offer Declined'
+                  AND x.Agency LIKE '%GHR%'
             ) THEN 1 ELSE 0 END                         AS b4_report_declined
         FROM dhc.B4HealthOrder o WITH (NOLOCK)
         -- The crosswalk maps keys and nothing else. Its own status and date
