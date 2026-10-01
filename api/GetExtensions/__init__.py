@@ -123,6 +123,60 @@ def _b4_rows(cursor, horizon, include_affiliate):
     """Extension candidates still being managed in B4Health."""
     status_list = ', '.join("'" + s.replace("'", "''") + "'" for s in B4_EXCLUDED_STATUSES)
     agency_filter = '' if include_affiliate else f'AND {B4_GHR_PREDICATE}'
+    # Resolve the Bullhorn crosswalk once instead of per row.
+    #
+    # The crosswalk carries one row per load run rather than per pair -- 8,015
+    # rows over 4,331 distinct (contract, placement) pairs -- so joining it raw
+    # fans every order out ~1.9x. 140 contracts legitimately map to more than
+    # one placement (a seat refilled or continued into a new record); the live
+    # one is the latest-ending, which is what ROW_NUMBER picks here.
+    #
+    # This was an OUTER APPLY, which SQL Server evaluated once per row: 13.1s
+    # for 444 rows against 2.7s pre-resolved, for identical output. The earlier
+    # timings that made the APPLY look cheap used SELECT COUNT(*), which lets
+    # the optimiser skip the SELECT list entirely -- the cost only appears when
+    # the columns are actually produced.
+    cursor.execute("""
+        SET NOCOUNT ON;
+        IF OBJECT_ID('tempdb..#b4_bh') IS NOT NULL DROP TABLE #b4_bh;
+        SELECT contract_id, match_id, match_start_date, match_end_date,
+               match_status, match_clinician, match_is_extension,
+               match_original_end, Recruiter, source_is_extension
+        INTO #b4_bh
+        FROM (
+            SELECT LTRIM(RTRIM(l.Contract_ID))                  AS contract_id,
+                   pd.Source_Placement_ID                       AS match_id,
+                   CAST(pd.DateBegin AS DATE)                   AS match_start_date,
+                   CAST(pd.DateEnd AS DATE)                     AS match_end_date,
+                   NULLIF(LTRIM(RTRIM(pd.Status)), '')          AS match_status,
+                   NULLIF(LTRIM(RTRIM(ISNULL(l.firstName, '') + ' '
+                                    + ISNULL(l.lastName, ''))), '') AS match_clinician,
+                   pd.IsExtension                               AS match_is_extension,
+                   CAST(pd.DateOriginalEnd AS DATE)             AS match_original_end,
+                   NULLIF(LTRIM(RTRIM(pd.Recruiter)), '')       AS Recruiter,
+                   CASE WHEN pd.IsExtension = 1 THEN 'Yes'
+                        WHEN pd.IsExtension = 0 THEN 'No' END   AS source_is_extension,
+                   ROW_NUMBER() OVER (PARTITION BY LTRIM(RTRIM(l.Contract_ID))
+                                      ORDER BY pd.DateEnd DESC, l.RUN_ID DESC) AS rn
+            FROM dbo.BH_PLACEMENT_RAW_TO_B4HealthOrder l WITH (NOLOCK)
+            INNER JOIN dbo.PLACEMENT_DIM pd WITH (NOLOCK)
+                    ON pd.Source_Placement_ID = l.placementID
+        ) z WHERE rn = 1;
+        CREATE INDEX ix_b4bh ON #b4_bh (contract_id);
+
+        IF OBJECT_ID('tempdb..#b4_rto') IS NOT NULL DROP TABLE #b4_rto;
+        SELECT contract_id, rto INTO #b4_rto FROM (
+            SELECT LTRIM(RTRIM(cs.Contract_Assignment_ID))      AS contract_id,
+                   NULLIF(LTRIM(RTRIM(cs.RTO)), '')             AS rto,
+                   ROW_NUMBER() OVER (PARTITION BY LTRIM(RTRIM(cs.Contract_Assignment_ID))
+                                      ORDER BY cs.Date_Loaded DESC) AS rn
+            FROM dhc.B4Health_Contract_Submissions cs WITH (NOLOCK)
+            WHERE NULLIF(LTRIM(RTRIM(cs.RTO)), '') IS NOT NULL
+        ) z WHERE rn = 1;
+        CREATE INDEX ix_b4rto ON #b4_rto (contract_id);
+    """)
+
+
     cursor.execute(f'''
         SELECT
             'B4'                                        AS source_system,
@@ -189,21 +243,15 @@ def _b4_rows(cursor, horizon, include_affiliate):
             bh.source_is_extension                      AS source_is_extension,
             /* RTO for MSP, at last. The Bullhorn path cannot supply it --
              * BH_PLACEMENT_RAW holds Blocks 1-5 and 10 only, so customTextBlock9
-             * never reaches the warehouse and bh.recorded_rto is always null
-             * here. B4 records it on the contract submission itself, which is a
+             * never reaches the warehouse, so the ATS copy is unavailable on
+             * this book. B4 records it on the contract submission itself, which is a
              * better source anyway: it is the VMS's own field, not an ATS copy.
              *
-             * COALESCE so the Bullhorn value still wins if that path is ever
-             * given the block. 18 of the 314 GHR seats in the live window carry
-             * one; the tab showed 0 before this.
+             * 18 of the 314 GHR seats in the live window carry one; the tab
+             * showed 0 before this. Resolved once into #b4_rto for the same
+             * reason the crosswalk is: as a correlated subquery it ran per row.
              */
-            COALESCE(bh.recorded_rto, (
-                SELECT TOP 1 NULLIF(LTRIM(RTRIM(cs.RTO)), '')
-                FROM dhc.B4Health_Contract_Submissions cs WITH (NOLOCK)
-                WHERE LTRIM(RTRIM(cs.Contract_Assignment_ID)) = LTRIM(RTRIM(o.Contract_ID))
-                  AND NULLIF(LTRIM(RTRIM(cs.RTO)), '') IS NOT NULL
-                ORDER BY cs.Date_Loaded DESC
-            ))                                          AS recorded_rto,
+            rt.rto                                      AS recorded_rto,
             -- B4 carries no original end date; the parent-contract chain in
             -- parent_ref is the only extension evidence on this source.
             CAST(NULL AS DATE)                          AS original_end_date,
@@ -314,46 +362,11 @@ def _b4_rows(cursor, horizon, include_affiliate):
         -- would fan every order out ~1.9x. 140 contracts legitimately map to
         -- more than one placement (a seat refilled or continued into a new
         -- record); the live one is the latest-ending.
-        OUTER APPLY (
-            SELECT TOP 1
-                pd.Source_Placement_ID                   AS match_id,
-                CAST(pd.DateBegin AS DATE)               AS match_start_date,
-                CAST(pd.DateEnd AS DATE)                 AS match_end_date,
-                NULLIF(LTRIM(RTRIM(pd.Status)), '')      AS match_status,
-                NULLIF(LTRIM(RTRIM(ISNULL(l.firstName, '') + ' '
-                                 + ISNULL(l.lastName, ''))), '') AS match_clinician,
-                pd.IsExtension                           AS match_is_extension,
-                CAST(pd.DateOriginalEnd AS DATE)         AS match_original_end,
-                -- Recruiter is not on the B4 order at all: it belongs to the
-                -- ATS record. Populated on 85% of PLACEMENT_DIM, which beats a
-                -- column of dashes.
-                NULLIF(LTRIM(RTRIM(pd.Recruiter)), '')   AS Recruiter,
-                -- Bullhorn's own "Extension?" field (customText14) is exactly
-                -- what PLACEMENT_DIM.IsExtension already carries: across the
-                -- whole warehouse the two agree on every row (8,773 Yes/True,
-                -- 17,860 No/False, 25,019 null/null, no disagreements), so it
-                -- is restated from the dimension rather than joined for a second time.
-                -- Emitted under the same name the VNDLY and Bullhorn branches
-                -- use so the row shape stays identical across sources.
-                CASE WHEN pd.IsExtension = 1 THEN 'Yes'
-                     WHEN pd.IsExtension = 0 THEN 'No'
-                END                                      AS source_is_extension,
-                -- Recorded RTO lives in customTextBlock9 ("Time Off"). The
-                -- warehouse copy of the placement does not carry that column --
-                -- BH_PLACEMENT_RAW holds Blocks 1-5 and 10 only -- so RTO is
-                -- available on the non-MSP branch, which reads the mirror's
-                -- View_Placement, and is null here.
-                CAST(NULL AS NVARCHAR(MAX))              AS recorded_rto
-            FROM dbo.BH_PLACEMENT_RAW_TO_B4HealthOrder l WITH (NOLOCK)
-            INNER JOIN dbo.PLACEMENT_DIM pd WITH (NOLOCK)
-                    ON pd.Source_Placement_ID = l.placementID
-            -- LEFT JOIN dbo.BH_PLACEMENT_RAW bp WITH (NOLOCK)
-            -- ON bp.placementID = l.placementID
-            -- ^ dropped with 2.18.1: only reached customText14, which
-            --   PLACEMENT_DIM.IsExtension already restates exactly.
-            WHERE LTRIM(RTRIM(l.Contract_ID)) = LTRIM(RTRIM(o.Contract_ID))
-            ORDER BY pd.DateEnd DESC, l.RUN_ID DESC
-        ) bh
+        -- Materialised above into #b4_bh: as a correlated OUTER APPLY this
+        -- was re-evaluated per row and cost 13.1s for 444 rows. Pre-resolved
+        -- once and joined, the same 292 links take 2.7s.
+        LEFT JOIN #b4_bh  bh ON bh.contract_id = LTRIM(RTRIM(o.Contract_ID))
+        LEFT JOIN #b4_rto rt ON rt.contract_id = LTRIM(RTRIM(o.Contract_ID))
         WHERE o.End_Date BETWEEN CAST(GETDATE() AS DATE)
                              AND DATEADD(DAY, ?, CAST(GETDATE() AS DATE))
             AND o.Contract_Status NOT IN ({status_list})

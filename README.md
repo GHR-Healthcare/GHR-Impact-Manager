@@ -2,6 +2,23 @@
 
 ## Version History
 
+### 2.41.1 - The extensions build was correlated per row
+
+The cold build was 35-41s and had twice returned a 500 at the 45s gateway. It scaled
+at roughly **5.5s fixed + 62ms per row** -- the signature of per-row work, not a slow
+base query.
+
+- **The B4 Bullhorn crosswalk was a correlated `OUTER APPLY`**, re-evaluated once per
+  row: **13.1s for 444 rows**, against **2.7s** pre-resolved into a temp table for
+  identical output (the same 292 links). The RTO lookup had the same shape and is
+  resolved the same way
+- **My earlier timings missed this** because they used `SELECT COUNT(*)`, which lets
+  the optimiser skip the SELECT list entirely. The cost only appears when the columns
+  are actually produced -- 3.8s counting, 13.1s returning
+- Same fix the VNDLY link needed in 2.41.0, for the same reason: SQL Server inlines a
+  CTE and re-runs a correlated subquery, so a set that is used once per row has to be
+  materialised
+
 ### 2.41.0 - VNDLY seats reach Bullhorn
 
 Every VNDLY seat on the Extensions tab read "No Bullhorn record joins to this seat" --
