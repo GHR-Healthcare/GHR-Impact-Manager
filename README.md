@@ -2,6 +2,26 @@
 
 ## Version History
 
+### 2.39.1 - Modal layout: remove the dead space
+
+Walked every modal on both apps and measured where the room was going.
+
+- **Extensions was the worst.** The editable form sat inside the right column, which
+  made that column ~690px of content against ~300px on the left: the left ended with
+  roughly **370px of dead white space** while the right overflowed and scrolled (126%
+  of the available height). The columns are now 5/7 rather than 50/50, and the form is
+  lifted out to full width below both -- so the form gets the whole 1200px, the right
+  column loses the height it was lending it, and neither column scrolls. Client
+  Decision, Extension Designation and Shared Notes now sit three across instead of
+  wrapping in a half-width column
+- **The List modal's Submission Log reserved a fixed 224px** (`h-56`) whether it held
+  one submission or twenty, so a job with a single submission showed ~180px of empty
+  box. It sizes to its content now and only scrolls past the cap
+- **Pending's middle panel promised "who else is submitted" and showed two counts.**
+  That left it short against the panels either side -- the dead space and the
+  unanswered question were the same problem. It now lists the peers by name with their
+  agency, from data already loaded for the counts
+
 ### 2.39.0 - Cache the three remaining slow endpoints
 
 Warm measurements before this change: onboarding-data **15.8s** (MSP), trend-data

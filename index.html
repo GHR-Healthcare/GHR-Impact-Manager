@@ -978,7 +978,7 @@
     const $ = (id) => document.getElementById(id);
 
     // App version - loaded from environment variable via API, with fallback
-    let APP_VERSION = '2.39.0';
+    let APP_VERSION = '2.39.1';
 
     const API_BASE_URL = '/api';
 
@@ -6166,7 +6166,12 @@
                     <div class="col-span-5">Status</div>
                     <div class="col-span-3 text-right">Submitted</div>
                   </div>
-                  <div class="h-56 overflow-y-auto text-xs">
+                  <!-- max-h, not h: a fixed 224px box reserved the same room for
+                       one submission as for twenty, so a job with a single
+                       submission showed ~180px of empty white below it. It now
+                       grows to its content and only scrolls once it exceeds the
+                       cap. -->
+                  <div class="max-h-56 overflow-y-auto text-xs">
                   ${cands.length === 0 ? '<div class="p-4 text-center text-slate-400 italic">No candidates found</div>' : cands.map((c) => {
                     const originalIndex = job.candidates.indexOf(c);
                     const daysAgo = c.date ? Utils.calcDays(c.date) : '-';
@@ -9143,9 +9148,16 @@
           ? !!(r.match_original_end && r.match_end_date && r.match_end_date > r.match_original_end)
           : !!r.is_extension;
         return `
-              <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                ${View.systemMatchPanel(r)}
-                <div>
+              <!-- 5/7, not 50/50, and the editable form lifted out to full
+                   width. The form used to sit inside the right column, which
+                   made that column ~690px of content against ~300px on the
+                   left: the left ended with roughly 370px of dead white space
+                   while the right overflowed and scrolled. Out here the form
+                   gets the whole 1200px, the right column loses the height it
+                   was lending it, and neither column has to scroll. -->
+              <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
+                <div class="lg:col-span-5">${View.systemMatchPanel(r)}</div>
+                <div class="lg:col-span-7">
                   <div class="flex items-center justify-between gap-2 mb-1 pb-2 border-b border-slate-100">
                     <h5 class="text-xs font-bold uppercase tracking-wide text-slate-500">Extension Progress</h5>
                     <span class="text-[9px] font-bold text-slate-500 bg-slate-100 border border-slate-200 rounded-full px-2 py-0.5">
@@ -9190,11 +9202,16 @@
                       <span class="text-[10px] text-slate-400">System</span>
                     </div>
                   </div>
+                  <p class="text-[10px] text-slate-400 mt-3 leading-snug">
+                    Linked backfill isn&rsquo;t shown &mdash; nothing in the source systems ties an ending seat to its replacement job.
+                  </p>
+                </div>
+              </div>
                   <div class="mt-3 pt-3 border-t border-slate-100">
                     ${View.taskStrip({ decision: e.decision, decisionLabel: 'Client Decision',
                                        owner: ball.owner, who: ball.who, action: ball.action,
                                        due: Utils.actionDue(r.days_left, r.end_date) })}
-                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
                       <div>
                         <label class="block text-[10px] font-semibold text-slate-500 uppercase tracking-wide mb-1">Client Decision</label>
                         <select class="ext-decision w-full bg-white border border-slate-300 rounded-md px-3 py-2 text-sm" data-id="${r.id}">
@@ -9268,11 +9285,6 @@
                         meta.updatedAt ? ' · ' + new Date(meta.updatedAt).toLocaleString() : ''}</span>` : ''}
                     </div>
                   </div>
-                  <p class="text-[10px] text-slate-400 mt-3 leading-snug">
-                    Linked backfill isn&rsquo;t shown &mdash; nothing in the source systems ties an ending seat to its replacement job.
-                  </p>
-                </div>
-              </div>
               <!-- Rate & GM moved into the record above (View.rateGmInline).
                    It used to render here as a full-width strip. -->`;
       },
@@ -9797,7 +9809,24 @@
                       <div class="grid grid-cols-2 gap-2">
                         ${View.panelTile('GHR Submitted', mine)}
                         ${View.panelTile(nonMsp ? 'Other' : 'Affiliate Submitted', theirs)}
-                      </div>`
+                      </div>
+                      ${/* The panel promised "who else is submitted" and then showed
+                            only two counts, which left the middle column short against
+                            the two beside it -- the dead space and the missing answer
+                            were the same problem. The peers are already loaded for the
+                            counts, so naming them costs nothing. */''}
+                      ${peers && peers.length > 1 ? `
+                        <div class="mt-2 border-t border-slate-100 pt-2 max-h-28 overflow-y-auto">
+                          ${peers.slice(0, 8).map(x => `
+                            <div class="flex items-center justify-between gap-2 py-0.5 text-[11px]">
+                              <span class="truncate ${x.is_ghr ? 'text-slate-700 font-medium' : 'text-slate-500'}"
+                                    title="${View.esc(x.worker_name || x.full_name || '')}">${
+                                View.esc(x.worker_name || x.full_name || '—')}</span>
+                              <span class="shrink-0 text-[10px] ${x.is_ghr ? 'text-blue-600' : 'text-slate-400'}">${
+                                View.esc(x.is_ghr ? 'GHR' : (x.agency_name || 'Affiliate'))}</span>
+                            </div>`).join('')}
+                          ${peers.length > 8 ? `<div class="text-[10px] text-slate-400 pt-1">+${peers.length - 8} more</div>` : ''}
+                        </div>` : ''}`
                     : `<p class="text-xs text-slate-400 italic">No other submissions recorded against this seat.</p>`}
                     ${r.revenue ? `<div class="mt-2 text-[11px] text-slate-600">13-week value:
                       <b>$${Number(r.revenue).toLocaleString(undefined,{maximumFractionDigits:0})}</b></div>` : ''}`)}
