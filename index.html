@@ -976,7 +976,7 @@
     const $ = (id) => document.getElementById(id);
 
     // App version - loaded from environment variable via API, with fallback
-    let APP_VERSION = '2.36.6';
+    let APP_VERSION = '2.37.0';
 
     const API_BASE_URL = '/api';
 
@@ -2978,6 +2978,53 @@
       },
 
       AGING_CRITICAL_DAYS: 7,
+
+      /* The extension designations, in pipeline order.
+       *
+       * A SEPARATE axis from the Client Decision lever: the decision is GHR's
+       * own position on whether to extend, the designation is how far the
+       * request has actually got with the client and the vendor. A seat can be
+       * "Approved to Offer" internally and still sit at "Pending Extension
+       * Review" externally, and that gap is the thing worth seeing.
+       */
+      EXT_STAGES: ['Pending Extension Review', 'Awaiting Client Approval',
+                   'Awaiting Vendor Approval', 'Extension Accepted',
+                   // Not in the spec's list, but the B4 report carries it on
+                   // live seats. A declined offer is a finished decision, and
+                   // showing it as "pending review" would put it back on the
+                   // chase list.
+                   'Extension Declined'],
+
+      EXT_STAGE_TONE: {
+        'Pending Extension Review': 'bg-slate-100 text-slate-600 border-slate-200',
+        'Awaiting Client Approval': 'bg-amber-50 text-amber-700 border-amber-200',
+        'Awaiting Vendor Approval': 'bg-blue-50 text-blue-700 border-blue-200',
+        'Extension Accepted':       'bg-emerald-50 text-emerald-700 border-emerald-200',
+        'Extension Declined':       'bg-rose-50 text-rose-700 border-rose-200',
+      },
+
+      /* Where this extension sits. Derived on the server from the VNDLY
+       * date-extension modification status and the B4 parent/child contract,
+       * then overridden by hand here.
+       *
+       * "Awaiting Client Approval" has no VMS signal at all -- it means the PMO
+       * has put the extension in front of the client -- so it only ever comes
+       * from the manual lever. The spec expects that to become automatic once
+       * every account is on VNDLY; until then the override is the only source,
+       * and `manual` is returned so the tab can say which it is showing.
+       */
+      extensionStage(r) {
+        const saved = window.store.state.workspaceState?.extension?.[r.id]?.state;
+        const manual = (saved && saved.stage) || '';
+        if (manual && Utils.EXT_STAGES.includes(manual)) {
+          return { stage: manual, why: 'set by hand on this tab', manual: true };
+        }
+        return {
+          stage: r.extension_stage || Utils.EXT_STAGES[0],
+          why: r.extension_stage_why || 'no approval activity recorded yet',
+          manual: false,
+        };
+      },
 
       /* One day is "1 day". Every surface that prints a day count goes through
        * here so they cannot disagree about rounding or the plural.
@@ -8067,6 +8114,8 @@
         const saved = window.store.state.workspaceState?.extension?.[r.id]?.state;
         return {
           decision: saved?.decision || 'Not Requested',
+          // '' means "follow whatever the VMS feeds derive".
+          stage: saved?.stage || '',
           notes: saved?.notes || '',
           steps: saved?.steps || {},
           /* Recorded here because the source systems mostly cannot hold it.
@@ -8106,6 +8155,7 @@
        */
       extSearchBar(total, shown) {
         const f = window.store.state.extFilter || { endFrom: '', endTo: '', status: 'All' };
+        const gb = window.store.state.extGroupBy || 'designation';
         const active = !!(f.endFrom || f.endTo || (f.status && f.status !== 'All'));
         const field = 'w-full bg-white border border-slate-300 rounded-md px-2 py-1.5 text-xs focus:border-blue-500 outline-none shadow-sm';
         const lbl = 'block text-[9px] font-semibold uppercase tracking-wide text-slate-400 mb-0.5';
@@ -8141,6 +8191,13 @@
                    onchange="store.dispatch('SET_EXT_FILTER')">
             <select id="extensionStatusFilter" class="${field} w-[150px]" title="Extension status"
                     onchange="store.dispatch('SET_EXT_FILTER')">${opts}</select>
+            <span class="text-[10px] font-bold uppercase tracking-wider text-slate-400">Group</span>
+            <select id="extensionGroupBy" class="${field} w-[130px]"
+                    title="Group by the VMS-derived designation, or by GHR's own workflow state"
+                    onchange="store.dispatch('SET_EXT_GROUP_BY', this.value)">
+              <option value="designation" ${gb === 'workflow' ? '' : 'selected'}>Designation</option>
+              <option value="workflow"    ${gb === 'workflow' ? 'selected' : ''}>Workflow</option>
+            </select>
             <span class="text-[11px] ml-auto ${active ? 'text-slate-600 font-semibold' : 'text-slate-400'}">${
               active ? `${shown} of ${total} match` : `${total} in window`}</span>
             ${active ? `<button onclick="store.dispatch('CLEAR_EXT_FILTERS')"
@@ -8156,6 +8213,25 @@
         if (f.endTo   && (!end || end > f.endTo))   return false;
         if (f.status && f.status !== 'All' && View.extensionGroup(r) !== f.status) return false;
         return true;
+      },
+
+      /* The designation badge. A dot marks a value set by hand, so a reviewer
+       * can tell at a glance which rows the VMS is driving and which a person
+       * has overridden -- without that, a stale manual value looks identical to
+       * live data.
+       */
+      extensionStageCell(r) {
+        const st = Utils.extensionStage(r);
+        const tone = Utils.EXT_STAGE_TONE[st.stage] || Utils.EXT_STAGE_TONE[Utils.EXT_STAGES[0]];
+        const short = st.stage.replace('Pending Extension Review', 'Pending Review')
+                              .replace('Awaiting Client Approval', 'Awaiting Client')
+                              .replace('Awaiting Vendor Approval', 'Awaiting Vendor')
+                              .replace('Extension Accepted', 'Accepted')
+                              .replace('Extension Declined', 'Declined');
+        return `<span class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded border text-[10px] font-semibold ${tone}"
+                      title="${View.esc(st.stage)} — ${View.esc(st.why)}">
+                  ${st.manual ? '<span class="w-1 h-1 rounded-full bg-current opacity-70"></span>' : ''}${View.esc(short)}
+                </span>`;
       },
 
       extensionGroup(r) {
@@ -9041,6 +9117,7 @@
        */
       extensionDetailBody(r, opts) {
         const e = View.extensionEdit(r);
+        const st = Utils.extensionStage(r);
         const ball = View.extensionBall(r);
         const meta = window.store.state.workspaceState?.extension?.[r.id];
         const pm = r.account_manager || '—';
@@ -9123,6 +9200,17 @@
                         </select>
                       </div>
                       <div>
+                        <label class="block text-[10px] font-semibold text-slate-500 uppercase tracking-wide mb-1">Extension Designation</label>
+                        <select class="ext-stage w-full bg-white border border-slate-300 rounded-md px-3 py-2 text-sm" data-id="${r.id}">
+                          <option value="" ${e.stage ? '' : 'selected'}>Auto &mdash; ${View.esc(st.stage)}</option>
+                          ${Utils.EXT_STAGES.map(d => `<option ${e.stage === d ? 'selected' : ''}>${d}</option>`).join('')}
+                        </select>
+                        <p class="text-[10px] text-slate-400 mt-1">${
+                          st.manual
+                            ? 'Set by hand. Choose Auto to follow the VMS again.'
+                            : `Derived: ${View.esc(st.why)}. Switch to Awaiting Client Approval once the PMO has it in front of the client.`}</p>
+                      </div>
+                      <div>
                         <label class="block text-[10px] font-semibold text-slate-500 uppercase tracking-wide mb-1">Shared Notes</label>
                         <textarea class="ext-notes w-full bg-white border border-slate-300 rounded-md px-3 py-2 text-xs h-[38px]"
                                   data-id="${r.id}" placeholder="Client or extension context…">${e.notes}</textarea>
@@ -9200,14 +9288,22 @@
           // No separate chevron column: the disclosure arrow lives in the ID
           // cell, as it does on Closed and Open Jobs.
           { label: 'ID',              key: 'id', w: '7%' },
-          { label: 'Assignment',      key: 'facility', w: '13%' },
-          { label: 'Clinician',       key: 'clinician', w: '8%' },
+          { label: 'Assignment',      key: 'facility', w: '12%' },
+          { label: 'Clinician',       key: 'clinician', w: '7%' },
           { label: 'End Date',        key: 'end_date',      align: 'center', w: '6%' },
           { label: 'Days Left',       key: 'days_left',     align: 'center', w: '6%' },
-          { label: 'System Match',    key: r => View.matchSummary(r).sort, w: '10%',
+          { label: 'System Match',    key: r => View.matchSummary(r).sort, w: '8%',
             filter: 'select', filterValue: r => View.matchSummary(r).label },
-          { label: 'Decision',        key: r => View.extensionEdit(r).decision, align: 'center', w: '9%',
+          { label: 'Decision',        key: r => View.extensionEdit(r).decision, align: 'center', w: '8%',
             filter: 'select' },
+          // The external approval state, sorted in pipeline order rather than
+          // alphabetically -- "Awaiting Client" before "Awaiting Vendor" is the
+          // order the work moves in, which alphabetical happens to agree with
+          // here but would not if a designation were ever renamed.
+          { label: 'Designation',
+            key: r => String(Utils.EXT_STAGES.indexOf(Utils.extensionStage(r).stage)),
+            align: 'center', w: '9%',
+            filter: 'select', filterValue: r => Utils.extensionStage(r).stage },
           // Dropdowns rather than free text. Both are fully populated on the
           // non-MSP book -- 661 of 661 seats carry an AM and 660 carry a
           // recruiter -- across 71 and 78 distinct people respectively, which
@@ -9215,8 +9311,8 @@
           // Options are built from the rows below, so each list holds exactly
           // the people who actually appear in the loaded window.
           { label: s.dataSource === 'non_msp' ? 'AM' : 'PM',
-            key: 'account_manager', filter: 'select', w: '8%' },
-          { label: 'Recruiter',       key: 'recruiter', filter: 'select', w: '8%' },
+            key: 'account_manager', filter: 'select', w: '7%' },
+          { label: 'Recruiter',       key: 'recruiter', filter: 'select', w: '7%' },
           // "Who has the ball" and "what next", from the IT notes. Sorted and
           // filtered on the owner, which is the question people scan for.
           /* Sorted by how soon the action is due rather than by owner name:
@@ -9227,7 +9323,7 @@
           { label: 'Next Action',
             key: r => { const d = Utils.actionDueInDays(r.days_left);
                         return d == null ? 99999 : d; },
-            sortNote: 'when the action is due (seats with no end date last)', w: '12%' },
+            sortNote: 'when the action is due (seats with no end date last)', w: '10%' },
           { label: 'Urgency',         key: 'urgency',       align: 'center', w: '6%',
             filter: 'select', filterValue: r => View.extensionUrgencyLabel(r) },
           { label: '13-Wk',           key: 'extension_value_13wk', align: 'right', w: '7%' },
@@ -9273,11 +9369,25 @@
             icon: 'git-compare', color: 'purple' },
         ]);
 
-        // Group by workflow state, in the reference's order.
+        /* Two ways to group, because they answer different questions.
+         *
+         * "Designation" is the spec's model: where the extension has got to
+         * with the client and the vendor, derived from the VMS feeds. It is the
+         * default because it is the one driven by live data.
+         *
+         * "Workflow" is the original grouping -- GHR's own decision and the
+         * checklist steps. Kept because it is the only view that shows what the
+         * team has done, as opposed to what the systems report.
+         */
+        const groupBy = s.extGroupBy === 'workflow' ? 'workflow' : 'designation';
+        const groupOf = groupBy === 'workflow'
+          ? (r => View.extensionGroup(r))
+          : (r => Utils.extensionStage(r).stage);
+        const order = groupBy === 'workflow' ? View.EXT_GROUP_ORDER : Utils.EXT_STAGES;
         const groups = {};
-        rows.forEach(r => { (groups[View.extensionGroup(r)] = groups[View.extensionGroup(r)] || []).push(r); });
+        rows.forEach(r => { const g = groupOf(r); (groups[g] = groups[g] || []).push(r); });
         let body = '';
-        View.EXT_GROUP_ORDER.forEach(g => {
+        order.forEach(g => {
           // Rows arrive already sorted when a column sort is active; only fall
           // back to the default days-left ordering when none is.
           const list = View.stageSort.extensions?.label
@@ -9315,6 +9425,7 @@
                 <td class="px-3 py-1.5 text-center">${r.days_left != null ? View.stageBadge(r.days_left + 'd', r.urgency || 'low') : '—'}</td>
                 <td class="px-3 py-1.5">${View.matchCell(r)}</td>
                 <td class="px-3 py-1.5 text-center">${View.extensionDecisionBadge(e.decision)}</td>
+                <td class="px-3 py-1.5 text-center">${View.extensionStageCell(r)}</td>
                 <td class="px-3 py-1.5 text-slate-500 truncate">${View.esc(r.account_manager || '—')}</td>
                 <td class="px-3 py-1.5 text-slate-500 truncate">${r.recruiter
                   ? View.esc(r.recruiter)
@@ -15769,6 +15880,8 @@
         expandedOnboarding: new Set(),
         expandedClosed: new Set(),
         expandedPending: new Set(),
+        // Spec's designation model is the default grouping on Extensions.
+        extGroupBy: 'designation',
         // Analysis strips default open; collapsed state is per stage view.
         intelOpen: {},
         onboardingRows: [], onboardingMeta: null, onboardingLoaded: false, onboardingError: null,
@@ -16095,6 +16208,12 @@
               break;
             }
 
+            case 'SET_EXT_GROUP_BY': {
+              s.extGroupBy = payload === 'workflow' ? 'workflow' : 'designation';
+              View.extensions();
+              break;
+            }
+
             case 'TOGGLE_PENDING_ROW': {
               if (!Utils.impactUi()) {
                 // Production MSP keeps the legacy in-place expand, untouched.
@@ -16238,8 +16357,9 @@
               // rather than || '' would still be wrong here -- an absent input
               // means "no detail open", and this only runs from an open one.
               const val = sel => (document.querySelector(`${sel}[data-id="${id}"]`)?.value || '').trim();
+              const stage = document.querySelector(`.ext-stage[data-id="${id}"]`)?.value || '';
               const state = {
-                decision, notes, steps,
+                decision, stage, notes, steps,
                 newEnd: val('.ext-new-end'),
                 rto: val('.ext-rto'),
                 isExt: val('.ext-flag'),

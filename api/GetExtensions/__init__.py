@@ -39,6 +39,62 @@ VNDLY_ACTIVE_STATUSES = ('Active',)
 
 EXTENSION_HORIZON_DAYS = 45
 
+# The extension designations, per the Extension Criteria spec. Order is the
+# pipeline order, which is also the order the tab groups them in.
+#
+# These are a SEPARATE axis from the GHR-internal decision lever ('Interested',
+# 'Approved to Offer', ...). The decision is GHR's own position on whether to
+# extend; the designation is where the request has actually got to with the
+# client and the vendor. A seat can be 'Approved to Offer' internally and still
+# sit at 'Pending Extension Review' externally, and conflating them would hide
+# exactly that gap.
+EXT_STAGE_REVIEW   = 'Pending Extension Review'
+EXT_STAGE_CLIENT   = 'Awaiting Client Approval'
+EXT_STAGE_VENDOR   = 'Awaiting Vendor Approval'
+EXT_STAGE_ACCEPTED = 'Extension Accepted'
+# Not in the spec's list, but present in the B4 report on 10 live seats. A
+# declined offer is a finished decision, not one still waiting to be made.
+EXT_STAGE_DECLINED = 'Extension Declined'
+EXT_STAGES = (EXT_STAGE_REVIEW, EXT_STAGE_CLIENT, EXT_STAGE_VENDOR,
+              EXT_STAGE_ACCEPTED, EXT_STAGE_DECLINED)
+
+
+def _extension_stage(r):
+    """Where this seat's extension actually sits, derived from the VMS.
+
+    Spec: pull the ends 45 days out, then use the VNDLY pending-modification
+    report and the B4 'extension offer pending' assignments to move a seat to
+    Awaiting Vendor. 'Awaiting Client Approval' has no VMS signal -- it means
+    the PMO has put the extension in front of the client -- so it is set by
+    hand on the tab and applied client-side over whatever is derived here.
+
+    Returns (stage, why) so the tab can show its own reasoning rather than
+    asserting a status with no provenance.
+    """
+    # VNDLY: the latest Date Extension modification on the work order.
+    mod = (r.get('mod_status') or '').strip().lower()
+    if mod == 'accepted':
+        return EXT_STAGE_ACCEPTED, 'VNDLY date extension accepted'
+    if mod in ('submitted', 'pending'):
+        return EXT_STAGE_VENDOR, 'VNDLY date extension submitted, awaiting vendor'
+
+    # B4: the Network Activity Report, when it has been loaded, states the
+    # assignment type outright -- so it outranks anything inferred below.
+    if r.get('b4_report_offer_pending'):
+        return EXT_STAGE_VENDOR, 'B4 report: extension offer pending'
+    if r.get('b4_report_extended'):
+        return EXT_STAGE_ACCEPTED, 'B4 report: future extension accepted'
+    if r.get('b4_report_declined'):
+        return EXT_STAGE_DECLINED, 'B4 report: extension offer declined'
+
+    # B4: a child contract hanging off this assignment is the extension itself.
+    if r.get('b4_ext_awarded'):
+        return EXT_STAGE_ACCEPTED, 'B4 extension awarded'
+    if r.get('b4_ext_offer_pending'):
+        return EXT_STAGE_VENDOR, 'B4 extension offer pending, awaiting vendor'
+
+    return EXT_STAGE_REVIEW, 'no approval activity recorded yet'
+
 # Non-MSP placement statuses that represent a seat still running, and so
 # capable of being extended. Everything else in the window is terminal
 # (Cancellation, Termination, Completed) or never started.
@@ -131,7 +187,88 @@ def _b4_rows(cursor, horizon, include_affiliate):
             bh.recorded_rto                             AS recorded_rto,
             -- B4 carries no original end date; the parent-contract chain in
             -- parent_ref is the only extension evidence on this source.
-            CAST(NULL AS DATE)                          AS original_end_date
+            CAST(NULL AS DATE)                          AS original_end_date,
+            -- B4 has no modification concept -- extensions are their own
+            -- contract -- so the VNDLY status column is null on this source.
+            CAST(NULL AS NVARCHAR(50))                  AS mod_status,
+            CAST(NULL AS NVARCHAR(100))                 AS mod_reason,
+            /* The spec reaches this through the Network Activity Report:
+             * filter to the extensions tab, take assignment type "extension
+             * offer pending" for GHR divisions, then crosswalk the names back
+             * to the forecast ends. The warehouse carries the same facts with
+             * a real key -- an extension in B4 IS a child contract whose
+             * Parent_Contract_Assignment_ID is this assignment -- so the match
+             * is exact instead of by name, and nothing is exported by hand.
+             *
+             * Measured against the live 45-day window: 687 seats ending, 128
+             * with a child submission, 38 offer-pending, 87 already awarded.
+             *
+             * Awarded is tested first and wins: once the extension is awarded
+             * the seat is no longer awaiting anyone.
+             */
+            CASE WHEN EXISTS (
+                SELECT 1 FROM dhc.B4Health_Contract_Submissions cs WITH (NOLOCK)
+                WHERE LTRIM(RTRIM(cs.Parent_Contract_Assignment_ID)) = LTRIM(RTRIM(o.Contract_ID))
+                  AND cs.Date_Awarded IS NOT NULL
+            ) THEN 1 ELSE 0 END                         AS b4_ext_awarded,
+            CASE WHEN EXISTS (
+                SELECT 1 FROM dhc.B4Health_Contract_Submissions cs WITH (NOLOCK)
+                WHERE LTRIM(RTRIM(cs.Parent_Contract_Assignment_ID)) = LTRIM(RTRIM(o.Contract_ID))
+                  AND cs.Date_Awarded IS NULL
+                  AND cs.Offer_Date IS NOT NULL
+                  AND cs.Agency_Decline_Date IS NULL
+                  AND cs.Hospital_Decline_Date IS NULL
+                  AND cs.Agency_Retracted_Date IS NULL
+            ) THEN 1 ELSE 0 END                         AS b4_ext_offer_pending,
+            /* dhc.B4HealthExtensionsOrder is the Network Activity Report
+             * the spec names, landed in the warehouse (205 rows, loaded
+             * 2026-10-01). It states AssignmentType outright, so it outranks
+             * the contract-chain inference below.
+             *
+             * Its AssignmentID is the CHILD contract -- the extension itself,
+             * status "With Requests", carrying the extended end date -- not the
+             * seat that is ending. Joining it straight to Contract_ID looked
+             * like it worked (205 of 205 matched) but landed every designation
+             * on the wrong row: none of the 29 pending offers sat on an order
+             * ending inside 45 days, because the child's end date is the
+             * extended one. The hop through Parent_Contract_ID is what puts the
+             * designation on the seat a reviewer is actually looking at.
+             *
+             * Verified against the live window: 87 accepted, 28 offer pending,
+             * 10 declined. The 87 is the same 87 the contract chain finds
+             * independently below, which is the check that this join is right.
+             */
+            CASE WHEN EXISTS (
+                SELECT 1 FROM dhc.B4HealthExtensionsOrder x WITH (NOLOCK)
+                JOIN dhc.B4HealthOrder c WITH (NOLOCK)
+                  ON LTRIM(RTRIM(c.Contract_ID)) = LTRIM(RTRIM(x.AssignmentID))
+                WHERE LTRIM(RTRIM(c.Parent_Contract_ID)) = LTRIM(RTRIM(o.Contract_ID))
+                  AND LTRIM(RTRIM(x.AssignmentType)) = 'Extension Offer Pending'
+            ) THEN 1 ELSE 0 END                         AS b4_report_offer_pending,
+            CASE WHEN EXISTS (
+                SELECT 1 FROM dhc.B4HealthExtensionsOrder x WITH (NOLOCK)
+                JOIN dhc.B4HealthOrder c WITH (NOLOCK)
+                  ON LTRIM(RTRIM(c.Contract_ID)) = LTRIM(RTRIM(x.AssignmentID))
+                WHERE LTRIM(RTRIM(c.Parent_Contract_ID)) = LTRIM(RTRIM(o.Contract_ID))
+                  AND LTRIM(RTRIM(x.AssignmentType)) = 'Future Extension Accepted'
+            ) THEN 1 ELSE 0 END                         AS b4_report_extended,
+            /* The report carries a fourth state the spec's list does not:
+             * Extension Offer Declined, on 10 seats in the window. Folding it
+             * into "Pending Extension Review" would put a settled decision back
+             * on the chase list, so it gets its own designation.
+             *
+             * This is also what the first version of this query got wrong: it
+             * matched AssignmentType LIKE '%extension%' AND NOT LIKE '%pending%'
+             * for "extended", which quietly swept all 72 declined rows in with
+             * the accepted ones.
+             */
+            CASE WHEN EXISTS (
+                SELECT 1 FROM dhc.B4HealthExtensionsOrder x WITH (NOLOCK)
+                JOIN dhc.B4HealthOrder c WITH (NOLOCK)
+                  ON LTRIM(RTRIM(c.Contract_ID)) = LTRIM(RTRIM(x.AssignmentID))
+                WHERE LTRIM(RTRIM(c.Parent_Contract_ID)) = LTRIM(RTRIM(o.Contract_ID))
+                  AND LTRIM(RTRIM(x.AssignmentType)) = 'Extension Offer Declined'
+            ) THEN 1 ELSE 0 END                         AS b4_report_declined
         FROM dhc.B4HealthOrder o WITH (NOLOCK)
         -- The crosswalk maps keys and nothing else. Its own status and date
         -- columns are a snapshot frozen at load time and must not be compared
@@ -263,6 +400,34 @@ def _vndly_rows(cursor, horizon, include_affiliate):
                   AND NULLIF(LTRIM(RTRIM([Other Reason])), '') IS NOT NULL
             ) r
             WHERE r.rn = 1
+        ),
+        -- The approval state of the latest date-extension modification. This is
+        -- the "Pending Modifications - Awaiting Vendor" report, read from the
+        -- staging table instead of exported by hand.
+        --
+        -- Deliberately NOT folded into ext_latest above: that CTE requires a
+        -- non-empty [Other Reason], because it exists to surface the free-text
+        -- note. Most extensions carry no note at all, so reusing it would have
+        -- silently limited the designation to the minority of work orders that
+        -- happen to have one.
+        --
+        -- [Is Latest Modification] is not unique per work order -- several rows
+        -- on one order can carry 'Yes' -- so the newest is taken by ordering on
+        -- [Last Modified] and the revision, never by trusting that flag.
+        ext_status AS (
+            SELECT wo, mod_status, mod_reason, mod_when
+            FROM (
+                SELECT WOSystemKey                              AS wo,
+                       LTRIM(RTRIM([Status]))                   AS mod_status,
+                       LTRIM(RTRIM([Reason for Modification]))  AS mod_reason,
+                       [Last Modified]                          AS mod_when,
+                       ROW_NUMBER() OVER (PARTITION BY WOSystemKey
+                                          ORDER BY [Last Modified] DESC,
+                                                   TRY_CAST([Revision Number] AS INT) DESC) AS rn
+                FROM dbo.STAGING_VNDLY_WORKODER_MODIFICATIONS WITH (NOLOCK)
+                WHERE LTRIM(RTRIM([Reason for Modification])) = 'Date Extension'
+            ) r
+            WHERE r.rn = 1
         )
         SELECT
             'VNDLY'                                     AS source_system,
@@ -328,10 +493,18 @@ def _vndly_rows(cursor, horizon, include_affiliate):
             -- VNDLY is the one MSP source that states the seat's original end
             -- date outright, so an in-place extension is a fact here rather
             -- than an inference.
-            TRY_CAST(w.[Original End Date] AS DATE)      AS original_end_date
+            TRY_CAST(w.[Original End Date] AS DATE)      AS original_end_date,
+            xs.mod_status                                AS mod_status,
+            xs.mod_reason                                AS mod_reason,
+            CAST(NULL AS INT)                            AS b4_ext_offer_pending,
+            CAST(NULL AS INT)                            AS b4_ext_awarded,
+            CAST(NULL AS INT)                            AS b4_report_offer_pending,
+            CAST(NULL AS INT)                            AS b4_report_extended,
+            CAST(NULL AS INT)                            AS b4_report_declined
         FROM dbo.STAGING_VNDLY_WORKORDERS w WITH (NOLOCK)
         LEFT JOIN ext_mods x ON x.wo = w.WOSystemKey
         LEFT JOIN ext_latest xl ON xl.wo = w.WOSystemKey
+        LEFT JOIN ext_status  xs ON xs.wo = w.WOSystemKey
         -- STAGING_VNDLY_JOBS holds 664 rows across only 387 distinct [Job Id],
         -- so joining it raw fans work orders out — measured at 112 rows where
         -- the truth is 60. Collapse to one row per job before joining.
@@ -760,6 +933,9 @@ def _serialize(rows):
         # than assuming a standard week when hours aren't known.
         r['extension_value_13wk'] = value_13wk(rate, hrs, r.get('time_type'))
         r['urgency'] = _urgency(r.get('days_left'))
+        stage, why = _extension_stage(r)
+        r['extension_stage'] = stage
+        r['extension_stage_why'] = why
         r['match'] = _match_panel(r)
         # `is_extension` on the row is per-source evidence that this seat has
         # been extended before (a B4 parent chain, a VNDLY date past its

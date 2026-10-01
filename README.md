@@ -2,6 +2,45 @@
 
 ## Version History
 
+### 2.37.0 - Extension designations, from VNDLY and B4
+
+Aligns the Extensions tab to the Extension Criteria spec. Nothing was removed: the
+45-day Bullhorn window, the Client Decision lever and the workflow grouping all stay
+as they were, and the designation is added alongside them.
+
+- **A designation per seat, derived from the VMS rather than typed in.** Where the
+  extension has actually got to, on its own axis from the Client Decision. The decision
+  is GHR's position on whether to extend; the designation is how far the request has
+  got with the client and the vendor. A seat can be "Approved to Offer" internally and
+  still sit at "Pending Extension Review" externally, and that gap is the thing worth
+  seeing. One function, `Utils.extensionStage`, owns it for every surface
+- **Both VMS books feed it.** VNDLY: the latest `Date Extension` modification on the
+  work order, from `STAGING_VNDLY_WORKODER_MODIFICATIONS` -- the "Pending Modifications
+  - Awaiting Vendor" report, read from staging instead of exported by hand. `Submitted`
+  means awaiting vendor, `Accepted` means done. B4: `dhc.B4HealthExtensionsOrder`, the
+  Network Activity Report, with the contract parent/child chain as a second,
+  independent read
+- **The B4 report's AssignmentID is the child contract, not the seat that is ending.**
+  Joined straight to `Contract_ID` it matched 205 of 205 rows and was wrong every time:
+  none of the 29 pending offers landed on an order ending inside 45 days, because the
+  child carries the *extended* end date. The hop through `Parent_Contract_ID` puts the
+  designation on the seat a reviewer is looking at. The check that it is right: the
+  report finds 87 accepted in the window, and the contract chain independently finds
+  the same 87
+- **"Awaiting Client Approval" is the manual lever the spec asks for.** It has no VMS
+  signal -- it means the PMO has put the extension in front of the client -- so it is
+  set by hand and applied over whatever is derived. A dot on the badge marks any
+  designation set by hand, so a stale manual value cannot pass for live data
+- **A fifth designation the spec did not list: Extension Declined.** The B4 report
+  carries it on 10 live seats. Folding those into "Pending Extension Review" would have
+  put a settled decision back on the chase list
+- **Group by Designation or Workflow**, defaulting to Designation. The original
+  workflow grouping is the only view of what the team has done rather than what the
+  systems report, so it stays one click away
+
+Live counts at release: 87 accepted, 28 awaiting vendor and 10 declined from the B4
+report; 3 awaiting vendor and 88 accepted from VNDLY.
+
 ### 2.36.6 - One day is "1 day"
 
 - Four surfaces printed a raw day count and read "1 days": the Pending stage age, the
