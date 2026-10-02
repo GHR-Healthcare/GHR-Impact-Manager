@@ -2,6 +2,23 @@
 
 ## Version History
 
+### 2.42.2 - "Comparable Median 0 days" was measuring data entry
+
+The Closed detail read **"This Job 56 days vs Comparable Median 0 days"** across 20
+peers -- a comparison that tells a reviewer nothing.
+
+- `days_to_close` is `DATEDIFF(HOUR, job added, first placement) / 24`, so a record
+  keyed in retroactively -- job order and placement entered together -- scores **0**.
+  That is data-entry timing, not recruiting speed
+- Measured on the live non-MSP book: of 881 closed rows only 248 carry a number at all,
+  and **99 of those (40%) are exactly 0**, with another 38 under a day. The median came
+  out 0.38 and rendered as "0 days". Excluding sub-day entries gives **7 days** against
+  the same peers
+- The comparable set now requires at least a full day. The row's **own** days-to-close
+  is untouched -- the filter governs only what it is measured against -- and the
+  "Avg Days to Close" KPI uses the same rule, since it was being pulled toward zero by
+  the same rows
+
 ### 2.42.1 - Settle the rate-intel scoping question
 
 `GetRateIntel` pools every Bullhorn job order as a peer, MSP included. That has been

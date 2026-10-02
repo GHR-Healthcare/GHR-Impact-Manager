@@ -1004,7 +1004,7 @@
     const $ = (id) => document.getElementById(id);
 
     // App version - loaded from environment variable via API, with fallback
-    let APP_VERSION = '2.42.1';
+    let APP_VERSION = '2.42.2';
 
     const API_BASE_URL = '/api';
 
@@ -7647,7 +7647,22 @@
         const rows = (window.store.state.closedRows || []).filter(View.stageFilter);
         const prof = (r.profession || '').toLowerCase();
         const acct = r.health_system || '';
-        const usable = x => x.id !== r.id && Number(x.days_to_close) >= 0;
+        /* A comparable has to be a real fill time. days_to_close is
+         * DATEDIFF(HOUR, job added, first placement) / 24, so a record entered
+         * retroactively -- the job order and the placement keyed in together --
+         * scores 0. That is data-entry timing, not recruiting speed.
+         *
+         * Measured on the live non-MSP book: of 881 closed rows only 248 carry
+         * a number at all, and 99 of those (40%) are exactly 0 with another 38
+         * under a day. The median came out 0.38 and rendered as "0 days", so
+         * the panel read "This Job 56 days vs Comparable Median 0 days" -- a
+         * comparison that tells a reviewer nothing. Excluding sub-day entries
+         * gives a median of 7 days against the same peers.
+         *
+         * The row's OWN days-to-close is untouched; this filter governs only
+         * what it is measured AGAINST.
+         */
+        const usable = x => x.id !== r.id && Number(x.days_to_close) >= 1;
         const pick = list => list.map(x => Number(x.days_to_close)).sort((a, b) => a - b);
         let peers = pick(rows.filter(x => usable(x)
           && (x.health_system || '') === acct
@@ -7816,7 +7831,8 @@
                                 : View.esc(View.rateNoRankReason(r)))}
             ${View.panelTile('Days to Close', hasDtc ? Utils.days(dtc) : none)}
             ${View.panelTile('Comparable Median', cmp ? Utils.days(cmp.median) : none,
-                             cmp ? `${cmp.n} peers &middot; ${View.esc(cmp.scope)}` : 'fewer than 3 comparable closes')}
+                             cmp ? `${cmp.n} peers &middot; ${View.esc(cmp.scope)}`
+                                 : 'fewer than 3 comparable closes')}
           </div>
           ${(hasDtc && cmp) ? `
             <div class="mt-3">
@@ -10213,7 +10229,11 @@
          */
         const capturedPos = rows.reduce((a, r) => a + Math.max(0, Number(r.revenue) || 0), 0);
         const missedRev = Math.abs(rows.reduce((a, r) => a + Math.min(0, Number(r.revenue) || 0), 0));
-        const dtc = rows.map(r => Number(r.days_to_close)).filter(v => isFinite(v) && v >= 0);
+        // >= 1, matching closedComparables: a record keyed in retroactively
+        // scores 0 days and is data-entry timing, not a fill time. 40% of the
+        // priced non-MSP closes are such rows, and counting them pulled this
+        // average down toward zero.
+        const dtc = rows.map(r => Number(r.days_to_close)).filter(v => isFinite(v) && v >= 1);
         const avgDaysToClose = dtc.length
           ? Math.round(dtc.reduce((a, b) => a + b, 0) / dtc.length) : null;
         const captureRate = nonMspKpi
