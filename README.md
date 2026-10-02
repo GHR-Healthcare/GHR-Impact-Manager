@@ -2,6 +2,23 @@
 
 ## Version History
 
+### 2.42.1 - Settle the rate-intel scoping question
+
+`GetRateIntel` pools every Bullhorn job order as a peer, MSP included. That has been
+flagged twice as a possible correctness problem; it is not one, and the evidence is now
+in the query.
+
+- MSP is **2,501 of 43,011 peer rows (5.8%)** over the 90-day window
+- The global gap -- MSP $74.65 against non-MSP $90.77 -- is a **profession-mix effect,
+  not a rate gap**. Ranking happens within profession + specialty + category, and inside
+  the same bucket MSP is mostly *higher*: RN/ER/Travel $91.94 vs $86.51, RN/OR/Travel
+  $100.90 vs $93.21, RRT/Hospital/Travel $91.14 vs $84.04
+- Scoping it out would move ranks by 1-3% of each bucket, in the direction of making
+  seats look better paid, and would gut the thin Local/PRN pools where MSP supplies most
+  of the comparables -- RN/Med/Surg Tele/Local is 92 MSP rows against 23 non-MSP, an 80%
+  reduction. Still above `minPeers` (3), but far noisier
+- **Decision: leave it pooled.** Recorded in the query comment so it is not re-opened
+
 ### 2.42.0 - Cache the last three uncached endpoints
 
 - **`stats-data`** was the slowest endpoint on either book -- **6.9s warm on non-MSP**,

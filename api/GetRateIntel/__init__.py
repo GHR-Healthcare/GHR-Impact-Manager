@@ -74,6 +74,31 @@ def _peer_rows(cursor):
             DATEADD(DAY, -((DATEPART(WEEKDAY, o.dateAdded_date) + 5) % 7),
                     o.dateAdded_date)                      AS week_start,
             CAST(o.bt_Outlier AS INT)                      AS is_outlier
+        /* Deliberately NOT scoped to one book. Measured 2026-10-02 over the
+         * 90-day window: MSP accounts are 2,501 of 43,011 peer rows (5.8%),
+         * 35 clients against 2,118.
+         *
+         * The global averages look alarming -- MSP $74.65 against non-MSP
+         * $90.77 -- but that is a mix effect, not a rate gap: MSP carries more
+         * of the lower-paying professions. Ranking happens within
+         * profession + specialty + category, and inside the same bucket MSP is
+         * mostly HIGHER, not lower:
+         *
+         *     RN/ER/Travel              MSP $91.94 (69)   non-MSP $86.51 (3194)
+         *     RN/Med/Surg Tele/Travel       $93.63 (73)           $87.81 (2377)
+         *     RRT/Hospital/Travel           $91.14 (35)           $84.04 (1578)
+         *     RN/OR/Travel                 $100.90 (30)           $93.21 (1419)
+         *     RN/ICU/Travel                 $90.21 (42)           $91.89 (2317)
+         *
+         * So excluding MSP would move ranks by 1-3% of each bucket, in the
+         * direction of making seats look slightly better paid -- and it would
+         * gut the thin Local/PRN pools, where MSP supplies most of the
+         * comparables: RN/Med/Surg Tele/Local is 92 MSP rows against 23
+         * non-MSP, so scoping would drop that pool by 80%. Above minPeers (3),
+         * but far noisier.
+         *
+         * Scoping this is a net loss. Leave it pooled.
+         */
         FROM dbo.BH_BILL_RATE_TRENDS_OUTLIERS_FACT o WITH (NOLOCK)
         LEFT JOIN dbo.CLIENT_DIM c WITH (NOLOCK)
                ON c.Source_Client_ID = o.clientCorporationID
