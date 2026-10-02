@@ -2,7 +2,9 @@ import azure.functions as func
 import pyodbc
 import os
 import json
+import time
 from datetime import datetime, timedelta
+from shared_code.endpoint_cache import cache_key, read_cache, write_cache
 from shared_code.auth import require_allowed_domain
 from shared_code.credentials import (
     normalize as normalize_credential,
@@ -314,8 +316,31 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
     if auth_error:
         return auth_error
 
+    # Measured warm at 6.9s on non-MSP, the slowest endpoint on either book,
+    # and 1.9MB. It takes no request parameters, so the whole response is
+    # cacheable with no default-window guard.
+    _started = time.time()
+    _key = cache_key('stats-data', 'non_msp' if is_non_msp() else 'msp')
+    _cached = read_cache(_key)
+    if _cached is not None:
+        print('stats-data: served from cache')
+        return func.HttpResponse(json.dumps(_cached, default=str),
+                                 mimetype='application/json', status_code=200)
+
     if is_non_msp():
-        return _non_msp_stats(req)
+        # Warm from this branch too. The read above sits in front of both books,
+        # but _non_msp_stats returns its own HttpResponse -- without writing here
+        # non-MSP would read a cache nothing ever fills and stay at 6.9s, which
+        # is exactly how the extensions cache failed silently in 2.38.1.
+        resp = _non_msp_stats(req)
+        try:
+            if resp.status_code == 200:
+                write_cache(_key, json.loads(resp.get_body()),
+                            build_ms=int((time.time() - _started) * 1000),
+                            refreshed_by='live-request')
+        except Exception as e:
+            print(f'stats-data: cache warm skipped ({e})')
+        return resp
 
     try:
         conn = pyodbc.connect(
@@ -547,12 +572,15 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
         print(f"Returning {len(on_assignment)} active (B4: {b4_active}, VNDLY: {vndly_active}), "
               f"{len(upcoming)} upcoming, {len(recently_ended)} recently ended")
         
+        _payload = {
+            'onAssignment': on_assignment,
+            'upcoming': upcoming,
+            'recentlyEnded': recently_ended,
+        }
+        write_cache(_key, _payload, build_ms=int((time.time() - _started) * 1000),
+                    refreshed_by='live-request')
         return func.HttpResponse(
-            json.dumps({
-                'onAssignment': on_assignment,
-                'upcoming': upcoming,
-                'recentlyEnded': recently_ended
-            }, default=str),
+            json.dumps(_payload, default=str),
             mimetype="application/json",
             status_code=200
         )

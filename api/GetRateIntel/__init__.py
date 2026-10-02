@@ -2,6 +2,8 @@ import azure.functions as func
 import pyodbc
 import os
 import json
+import time
+from shared_code.endpoint_cache import cache_key, read_cache, write_cache
 from shared_code.auth import require_allowed_domain
 from shared_code.data_source import is_non_msp
 from shared_code.credentials import (
@@ -106,6 +108,18 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
     if auth_error:
         return auth_error
 
+    # The biggest payload in the app -- 4.8MB of peer rates -- and measured
+    # warm at 2.7s on MSP and 4.3s on non-MSP. It takes no request parameters
+    # at all, so unlike extensions/closed/onboarding there is no default window
+    # to guard: the whole response is cacheable as-is.
+    _started = time.time()
+    _key = cache_key('rate-intel', 'non_msp' if is_non_msp() else 'msp')
+    _cached = read_cache(_key)
+    if _cached is not None:
+        print('rate-intel: served from cache')
+        return func.HttpResponse(json.dumps(_cached, default=str),
+                                 mimetype='application/json', status_code=200)
+
     # Bullhorn job orders are the only rate population wide enough to rank
     # against, and they cover both books' roles. Non-MSP reads the same set.
     conn = None
@@ -156,6 +170,8 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
         print(f"RateIntel: {len(peers)} peer rows, "
               f"{payload['coverage']['accounts']} accounts, "
               f"{payload['coverage']['outliersFlagged']} flagged")
+        write_cache(_key, payload, build_ms=int((time.time() - _started) * 1000),
+                    refreshed_by='live-request')
         return func.HttpResponse(json.dumps(payload, default=str),
                                  mimetype='application/json', status_code=200)
     except Exception as e:

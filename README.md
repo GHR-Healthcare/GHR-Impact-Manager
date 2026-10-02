@@ -2,6 +2,20 @@
 
 ## Version History
 
+### 2.42.0 - Cache the last three uncached endpoints
+
+- **`stats-data`** was the slowest endpoint on either book -- **6.9s warm on non-MSP**,
+  1.9MB -- and uncached. It takes no request parameters, so the whole response caches
+  with no default-window guard. The non-MSP branch returns its own response, so it
+  warms the cache explicitly: a read in front of both books with a write on only one is
+  how the extensions cache failed silently in 2.38.1
+- **`rate-intel`** is the biggest payload in the app at 4.8MB, 2.7s on MSP and 4.3s on
+  non-MSP, also parameterless and now cached
+- **`financial-data` had no caching on MSP at all.** The cache block lives inside
+  `_non_msp_financial()`, so that book rebuilt on every request (3.2s warm) while the
+  endpoint appeared to have caching. The same oversight the trend endpoint had in
+  2.39.0. The default-range guard is hoisted so both books share it
+
 ### 2.41.3 - Modal pass after the dropdown-to-popup switch
 
 Walked every modal on both apps at 1440, 1280 and 1100px.

@@ -320,12 +320,25 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             # cycles show up immediately rather than waiting until next month.
             date_to = "DATEADD(MONTH, 1, DATEFROMPARTS(YEAR(GETDATE()), MONTH(GETDATE()), 1))"
 
+        # Only the default range is cacheable. fromMonth / toMonth produce a
+        # different answer, and a cache keyed on route alone would hand the
+        # default thirteen months to someone who asked for one quarter.
+        default_range = not from_month and not to_month
+
         if is_non_msp():
-            # Only the default range is cacheable. fromMonth / toMonth produce a
-            # different answer, and a cache keyed on route alone would hand the
-            # default thirteen months to someone who asked for one quarter.
-            default_range = not from_month and not to_month
             return _non_msp_financial(req, date_from, date_to, cacheable=default_range)
+
+        # MSP had no caching at all: the block above lives inside
+        # _non_msp_financial, so this book has been rebuilding every request
+        # (3.2s warm). Same oversight the trend endpoint had.
+        _started = time.time()
+        _key = cache_key('financial-data', 'msp')
+        if default_range:
+            _cached = read_cache(_key)
+            if _cached is not None:
+                print('financial-data(msp): served from cache')
+                return func.HttpResponse(json.dumps(_cached, default=str),
+                                         mimetype='application/json', status_code=200)
 
         conn = pyodbc.connect(
             f"DRIVER={{ODBC Driver 17 for SQL Server}};"
@@ -633,8 +646,12 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
         b4_count = len([r for r in monthly_data if r.get('source_system') == 'B4'])
         print(f"Returning {len(monthly_data)} financial data rows (VNDLY: {vndly_count}, B4: {b4_count})")
 
+        _payload = {'monthlyData': monthly_data}
+        if default_range:
+            write_cache(_key, _payload, build_ms=int((time.time() - _started) * 1000),
+                        refreshed_by='live-request')
         return func.HttpResponse(
-            json.dumps({'monthlyData': monthly_data}, default=str),
+            json.dumps(_payload, default=str),
             mimetype="application/json",
             status_code=200
         )
