@@ -133,11 +133,15 @@ def _bullhorn_yoy_data():
             app_conn.close()
     # Join, not CASE. build_system_case_expr renders a 13-branch CASE that
     # SQL Server evaluates once per row, and across this 60-week join that is
-    # 334k rows -- measured as half the cost of this branch: 25.1s with the
-    # CASE against 10.1s joining the same mapping, for byte-identical output
-    # (44,749 rows, 281,124 summed headcount). The CASE form stays everywhere
-    # the row count makes it irrelevant; this endpoint is where it does not.
-    # (GH #97)
+    # hundreds of thousands of rows -- measured as half the cost of this
+    # branch, 25.1s with the CASE against 10.1s joining the same mapping, for
+    # byte-identical output. The CASE form stays everywhere the row count makes
+    # it irrelevant; this endpoint is where it does not. (GH #97)
+    #
+    # Absolute row counts are deliberately not quoted here: scope_ids below
+    # comes from discover_active_client_ids, which is "on assignment TODAY",
+    # so this branch's output changes size daily. Measured 2026-10-05 at 325
+    # in-scope clients: 1,564ms, 17,318 rows, 68,682 summed headcount.
     system_values = build_system_rollup_values()
     system_case = 'COALESCE(sm.system, pcc.name, cc.name)'
     scope_filter = build_scope_filter('p.clientCorporationID', client_ids=scope_ids)
@@ -244,8 +248,14 @@ def _symplr_yoy_data():
     #     build weeks            1ms
     #     join + GROUP BY      553ms   (26,089 rows)
     #
-    # 4+ minutes -> 2.3s, same output. Sixth time in this codebase that an
+    # 4+ minutes -> seconds, same output. Sixth time in this codebase that an
     # inlined CTE or a correlated subquery has had to be materialised. (GH #97)
+    #
+    # The stage timings above were taken against a narrower scope than the one
+    # this actually runs with -- symplr_resolve_scope is also "active today",
+    # so the size moves. Re-measured 2026-10-05 end to end at the real 193
+    # in-scope clients: 12,329ms, 12,806 rows, 60 weeks. Still well inside the
+    # gateway, but it is the slow half of this endpoint, not the fast one.
     cursor.execute(f'''
         SET NOCOUNT ON;
 
