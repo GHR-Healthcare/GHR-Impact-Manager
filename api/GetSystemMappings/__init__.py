@@ -3,7 +3,8 @@ import pyodbc
 import os
 import json
 import time
-from shared_code.auth import require_allowed_domain
+from shared_code.auth import require_allowed_domain, current_user_email
+from shared_code.audit import record_change
 from shared_code.data_source import is_non_msp, get_bullhorn_conn
 from shared_code.bullhorn_systems import BULLHORN_SYSTEM_ROLLUP
 from shared_code.symplr_systems import SYMPLR_SYSTEM_ROLLUP
@@ -345,6 +346,14 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                     mimetype="application/json",
                     status_code=400
                 )
+
+            # Settings are open by design -- anyone signed in may edit them --
+            # so the record of WHO replaced the set is the control, and it is
+            # written before the delete so a failure part-way still leaves the
+            # attempt attributed. (GH #81)
+            _user = current_user_email(req)
+            record_change(cursor, 'config.system_mappings', 'all',
+                          {'action': 'replace_all', 'count': len(mappings)}, _user)
 
             cursor.execute('DELETE FROM impactmgr.system_mappings')
 

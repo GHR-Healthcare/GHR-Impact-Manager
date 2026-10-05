@@ -2,7 +2,8 @@ import azure.functions as func
 import pyodbc
 import os
 import json
-from shared_code.auth import require_allowed_domain
+from shared_code.auth import require_allowed_domain, current_user_email
+from shared_code.audit import record_change
 
 
 def ensure_schema(cursor):
@@ -70,6 +71,12 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                     mimetype="application/json",
                     status_code=400
                 )
+
+            # Same reasoning as the system mappings: open to edit, so the
+            # change is attributed rather than restricted.
+            _user = current_user_email(req)
+            record_change(cursor, 'config.pm_mappings', 'all',
+                          {'action': 'replace_all', 'count': len(mappings)}, _user)
 
             cursor.execute('DELETE FROM impactmgr.pm_mappings')
 

@@ -2,6 +2,7 @@ import azure.functions as func
 import os
 import json
 import datetime
+from shared_code.audit import record_change
 from shared_code.auth import require_allowed_domain, current_user_email
 from shared_code.data_source import get_appdb_conn
 
@@ -86,19 +87,17 @@ def _put(cursor, scope, entity_id, state, user):
 
 
 def _audit(cursor, scope, entity_id, state, user):
-    """Append to the existing change log so edits stay traceable over time."""
-    try:
-        cursor.execute("""
-            IF EXISTS (SELECT 1 FROM sys.tables
-                       WHERE name = 'changes' AND schema_id = SCHEMA_ID('impactmgr'))
-            INSERT INTO impactmgr.changes (id, timestamp, jobid, change_type, change_data, user_name)
-            VALUES (?, ?, ?, ?, ?, ?)
-        """, f'{scope}:{entity_id}:{datetime.datetime.utcnow().isoformat()}',
-             datetime.datetime.utcnow(), entity_id, f'workspace.{scope}',
-             json.dumps(state, default=str)[:4000], user)
-    except Exception as e:
-        # Audit is best-effort; never fail the save because logging failed.
-        print(f'WorkspaceState: audit write skipped: {e}')
+    """Append to the existing change log so edits stay traceable over time.
+
+    Delegates to shared_code.audit, which every config endpoint also uses, so
+    there is one timeline and one implementation. The local copy built the row
+    id as scope:entity:timestamp with no length cap, and impactmgr.changes.id
+    is NVARCHAR(100) -- a long entity id overflowed it and, because the audit
+    write is best-effort, the row was dropped without a trace. The shared
+    helper trims the entity id and keeps the timestamp that makes it unique.
+    (GH #69)
+    """
+    record_change(cursor, f'workspace.{scope}', entity_id, state, user)
 
 
 def main(req: func.HttpRequest) -> func.HttpResponse:

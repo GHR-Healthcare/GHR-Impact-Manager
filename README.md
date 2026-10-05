@@ -2,6 +2,30 @@
 
 ## Version History
 
+### 2.45.0 - Record who changed settings (GH #52, #81)
+
+Settings are open by design — anyone who can sign in may edit the client allowlist, the
+system mappings and the PM mappings. So the control is **attribution, not
+authorisation**: every config write now lands in `impactmgr.changes` against the
+signed-in principal, giving one queryable timeline of who changed what and when.
+
+- **`shared_code/audit.py`** holds the one implementation. It is the mirror
+  `WorkspaceState` has used for a while, factored out so the config endpoints record
+  changes the same way instead of each inventing its own
+- **Newly attributed:** `GetSystemMappings`, `GetPMMappings`, `SaveHistory`. The audit
+  row is written **before** the delete in the replace-all handlers, so a failure
+  part-way still leaves the attempt attributed
+- **`GetClientAllowlist`** already stored `added_by` per row; it now also appears on the
+  shared timeline, and its `_user_from_req` prefers the verified principal email so this
+  endpoint attributes the same way the others do
+- **Fixes the other half of #69.** `WorkspaceState`'s local copy built the row id as
+  `scope:entity:timestamp` with no length cap against an `NVARCHAR(100)` column, so a
+  long entity id overflowed and — the audit write being best-effort — the row was
+  dropped without a trace. The shared helper trims the entity id and keeps the timestamp
+  that makes it unique
+- Audited every endpoint that writes: all nine now attribute. (`GetPositions` matched the
+  first scan on the comment `# Update counts`, not SQL — it is read-only)
+
 ### 2.44.1 - The #46 fix was correct and far too slow
 
 A regression I shipped in 2.43.2 and did not catch, because I verified the fix's

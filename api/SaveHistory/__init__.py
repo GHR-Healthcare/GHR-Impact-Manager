@@ -2,7 +2,8 @@ import azure.functions as func
 import pyodbc
 import os
 import json
-from shared_code.auth import require_allowed_domain
+from shared_code.auth import require_allowed_domain, current_user_email
+from shared_code.audit import record_change
 
 
 def ensure_schema(cursor):
@@ -51,6 +52,11 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             snapshot['changeCount'],
             json.dumps(snapshot['data'])
         ))
+
+        record_change(cursor, 'config.history_snapshot',
+                      str(snapshot.get('timestamp') or ''),
+                      {'changeCount': snapshot.get('changeCount')},
+                      current_user_email(req))
 
         # Keep only last 100 snapshots
         cursor.execute('''

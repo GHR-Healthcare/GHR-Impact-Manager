@@ -28,12 +28,20 @@ import json
 
 from shared_code.auth import require_allowed_domain
 from shared_code.data_source import is_non_msp, get_appdb_conn
+from shared_code.audit import record_change
+from shared_code.auth import current_user_email
 
 
 def _user_from_req(req):
-    """Best-effort principal name from Static Web App auth headers."""
+    """The signed-in principal.
+
+    Prefers the verified email from the principal blob so this endpoint
+    attributes writes the same way SaveChange, Meetings and the config
+    endpoints do, and falls back to the SWA name/id headers.
+    """
     return (
-        req.headers.get('x-ms-client-principal-name')
+        current_user_email(req)
+        or req.headers.get('x-ms-client-principal-name')
         or req.headers.get('x-ms-client-principal-id')
         or 'unknown'
     )
@@ -171,6 +179,12 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                 })
 
             user = _user_from_req(req)
+            # added_by already records the owner of each row; this puts the
+            # replacement itself on the same timeline as every other config
+            # change, before the delete so a part-way failure is still
+            # attributed. Settings are open by design. (GH #52)
+            record_change(cursor, 'config.client_allowlist', 'all',
+                          {'action': 'replace_all', 'count': len(cleaned)}, user)
             cursor.execute('DELETE FROM impactmgr.bullhorn_client_allowlist')
             for e in cleaned:
                 cursor.execute('''
