@@ -2,7 +2,7 @@ import azure.functions as func
 import pyodbc
 import os
 import json
-from shared_code.auth import require_allowed_domain
+from shared_code.auth import require_allowed_domain, current_user_email
 
 
 def ensure_schema(cursor):
@@ -88,7 +88,14 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             change['jobId'],
             change['type'],
             json.dumps(change['data']),
-            change.get('user', 'Unknown')
+            # The signed-in principal, not the request body. getCurrentUser()
+            # in the browser can be a name typed into a prompt() and kept in
+            # localStorage, or the literal string 'Anonymous' -- so the audit
+            # trail was self-asserted and any caller could attribute a change
+            # to anyone. current_user_email re-reads the auth header. The body
+            # value is kept only as a fallback for an unauthenticated local
+            # run, where there is no principal to read. (GH #27)
+            current_user_email(req) or change.get('user') or 'Unknown'
         ))
 
         conn.commit()

@@ -1004,7 +1004,7 @@
     const $ = (id) => document.getElementById(id);
 
     // App version - loaded from environment variable via API, with fallback
-    let APP_VERSION = '2.43.3';
+    let APP_VERSION = '2.44.0';
 
     const API_BASE_URL = '/api';
 
@@ -1251,7 +1251,12 @@
       const icon = type === 'success' ? 'check-circle' : (type === 'error' ? 'alert-circle' : 'info');
 
       el.className = `toast ${bg} text-white px-4 py-3 rounded shadow-lg text-sm font-medium fade-in flex items-center gap-3 min-w-[300px] transform translate-x-full opacity-0`;
-      el.innerHTML = `<i data-lucide="${icon}" class="w-5 h-5 shrink-0"></i><span>${msg}</span>`;
+      // The message is set as text, not markup. Callers pass server-derived
+      // strings into here -- "Could not save: " + e.message, and similar -- so
+      // interpolating it into innerHTML made every toast a sink for whatever
+      // text an API returned. `icon` is from the fixed set above. (GH #23)
+      el.innerHTML = `<i data-lucide="${icon}" class="w-5 h-5 shrink-0"></i><span></span>`;
+      el.querySelector('span').textContent = String(msg == null ? '' : msg);
       container.appendChild(el);
       lucide.createIcons();
 

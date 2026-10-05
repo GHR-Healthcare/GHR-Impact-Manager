@@ -2,6 +2,32 @@
 
 ## Version History
 
+### 2.44.0 - Security batch from the issue backlog (GH #16, #23, #27, #42, #87)
+
+- **#27, #87 -- audit attribution came from the request body.** `SaveChange` and
+  `ReviewedContractsRows` stored whatever `user` the caller sent. On the browser side
+  that value is `getCurrentUser()`, which can be a name typed into a `prompt()` and kept
+  in `localStorage`, or the literal string `Anonymous` -- so the change log was
+  self-asserted and any caller could attribute a change to anyone. Both now use
+  `current_user_email(req)`, which re-reads the auth header. `Meetings` already did this;
+  `GetClientAllowlist` reads the SWA principal headers
+- **#16 -- the privacy-mode password fell back to the literal `'2026'`** when
+  `PRIVACY_PASSWORD` was unset, so a misconfigured deploy would ship a guessable code
+  that un-redacts competitor and affiliate worker names. It is set on all four
+  environments, so nothing operational sat behind that default. Now fails closed,
+  compares with `hmac.compare_digest` (a plain `==` leaks match length through timing on
+  what is otherwise an unthrottled oracle), logs failed attempts with the caller, and no
+  longer echoes exception text. Real throttling needs shared state these stateless
+  functions do not have -- noted on the issue rather than pretended
+- **#42 -- `SearchUsers` interpolated the query into a Graph `$search` term.** The term
+  is quoted, so `a" OR "mail:ceo` closed the quote and ran an arbitrary directory search
+  under the app's `User.Read.All` permission. Graph has no escape for a quote inside a
+  search term, so quotes, backslashes, parentheses and the boolean operators are stripped
+  instead. `o'brien` still searches correctly
+- **#23 -- toast messages were interpolated into `innerHTML`.** Callers pass
+  server-derived strings in (`"Could not save: " + e.message`), making every toast a sink
+  for whatever text an API returned. The message is set with `textContent` now
+
 ### 2.43.3 - Bump the cache shape for #86's new field
 
 - `financial-data` gained an `errors` field in 2.43.2 and `PAYLOAD_SHAPE` was not

@@ -2,7 +2,7 @@ import azure.functions as func
 import pyodbc
 import os
 import json
-from shared_code.auth import require_allowed_domain
+from shared_code.auth import require_allowed_domain, current_user_email
 
 
 def ensure_schema(cursor):
@@ -71,7 +71,9 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
 
             action = (body.get('action') or '').strip().lower()
             key = (body.get('key') or '').strip()
-            user = (body.get('user') or '').strip() or None
+            # Reviewed-by is an audit field, so it comes from the signed-in
+            # principal rather than a body value the caller chooses. (GH #87)
+            user = current_user_email(req) or (body.get('user') or '').strip() or None
 
             if not key:
                 return func.HttpResponse(

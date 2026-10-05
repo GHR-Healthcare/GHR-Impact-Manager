@@ -1,5 +1,6 @@
 import azure.functions as func
 import os
+import re
 import json
 import urllib.request
 import urllib.parse
@@ -31,6 +32,11 @@ def get_graph_token():
         return data['access_token']
 
 
+# Characters that can terminate the quoted search term or chain another
+# clause onto it. Graph offers no escaping inside a $search term.
+_SEARCH_UNSAFE = re.compile(r'["\\()]|\bAND\b|\bOR\b|\bNOT\b', re.IGNORECASE)
+
+
 def main(req: func.HttpRequest) -> func.HttpResponse:
     """
     GET /api/search-users?q=mike
@@ -56,8 +62,20 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
         # Use $search for flexible prefix matching across displayName and other fields.
         # $count=true is required when using ConsistencyLevel: eventual.
         # Pull 25 to leave headroom for filtering out shared mailboxes etc.
+        # The term is quoted inside the $search expression, so a double quote
+        # in the input closes it and the rest becomes operators -- q='a" OR
+        # "mail:ceo' would run an arbitrary search against the directory with
+        # this app's User.Read.All permission. Graph has no escape for the
+        # quote inside a search term, so the characters that can break out or
+        # chain a clause are stripped rather than encoded. (GH #42)
+        safe_query = _SEARCH_UNSAFE.sub(' ', query).strip()
+        if not safe_query:
+            return func.HttpResponse(
+                json.dumps({'users': []}),
+                mimetype='application/json', status_code=200)
+
         params = urllib.parse.urlencode({
-            '$search': f'"displayName:{query}"',
+            '$search': f'"displayName:{safe_query}"',
             '$count': 'true',
             '$select': 'id,displayName,mail,jobTitle,department',
             '$top': '25',
