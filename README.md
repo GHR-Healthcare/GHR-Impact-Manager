@@ -2,6 +2,31 @@
 
 ## Version History
 
+### 2.21.10 - Year-over-year trend no longer times out on Non-MSP (GH #97, #46, #45)
+
+- **#97 — the Non-MSP year-over-year overlay returned a 500 after 45 seconds**, so the
+  comparison line never drew. The gateway gives up at 45s and the endpoint was past it.
+  Two causes, both the same mistake in two places:
+  - The Symplr branch built its 60 weeks and its placement union as CTEs. SQL Server
+    inlines a CTE, so the week table was rebuilt per placement and the union re-scanned
+    per week. Materialised into `#yoy_weeks` and `#yoy_pl` with an index on the date
+    range, it is 5.5s for the same 12,806 rows — it had been over four minutes
+  - The Bullhorn branch resolved each placement's health system with a nested `CASE`
+    over the mapping list. Replaced with `build_system_rollup_values()` — the same
+    mapping as a `VALUES` list joined once. 6.1s for 65,034 rows. The helper lives in
+    `shared_code/bullhorn_systems.py` beside the `CASE` builder the other endpoints
+    still use, so the mapping stays defined once
+- **#46 — the VNDLY spend lookups were correlated subqueries** re-evaluated per work
+  order, in both `GetTrendData` and `GetYoYTrendData`. Pre-aggregated into
+  `#vndly_wo_spend` / `#vndly_name_spend`: **13,840ms to 164ms**, measured on the live
+  warehouse. The same fix also makes the terminal-work-order test *correct* — the old
+  name match was unbounded, so a same-named worker's spend on a **different**
+  assignment kept a work order that never ran alive. Of 861 terminal work orders the
+  bounded version drops 8 false positives (name-matched spend 35-220 days past their
+  own end date, or ending before they started) and adds 26 real ones the name match
+  missed, now linked through `WOSystemKey`, which is unique 1,815 of 1,815
+- **#45 — `Access-Control-Allow-Origin: *` removed** from `GetYoYTrendData`
+
 ### 2.21.9 - Rate-Intel weeks, and free-text arithmetic hardened (GH #92, #49, #65)
 
 - **#92 — Rate Intel bucketed weeks to MONDAY** while every other weekly series in the

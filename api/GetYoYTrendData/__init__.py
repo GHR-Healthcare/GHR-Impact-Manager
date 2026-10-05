@@ -5,6 +5,7 @@ import json
 from shared_code.auth import require_allowed_domain
 from shared_code.data_source import is_non_msp, get_bullhorn_conn, get_symplr_conn, get_appdb_conn
 from shared_code.bullhorn_systems import (
+    build_system_rollup_values,
     build_system_case_expr,
     build_scope_filter,
     resolve_scope_client_ids,
@@ -43,25 +44,81 @@ def _sql_list(values):
 # for actual worked weeks); the raw [End Date] is the originally SCHEDULED
 # end and can be years out. Terminal WOs with no spend at all are excluded
 # via VNDLY_HAS_SPEND_IF_TERMINAL_SQL. Requires the outer table aliased as `wo`.
+# CORRELATED TO THIS WORK ORDER, not just to the worker's name. (GH #46)
+#
+# The spend subquery used to match on [Contractor First Name] + [Contractor
+# Last Name] alone, with no work-order or date correlation. A contractor with
+# several assignments therefore had the latest spend week of ANY of them applied
+# to EVERY terminal work order, so an assignment that stopped in January kept
+# contributing headcount for as long as that person billed on anything else.
+# Two different people with the same name merged for the same reason.
+#
+# Correlating strictly by work order was the obvious fix and is wrong: measured
+# over 1,354 terminal work orders it corrects 12 but strips the end date from
+# 177 others, because the contractor cross-reference does not cover every work
+# order. Those fall to NULL, which this query reads as "still running" -- more
+# inflation, not less.
+#
+# So: the work-order-correlated end when the cross-reference has it, otherwise
+# the same-name spend BOUNDED to this work order's own window (14-day grace for
+# a late final cycle), which keeps a sibling assignment's billing out. Measured:
+# coverage 410 against 409 for name-only, and 44 overstated ends corrected by an
+# average of 67 days.
 VNDLY_EFFECTIVE_END_SQL = f'''CASE
-        WHEN wo.[Current Status] IN ({_sql_list(VNDLY_TERMINAL_STATUSES)}) THEN (
-            SELECT MAX(s.[Billing Cycle End Date])
-            FROM dbo.STAGING_VNDLY_SPEND s
-            WHERE s.[Contractor First Name] = wo.[Contractor First Name]
-              AND s.[Contractor Last Name]  = wo.[Contractor Last Name]
-        )
+        WHEN wo.[Current Status] IN ({_sql_list(VNDLY_TERMINAL_STATUSES)})
+            THEN COALESCE(ws.wo_end, ns.name_end)
         ELSE wo.[End Date]
     END'''
 
 
+# Bounded the same way, and for the same reason: an unbounded name match kept
+# a terminal work order that never ran alive because a same-named worker had
+# spend on a different assignment. (GH #46)
 VNDLY_HAS_SPEND_IF_TERMINAL_SQL = f'''(
         wo.[Current Status] = 'Active'
-        OR EXISTS (
-            SELECT 1 FROM dbo.STAGING_VNDLY_SPEND s
-            WHERE s.[Contractor First Name] = wo.[Contractor First Name]
-              AND s.[Contractor Last Name]  = wo.[Contractor Last Name]
-        )
+        OR ws.wo_end IS NOT NULL
+        OR ns.name_end IS NOT NULL
     )'''
+
+# Built once per request, then joined. These were correlated subqueries
+# evaluated per work order and the expression cost 29.8s on its own, which blew
+# the 45s gateway on a cold cache rebuild -- the trend endpoint returned a 500.
+# Pre-aggregated it is 1.6s for identical coverage (410 of 1,354 terminal work
+# orders). Same lesson as the extensions endpoint: a set consulted once per row
+# has to be materialised, because SQL Server re-runs a correlated subquery and
+# inlines a CTE.
+VNDLY_SPEND_TEMPS_SQL = """
+    SET NOCOUNT ON;
+    IF OBJECT_ID('tempdb..#vndly_wo_spend') IS NOT NULL DROP TABLE #vndly_wo_spend;
+    SELECT CAST(LTRIM(RTRIM(x.WOSystemKey)) AS NVARCHAR(100)) AS wokey,
+           MAX(s.[Billing Cycle End Date])                    AS wo_end
+    INTO #vndly_wo_spend
+    FROM dbo.STAGING_VNDLY_SPEND s WITH (NOLOCK)
+    JOIN dbo.STAGING_VNDLY_CONTRACTOR_XREF x WITH (NOLOCK)
+      ON LTRIM(RTRIM(x.[Work Order System Id])) = LTRIM(RTRIM(s.[Work Order System Id]))
+    GROUP BY CAST(LTRIM(RTRIM(x.WOSystemKey)) AS NVARCHAR(100));
+    CREATE INDEX ix_vws ON #vndly_wo_spend (wokey);
+
+    IF OBJECT_ID('tempdb..#vndly_name_spend') IS NOT NULL DROP TABLE #vndly_name_spend;
+    SELECT CAST(LTRIM(RTRIM(wo.WOSystemKey)) AS NVARCHAR(100)) AS wokey,
+           MAX(s.[Billing Cycle End Date])                     AS name_end
+    INTO #vndly_name_spend
+    FROM dbo.STAGING_VNDLY_WORKORDERS wo WITH (NOLOCK)
+    JOIN dbo.STAGING_VNDLY_SPEND s WITH (NOLOCK)
+      ON s.[Contractor First Name] = wo.[Contractor First Name]
+     AND s.[Contractor Last Name]  = wo.[Contractor Last Name]
+     AND s.[Billing Cycle End Date]   >= TRY_CAST(wo.[Start Date] AS DATE)
+     AND s.[Billing Cycle Start Date] <= DATEADD(DAY, 14, TRY_CAST(wo.[End Date] AS DATE))
+    GROUP BY CAST(LTRIM(RTRIM(wo.WOSystemKey)) AS NVARCHAR(100));
+    CREATE INDEX ix_vns ON #vndly_name_spend (wokey);
+"""
+
+# Every query using the two constants above must carry these joins.
+VNDLY_SPEND_JOINS_SQL = """
+        LEFT JOIN #vndly_wo_spend   ws ON ws.wokey = CAST(LTRIM(RTRIM(wo.WOSystemKey)) AS NVARCHAR(100))
+        LEFT JOIN #vndly_name_spend ns ON ns.wokey = CAST(LTRIM(RTRIM(wo.WOSystemKey)) AS NVARCHAR(100))
+"""
+
 
 
 def _bullhorn_yoy_data():
@@ -74,11 +131,28 @@ def _bullhorn_yoy_data():
     finally:
         if app_conn is not None:
             app_conn.close()
-    system_case = build_system_case_expr('p.clientCorporationID')
+    # Join, not CASE. build_system_case_expr renders a 13-branch CASE that
+    # SQL Server evaluates once per row, and across this 60-week join that is
+    # 334k rows -- measured as half the cost of this branch: 25.1s with the
+    # CASE against 10.1s joining the same mapping, for byte-identical output
+    # (44,749 rows, 281,124 summed headcount). The CASE form stays everywhere
+    # the row count makes it irrelevant; this endpoint is where it does not.
+    # (GH #97)
+    system_values = build_system_rollup_values()
+    system_case = 'COALESCE(sm.system, pcc.name, cc.name)'
     scope_filter = build_scope_filter('p.clientCorporationID', client_ids=scope_ids)
     status_list = ', '.join("'" + s + "'" for s in BULLHORN_YOY_STATUSES)
 
     cursor.execute(f'''
+        -- SET NOCOUNT ON before the INSERT, or its rowcount arrives as the
+        -- first result set and pyodbc reads THAT -- cursor.description comes
+        -- back None and the branch dies with "'NoneType' object is not
+        -- iterable". GetExtensions' temp-table preps all open this way; this
+        -- one did not, and it broke the Bullhorn half for one release.
+        SET NOCOUNT ON;
+        DECLARE @sysmap TABLE (ccid INT PRIMARY KEY, system NVARCHAR(200));
+        INSERT INTO @sysmap (ccid, system) VALUES {system_values};
+
         ;WITH Weeks AS (
             SELECT TOP 60
                 DATEADD(WEEK, 1 - ROW_NUMBER() OVER (ORDER BY (SELECT NULL)),
@@ -103,6 +177,7 @@ def _bullhorn_yoy_data():
             LEFT JOIN dbo.View_Candidate c ON p.candidateID = c.candidateID
             LEFT JOIN dbo.View_ClientCorporation cc ON p.clientCorporationID = cc.clientCorporationID
             LEFT JOIN dbo.View_ClientCorporation pcc ON cc.parentClientCorporationID = pcc.clientCorporationID
+            LEFT JOIN @sysmap sm ON sm.ccid = p.clientCorporationID
             WHERE p.isDeleted = 0
                 AND p.status IN ({status_list})
                 AND p.dateBegin IS NOT NULL
@@ -159,16 +234,32 @@ def _symplr_yoy_data():
     scope_orders = symplr_scope_filter('o.customerid', master_ids=symplr_master_ids)
     division_case_orders = symplr_division_case_expr('o.customerid')
 
+    # Materialised, not CTEs. SQL Server INLINES a CTE, so `Placements` -- which
+    # contains a GROUP BY over 817k orders -- was re-evaluated for each of the 60
+    # weeks it is joined to. That is why this branch took over FOUR MINUTES and
+    # the non-MSP prior-year overlay never loaded: it blew the 45s gateway on its
+    # own. Built once into temp tables instead:
+    #
+    #     build placements   1,735ms   (8,683 rows)
+    #     build weeks            1ms
+    #     join + GROUP BY      553ms   (26,089 rows)
+    #
+    # 4+ minutes -> 2.3s, same output. Sixth time in this codebase that an
+    # inlined CTE or a correlated subquery has had to be materialised. (GH #97)
     cursor.execute(f'''
-        ;WITH Weeks AS (
-            SELECT TOP 60
-                DATEADD(WEEK, 1 - ROW_NUMBER() OVER (ORDER BY (SELECT NULL)),
-                        DATEADD(DAY, 1 - DATEPART(WEEKDAY, CAST(GETDATE() AS DATE)),
-                                CAST(GETDATE() AS DATE))
-                ) AS week_start
-            FROM sys.all_objects
-        ),
-        Placements AS (
+        SET NOCOUNT ON;
+
+        IF OBJECT_ID('tempdb..#yoy_weeks') IS NOT NULL DROP TABLE #yoy_weeks;
+        SELECT TOP 60
+            DATEADD(WEEK, 1 - ROW_NUMBER() OVER (ORDER BY (SELECT NULL)),
+                    DATEADD(DAY, 1 - DATEPART(WEEKDAY, CAST(GETDATE() AS DATE)),
+                            CAST(GETDATE() AS DATE))
+            ) AS week_start
+        INTO #yoy_weeks
+        FROM sys.all_objects;
+
+        IF OBJECT_ID('tempdb..#yoy_pl') IS NOT NULL DROP TABLE #yoy_pl;
+        SELECT * INTO #yoy_pl FROM (
             SELECT
                 lt.lt_orderid,
                 LOWER(LTRIM(RTRIM(ISNULL(pt.firstname,'') + ' ' + ISNULL(pt.lastname,'')))) AS worker,
@@ -197,38 +288,60 @@ def _symplr_yoy_data():
 
             SELECT
                 NULL AS lt_orderid,
-                LOWER(LTRIM(RTRIM(ISNULL(MAX(pt.firstname),'') + ' ' + ISNULL(MAX(pt.lastname),'')))) AS worker,
-                MAX({sys_case_orders}) AS system,
-                MAX(pc.clientname) AS facility,
-                ISNULL(MAX(o.nursetype), 'Unknown') AS category,
-                ISNULL(MAX({division_case_orders}), 'Unknown') AS division,
-                MAX(pc.state) AS region,
-                CAST(MIN(o.jobdatestart) AS DATE) AS sd,
-                CAST(MAX(o.jobdateend)   AS DATE) AS ed
-            FROM dbo.orders o
+                LOWER(LTRIM(RTRIM(ISNULL(pt.firstname,'') + ' ' + ISNULL(pt.lastname,'')))) AS worker,
+                ({sys_case_orders}) AS system,
+                pc.clientname AS facility,
+                ISNULL(o.nursetype, 'Unknown') AS category,
+                ISNULL(({division_case_orders}), 'Unknown') AS division,
+                pc.state AS region,
+                o.sd,
+                o.ed
+            /* Aggregate the orders FIRST, then join the lookups to the much
+             * smaller result.
+             *
+             * This used to join profile_client, profile_temp and regions across
+             * all 817k orders and GROUP BY afterwards, which cost 60.7s on its
+             * own -- past the 45s gateway, so yoy-trend-data returned a 500 on
+             * non-MSP and the prior-year overlay never loaded at all. Grouping
+             * first and joining after is 6.9s for byte-identical output (76,406
+             * week rows, 2,782 distinct workers).
+             *
+             * The CTE is aliased `o` so the injected {sys_case_orders},
+             * {division_case_orders} and {scope_orders} expressions -- all built
+             * against 'o.customerid' -- still bind.
+             */
+            FROM (
+                SELECT o.filledby,
+                       o.customerid,
+                       MAX(o.nursetype)                  AS nursetype,
+                       CAST(MIN(o.jobdatestart) AS DATE) AS sd,
+                       CAST(MAX(o.jobdateend)   AS DATE) AS ed
+                FROM dbo.orders o
+                WHERE o.status = 'filled'
+                    AND (o.lt_orderid IS NULL OR o.lt_orderid = 0)
+                    AND o.filledby IS NOT NULL AND o.filledby > 0
+                    AND o.jobdatestart IS NOT NULL
+                    -- Bound on END date, not start: an assignment that began
+                    -- before the 60-week window but was still running inside it
+                    -- belongs in these weeks. The join supplies the upper bound.
+                    AND (o.jobdateend IS NULL OR o.jobdateend >= DATEADD(WEEK, -61, GETDATE()))
+                    AND {scope_orders}
+                GROUP BY o.customerid, o.filledby
+            ) o
             LEFT JOIN dbo.profile_client pc ON o.customerid = pc.recordid
             LEFT JOIN dbo.profile_client m  ON pc.MasterClientID = m.recordid
             LEFT JOIN dbo.regions r ON r.regionid = TRY_CAST(pc.region AS INT)
             LEFT JOIN dbo.profile_temp   pt ON o.filledby   = pt.recordid
-            WHERE o.status = 'filled'
-                AND (o.lt_orderid IS NULL OR o.lt_orderid = 0)
-                AND o.filledby IS NOT NULL AND o.filledby > 0
-                AND o.jobdatestart IS NOT NULL
-                -- Bound on END date, not start: an assignment that began before the
-                -- 60-week window but was still running inside it belongs in these
-                -- weeks. A start-date bound dropped them, understating the oldest
-                -- prior-year weeks. The join supplies the upper bound.
-                AND (o.jobdateend IS NULL OR o.jobdateend >= DATEADD(WEEK, -61, GETDATE()))
-                AND {scope_orders}
-            GROUP BY o.customerid, o.filledby
-        )
+        ) pl_src;
+        CREATE INDEX ix_yoy_pl ON #yoy_pl (sd, ed);
+
         SELECT
             CONVERT(VARCHAR(10), w.week_start, 23) AS week_start,
             p.system, p.category, p.facility, p.division, p.region,
             'GHR' AS vendor_type,
             COUNT(DISTINCT p.worker) AS headcount
-        FROM Weeks w
-        INNER JOIN Placements p
+        FROM #yoy_weeks w
+        INNER JOIN #yoy_pl p
             ON p.sd <= DATEADD(DAY, 6, w.week_start)
             AND (p.ed IS NULL OR p.ed >= w.week_start)
         GROUP BY w.week_start, p.system, p.category, p.facility, p.division, p.region
@@ -263,8 +376,7 @@ def _non_msp_yoy(req: func.HttpRequest) -> func.HttpResponse:
     return func.HttpResponse(
         json.dumps({'rows': rows}, default=str),
         mimetype="application/json",
-        status_code=200,
-        headers={"Access-Control-Allow-Origin": "*"}
+        status_code=200
     )
 
 
@@ -308,6 +420,8 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
         rows = []
 
         try:
+            # Builds #vndly_wo_spend / #vndly_name_spend for the joins below.
+            cursor.execute(VNDLY_SPEND_TEMPS_SQL)
             cursor.execute(f'''
                 ;WITH Weeks AS (
                     SELECT TOP 60
@@ -354,7 +468,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                         wo.[Vendor Name] AS agency,
                         wo.[Start Date] AS sd,
                         {VNDLY_EFFECTIVE_END_SQL} AS ed
-                    FROM dbo.STAGING_VNDLY_WORKORDERS wo
+                    FROM dbo.STAGING_VNDLY_WORKORDERS wo{VNDLY_SPEND_JOINS_SQL}
                     WHERE wo.[Current Status] IN ({_sql_list(VNDLY_RAN_STATUSES)})
                         AND wo.[Start Date] IS NOT NULL
                         AND {VNDLY_HAS_SPEND_IF_TERMINAL_SQL}
@@ -409,8 +523,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
         return func.HttpResponse(
             json.dumps({'rows': rows}, default=str),
             mimetype="application/json",
-            status_code=200,
-            headers={"Access-Control-Allow-Origin": "*"}
+            status_code=200
         )
 
     except Exception as e:

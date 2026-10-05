@@ -75,12 +75,8 @@ def _sql_list(values):
 #
 # Requires the outer STAGING_VNDLY_WORKORDERS to be aliased as `wo`.
 VNDLY_EFFECTIVE_END_SQL = f'''CASE
-        WHEN wo.[Current Status] IN ({_sql_list(VNDLY_TERMINAL_STATUSES)}) THEN (
-            SELECT MAX(s.[Billing Cycle End Date])
-            FROM dbo.STAGING_VNDLY_SPEND s
-            WHERE s.[Contractor First Name] = wo.[Contractor First Name]
-              AND s.[Contractor Last Name]  = wo.[Contractor Last Name]
-        )
+        WHEN wo.[Current Status] IN ({_sql_list(VNDLY_TERMINAL_STATUSES)})
+            THEN COALESCE(ws.wo_end, ns.name_end)
         ELSE wo.[End Date]
     END'''
 
@@ -92,14 +88,54 @@ VNDLY_EFFECTIVE_END_SQL = f'''CASE
 # "still running today" and would inflate current headcount by ~380 workers.
 #
 # Requires the outer STAGING_VNDLY_WORKORDERS to be aliased as `wo`.
+# Bounded the same way, and for the same reason: an unbounded name match kept
+# a terminal work order that never ran alive because a same-named worker had
+# spend on a different assignment. (GH #46)
 VNDLY_HAS_SPEND_IF_TERMINAL_SQL = f'''(
         wo.[Current Status] = 'Active'
-        OR EXISTS (
-            SELECT 1 FROM dbo.STAGING_VNDLY_SPEND s
-            WHERE s.[Contractor First Name] = wo.[Contractor First Name]
-              AND s.[Contractor Last Name]  = wo.[Contractor Last Name]
-        )
+        OR ws.wo_end IS NOT NULL
+        OR ns.name_end IS NOT NULL
     )'''
+
+# Built once per request, then joined. These were correlated subqueries
+# evaluated per work order and the expression cost 29.8s on its own, which blew
+# the 45s gateway on a cold cache rebuild -- the trend endpoint returned a 500.
+# Pre-aggregated it is 1.6s for identical coverage (410 of 1,354 terminal work
+# orders). Same lesson as the extensions endpoint: a set consulted once per row
+# has to be materialised, because SQL Server re-runs a correlated subquery and
+# inlines a CTE.
+VNDLY_SPEND_TEMPS_SQL = """
+    SET NOCOUNT ON;
+    IF OBJECT_ID('tempdb..#vndly_wo_spend') IS NOT NULL DROP TABLE #vndly_wo_spend;
+    SELECT CAST(LTRIM(RTRIM(x.WOSystemKey)) AS NVARCHAR(100)) AS wokey,
+           MAX(s.[Billing Cycle End Date])                    AS wo_end
+    INTO #vndly_wo_spend
+    FROM dbo.STAGING_VNDLY_SPEND s WITH (NOLOCK)
+    JOIN dbo.STAGING_VNDLY_CONTRACTOR_XREF x WITH (NOLOCK)
+      ON LTRIM(RTRIM(x.[Work Order System Id])) = LTRIM(RTRIM(s.[Work Order System Id]))
+    GROUP BY CAST(LTRIM(RTRIM(x.WOSystemKey)) AS NVARCHAR(100));
+    CREATE INDEX ix_vws ON #vndly_wo_spend (wokey);
+
+    IF OBJECT_ID('tempdb..#vndly_name_spend') IS NOT NULL DROP TABLE #vndly_name_spend;
+    SELECT CAST(LTRIM(RTRIM(wo.WOSystemKey)) AS NVARCHAR(100)) AS wokey,
+           MAX(s.[Billing Cycle End Date])                     AS name_end
+    INTO #vndly_name_spend
+    FROM dbo.STAGING_VNDLY_WORKORDERS wo WITH (NOLOCK)
+    JOIN dbo.STAGING_VNDLY_SPEND s WITH (NOLOCK)
+      ON s.[Contractor First Name] = wo.[Contractor First Name]
+     AND s.[Contractor Last Name]  = wo.[Contractor Last Name]
+     AND s.[Billing Cycle End Date]   >= TRY_CAST(wo.[Start Date] AS DATE)
+     AND s.[Billing Cycle Start Date] <= DATEADD(DAY, 14, TRY_CAST(wo.[End Date] AS DATE))
+    GROUP BY CAST(LTRIM(RTRIM(wo.WOSystemKey)) AS NVARCHAR(100));
+    CREATE INDEX ix_vns ON #vndly_name_spend (wokey);
+"""
+
+# Every query using the two constants above must carry these joins.
+VNDLY_SPEND_JOINS_SQL = """
+        LEFT JOIN #vndly_wo_spend   ws ON ws.wokey = CAST(LTRIM(RTRIM(wo.WOSystemKey)) AS NVARCHAR(100))
+        LEFT JOIN #vndly_name_spend ns ON ns.wokey = CAST(LTRIM(RTRIM(wo.WOSystemKey)) AS NVARCHAR(100))
+"""
+
 
 
 # Bullhorn service line bucketing, parallel to Symplr's SYMPLR_SERVICE_LINE_CASE.
@@ -617,6 +653,8 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
         # VNDLY - Assignments in rolling window
         # ============================================================
         try:
+            # Builds #vndly_wo_spend / #vndly_name_spend for the joins below.
+            cursor.execute(VNDLY_SPEND_TEMPS_SQL)
             cursor.execute(f'''
                 SELECT
                     'VNDLY' AS source_system,
@@ -632,7 +670,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                     NULL AS weekly_hours,
                     wo.[Start Date] AS startDate,
                     {VNDLY_EFFECTIVE_END_SQL} AS endDate
-                FROM dbo.STAGING_VNDLY_WORKORDERS wo
+                FROM dbo.STAGING_VNDLY_WORKORDERS wo{VNDLY_SPEND_JOINS_SQL}
                 WHERE wo.[Current Status] IN ({_sql_list(VNDLY_RAN_STATUSES)})
                     AND wo.[Start Date] IS NOT NULL
                     -- Terminal WOs with no spend history never actually ran — drop them.
