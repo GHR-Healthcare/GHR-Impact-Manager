@@ -43,23 +43,65 @@ def _sql_list(values):
 # for actual worked weeks); the raw [End Date] is the originally SCHEDULED
 # end and can be years out. Terminal WOs with no spend at all are excluded
 # via VNDLY_HAS_SPEND_IF_TERMINAL_SQL. Requires the outer table aliased as `wo`.
+# CORRELATED TO THIS WORK ORDER, not just to the worker's name. (GH #46)
+#
+# The spend subquery used to match on [Contractor First Name] + [Contractor
+# Last Name] alone, with no work-order or date correlation. A contractor with
+# several assignments therefore had the latest spend week of ANY of them applied
+# to EVERY terminal work order, so an assignment that stopped in January kept
+# contributing headcount for as long as that person billed on anything else.
+# Two different people with the same name merged for the same reason.
+#
+# Correlating strictly by work order was the obvious fix and is wrong: measured
+# over 1,354 terminal work orders it corrects 12 but strips the end date from
+# 177 others, because the contractor cross-reference does not cover every work
+# order. Those fall to NULL, which this query reads as "still running" -- more
+# inflation, not less.
+#
+# So: the work-order-correlated end when the cross-reference has it, otherwise
+# the same-name spend BOUNDED to this work order's own window (14-day grace for
+# a late final cycle), which keeps a sibling assignment's billing out. Measured:
+# coverage 410 against 409 for name-only, and 44 overstated ends corrected by an
+# average of 67 days.
 VNDLY_EFFECTIVE_END_SQL = f'''CASE
-        WHEN wo.[Current Status] IN ({_sql_list(VNDLY_TERMINAL_STATUSES)}) THEN (
-            SELECT MAX(s.[Billing Cycle End Date])
-            FROM dbo.STAGING_VNDLY_SPEND s
-            WHERE s.[Contractor First Name] = wo.[Contractor First Name]
-              AND s.[Contractor Last Name]  = wo.[Contractor Last Name]
+        WHEN wo.[Current Status] IN ({_sql_list(VNDLY_TERMINAL_STATUSES)}) THEN COALESCE(
+            (
+                SELECT MAX(s.[Billing Cycle End Date])
+                FROM dbo.STAGING_VNDLY_SPEND s
+                JOIN dbo.STAGING_VNDLY_CONTRACTOR_XREF x
+                  ON LTRIM(RTRIM(x.[Work Order System Id])) = LTRIM(RTRIM(s.[Work Order System Id]))
+                WHERE LTRIM(RTRIM(x.WOSystemKey)) = LTRIM(RTRIM(wo.WOSystemKey))
+            ),
+            (
+                SELECT MAX(s.[Billing Cycle End Date])
+                FROM dbo.STAGING_VNDLY_SPEND s
+                WHERE s.[Contractor First Name] = wo.[Contractor First Name]
+                  AND s.[Contractor Last Name]  = wo.[Contractor Last Name]
+                  AND s.[Billing Cycle End Date]   >= TRY_CAST(wo.[Start Date] AS DATE)
+                  AND s.[Billing Cycle Start Date] <= DATEADD(DAY, 14, TRY_CAST(wo.[End Date] AS DATE))
+            )
         )
         ELSE wo.[End Date]
     END'''
 
 
+# Bounded the same way, and for the same reason: an unbounded name match kept
+# a terminal work order that never ran alive because a same-named worker had
+# spend on a different assignment. (GH #46)
 VNDLY_HAS_SPEND_IF_TERMINAL_SQL = f'''(
         wo.[Current Status] = 'Active'
         OR EXISTS (
             SELECT 1 FROM dbo.STAGING_VNDLY_SPEND s
+            JOIN dbo.STAGING_VNDLY_CONTRACTOR_XREF x
+              ON LTRIM(RTRIM(x.[Work Order System Id])) = LTRIM(RTRIM(s.[Work Order System Id]))
+            WHERE LTRIM(RTRIM(x.WOSystemKey)) = LTRIM(RTRIM(wo.WOSystemKey))
+        )
+        OR EXISTS (
+            SELECT 1 FROM dbo.STAGING_VNDLY_SPEND s
             WHERE s.[Contractor First Name] = wo.[Contractor First Name]
               AND s.[Contractor Last Name]  = wo.[Contractor Last Name]
+              AND s.[Billing Cycle End Date]   >= TRY_CAST(wo.[Start Date] AS DATE)
+              AND s.[Billing Cycle Start Date] <= DATEADD(DAY, 14, TRY_CAST(wo.[End Date] AS DATE))
         )
     )'''
 

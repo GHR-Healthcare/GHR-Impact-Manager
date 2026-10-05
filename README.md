@@ -2,6 +2,34 @@
 
 ## Version History
 
+### 2.43.2 - Triage of the three remaining high-severity issues (GH #46, #63, #86)
+
+Verified each against the live data before changing any figure. One was a false
+positive, two were real.
+
+- **#63 is a false positive — and the code's own comment caused it.** The report said
+  the Symplr void-reason map never matches, so competitive losses count as zero. The
+  live book disagrees: `Filled by Competition` maps to `Lost to competitor` on every
+  row, Symplr contributes 44 of 58 unfilled with a reason (75.9% coverage), and nothing
+  falls through unmapped. The map keys were right; the **inventory comment above them**
+  abbreviated the values to `Internal Staff` / `Competition`, which is what the scan
+  read. Comment corrected to the real vocabulary
+- **#86 is real.** Both MSP source blocks caught, logged and continued without recording
+  anything, and the non-MSP path collected an `errors` list and then dropped it from the
+  payload. One failed source rendered the tab with half the billings at HTTP 200 and no
+  indication — a wrong money figure that looks authoritative. Both paths report their
+  errors now, a partial result is never cached, and the Financials tab shows the same
+  amber partial-load banner the Trend tab already uses
+- **#46 is real, but its suggested fix would have made it worse.** The spend subquery
+  matched contractor first+last name with no work-order or date correlation, so a
+  worker's latest billing week was applied to every terminal work order they ever had.
+  Correlating strictly by work order — what the issue proposes — corrects 12 of 1,354
+  but strips the end date from **177** others, which this query then reads as "still
+  running". The fix is work-order correlation **with a bounded same-name fallback**
+  (limited to that work order's own window, 14-day grace). Measured: coverage 410 vs 409
+  for name-only, and **44 overstated ends corrected, averaging 67 days**. Applied to
+  both the Trend and prior-year endpoints
+
 ### 2.43.1 - Robustness batch from the issue backlog (10 issues, no behaviour change)
 
 Fixes that only affect failure paths -- crashes on bad input, leaked connections and

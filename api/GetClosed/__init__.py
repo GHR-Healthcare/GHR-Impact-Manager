@@ -59,9 +59,18 @@ SYMPLR_NON_OPPORTUNITY_REASONS = {'scheduling error', 'census dropped'}
 # Mapped exhaustively rather than by prefix matching so a new reason shows up
 # as unmapped instead of being silently folded into a neighbouring bucket.
 #
-#   (blank) 680 | Internal Staff 382 | Scheduling Error 316 | Competition 234
-#   Census Dropped 178 | Unable to Fill 58 | Other 19 | No Show 2 | Call-out 2
-#   Temp late and sent home 2 | DNR 1 | NSNC 1 | Picked up another shift 1
+#   (blank) 680 | Filled by Internal Staff 382 | Scheduling Error 316
+#   Filled by Competition 234 | Census Dropped 178 | Unable to Fill 58
+#   Other 19 | No Show 2 | Call-out 2 | Temp late and sent home 2 | DNR 1
+#   NSNC 1 | Picked up another shift 1
+#
+# The two "Filled by ..." values are written in full by Symplr. An earlier
+# version of this list abbreviated them to 'Internal Staff' and 'Competition',
+# which made the map below look wrong against its own documentation and was
+# reported as a bug (GH #63) -- competitive losses supposedly never counted.
+# They are counted: verified on the live book, 'Filled by Competition' maps to
+# 'Lost to competitor' on every row and nothing falls through unmapped. The
+# list, not the map, was wrong.
 #
 # 'Clinician fell through' is its own bucket because those orders were booked
 # and then failed — a service failure, not a sourcing failure. They still

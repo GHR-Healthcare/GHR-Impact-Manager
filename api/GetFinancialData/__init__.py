@@ -264,7 +264,11 @@ def _non_msp_financial(req: func.HttpRequest, date_from_sql: str, date_to_sql: s
             import traceback; traceback.print_exc()
             errors.append(f"symplr: {e}")
     print(f"Returning {len(monthly_data)} non-MSP financial rows (errors: {errors or 'none'})")
-    payload = {'monthlyData': monthly_data}
+    # errors was collected and then dropped, so a failed source rendered the tab
+    # with half the billings at HTTP 200 and no sign anything was missing -- a
+    # wrong money figure that looks authoritative. GetTrendData and GetClosed
+    # both return theirs. (GH #86)
+    payload = {'monthlyData': monthly_data, 'errors': errors}
     # Warm from a live build, best-effort, and only when both branches
     # succeeded -- a partial month would otherwise be served for a day.
     if cacheable and not errors:
@@ -337,6 +341,8 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
         # _non_msp_financial, so this book has been rebuilding every request
         # (3.2s warm). Same oversight the trend endpoint had.
         _started = time.time()
+        # One source failing must not be reported as a whole book. (GH #86)
+        msp_errors = []
         _key = cache_key('financial-data', 'msp')
         if default_range:
             _cached = read_cache(_key)
@@ -455,6 +461,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             print(f"Error loading VNDLY financial data: {e}")
             import traceback
             traceback.print_exc()
+            msp_errors.append(f"vndly: {e}")
 
         # ============================================================
         # B4Health - Monthly billings and headcounts from ESR data
@@ -630,6 +637,9 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                 b4_data.append(row_dict)
         except Exception as e:
             print(f"Error loading B4 financial data: {e}")
+            import traceback
+            traceback.print_exc()
+            msp_errors.append(f"b4: {e}")
 
         conn.close()
 
@@ -651,8 +661,10 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
         b4_count = len([r for r in monthly_data if r.get('source_system') == 'B4'])
         print(f"Returning {len(monthly_data)} financial data rows (VNDLY: {vndly_count}, B4: {b4_count})")
 
-        _payload = {'monthlyData': monthly_data}
-        if default_range:
+        _payload = {'monthlyData': monthly_data, 'errors': msp_errors}
+        # Never cache a partial book -- it would be served for a day. The
+        # non-MSP path already guards this way.
+        if default_range and not msp_errors:
             write_cache(_key, _payload, build_ms=int((time.time() - _started) * 1000),
                         refreshed_by='live-request')
         return func.HttpResponse(
