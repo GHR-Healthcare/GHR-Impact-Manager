@@ -18,10 +18,17 @@ ALLOWED_DOMAINS = {
 }
 
 # Claim types SWA may use to surface the user's email/UPN.
+#
+# The display-name claim is deliberately NOT here. It used to be, and it made
+# the domain gate bypassable: this provider accepts any Microsoft account, the
+# holder of a personal account sets their own display name, and _extract_email
+# returned the first candidate containing '@'. A personal account whose display
+# name was set to "someone@ghrhealthcare.com" passed the check and reached every
+# /api/* endpoint, whenever userDetails itself carried no '@'. Display name is
+# user-controlled text, not an identity. (GH #26)
 EMAIL_CLAIM_TYPES = {
     'http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress',
     'http://schemas.xmlsoap.org/ws/2005/05/identity/claims/upn',
-    'http://schemas.xmlsoap.org/ws/2005/05/identity/claims/name',
     'preferred_username',
     'upn',
     'email',
@@ -30,16 +37,24 @@ EMAIL_CLAIM_TYPES = {
 
 
 def _extract_email(principal):
+    """The caller's email, from an identity claim.
+
+    Explicit claims are checked BEFORE userDetails: userDetails is whatever the
+    provider chose to put there, while the claims above are the fields that
+    actually carry a verified address. Anything with no '@' is not an email and
+    is skipped, and a principal with no usable address is rejected by the caller
+    rather than falling back to something user-controlled. (GH #26)
+    """
     candidates = []
-    ud = principal.get('userDetails')
-    if ud:
-        candidates.append(ud)
     for c in (principal.get('claims') or []):
         ctype = c.get('typ') or c.get('type')
         if ctype in EMAIL_CLAIM_TYPES:
             v = c.get('val') or c.get('value')
             if v:
                 candidates.append(v)
+    ud = principal.get('userDetails')
+    if ud:
+        candidates.append(ud)
     for v in candidates:
         if isinstance(v, str) and '@' in v:
             return v.strip().lower()

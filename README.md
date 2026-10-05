@@ -2,6 +2,20 @@
 
 ## Version History
 
+### 2.21.7 - The domain allowlist could be bypassed through the display-name claim
+
+- `EMAIL_CLAIM_TYPES` included `.../identity/claims/name` and `_extract_email` returned
+  the first candidate containing an `@`. This provider accepts **any** Microsoft
+  account, and the holder of a personal one sets their own display name — so an account
+  named `someone@ghrhealthcare.com` passed the domain gate and reached every `/api/*`
+  endpoint whenever `userDetails` itself carried no `@`. Display name is user-controlled
+  text, not an identity
+- The claim is removed, and explicit claims (`emailaddress`, `upn`,
+  `preferred_username`, `email`, `emails`) are now checked **before** `userDetails`
+- Verified against both attack shapes and four legitimate sign-in shapes, including
+  email-only-in-`userDetails`, which was the lockout risk in removing a claim type
+- Reported by the app-factory scan as GH #26
+
 ### 2.21.6 - The site stops serving the repo it is deployed from
 - Only `/`, `/*.html` and `/api/*` were gated. `app_location` is `/` on all four
   workflows, so the repo root **is** the deployed site and everything else was served
