@@ -2,6 +2,25 @@
 
 ## Version History
 
+### 2.48.1 - The actual cause of the dead YoY overlay
+
+Parallelising and caching in 2.48.0 was not enough — the endpoint still returned a 500,
+because **one branch alone exceeded the gateway**. Measured each in turn:
+
+| | |
+|---|---|
+| Symplr `lt_order` half | 2.4s |
+| Symplr **orderless** half | **60.7s** |
+
+The orderless branch joined `profile_client`, `profile_temp` and `regions` across all
+**817k** orders and aggregated afterwards. Grouping the orders first and joining the
+lookups to the much smaller result is **6.9s**, for byte-identical output — 76,406 week
+rows, 2,782 distinct workers.
+
+The derived table is aliased `o` so the injected `{sys_case_orders}`,
+`{division_case_orders}` and `{scope_orders}` expressions, all built against
+`'o.customerid'`, still bind.
+
 ### 2.48.0 - The non-MSP prior-year overlay was dead, and its filters lied (GH #50)
 
 Found while verifying #50: **`yoy-trend-data` was returning a 500 on non-MSP** — 45.2s

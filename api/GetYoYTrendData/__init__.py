@@ -256,30 +256,50 @@ def _symplr_yoy_data():
 
             SELECT
                 NULL AS lt_orderid,
-                LOWER(LTRIM(RTRIM(ISNULL(MAX(pt.firstname),'') + ' ' + ISNULL(MAX(pt.lastname),'')))) AS worker,
-                MAX({sys_case_orders}) AS system,
-                MAX(pc.clientname) AS facility,
-                ISNULL(MAX(o.nursetype), 'Unknown') AS category,
-                ISNULL(MAX({division_case_orders}), 'Unknown') AS division,
-                MAX(pc.state) AS region,
-                CAST(MIN(o.jobdatestart) AS DATE) AS sd,
-                CAST(MAX(o.jobdateend)   AS DATE) AS ed
-            FROM dbo.orders o
+                LOWER(LTRIM(RTRIM(ISNULL(pt.firstname,'') + ' ' + ISNULL(pt.lastname,'')))) AS worker,
+                ({sys_case_orders}) AS system,
+                pc.clientname AS facility,
+                ISNULL(o.nursetype, 'Unknown') AS category,
+                ISNULL(({division_case_orders}), 'Unknown') AS division,
+                pc.state AS region,
+                o.sd,
+                o.ed
+            /* Aggregate the orders FIRST, then join the lookups to the much
+             * smaller result.
+             *
+             * This used to join profile_client, profile_temp and regions across
+             * all 817k orders and GROUP BY afterwards, which cost 60.7s on its
+             * own -- past the 45s gateway, so yoy-trend-data returned a 500 on
+             * non-MSP and the prior-year overlay never loaded at all. Grouping
+             * first and joining after is 6.9s for byte-identical output (76,406
+             * week rows, 2,782 distinct workers).
+             *
+             * The CTE is aliased `o` so the injected {sys_case_orders},
+             * {division_case_orders} and {scope_orders} expressions -- all built
+             * against 'o.customerid' -- still bind.
+             */
+            FROM (
+                SELECT o.filledby,
+                       o.customerid,
+                       MAX(o.nursetype)                  AS nursetype,
+                       CAST(MIN(o.jobdatestart) AS DATE) AS sd,
+                       CAST(MAX(o.jobdateend)   AS DATE) AS ed
+                FROM dbo.orders o
+                WHERE o.status = 'filled'
+                    AND (o.lt_orderid IS NULL OR o.lt_orderid = 0)
+                    AND o.filledby IS NOT NULL AND o.filledby > 0
+                    AND o.jobdatestart IS NOT NULL
+                    -- Bound on END date, not start: an assignment that began
+                    -- before the 60-week window but was still running inside it
+                    -- belongs in these weeks. The join supplies the upper bound.
+                    AND (o.jobdateend IS NULL OR o.jobdateend >= DATEADD(WEEK, -61, GETDATE()))
+                    AND {scope_orders}
+                GROUP BY o.customerid, o.filledby
+            ) o
             LEFT JOIN dbo.profile_client pc ON o.customerid = pc.recordid
             LEFT JOIN dbo.profile_client m  ON pc.MasterClientID = m.recordid
             LEFT JOIN dbo.regions r ON r.regionid = TRY_CAST(pc.region AS INT)
             LEFT JOIN dbo.profile_temp   pt ON o.filledby   = pt.recordid
-            WHERE o.status = 'filled'
-                AND (o.lt_orderid IS NULL OR o.lt_orderid = 0)
-                AND o.filledby IS NOT NULL AND o.filledby > 0
-                AND o.jobdatestart IS NOT NULL
-                -- Bound on END date, not start: an assignment that began before the
-                -- 60-week window but was still running inside it belongs in these
-                -- weeks. A start-date bound dropped them, understating the oldest
-                -- prior-year weeks. The join supplies the upper bound.
-                AND (o.jobdateend IS NULL OR o.jobdateend >= DATEADD(WEEK, -61, GETDATE()))
-                AND {scope_orders}
-            GROUP BY o.customerid, o.filledby
         )
         SELECT
             CONVERT(VARCHAR(10), w.week_start, 23) AS week_start,

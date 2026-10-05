@@ -90,7 +90,7 @@ def ensure_table(conn):
 #
 # Changing this string makes every existing entry unreachable, so the next
 # request to each endpoint rebuilds. Old rows age out on their own.
-PAYLOAD_SHAPE = 'v10'
+PAYLOAD_SHAPE = 'v11'
 
 
 def cache_key(route, data_source, variant=None):
