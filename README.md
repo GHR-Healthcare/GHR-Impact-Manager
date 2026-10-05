@@ -2,6 +2,24 @@
 
 ## Version History
 
+### 2.21.9 - Rate-Intel weeks, and free-text arithmetic hardened (GH #92, #49, #65)
+
+- **#92 — Rate Intel bucketed weeks to MONDAY** while every other weekly series in the
+  app buckets to SUNDAY, despite the comment directly above it saying "Sunday-based".
+  Worse than an off-by-one: for a Sunday the old expression returned the *previous*
+  Monday — six days earlier, a different week. Verified across a full week of dates; all
+  seven disagreed with the other endpoints, so any comparison of a rate week against a
+  trend week was joining the wrong bucket
+- **#92 also — the endpoint never pinned `DATEFIRST`.** It opens a raw `pyodbc.connect`
+  instead of going through `data_source._pin_datefirst`, so `DATEPART(WEEKDAY)` depended
+  on the server's language default. Now `SET DATEFIRST 7`, as elsewhere
+- **#49, #65 — free-text columns were multiplied before being cast.**
+  `TRY_CAST(p.hoursPerDay * 5 AS DECIMAL)` casts the product, so the multiply runs first
+  and one unparseable value aborts the whole Bullhorn branch; `GetFinancialData` had no
+  `TRY_CAST` at all. Each column is cast first now. **Latent, not active** — 0 bad values
+  across 52,026 live placements — so this guards against a silent partial book rather
+  than correcting a figure
+
 ### 2.21.8 - Three number-correctness fixes (GH #64, #47, #48)
 
 Each verified against the source data before any figure moved. Applied here because

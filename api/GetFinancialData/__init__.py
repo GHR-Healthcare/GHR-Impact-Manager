@@ -94,9 +94,17 @@ def _bullhorn_financial_data(date_from_sql: str, date_to_sql: str):
                 ISNULL(cc.customTextBlock1, 'Unknown') AS division,
                 CAST(NULL AS NVARCHAR(50)) AS region,
                 LTRIM(RTRIM(ISNULL(c.firstName, '') + ' ' + ISNULL(c.lastName, ''))) AS worker_name,
-                ISNULL(p.clientBillRate, 0) * ISNULL(p.hoursPerDay, 0) * 5 AS weekly_revenue,
-                ISNULL(p.hoursPerDay, 0) * 5 AS weekly_hours,
-                ISNULL(p.clientBillRate, 0) * ISNULL(p.hoursPerDay, 0) * 5
+                -- TRY_CAST each column BEFORE the arithmetic. These are free text
+                -- in the Bullhorn views, and casting the product --
+                -- TRY_CAST(p.hoursPerDay * 5 AS ...) -- does not protect it: the
+                -- multiply runs first and one unparseable value aborts the whole
+                -- Bullhorn branch. Clean today (0 bad values across 52,026 live
+                -- placements), so this is hardening. (GH #49, #65)
+                ISNULL(TRY_CAST(p.clientBillRate AS DECIMAL(18,2)), 0)
+                    * ISNULL(TRY_CAST(p.hoursPerDay AS DECIMAL(10,2)), 0) * 5 AS weekly_revenue,
+                ISNULL(TRY_CAST(p.hoursPerDay AS DECIMAL(10,2)), 0) * 5 AS weekly_hours,
+                ISNULL(TRY_CAST(p.clientBillRate AS DECIMAL(18,2)), 0)
+                    * ISNULL(TRY_CAST(p.hoursPerDay AS DECIMAL(10,2)), 0) * 5
                     * (ISNULL(p.reportedMargin, 0) / 100.0) AS weekly_margin
             FROM Weeks w
             INNER JOIN dbo.View_Placement p

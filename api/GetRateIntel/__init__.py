@@ -69,7 +69,11 @@ def _peer_rows(cursor):
             -- Week start, Sunday-based, matching the DATEFIRST 7 the app pins
             -- for every other week bucket and the Saturday period ends in the
             -- rate trend tables.
-            DATEADD(DAY, -((DATEPART(WEEKDAY, o.dateAdded_date) + 5) % 7),
+            -- The old form, -((DATEPART(WEEKDAY, d) + 5) % 7), returned the
+            -- MONDAY of the week despite the comment above -- and for a Sunday
+            -- the PREVIOUS Monday, six days earlier. Every other weekly series
+            -- in the app uses the form below. (GH #92)
+            DATEADD(DAY, 1 - DATEPART(WEEKDAY, o.dateAdded_date),
                     o.dateAdded_date)                      AS week_start,
             CAST(o.bt_Outlier AS INT)                      AS is_outlier
         FROM dbo.BH_BILL_RATE_TRENDS_OUTLIERS_FACT o WITH (NOLOCK)
@@ -120,6 +124,9 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
         )
         cursor = conn.cursor()
         cursor.execute('SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED')
+        # DATEPART(WEEKDAY) is relative to DATEFIRST and this endpoint opens a
+        # raw connection, so it inherited the server default. (GH #92)
+        cursor.execute('SET DATEFIRST 7')
         peers = _peer_rows(cursor)
 
         payload = {
