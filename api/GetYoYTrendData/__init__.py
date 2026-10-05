@@ -8,6 +8,7 @@ from shared_code.endpoint_cache import cache_key, read_cache, write_cache
 from shared_code.auth import require_allowed_domain
 from shared_code.data_source import is_non_msp, get_bullhorn_conn, get_symplr_conn, get_appdb_conn
 from shared_code.bullhorn_systems import (
+    build_system_rollup_values,
     build_system_case_expr,
     build_scope_filter,
     resolve_scope_client_ids,
@@ -133,11 +134,22 @@ def _bullhorn_yoy_data():
     finally:
         if app_conn is not None:
             app_conn.close()
-    system_case = build_system_case_expr('p.clientCorporationID')
+    # Join, not CASE. build_system_case_expr renders a 13-branch CASE that
+    # SQL Server evaluates once per row, and across this 60-week join that is
+    # 334k rows -- measured as half the cost of this branch: 25.1s with the
+    # CASE against 10.1s joining the same mapping, for byte-identical output
+    # (44,749 rows, 281,124 summed headcount). The CASE form stays everywhere
+    # the row count makes it irrelevant; this endpoint is where it does not.
+    # (GH #97)
+    system_values = build_system_rollup_values()
+    system_case = 'COALESCE(sm.system, pcc.name, cc.name)'
     scope_filter = build_scope_filter('p.clientCorporationID', client_ids=scope_ids)
     status_list = ', '.join("'" + s + "'" for s in BULLHORN_YOY_STATUSES)
 
     cursor.execute(f'''
+        DECLARE @sysmap TABLE (ccid INT PRIMARY KEY, system NVARCHAR(200));
+        INSERT INTO @sysmap (ccid, system) VALUES {system_values};
+
         ;WITH Weeks AS (
             SELECT TOP 60
                 DATEADD(WEEK, 1 - ROW_NUMBER() OVER (ORDER BY (SELECT NULL)),
@@ -162,6 +174,7 @@ def _bullhorn_yoy_data():
             LEFT JOIN dbo.View_Candidate c ON p.candidateID = c.candidateID
             LEFT JOIN dbo.View_ClientCorporation cc ON p.clientCorporationID = cc.clientCorporationID
             LEFT JOIN dbo.View_ClientCorporation pcc ON cc.parentClientCorporationID = pcc.clientCorporationID
+            LEFT JOIN @sysmap sm ON sm.ccid = p.clientCorporationID
             WHERE p.isDeleted = 0
                 AND p.status IN ({status_list})
                 AND p.dateBegin IS NOT NULL

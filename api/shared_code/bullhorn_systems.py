@@ -269,6 +269,32 @@ def resolve_scope_client_ids(bullhorn_cursor, app_conn=None):
     ) - MSP_CLIENT_IDS
 
 
+def build_system_rollup_values():
+    """The same clientCorporationID -> system_name rollup as a VALUES list.
+
+    build_system_case_expr() renders this as a CASE, which SQL Server evaluates
+    once per row. On the 60-week YoY join that is 334k rows x a 13-branch CASE,
+    and it measured as half the cost of the whole Bullhorn branch -- 25.1s with
+    the CASE against 10.1s joining this list instead, for byte-identical output.
+
+    Use with:
+        DECLARE @sysmap TABLE (ccid INT PRIMARY KEY, system NVARCHAR(200));
+        INSERT INTO @sysmap (ccid, system) VALUES {build_system_rollup_values()};
+        ...
+        LEFT JOIN @sysmap sm ON sm.ccid = p.clientCorporationID
+        -- then COALESCE(sm.system, <the same fallback the CASE used>)
+
+    The CASE form stays for the many queries where the row count makes it
+    irrelevant; this is for the ones where it does not.
+    """
+    out = []
+    for entry in BULLHORN_SYSTEM_ROLLUP:
+        name_safe = entry['system_name'].replace("'", "''")
+        for cid in entry['client_ids']:
+            out.append(f"({int(cid)},'{name_safe}')")
+    return ', '.join(out)
+
+
 def build_system_case_expr(column_name='p.clientCorporationID', fallback_name_column="ISNULL(pcc.name, cc.name)"):
     """
     SQL CASE that maps clientCorporationID → rolled-up system_name.

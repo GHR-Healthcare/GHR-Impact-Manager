@@ -2,6 +2,26 @@
 
 ## Version History
 
+### 2.48.2 - The YoY system rollup was a CASE evaluated 334k times (GH #97)
+
+Measuring the proposed fix for #97 disproved it, and turned up the real cost.
+
+- **Aggregating to `system` saves nothing on non-MSP.** `system` falls through to the
+  per-client name there, so week x system is still **38,271 rows** against week x facility's
+  59,104 — the grouping was never the problem
+- **The `system_case` CASE was.** `build_system_case_expr` renders a 13-branch CASE that
+  SQL Server evaluates once per row, and across the 60-week join that is 334k rows:
+  **25.1s with the CASE against 10.1s** joining the same mapping as a table, for
+  byte-identical output (44,749 rows, 281,124 summed headcount)
+- `build_system_rollup_values()` emits that mapping as a `VALUES` list; the YoY Bullhorn
+  branch declares it as a table variable and joins. The CASE form stays everywhere the
+  row count makes it irrelevant
+
+Also recorded while measuring: the client **sums** `headcount` across rows, but each row
+is a `COUNT(DISTINCT worker)` — so a worker at two facilities in one week is counted
+twice. Summed 282,961 against 268,347 truly distinct, a **5.4% overstatement** that
+applies to MSP today as well. Noted on #97 rather than changed here.
+
 ### 2.48.1 - The actual cause of the dead YoY overlay
 
 Parallelising and caching in 2.48.0 was not enough — the endpoint still returned a 500,
