@@ -147,6 +147,12 @@ def _bullhorn_yoy_data():
     status_list = ', '.join("'" + s + "'" for s in BULLHORN_YOY_STATUSES)
 
     cursor.execute(f'''
+        -- SET NOCOUNT ON before the INSERT, or its rowcount arrives as the
+        -- first result set and pyodbc reads THAT -- cursor.description comes
+        -- back None and the branch dies with "'NoneType' object is not
+        -- iterable". GetExtensions' temp-table preps all open this way; this
+        -- one did not, and it broke the Bullhorn half for one release.
+        SET NOCOUNT ON;
         DECLARE @sysmap TABLE (ccid INT PRIMARY KEY, system NVARCHAR(200));
         INSERT INTO @sysmap (ccid, system) VALUES {system_values};
 
