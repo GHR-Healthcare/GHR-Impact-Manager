@@ -55,6 +55,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
     auth_error = require_allowed_domain(req)
     if auth_error:
         return auth_error
+    pos_conn = None
     try:
         # ===========================================================
         # B4 + VNDLY assignments from positions DB
@@ -128,7 +129,13 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
         except Exception as e:
             print(f"Error loading VNDLY assignments: {e}")
 
+        # Closed here on the happy path and again in the finally below; the
+        # second close is a no-op. It used to be the ONLY close, so any raise
+        # after the connection opened -- including one outside the inner
+        # try/except while building assignment_records, or the early return in
+        # the Bullhorn block -- leaked it. (GH #72)
         pos_conn.close()
+        pos_conn = None
 
         # ===========================================================
         # Bullhorn placements from mirror DB
@@ -307,8 +314,16 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
         print(f"Error: {e}")
         import traceback
         traceback.print_exc()
+        # Generic to the caller; pyodbc text carries server and driver details.
+        # (GH #29)
         return func.HttpResponse(
-            json.dumps({'error': str(e)}),
+            json.dumps({'error': 'contracts_comparison_failed'}),
             mimetype="application/json",
             status_code=500
         )
+    finally:
+        if pos_conn is not None:
+            try:
+                pos_conn.close()
+            except Exception:
+                pass

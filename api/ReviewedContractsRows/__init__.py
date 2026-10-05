@@ -24,6 +24,10 @@ def ensure_schema(cursor):
     """)
 
 
+# Matches the row_key column width in the table above.
+MAX_ROW_KEY_LEN = 500
+
+
 def main(req: func.HttpRequest) -> func.HttpResponse:
     """
     GET  → returns { keys: [...] } of all reviewed contract row keys
@@ -72,6 +76,20 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             if not key:
                 return func.HttpResponse(
                     json.dumps({'error': 'Missing key'}),
+                    mimetype="application/json", status_code=400
+                )
+
+            # row_key is NVARCHAR(500) NOT NULL UNIQUE. A longer key was
+            # inserted anyway and SQL Server answered "String or binary data
+            # would be truncated", which surfaced as a 500 carrying the raw
+            # driver message. The key is built by concatenating worker,
+            # facility and date fields, so an unusually long facility name is
+            # enough to trip it -- a validation error, not a server fault.
+            # (GH #43)
+            if len(key) > MAX_ROW_KEY_LEN:
+                return func.HttpResponse(
+                    json.dumps({'error': 'key_too_long', 'max': MAX_ROW_KEY_LEN,
+                                'got': len(key)}),
                     mimetype="application/json", status_code=400
                 )
 

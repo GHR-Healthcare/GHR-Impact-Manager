@@ -263,8 +263,7 @@ def _non_msp_yoy(req: func.HttpRequest) -> func.HttpResponse:
     return func.HttpResponse(
         json.dumps({'rows': rows}, default=str),
         mimetype="application/json",
-        status_code=200,
-        headers={"Access-Control-Allow-Origin": "*"}
+        status_code=200
     )
 
 
@@ -409,8 +408,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
         return func.HttpResponse(
             json.dumps({'rows': rows}, default=str),
             mimetype="application/json",
-            status_code=200,
-            headers={"Access-Control-Allow-Origin": "*"}
+            status_code=200
         )
 
     except Exception as e:

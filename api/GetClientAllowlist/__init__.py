@@ -180,7 +180,6 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                 ''', e['client_id'], e['source'], e['display_name'], e['notes'], user)
 
             conn.commit()
-            conn.close()
             return func.HttpResponse(
                 json.dumps({'success': True, 'count': len(cleaned)}),
                 mimetype="application/json",
@@ -198,8 +197,24 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
         import traceback
         traceback.print_exc()
         print(f"GetClientAllowlist: unhandled error: {e}")
+        # The POST deletes every row before re-inserting, so a failure between
+        # the two must not be left to an implicit rollback at collection time.
+        # pyodbc defaults to autocommit=False, so the transaction WAS rolled
+        # back eventually -- but only whenever the leaked connection happened
+        # to be collected. Rolled back here, explicitly. (GH #53)
+        try:
+            conn.rollback()
+        except Exception:
+            pass
         return func.HttpResponse(
             json.dumps({'error': 'Something went wrong saving the allowlist. Please try again.'}),
             mimetype="application/json",
             status_code=500,
         )
+    finally:
+        # Was closed only on the success paths, so every failing request leaked
+        # a pooled connection. (GH #40, #53)
+        try:
+            conn.close()
+        except Exception:
+            pass

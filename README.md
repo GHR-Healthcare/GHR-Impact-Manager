@@ -2,6 +2,41 @@
 
 ## Version History
 
+### 2.43.1 - Robustness batch from the issue backlog (10 issues, no behaviour change)
+
+Fixes that only affect failure paths -- crashes on bad input, leaked connections and
+leaked error detail. Nothing here moves a number on a working request.
+
+- **#30, #29 (SaveChange)** -- `id`/`timestamp`/`jobId`/`type` were indexed directly, so
+  a body missing any of them, a non-object body, or invalid JSON raised
+  KeyError/ValueError and surfaced as a 500 carrying the raw driver message. Validated
+  up front with a 400 naming the missing fields; the exception text is logged, not
+  returned
+- **#69 (SaveChange)** -- `changes.id` is `NVARCHAR(100)`, and a longer id was a
+  truncation error rather than a saved row. Rejected with a 400
+- **#67 (Meetings)** -- `limit` was clamped only at the top, so `?limit=-5` produced
+  `SELECT TOP -5` and a 500. Clamped at both ends
+- **#43 (ReviewedContractsRows)** -- `row_key` is `NVARCHAR(500)`; a longer key hit
+  "String or binary data would be truncated" as a 500. The key is concatenated from
+  worker/facility/date fields, so a long facility name was enough. Now a 400
+- **#89 (GetOnboarding)** -- the movement-history line carries a free-text user name, so
+  a Bullhorn user whose name contains a newline shifted every field and
+  `date.fromisoformat` raised, **taking down the whole endpoint for every seat**. An
+  unreadable line is skipped
+- **#35, #95 (GetFinancialData, GetPerDiemData)** -- the month regex checked shape only,
+  accepting `2025-13` and `9999-99`, which failed conversion inside SQL Server where the
+  handler swallowed it and returned 200 with nothing. The UI said "no activity" for what
+  was a bad request. Month is now `01`-`12`
+- **#45 (GetYoYTrendData, GetPendingData)** -- `Access-Control-Allow-Origin: *` on
+  authenticated data endpoints, inconsistent with every other endpoint. Removed
+- **#53, #40 (GetClientAllowlist)** -- the POST deletes every row before re-inserting and
+  had no rollback and no close on the failure path. pyodbc defaults to
+  `autocommit=False` so the transaction *was* rolled back -- but only whenever the leaked
+  connection happened to be collected. Explicit rollback, and closed in a `finally`
+- **#72, #29 (GetContractsComparison)** -- `pos_conn` was closed only on the happy path,
+  so any raise after it opened leaked it. Closed in a `finally`, and the error response
+  no longer returns raw exception text
+
 ### 2.43.0 - Two security findings from the issue backlog (GH #26, #78)
 
 - **#26 (high) -- the domain allowlist could be bypassed through the display-name

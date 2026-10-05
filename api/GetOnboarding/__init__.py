@@ -620,11 +620,20 @@ def _finalize(rows):
             parts = line.split('|')
             if len(parts) < 3 or not parts[1] or not parts[2] or parts[1] == parts[2]:
                 continue
+            # The line carries a free-text user name, so a Bullhorn corporate
+            # user whose name contains a newline shifts every field on the next
+            # parse and fromisoformat raises -- which used to take down the
+            # whole Onboarding endpoint for every seat, not just this row. A
+            # line we cannot read is skipped. (GH #89)
+            try:
+                _from = date.fromisoformat(parts[1])
+                _to = date.fromisoformat(parts[2])
+            except (ValueError, TypeError):
+                continue
             moves.append({
                 'on': parts[0], 'from': parts[1], 'to': parts[2],
                 'by': (parts[3].strip() if len(parts) > 3 else '') or None,
-                'days': (lambda a, b: (b - a).days)(
-                    date.fromisoformat(parts[1]), date.fromisoformat(parts[2])),
+                'days': (_to - _from).days,
             })
         r['moves'] = moves
         r['compliance'] = _compliance(r)

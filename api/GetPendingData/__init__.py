@@ -152,14 +152,12 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
 
         return func.HttpResponse(
             json.dumps({"submissions": submissions, "errors": errors}),
-            mimetype="application/json",
-            headers={"Access-Control-Allow-Origin": "*"}
+            mimetype="application/json"
         )
 
     except Exception as e:
         return func.HttpResponse(
             json.dumps({"error": str(e)}),
             status_code=500,
-            mimetype="application/json",
-            headers={"Access-Control-Allow-Origin": "*"}
+            mimetype="application/json"
         )

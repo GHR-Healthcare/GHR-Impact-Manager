@@ -37,7 +37,12 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
         to_month = req.params.get('to')
 
         # Validate date format to prevent injection
-        date_pattern = re.compile(r'^\d{4}-\d{2}$')
+        # Month 01-12 only. The old shape-only pattern accepted '2025-13'
+        # and '9999-99', which were inlined as a date literal and failed
+        # conversion inside SQL Server -- where the surrounding handler
+        # swallowed it and returned 200 with an empty result, so the UI
+        # showed 'no activity' rather than 'bad request'. (GH #95)
+        date_pattern = re.compile(r'^\d{4}-(0[1-9]|1[0-2])$')
         if from_month and not date_pattern.match(from_month):
             from_month = None
         if to_month and not date_pattern.match(to_month):

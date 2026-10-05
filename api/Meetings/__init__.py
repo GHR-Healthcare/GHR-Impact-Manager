@@ -109,7 +109,11 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             # Recent meetings, newest first — the workspace offers to resume an
             # unfinished one rather than silently starting a second.
             try:
-                limit = min(int(req.params.get('limit') or 20), 100)
+                # Clamped at BOTH ends. Only the upper bound was clamped, so
+                # ?limit=-5 produced SELECT TOP -5, which SQL Server rejects,
+                # and the handler returned a 500 carrying the driver message.
+                # ?limit=0 returned an empty list for no stated reason. (GH #67)
+                limit = max(1, min(int(req.params.get('limit') or 20), 100))
             except (TypeError, ValueError):
                 limit = 20
             cursor.execute(f"""
