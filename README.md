@@ -2,6 +2,13 @@
 
 ## Version History
 
+### 2.43.3 - Bump the cache shape for #86's new field
+
+- `financial-data` gained an `errors` field in 2.43.2 and `PAYLOAD_SHAPE` was not
+  bumped, so MSP kept serving the pre-change payload from cache and the field was
+  absent on that book — the precise failure the shape version exists to prevent.
+  Caught by checking the live response rather than assuming the deploy was enough
+
 ### 2.43.2 - Triage of the three remaining high-severity issues (GH #46, #63, #86)
 
 Verified each against the live data before changing any figure. One was a false
