@@ -2,6 +2,25 @@
 
 ## Version History
 
+### 2.44.1 - The #46 fix was correct and far too slow
+
+A regression I shipped in 2.43.2 and did not catch, because I verified the fix's
+**correctness** and never its **cost**.
+
+- The new effective-end expression was two correlated subqueries evaluated per work
+  order: **29.8s** on its own. `trend-data` returned a **500** on its first cold rebuild
+  — the 45s gateway. It looked fine immediately after the deploy only because the cache
+  was still serving a payload built by the old code; the shape bump in 2.43.3 forced the
+  rebuild and exposed it
+- Pre-aggregated into `#vndly_wo_spend` / `#vndly_name_spend` once per request and
+  joined: **1.6s**, with identical coverage (410 of 1,354 terminal work orders) and the
+  same 44 corrected end dates. The rendered query was executed against the warehouse
+  before shipping this time, not just reasoned about
+- This is the third time in this codebase that a correlated construct has had to be
+  materialised. SQL Server re-runs a correlated subquery and inlines a CTE, so any set
+  consulted once per row needs a temp table — the same fix the extensions endpoint
+  needed twice in 2.41.1 and 2.41.2
+
 ### 2.44.0 - Security batch from the issue backlog (GH #16, #23, #27, #42, #87)
 
 - **#27, #87 -- audit attribution came from the request body.** `SaveChange` and
