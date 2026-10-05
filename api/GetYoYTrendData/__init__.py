@@ -357,10 +357,16 @@ def _non_msp_yoy(req: func.HttpRequest) -> func.HttpResponse:
     rows = []
     errors = []
 
+    timings = {}
+
     def _run(label, fn):
+        t0 = time.time()
         try:
-            return label, fn(), None
+            got = fn()
+            timings[label] = {'ms': int((time.time() - t0) * 1000), 'rows': len(got)}
+            return label, got, None
         except Exception as e:
+            timings[label] = {'ms': int((time.time() - t0) * 1000), 'error': str(e)[:200]}
             print(f"{label} YoY error: {e}")
             import traceback; traceback.print_exc()
             return label, [], f'{label.lower()}: {e}'
@@ -379,6 +385,18 @@ def _non_msp_yoy(req: func.HttpRequest) -> func.HttpResponse:
     # financial-data had in #86 -- a failed source rendered the overlay with
     # half the book and no sign of it.
     payload = {'rows': rows, 'errors': errors}
+    # ?debug=timings answers "which half is slow" without shipping a build and
+    # reading logs we cannot reach. It returns the per-branch milliseconds and
+    # row counts INSTEAD of the rows, so it always responds inside the gateway
+    # even when the full payload does not. (GH #97)
+    if str(req.params.get('debug', '')).lower() == 'timings':
+        return func.HttpResponse(
+            json.dumps({'timings': timings,
+                        'totalRows': len(rows),
+                        'serializedBytes': len(json.dumps(payload, default=str)),
+                        'totalMs': int((time.time() - started) * 1000),
+                        'errors': errors}, default=str),
+            mimetype='application/json', status_code=200)
     if not errors:
         write_cache(key, payload, build_ms=int((time.time() - started) * 1000),
                     refreshed_by='live-request')
