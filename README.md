@@ -2,6 +2,30 @@
 
 ## Version History
 
+### 2.48.3 - The non-MSP prior-year overlay works (GH #97)
+
+The Symplr branch took **over four minutes** — it blew the gateway on its own, which is
+why that overlay never loaded. The cause was the one this codebase keeps producing:
+**SQL Server inlines a CTE**, so `Placements` — which contains a `GROUP BY` over 817k
+orders — was re-evaluated for each of the 60 weeks it is joined to.
+
+Materialised into temp tables instead:
+
+| step | |
+|---|---|
+| build placements | 1,735ms (8,683 rows) |
+| build weeks | 1ms |
+| join + `GROUP BY` | **553ms** (26,089 rows) |
+
+**4+ minutes → 2.3s**, same output. Sixth time in this codebase that an inlined CTE or a
+correlated subquery has had to be materialised.
+
+Also fixed here: the `DECLARE`/`INSERT` added in 2.48.2 had no `SET NOCOUNT ON`, so
+pyodbc read the INSERT's rowcount as the first result set and the **Bullhorn** branch
+died with `'NoneType' object is not iterable` in 5s. Found with the per-branch
+`?debug=bullhorn|symplr` mode added while chasing this, which is kept — running one
+branch at a time answers inside the gateway where running both does not.
+
 ### 2.48.2 - The YoY system rollup was a CASE evaluated 334k times (GH #97)
 
 Measuring the proposed fix for #97 disproved it, and turned up the real cost.

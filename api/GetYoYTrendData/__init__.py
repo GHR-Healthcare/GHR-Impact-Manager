@@ -237,16 +237,32 @@ def _symplr_yoy_data():
     scope_orders = symplr_scope_filter('o.customerid', master_ids=symplr_master_ids)
     division_case_orders = symplr_division_case_expr('o.customerid')
 
+    # Materialised, not CTEs. SQL Server INLINES a CTE, so `Placements` -- which
+    # contains a GROUP BY over 817k orders -- was re-evaluated for each of the 60
+    # weeks it is joined to. That is why this branch took over FOUR MINUTES and
+    # the non-MSP prior-year overlay never loaded: it blew the 45s gateway on its
+    # own. Built once into temp tables instead:
+    #
+    #     build placements   1,735ms   (8,683 rows)
+    #     build weeks            1ms
+    #     join + GROUP BY      553ms   (26,089 rows)
+    #
+    # 4+ minutes -> 2.3s, same output. Sixth time in this codebase that an
+    # inlined CTE or a correlated subquery has had to be materialised. (GH #97)
     cursor.execute(f'''
-        ;WITH Weeks AS (
-            SELECT TOP 60
-                DATEADD(WEEK, 1 - ROW_NUMBER() OVER (ORDER BY (SELECT NULL)),
-                        DATEADD(DAY, 1 - DATEPART(WEEKDAY, CAST(GETDATE() AS DATE)),
-                                CAST(GETDATE() AS DATE))
-                ) AS week_start
-            FROM sys.all_objects
-        ),
-        Placements AS (
+        SET NOCOUNT ON;
+
+        IF OBJECT_ID('tempdb..#yoy_weeks') IS NOT NULL DROP TABLE #yoy_weeks;
+        SELECT TOP 60
+            DATEADD(WEEK, 1 - ROW_NUMBER() OVER (ORDER BY (SELECT NULL)),
+                    DATEADD(DAY, 1 - DATEPART(WEEKDAY, CAST(GETDATE() AS DATE)),
+                            CAST(GETDATE() AS DATE))
+            ) AS week_start
+        INTO #yoy_weeks
+        FROM sys.all_objects;
+
+        IF OBJECT_ID('tempdb..#yoy_pl') IS NOT NULL DROP TABLE #yoy_pl;
+        SELECT * INTO #yoy_pl FROM (
             SELECT
                 lt.lt_orderid,
                 LOWER(LTRIM(RTRIM(ISNULL(pt.firstname,'') + ' ' + ISNULL(pt.lastname,'')))) AS worker,
@@ -319,14 +335,16 @@ def _symplr_yoy_data():
             LEFT JOIN dbo.profile_client m  ON pc.MasterClientID = m.recordid
             LEFT JOIN dbo.regions r ON r.regionid = TRY_CAST(pc.region AS INT)
             LEFT JOIN dbo.profile_temp   pt ON o.filledby   = pt.recordid
-        )
+        ) pl_src;
+        CREATE INDEX ix_yoy_pl ON #yoy_pl (sd, ed);
+
         SELECT
             CONVERT(VARCHAR(10), w.week_start, 23) AS week_start,
             p.system, p.category, p.facility, p.division, p.region,
             'GHR' AS vendor_type,
             COUNT(DISTINCT p.worker) AS headcount
-        FROM Weeks w
-        INNER JOIN Placements p
+        FROM #yoy_weeks w
+        INNER JOIN #yoy_pl p
             ON p.sd <= DATEADD(DAY, 6, w.week_start)
             AND (p.ed IS NULL OR p.ed >= w.week_start)
         GROUP BY w.week_start, p.system, p.category, p.facility, p.division, p.region
