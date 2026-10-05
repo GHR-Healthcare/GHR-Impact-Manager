@@ -2,6 +2,34 @@
 
 ## Version History
 
+### 2.47.0 - Three number-correctness fixes, verified against the source data (GH #64, #47, #48)
+
+- **#64 -- a soft-deleted placement counted as a fill.** The placement-existence apply in
+  `GetClosed` had no `p.isDeleted = 0`, unlike every other `View_Placement` query in the
+  repo, so a deleted placement made a resolved order report FILLED and supplied the
+  `first_placed` that days-to-close is anchored on. Measured on the live mirror over 30
+  days: 1,049 resolved orders, 368 counted FILLED, 365 with a live placement — **3 were
+  filled only by a deleted row**
+- **#47 -- Financials and Trend disagreed, and neither was right.** Over 13 months of
+  Symplr orders:
+
+  | bucket | rows | revenue |
+  |---|---|---|
+  | worked (`hours > 0`) | 287,625 | $85,001,816 |
+  | never ran (`hours = 0`) | 528,035 | **$141,958 phantom** |
+  | credit/reversal (`hours < 0`) | 1,351 | **−$400,541 real** |
+
+  Financials counted all three, so it carried the phantom revenue. Trend gated on
+  `> 0`, so it discarded $400k of genuine credits. The two tabs differed by $258k. Both
+  now use `<> 0`, which drops the orders that never ran and keeps the reversals — more
+  correct than either was, not merely consistent. The issue proposed adopting Trend's
+  `> 0`, which would have silently overstated revenue by $400k
+- **#48 -- half the Symplr book reported headcount 0.** `COUNT(DISTINCT lt.tempid)` is
+  null for per-shift orders with no `lt_order` row: 414,452 rows carrying $43.8M. Those
+  groups showed real billings beside a headcount of zero, so any $/head figure was wrong
+  or divided by zero. Falling back to `o.filledby` turns 149,309 orderless worked rows
+  from headcount **0** into **2,536** distinct workers
+
 ### 2.46.0 - Meeting attribution, and the allowlist stops wiping itself (GH #88, #68, #41)
 
 - **#88 -- meetings stay team-wide; what was missing was the author of an edit.**

@@ -568,7 +568,15 @@ def _bullhorn_closed_rows(cursor, app_conn, lookback):
                    MIN(LTRIM(RTRIM(ISNULL(cnd.firstName, '') + ' ' + ISNULL(cnd.lastName, '')))) AS clinician
             FROM dbo.View_Placement p WITH (NOLOCK)
             LEFT JOIN dbo.View_Candidate cnd WITH (NOLOCK) ON cnd.candidateID = p.candidateID
+            -- A soft-deleted placement is not a fill. Without this the order
+            -- reports FILLED, and first_placed / clinician are taken from the
+            -- deleted row, so days-to-close is anchored on it too. Every other
+            -- View_Placement query in the repo filters this; this one did not.
+            -- Measured on the live mirror over 30 days: 1,049 resolved orders,
+            -- 368 counted FILLED, 365 with a live placement -- 3 were filled
+            -- only by a deleted one. (GH #64)
             WHERE p.jobOrderID = jo.jobOrderID
+              AND p.isDeleted = 0
         ) pl
         OUTER APPLY (
             SELECT TOP 1 COALESCE(NULLIF(cty.name, ''), cty.occupation) AS cred

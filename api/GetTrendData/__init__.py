@@ -510,7 +510,12 @@ def _symplr_trend_data():
                     -- billhours rather than status = 'filled' mirrors
                     -- GetHoursData and is safe if a worked shift later moves to
                     -- a terminal status other than 'filled'.
-                    AND ISNULL(o.totalbillhours, 0) > 0
+                    -- "<> 0", not "> 0": a credit/reversal carries negative
+                    -- hours and is real money leaving the book. Gating on "> 0"
+                    -- discarded $400k of them over 13 months while Financials
+                    -- kept them, which is half of why the two tabs disagreed.
+                    -- (GH #47)
+                    AND ISNULL(o.totalbillhours, 0) <> 0
                     AND {symplr_scope_filter('o.customerid', master_ids=symplr_master_ids)}
             )
             SELECT
