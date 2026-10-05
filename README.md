@@ -2,6 +2,26 @@
 
 ## Version History
 
+### 2.43.0 - Two security findings from the issue backlog (GH #26, #78)
+
+- **#26 (high) -- the domain allowlist could be bypassed through the display-name
+  claim, and this was live on `main`.** `EMAIL_CLAIM_TYPES` included the
+  `.../identity/claims/name` claim and `_extract_email` returned the first candidate
+  containing an `@`. The provider accepts any Microsoft account and the holder of a
+  personal one sets their own display name, so an account named
+  `someone@ghrhealthcare.com` passed the gate and reached every `/api/*` endpoint
+  whenever `userDetails` itself carried no `@`. Display name is user-controlled text,
+  not an identity. The claim is gone and explicit claims are now checked **before**
+  `userDetails`. Verified against both attack shapes and three legitimate sign-in
+  shapes, including the email-only-in-userDetails case
+- **#78 (high) -- partly stale, partly real.** The report said there is no HTML escaping
+  anywhere; there are two helpers (`View.esc`, 127 uses, and `_escapeAttr`) and the
+  reproduction it gives, the Non-MSP client allowlist, is fully escaped. But the
+  **system-mappings table was not**: `system_name` went into `innerHTML` as a text node
+  and into a `value=""` attribute with no escaping at all, and `incumbent` escaped only
+  the double quote. Operator-entered through the mappings admin endpoint, so it was
+  stored XSS for anyone opening Settings. All three now go through `_escapeAttr`
+
 ### 2.42.2 - "Comparable Median 0 days" was measuring data entry
 
 The Closed detail read **"This Job 56 days vs Comparable Median 0 days"** across 20

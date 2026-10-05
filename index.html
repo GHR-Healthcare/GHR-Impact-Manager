@@ -1004,7 +1004,7 @@
     const $ = (id) => document.getElementById(id);
 
     // App version - loaded from environment variable via API, with fallback
-    let APP_VERSION = '2.42.2';
+    let APP_VERSION = '2.43.0';
 
     const API_BASE_URL = '/api';
 
@@ -17604,8 +17604,12 @@
                 const ids = Array.isArray(mapping.client_ids) ? mapping.client_ids.join(', ') : '';
                 return `
                     <tr class="hover:bg-slate-50" data-idx="${idx}">
-                        <td class="p-3 text-sm text-slate-600 font-mono">${ids}</td>
-                        <td class="p-3 text-sm text-slate-700 font-medium">${mapping.system_name || ''}</td>
+                        <td class="p-3 text-sm text-slate-600 font-mono">${_escapeAttr(ids)}</td>
+                        <!-- Escaped: these rows are built with innerHTML and
+                             system_name is operator-entered through the mappings
+                             admin endpoint, so an unescaped value here is stored
+                             XSS for everyone who opens Settings. (GH #78) -->
+                        <td class="p-3 text-sm text-slate-700 font-medium">${_escapeAttr(mapping.system_name || '')}</td>
                         <td class="p-3 text-center text-slate-300">—</td>
                         <td class="p-3 text-center text-slate-300">—</td>
                         <td class="p-3 text-center text-slate-300">—</td>
@@ -17625,7 +17629,7 @@
                                class="w-full border border-slate-300 rounded px-2 py-1.5 text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none">
                     </td>
                     <td class="p-2">
-                        <input type="text" value="${mapping.system_name || mapping.system || ''}"
+                        <input type="text" value="${_escapeAttr(mapping.system_name || mapping.system || '')}"
                                onchange="updateMapping(${idx}, 'system_name', this.value)"
                                class="w-full border border-slate-300 rounded px-2 py-1.5 text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none">
                     </td>
@@ -17637,7 +17641,7 @@
                         </select>
                     </td>
                     <td class="p-2">
-                        <input type="text" value="${(mapping.incumbent || '').replace(/"/g, '&quot;')}"
+                        <input type="text" value="${_escapeAttr(mapping.incumbent || '')}"
                                onchange="updateMapping(${idx}, 'incumbent', this.value)"
                                placeholder="e.g. Qualivis"
                                class="w-full border border-slate-300 rounded px-2 py-1.5 text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none">
