@@ -184,7 +184,12 @@ def _symplr_financial_data(date_from_sql: str, date_to_sql: str):
             ISNULL(({sym_division_o}), 'Unknown') AS division,
             pc.state AS region,
             'GHR' AS vendor_type,
-            COUNT(DISTINCT lt.tempid) AS headcount,
+            -- Per-shift orders have no lt_order row, so lt.tempid is NULL on
+            -- 414,452 rows in the window carrying $43.8M -- every one of those
+            -- groups reported headcount 0 beside real billings, so any $/head
+            -- figure was wrong or divided by zero. (GH #48)
+            COUNT(DISTINCT COALESCE(CAST(lt.tempid AS NVARCHAR(100)),
+                                    NULLIF(LTRIM(RTRIM(CAST(o.filledby AS NVARCHAR(100)))), ''))) AS headcount,
             SUM(ISNULL(o.totalbillamount, 0)) AS estimated_billing,
             SUM(ISNULL(o.totalbillhours, 0)) AS hours_worked,
             0 AS gross_margin
@@ -194,6 +199,15 @@ def _symplr_financial_data(date_from_sql: str, date_to_sql: str):
         LEFT JOIN dbo.profile_client m  ON pc.MasterClientID = m.recordid
         LEFT JOIN dbo.regions r ON r.regionid = TRY_CAST(pc.region AS INT)
         WHERE o.jobdatestart IS NOT NULL
+            -- Worked orders OR credits -- not "> 0". Over 13 months on the
+            -- live Symplr book: worked (hours>0) 287,625 rows $85,001,816;
+            -- never ran (hours=0) 528,035 rows $141,958 phantom; credits
+            -- (hours<0) 1,351 rows -$400,541 real. This query counted all
+            -- three and carried the phantom revenue, while Trend gated on
+            -- "> 0" and threw away the credits -- the two tabs differed by
+            -- $258k. "<> 0" drops what never ran and keeps the reversals.
+            -- (GH #47)
+            AND ISNULL(o.totalbillhours, 0) <> 0
             AND CAST(o.jobdatestart AS DATE) >= {date_from_sql}
             AND CAST(o.jobdatestart AS DATE) < {date_to_sql}
             AND {sym_scope_o}

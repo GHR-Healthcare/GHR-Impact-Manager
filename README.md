@@ -2,6 +2,28 @@
 
 ## Version History
 
+### 2.21.8 - Three number-correctness fixes (GH #64, #47, #48)
+
+Each verified against the source data before any figure moved. Applied here because
+production non-MSP is where these numbers are actually read.
+
+- **#64 — a soft-deleted placement counted as a fill.** `GetClosed`'s placement-existence
+  apply had no `p.isDeleted = 0`, unlike every other `View_Placement` query in the repo,
+  so a deleted placement made a resolved order report FILLED and supplied the
+  `first_placed` that days-to-close anchors on. Live mirror over 30 days: 1,049 resolved
+  orders, 368 counted FILLED, 365 with a live placement — **3 filled only by a deleted
+  row**
+- **#47 — the Financials and Trend tabs disagreed, and neither was right.** Over 13
+  months of Symplr orders: worked (`hours > 0`) 287,625 rows / $85,001,816; never ran
+  (`hours = 0`) 528,035 rows / **$141,958 phantom**; credits (`hours < 0`) 1,351 rows /
+  **−$400,541 real**. Financials counted all three and carried the phantom revenue;
+  Trend gated on `> 0` and discarded the credits; the two differed by $258k. Both use
+  `<> 0` now — drops what never ran, keeps the reversals
+- **#48 — half the Symplr book reported headcount 0.** `COUNT(DISTINCT lt.tempid)` is
+  null for per-shift orders with no `lt_order` row: 414,452 rows carrying $43.8M showed
+  real billings beside a headcount of zero. Falling back to `o.filledby` turns 149,309
+  orderless worked rows from **0** into **2,536** distinct workers
+
 ### 2.21.7 - The domain allowlist could be bypassed through the display-name claim
 
 - `EMAIL_CLAIM_TYPES` included `.../identity/claims/name` and `_extract_email` returned
