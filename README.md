@@ -2,6 +2,28 @@
 
 ## Version History
 
+### 2.47.1 - Rate-Intel weeks were off by a week, and free-text arithmetic hardened (GH #92, #49, #65)
+
+- **#92 -- Rate Intel bucketed weeks to MONDAY while every other weekly series in the app
+  buckets to SUNDAY**, despite the comment directly above it saying "Sunday-based". Worse
+  than an off-by-one: for a Sunday the old expression returned the *previous* Monday, six
+  days earlier — a different week entirely. Verified across a full week of dates; all
+  seven disagreed with `GetTrendData` / `GetHoursData` / `GetFinancialData` /
+  `GetYoYTrendData`. Any client-side comparison of a rate week against a trend week was
+  joining the wrong bucket
+- **#92 also: this endpoint never pinned `DATEFIRST`.** It opens a raw `pyodbc.connect`
+  rather than going through `data_source._pin_datefirst`, so `DATEPART(WEEKDAY)` depended
+  on the server's language default. `SET DATEFIRST 7` now, as every other MSP endpoint
+  does
+- **#49, #65 -- free-text columns multiplied before being cast.** `clientBillRate` and
+  `hoursPerDay` are free text in the Bullhorn views;
+  `TRY_CAST(p.hoursPerDay * 5 AS DECIMAL)` casts the *product*, so the multiply runs
+  first and one unparseable value aborts the whole Bullhorn branch —
+  `GetFinancialData` had no `TRY_CAST` at all. Each column is cast before the arithmetic
+  now, in `GetFinancialData`, `GetTrendData` and `GetHoursData`.
+  **Latent, not active:** 0 bad values across 52,026 live placements, so this is
+  hardening against a silent partial book rather than a figure that was wrong
+
 ### 2.47.0 - Three number-correctness fixes, verified against the source data (GH #64, #47, #48)
 
 - **#64 -- a soft-deleted placement counted as a fill.** The placement-existence apply in

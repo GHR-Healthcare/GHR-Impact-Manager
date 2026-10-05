@@ -71,7 +71,15 @@ def _peer_rows(cursor):
             -- Week start, Sunday-based, matching the DATEFIRST 7 the app pins
             -- for every other week bucket and the Saturday period ends in the
             -- rate trend tables.
-            DATEADD(DAY, -((DATEPART(WEEKDAY, o.dateAdded_date) + 5) % 7),
+            --
+            -- The old expression, -((DATEPART(WEEKDAY, d) + 5) % 7), returned
+            -- the MONDAY of the week despite that comment -- and for a Sunday
+            -- it returned the PREVIOUS Monday, six days earlier, i.e. a
+            -- different week. Every other weekly series in the app
+            -- (GetTrendData, GetHoursData, GetFinancialData, GetYoYTrendData)
+            -- uses the form below, so rate weeks never lined up with trend
+            -- weeks. (GH #92)
+            DATEADD(DAY, 1 - DATEPART(WEEKDAY, o.dateAdded_date),
                     o.dateAdded_date)                      AS week_start,
             CAST(o.bt_Outlier AS INT)                      AS is_outlier
         /* Deliberately NOT scoped to one book. Measured 2026-10-02 over the
@@ -159,6 +167,12 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
         )
         cursor = conn.cursor()
         cursor.execute('SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED')
+        # DATEPART(WEEKDAY) is relative to DATEFIRST, and this endpoint opens a
+        # raw connection rather than going through data_source._pin_datefirst,
+        # so it inherited whatever the server default happened to be. Every
+        # other MSP endpoint pins this. Without it the week bucket above is
+        # correct only by luck of the server's language setting. (GH #92)
+        cursor.execute('SET DATEFIRST 7')
         peers = _peer_rows(cursor)
 
         payload = {

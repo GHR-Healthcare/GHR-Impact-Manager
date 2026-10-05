@@ -251,7 +251,14 @@ def _bullhorn_trend_data():
             p.customText11 AS pm,
             p.status AS status,
             TRY_CAST(p.clientBillRate AS DECIMAL(10,2)) AS bill_rate,
-            TRY_CAST(p.hoursPerDay * 5 AS DECIMAL(10,2)) AS weekly_hours,
+            -- TRY_CAST each column BEFORE the arithmetic. These are free text
+            -- in the Bullhorn views, and a cast applied to the product --
+            -- TRY_CAST(p.hoursPerDay * 5 AS ...) -- does not protect it: the
+            -- multiply runs first and a single unparseable value aborts the
+            -- whole Bullhorn branch. Clean today (0 bad values across 52,026
+            -- live placements), so this is hardening rather than a correction.
+            -- GetTrendData's revenue SUM already does it this way. (GH #49, #65)
+            TRY_CAST(p.hoursPerDay AS DECIMAL(10,2)) * 5 AS weekly_hours,
             CAST(p.dateBegin AS DATE) AS startDate,
             CAST(p.dateEnd AS DATE) AS endDate
         FROM dbo.View_Placement p
