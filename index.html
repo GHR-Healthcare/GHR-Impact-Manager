@@ -1004,7 +1004,7 @@
     const $ = (id) => document.getElementById(id);
 
     // App version - loaded from environment variable via API, with fallback
-    let APP_VERSION = '2.47.1';
+    let APP_VERSION = '2.48.0';
 
     const API_BASE_URL = '/api';
 
@@ -14326,6 +14326,23 @@
             </div>
           </div>
           ${partialDataBanner}
+          ${/* The prior-year series is a weekly aggregate without profession or
+                specialty columns, so it cannot follow those two filters. Said
+                plainly, and only while the overlay is on and such a filter is
+                active -- otherwise a filtered current year would be compared
+                against a full-book prior year with nothing to indicate it.
+                (GH #50) */''}
+          ${(window.__yoyVisible && yoyUnfilterable().length) ? `
+            <div class="mb-4 rounded-lg border border-sky-300 bg-sky-50 px-4 py-2.5 flex items-start gap-3">
+              <i data-lucide="info" class="w-4 h-4 text-sky-600 mt-0.5 flex-shrink-0"></i>
+              <div class="text-xs text-sky-900">
+                <span class="font-semibold">Prior-year line is not filtered by
+                ${yoyUnfilterable().join(' or ')}.</span>
+                That series is stored as a weekly total per system, facility and category,
+                so it carries no ${yoyUnfilterable().join(' or ')} breakdown. The current-year
+                line below is filtered; the comparison is not like-for-like.
+              </div>
+            </div>` : ''}
           <div class="bg-white rounded-xl border border-slate-200 p-4 shadow-sm">
             <div id="trendChartLegend" class="flex flex-wrap justify-center gap-x-5 gap-y-2 mb-3 text-[11px] text-slate-600"></div>
             <canvas id="trendChart" height="100"></canvas>
@@ -14727,12 +14744,26 @@
               && r.facility
               && !s.filterSelection.facilities.has(r.facility)) return false;
           if (!matchesTrendCategory(r.category)) return false;
-          if (s.filterSelection.specialties.size > 0) {
-            const rs = (r.specialty || '').toLowerCase();
-            const specMatch = Array.from(s.filterSelection.specialties)
-              .some(sp => sp.toLowerCase() === rs);
-            if (!specMatch) return false;
-          }
+          /* The prior-year payload is a weekly aggregate by system / category /
+           * facility / division / region / vendor_type -- it carries NO
+           * profession or specialty column. The two guards therefore used to
+           * disagree with each other, both silently:
+           *
+           *   profession: `&& r.profession &&` short-circuited on undefined,
+           *               so the overlay kept 100% of rows and a filtered
+           *               current year was compared against an unfiltered
+           *               prior year.
+           *   specialty:  compared '' against the selection, matched nothing,
+           *               so the overlay silently vanished instead.
+           *
+           * Both now short-circuit the same way, and yoyUnfilterable() below
+           * tells the user the line is not filtered rather than leaving them
+           * to infer it from a wrong delta. (GH #50)
+           */
+          if (s.filterSelection.specialties.size > 0
+              && r.specialty
+              && !Array.from(s.filterSelection.specialties)
+                   .some(sp => sp.toLowerCase() === String(r.specialty).toLowerCase())) return false;
           if (!Utils.matchesSelectedDivisions(r.division, s.filterSelection.divisions)) return false;
           if (!Utils.matchesSelectedTeams(r.team, s.filterSelection.teams)) return false;
           if (s.filterSelection.professions.size > 0
@@ -14742,6 +14773,17 @@
               && r.region
               && !s.filterSelection.regions.has(r.region)) return false;
           return true;
+        };
+
+        /* Which active filters the prior-year series cannot honour, because the
+         * aggregate does not carry those columns. Returned so the overlay can
+         * say so rather than quietly comparing unlike things. (GH #50) */
+        const yoyUnfilterable = () => {
+          const f = window.store.state.filterSelection || {};
+          const out = [];
+          if (f.professions && f.professions.size > 0) out.push('profession');
+          if (f.specialties && f.specialties.size > 0) out.push('specialty');
+          return out;
         };
 
         const computeYoYDatasets = (view) => {

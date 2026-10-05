@@ -1,7 +1,10 @@
 import azure.functions as func
 import pyodbc
 import os
+import time
+from concurrent.futures import ThreadPoolExecutor
 import json
+from shared_code.endpoint_cache import cache_key, read_cache, write_cache
 from shared_code.auth import require_allowed_domain
 from shared_code.data_source import is_non_msp, get_bullhorn_conn, get_symplr_conn, get_appdb_conn
 from shared_code.bullhorn_systems import (
@@ -301,23 +304,53 @@ def _symplr_yoy_data():
 
 
 def _non_msp_yoy(req: func.HttpRequest) -> func.HttpResponse:
+    """Prior-year weekly headcount for the non-MSP book.
+
+    This endpoint was returning a 500: the two sources ran one after the other,
+    nothing was cached, and the whole thing exceeded the 45s SWA gateway on the
+    non-MSP book, so the prior-year overlay never loaded at all. (MSP answered
+    in 9.1s and was fine.) The branches are independent reads, so they run
+    concurrently, each on its own connection, and the result is cached -- a
+    sixty-week historical series does not move within a day.
+    """
+    started = time.time()
+    key = cache_key('yoy-trend-data', 'non_msp')
+    cached = read_cache(key)
+    if cached is not None:
+        print('yoy-trend-data(non_msp): served from cache')
+        return func.HttpResponse(json.dumps(cached, default=str),
+                                 mimetype='application/json', status_code=200)
+
     rows = []
     errors = []
-    try:
-        rows.extend(_bullhorn_yoy_data())
-    except Exception as e:
-        print(f"Bullhorn YoY error: {e}")
-        import traceback; traceback.print_exc()
-        errors.append(f"bullhorn: {e}")
-    try:
-        rows.extend(_symplr_yoy_data())
-    except Exception as e:
-        print(f"Symplr YoY error: {e}")
-        import traceback; traceback.print_exc()
-        errors.append(f"symplr: {e}")
-    print(f"non-MSP YoY: {len(rows)} aggregate rows (errors: {errors or 'none'})")
+
+    def _run(label, fn):
+        try:
+            return label, fn(), None
+        except Exception as e:
+            print(f"{label} YoY error: {e}")
+            import traceback; traceback.print_exc()
+            return label, [], f'{label.lower()}: {e}'
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        for label, got, err in pool.map(lambda a: _run(*a),
+                                        (('Bullhorn', _bullhorn_yoy_data),
+                                         ('Symplr', _symplr_yoy_data))):
+            if err:
+                errors.append(err)
+            rows.extend(got)
+
+    print(f"non-MSP YoY: {len(rows)} aggregate rows "
+          f"({int((time.time()-started)*1000)}ms; errors: {errors or 'none'})")
+    # errors were collected and then dropped from the payload, the same defect
+    # financial-data had in #86 -- a failed source rendered the overlay with
+    # half the book and no sign of it.
+    payload = {'rows': rows, 'errors': errors}
+    if not errors:
+        write_cache(key, payload, build_ms=int((time.time() - started) * 1000),
+                    refreshed_by='live-request')
     return func.HttpResponse(
-        json.dumps({'rows': rows}, default=str),
+        json.dumps(payload, default=str),
         mimetype="application/json",
         status_code=200
     )

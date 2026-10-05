@@ -2,6 +2,29 @@
 
 ## Version History
 
+### 2.48.0 - The non-MSP prior-year overlay was dead, and its filters lied (GH #50)
+
+Found while verifying #50: **`yoy-trend-data` was returning a 500 on non-MSP** — 45.2s
+against the 45s gateway — so the prior-year overlay never loaded on that book at all.
+MSP answered in 9.1s and was fine. The same uncached code is on `main`, so production
+non-MSP has the same dead overlay.
+
+- **Fixed by running the two sources concurrently and caching the result.** Bullhorn and
+  Symplr ran one after the other with nothing cached, and a sixty-week historical series
+  does not move within a day. Each branch gets its own connection
+- **The endpoint also dropped its `errors` list from the payload**, the same defect
+  `financial-data` had in #86 — a failed source rendered the overlay with half the book
+  and no sign of it. Now returned, and a partial result is never cached
+- **#50 -- the two prior-year filter guards disagreed with each other, silently.** The
+  payload is a weekly aggregate by system / category / facility / division / region /
+  vendor_type and carries **no profession or specialty column**. The profession guard
+  short-circuited on `undefined` and kept 100% of rows, so a filtered current year was
+  compared against an unfiltered prior year; the specialty guard compared `''` against
+  the selection, matched nothing, and made the overlay vanish instead. Both short-circuit
+  the same way now, and the tab states plainly that the prior-year line is not filtered
+  by profession or specialty when such a filter is active — rather than leaving the
+  reader to infer it from a wrong delta
+
 ### 2.47.1 - Rate-Intel weeks were off by a week, and free-text arithmetic hardened (GH #92, #49, #65)
 
 - **#92 -- Rate Intel bucketed weeks to MONDAY while every other weekly series in the app
