@@ -357,6 +357,28 @@ def _non_msp_yoy(req: func.HttpRequest) -> func.HttpResponse:
     rows = []
     errors = []
 
+    # ?debug=bullhorn | symplr runs ONE branch and reports its timing. The
+    # combined debug below cannot answer "which half is slow" because it still
+    # waits for both, and both together exceed the gateway -- so the response
+    # never arrives. One at a time does fit. (GH #97)
+    only = str(req.params.get('debug', '')).lower()
+    if only in ('bullhorn', 'symplr'):
+        fn = _bullhorn_yoy_data if only == 'bullhorn' else _symplr_yoy_data
+        t0 = time.time()
+        try:
+            got = fn()
+            return func.HttpResponse(json.dumps({
+                'branch': only, 'ms': int((time.time() - t0) * 1000),
+                'rows': len(got),
+                'serializedBytes': len(json.dumps(got, default=str)),
+            }), mimetype='application/json', status_code=200)
+        except Exception as e:
+            import traceback; traceback.print_exc()
+            return func.HttpResponse(json.dumps({
+                'branch': only, 'ms': int((time.time() - t0) * 1000),
+                'error': str(e)[:400],
+            }), mimetype='application/json', status_code=200)
+
     timings = {}
 
     def _run(label, fn):
