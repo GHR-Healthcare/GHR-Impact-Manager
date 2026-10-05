@@ -1,6 +1,7 @@
 import azure.functions as func
 import json
 import datetime
+from shared_code.audit import record_change
 from shared_code.auth import require_allowed_domain, current_user_email
 from shared_code.data_source import get_appdb_conn
 
@@ -33,6 +34,18 @@ def _ensure_schema(cursor):
             updated_at  DATETIME2     NOT NULL,
             created_by  NVARCHAR(200) NULL
         )
+    """)
+    # Additive migration: meetings are shared across the whole team by design,
+    # so anyone can edit anyone's. That is the intended model -- the control is
+    # knowing WHO last changed a meeting, not preventing it. created_by is set
+    # on insert only, so before this an edit left updated_at with no author
+    # against it. (GH #88)
+    cursor.execute("""
+        IF NOT EXISTS (
+            SELECT 1 FROM sys.columns
+            WHERE object_id = OBJECT_ID('impactmgr.meetings') AND name = 'updated_by'
+        )
+        ALTER TABLE impactmgr.meetings ADD updated_by NVARCHAR(200) NULL
     """)
     # Additive migration: tables created before stages existed. Without it,
     # recall can't tell a meeting scoped to two stages from a four-stage
@@ -159,12 +172,13 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             WHEN MATCHED THEN UPDATE SET
                 health_system = ?, facilities = ?, recipients = ?, stage = ?,
                 stages = ?, completed = ?, actions = ?, started_at = ?, ended_at = ?,
-                updated_at = ?, recap_html = COALESCE(?, recap_html)
+                updated_at = ?, recap_html = COALESCE(?, recap_html),
+                updated_by = ?
             WHEN NOT MATCHED THEN
                 INSERT (meeting_id, health_system, facilities, recipients, stage,
                         stages, completed, actions, started_at, ended_at, updated_at,
-                        created_by, recap_html)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+                        created_by, recap_html, updated_by)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
         """,
             meeting_id,
             body.get('healthSystem'), json.dumps(body.get('facilities') or []),
@@ -172,12 +186,18 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             json.dumps(body.get('stages') or []),
             json.dumps(body.get('completed') or []), actions,
             _dt(body.get('startedAt')), _dt(body.get('endedAt')), now, recap_html,
+            user,
             meeting_id,
             body.get('healthSystem'), json.dumps(body.get('facilities') or []),
             body.get('recipients'), body.get('stage'),
             json.dumps(body.get('stages') or []),
             json.dumps(body.get('completed') or []), actions,
-            _dt(body.get('startedAt')), _dt(body.get('endedAt')), now, user, recap_html)
+            _dt(body.get('startedAt')), _dt(body.get('endedAt')), now, user, recap_html,
+            user)
+        record_change(cursor, 'meeting.save', meeting_id,
+                      {'healthSystem': body.get('healthSystem'),
+                       'stage': body.get('stage'),
+                       'actions': len(body.get('actions') or [])}, user)
         conn.commit()
         print(f'Meetings: saved {meeting_id} ({len(body.get("actions") or [])} actions) for {user}')
         return func.HttpResponse(

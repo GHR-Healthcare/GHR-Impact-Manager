@@ -146,7 +146,6 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
         if req.method == 'POST':
             try:
                 body = req.get_json()
-                entries = body.get('allowlist', [])
             except Exception:
                 return func.HttpResponse(
                     json.dumps({'error': 'Invalid JSON body'}),
@@ -154,15 +153,45 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                     status_code=400,
                 )
 
-            # Coerce + validate. Silently drop rows without a numeric client_id
-            # or an unrecognized source. Dedupe on (source, client_id).
+            # The handler replaces the whole table, so a body with no
+            # 'allowlist' key used to default to [] and delete every manually
+            # forced client for BOTH sources -- and these ids drive scope
+            # resolution across every non-MSP endpoint, so the accounts simply
+            # vanished from the dashboard. An absent key is a malformed request,
+            # not an instruction to erase the configuration. (GH #68)
+            if not isinstance(body, dict) or 'allowlist' not in body:
+                return func.HttpResponse(
+                    json.dumps({'error': 'missing_allowlist',
+                                'detail': "body must contain an 'allowlist' array; "
+                                          "send [] explicitly to clear it"}),
+                    mimetype="application/json",
+                    status_code=400,
+                )
+            entries = body.get('allowlist')
+            if not isinstance(entries, list):
+                return func.HttpResponse(
+                    json.dumps({'error': 'allowlist_must_be_an_array'}),
+                    mimetype="application/json",
+                    status_code=400,
+                )
+
+            # Coerce + validate. A non-numeric client_id is REJECTED rather
+            # than dropped: silently skipping it meant a payload whose ids were
+            # all malformed cleared the table and reported success. Dedupe on
+            # (source, client_id). (GH #68)
             cleaned = []
             seen = set()
+            rejected = []
             for e in entries:
+                if not isinstance(e, dict):
+                    rejected.append({'entry': str(e)[:60], 'why': 'not_an_object'})
+                    continue
                 raw_id = e.get('client_id')
                 try:
                     cid = int(raw_id)
                 except (TypeError, ValueError):
+                    rejected.append({'client_id': str(raw_id)[:60],
+                                     'why': 'client_id_not_numeric'})
                     continue
                 source = (e.get('source') or 'bullhorn').lower()
                 if source not in VALID_SOURCES:
@@ -177,6 +206,14 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                     'display_name': (e.get('display_name') or None) if isinstance(e.get('display_name'), str) else None,
                     'notes': (e.get('notes') or None) if isinstance(e.get('notes'), str) else None,
                 })
+
+            if rejected:
+                return func.HttpResponse(
+                    json.dumps({'error': 'invalid_entries', 'rejected': rejected[:20],
+                                'detail': 'nothing was changed'}),
+                    mimetype="application/json",
+                    status_code=400,
+                )
 
             user = _user_from_req(req)
             # added_by already records the owner of each row; this puts the

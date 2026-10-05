@@ -2,6 +2,24 @@
 
 ## Version History
 
+### 2.46.0 - Meeting attribution, and the allowlist stops wiping itself (GH #88, #68, #41)
+
+- **#88 -- meetings stay team-wide; what was missing was the author of an edit.**
+  Confirmed as the intended model: meetings are between the whole team, and
+  division/department scoping is a later concern. So the control is attribution, as it
+  is for settings. `created_by` was set on insert only, so an edit left `updated_at`
+  with nobody against it; there is now an `updated_by` column (additive migration, same
+  idiom as the others in that file), set on both branches of the MERGE, and each save
+  joins the shared `impactmgr.changes` timeline
+- **#68 -- a POST with no `allowlist` key deleted every forced client.** The handler
+  replaces the whole table, and an absent key defaulted to `[]`, so `{}` wiped the
+  configuration for both sources and committed. Those ids drive scope resolution across
+  every non-MSP endpoint, so the accounts simply vanished from the dashboard. An absent
+  key is now a 400; send `[]` explicitly to clear. A non-numeric `client_id` is
+  **rejected** rather than silently dropped, for the same reason -- a payload whose ids
+  were all malformed used to clear the table and report success
+- **#41 -- closed as accepted.** Browser-side redaction is the agreed model
+
 ### 2.45.0 - Record who changed settings (GH #52, #81)
 
 Settings are open by design — anyone who can sign in may edit the client allowlist, the
