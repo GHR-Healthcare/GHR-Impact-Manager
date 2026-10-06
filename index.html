@@ -1004,7 +1004,7 @@
     const $ = (id) => document.getElementById(id);
 
     // App version - loaded from environment variable via API, with fallback
-    let APP_VERSION = '2.48.3';
+    let APP_VERSION = '2.49.0';
 
     const API_BASE_URL = '/api';
 
@@ -8777,6 +8777,42 @@
           ${rows}`;
       },
 
+      /* With no counterpart record the left column ran ~190px short of the
+       * right and the gap read as a rendering fault. The panel's job is still
+       * to say what IS known, so show the source system's own record --
+       * including the identifier that would have done the linking if anything
+       * carried it across. Fields with no value are dropped rather than shown
+       * as blanks, so a sparse seat gets a short list, not an empty table. */
+      sourceRecordPanel(r) {
+        const vms = r.source_system || 'VMS';
+        const d = v => (v ? String(v).slice(0, 10) : null);
+        const items = [
+          [vms + ' ID',      r.woid || r.contract_id],
+          ['Start',          d(r.start_date)],
+          ['End',            d(r.end_date)],
+          ['Hours / wk',     r.hours_per_week],
+          ['Agency',         r.agency],
+          ['Unit',           r.unit || r.cost_center],
+          ['Hiring Manager', r.hiring_manager || r.account_manager],
+          ['Status',         r.contract_status || r.mod_status],
+        ].filter(([, v]) => v != null && v !== '');
+        if (!items.length) return '';
+        return `
+          <div class="mt-3">
+            <div class="text-[9px] uppercase tracking-wide text-slate-400 font-semibold mb-1.5">
+              What ${View.esc(vms)} records
+            </div>
+            <dl class="text-[11px] border-y border-slate-100 divide-y divide-slate-100">
+              ${items.map(([k, v]) => `
+                <div class="flex justify-between items-baseline gap-3 py-1">
+                  <dt class="text-slate-400 shrink-0">${View.esc(k)}</dt>
+                  <dd class="text-slate-700 font-medium text-right truncate"
+                      title="${View.esc(String(v))}">${View.esc(String(v))}</dd>
+                </div>`).join('')}
+            </dl>
+          </div>`;
+      },
+
       systemMatchPanel(r) {
         const m = r.match || {};
         const sm = View.matchSummary(r);
@@ -8838,7 +8874,8 @@
               copy of the seat to reconcile. Its recorded history is shown instead.
             </p>
             ${View.matchHistoryPanel(r)}
-            ${View.matchWindowBar(r)}`;
+            ${View.sourceRecordPanel(r)}
+            <div class="mt-auto">${View.matchWindowBar(r)}</div>`;
         } else {
           inner = `
             <p class="text-[11px] text-slate-500 mb-3 leading-snug">
@@ -8847,11 +8884,12 @@
                 : 'The seat has no counterpart record to compare against.'}
             </p>
             ${View.matchHistoryPanel(r)}
-            ${View.matchWindowBar(r)}`;
+            ${View.sourceRecordPanel(r)}
+            <div class="mt-auto">${View.matchWindowBar(r)}</div>`;
         }
 
         return `
-          <div>
+          <div class="h-full flex flex-col">
             <div class="flex items-center justify-between gap-2 mb-1 pb-2 border-b border-slate-100">
               <h5 class="text-xs font-bold uppercase tracking-wide text-slate-500">System Match</h5>
               <span class="inline-flex items-center gap-1.5 text-[9px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-full px-2 py-0.5">
@@ -8862,7 +8900,7 @@
             <p class="text-[10px] text-slate-400 mb-3">
               Compares what each system records for this seat and flags the differences. It does not create a next step.
             </p>
-            ${inner}
+            <div class="flex-1 flex flex-col">${inner}</div>
           </div>`;
       },
 

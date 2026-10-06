@@ -2,6 +2,26 @@
 
 ## Version History
 
+### 2.49.0 - The extension modal's left column had 193px of dead space
+
+- **Reported from the prototype: whitespace in the extension popup.** Measured it rather
+  than eyeballed it — on a seat with no counterpart record the left column's content
+  ended 193px above the right column's, and that block of nothing read as a rendering
+  fault. An earlier pass (2.39.1) moved the form out to fix a different gap; this is the
+  remaining one, and it only shows on seats the crosswalk cannot link
+- **Cause:** the grid item stretched to the row height but its *content* did not, so the
+  extension-window bar floated wherever the short content left it. The panel is now a
+  full-height flex column and the bar is pinned with `mt-auto`, so it bottoms out level
+  with the right column instead of hanging mid-air
+- **That alone only moved the gap, so the column now carries real content.** New
+  `What <source> records` block on no-match and single-system seats: the source
+  identifier — the key that *would* have done the linking if anything carried it across
+  — plus start, end, hours, agency, unit, hiring manager and status. Empty fields are
+  dropped rather than rendered as blanks, so a sparse seat gets a short list and not an
+  empty table
+- Verified by rendering the modal locally against a stubbed API and measuring both
+  columns: 193px gap before, 0px after
+
 ### 2.48.3 - The non-MSP prior-year overlay works (GH #97)
 
 The Symplr branch took **over four minutes** — it blew the gateway on its own, which is
