@@ -591,10 +591,17 @@
          justify-between a lone child falls to the LEFT -- so the tab row moved
          from tab to tab depending on whether that view happened to have an
          aging legend. -->
-    <div class="flex items-center gap-3 shrink-0 sm:ml-auto">
+    <!-- min-w-0, NOT shrink-0. shrink-0 stopped this wrapper from ever
+         narrowing, so the tab bar could not shrink and the whole PAGE scrolled
+         sideways instead. Non-MSP shows all ten tabs and measured 43px of
+         document overflow at 1280px; MSP's seven tabs fit, which is why this
+         only ever showed on one of the two instances. -->
+    <div class="flex items-center gap-3 min-w-0 sm:ml-auto">
       <!-- Banner shown while a meeting is running. Non-MSP only. -->
       <div id="meetingBanner" class="hidden mb-4"></div>
-      <div class="flex bg-white border border-slate-200 rounded-lg p-1 shadow-sm" id="viewToggles">
+      <!-- overflow-x-auto + min-w-0: with ten tabs the row is wider than the
+           space at 1280px, so it scrolls itself rather than widening the page. -->
+      <div class="flex bg-white border border-slate-200 rounded-lg p-1 shadow-sm overflow-x-auto min-w-0" id="viewToggles">
         <button onclick="store.dispatch('SET_VIEW','closed')" id="btnViewClosed"
                 class="px-4 py-1.5 text-xs font-bold rounded-md transition-colors text-slate-500 hover:text-slate-700 flex items-center gap-1.5 hidden">
           <i data-lucide="check-circle" class="w-3.5 h-3.5"></i> Closed
@@ -933,7 +940,7 @@
     const $ = (id) => document.getElementById(id);
 
     // App version - loaded from environment variable via API, with fallback
-    let APP_VERSION = '2.21.10';
+    let APP_VERSION = '2.21.11';
 
     const API_BASE_URL = '/api';
 

@@ -2,6 +2,21 @@
 
 ## Version History
 
+### 2.21.11 - Non-MSP's header made the whole page scroll sideways
+
+- At 1280px — an ordinary laptop width — the **document itself** scrolled horizontally by
+  43px on Non-MSP. A document-level sideways scroll is the one overflow signal that is
+  never a false positive, because nothing is scrolling it deliberately
+- The tab-bar wrapper carried `shrink-0`, so it could never narrow, and `#viewToggles`
+  had no `overflow-x-auto` to fall back on. Ten tabs simply did not fit, so the page grew
+  instead. `shrink-0` → `min-w-0`, and `overflow-x-auto min-w-0` added to the tab row, so
+  the tabs scroll themselves
+- **MSP is unaffected and unchanged.** It renders seven tabs, which fit, so the overflow
+  never occurred there and `min-w-0` never engages — measured identical before and after:
+  0px page overflow, 0px tab scroll, 7 tabs. Found on the prototype (ten tabs) and
+  confirmed against Non-MSP's tab set before shipping
+- Measured at 1280px: Non-MSP 43px → **0px**
+
 ### 2.21.10 - Year-over-year trend no longer times out on Non-MSP (GH #97, #46, #45)
 
 - **#97 — the Non-MSP year-over-year overlay returned a 500 after 45 seconds**, so the
