@@ -2,6 +2,16 @@
 
 ## Version History
 
+### 2.49.1 - The new source block rendered empty on the seats it was for
+
+- The `What <source> records` block added in 2.49.0 led with `woid || contract_id`.
+  Both come back **null** on MSP rows — the populated identifier is `parent_ref`. I took
+  the field names from the SQL aliases instead of from a live payload, and a live check
+  on the MSP prototype showed the block absent on exactly the seats it was written for
+- Field list now verified against a real `extensions-data` response and rendered against
+  a real unlinked row rather than an invented fixture: `B4 Ref`, start, end, hours/wk,
+  agency, unit, manager, status all populate
+
 ### 2.49.0 - The extension modal's left column had 193px of dead space
 
 - **Reported from the prototype: whitespace in the extension popup.** Measured it rather

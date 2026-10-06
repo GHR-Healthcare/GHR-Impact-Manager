@@ -1004,7 +1004,7 @@
     const $ = (id) => document.getElementById(id);
 
     // App version - loaded from environment variable via API, with fallback
-    let APP_VERSION = '2.49.0';
+    let APP_VERSION = '2.49.1';
 
     const API_BASE_URL = '/api';
 
@@ -8786,15 +8786,18 @@
       sourceRecordPanel(r) {
         const vms = r.source_system || 'VMS';
         const d = v => (v ? String(v).slice(0, 10) : null);
+        // Field names checked against a live MSP payload, not guessed from the
+        // SQL aliases: woid/contract_id come back null on these rows and the
+        // identifier that is actually populated is parent_ref.
         const items = [
-          [vms + ' ID',      r.woid || r.contract_id],
-          ['Start',          d(r.start_date)],
-          ['End',            d(r.end_date)],
-          ['Hours / wk',     r.hours_per_week],
-          ['Agency',         r.agency],
-          ['Unit',           r.unit || r.cost_center],
-          ['Hiring Manager', r.hiring_manager || r.account_manager],
-          ['Status',         r.contract_status || r.mod_status],
+          [vms + ' Ref',   r.parent_ref || r.woid || r.contract_id],
+          ['Start',        d(r.start_date)],
+          ['End',          d(r.end_date)],
+          ['Hours / wk',   r.hours_per_week],
+          ['Agency',       r.agency],
+          ['Unit',         r.unit || r.cost_center],
+          ['Manager',      r.hiring_manager || r.account_manager],
+          ['Status',       r.contract_status || r.mod_status],
         ].filter(([, v]) => v != null && v !== '');
         if (!items.length) return '';
         return `
