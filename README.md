@@ -2,6 +2,22 @@
 
 ## Version History
 
+### 2.49.2 - shrink-0 on the tab bar made the whole page scroll sideways
+
+- Found while auditing the live MSP prototype, not reported: at 1280px the **page
+  itself** scrolled horizontally — 49px on Open Jobs, 50px on Extensions, 87px on
+  Closed. A document-level sideways scroll is the one overflow signal that is never a
+  false positive, since nothing is scrolling it on purpose
+- The tab bar already carried `overflow-x-auto` and a comment saying ten tabs should
+  "degrade to a scroll on narrow screens instead of breaking the header layout". Its
+  wrapper carried `shrink-0`, which meant the wrapper never narrowed, so the inner
+  scroll could never engage and the page broke instead — the exact outcome the comment
+  said it was preventing
+- `shrink-0` → `min-w-0` on the wrapper, `min-w-0` added to `#viewToggles`. Measured at
+  1280/1366/1440: page overflow 49/0/0 → **0/0/0**, tab-bar scroll 0 → 261/205/157
+- `sm:ml-auto` is kept, so the right-anchoring that stopped the 446px of tab drift
+  between views still holds
+
 ### 2.49.1 - The new source block rendered empty on the seats it was for
 
 - The `What <source> records` block added in 2.49.0 led with `woid || contract_id`.

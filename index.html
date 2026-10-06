@@ -600,11 +600,16 @@
          justify-between a lone child falls to the LEFT -- so the tab row moved
          from tab to tab depending on whether that view happened to have an
          aging legend. Measured at 446px of drift before this. -->
-    <div class="flex items-center gap-3 shrink-0 sm:ml-auto">
+    <!-- min-w-0, NOT shrink-0. shrink-0 here stopped this wrapper from ever
+         narrowing, so the overflow-x-auto on #viewToggles below could never
+         engage and the whole PAGE scrolled sideways instead: 49px on Open
+         Jobs, 50px on Extensions, 87px on Closed, measured at 1280px. The
+         scroll the comment below promises only works if this box can shrink. -->
+    <div class="flex items-center gap-3 min-w-0 sm:ml-auto">
       <!-- Tab bar. Order and labels are the product spec; the view/button/wrapper
            wiring lives in View.VIEWS. overflow-x-auto so ten tabs degrade to a
            scroll on narrow screens instead of breaking the header layout. -->
-      <div class="flex bg-white border border-slate-200 rounded-lg p-1 shadow-sm overflow-x-auto" id="viewToggles">
+      <div class="flex bg-white border border-slate-200 rounded-lg p-1 shadow-sm overflow-x-auto min-w-0" id="viewToggles">
         <button onclick="store.dispatch('SET_VIEW','closed')" id="btnViewClosed"
                 class="px-3 py-1.5 text-xs font-bold rounded-md transition-colors text-slate-500 hover:text-slate-700 flex items-center gap-1.5 whitespace-nowrap">
           <i data-lucide="check-circle" class="w-3.5 h-3.5"></i> Closed
@@ -1004,7 +1009,7 @@
     const $ = (id) => document.getElementById(id);
 
     // App version - loaded from environment variable via API, with fallback
-    let APP_VERSION = '2.49.1';
+    let APP_VERSION = '2.49.2';
 
     const API_BASE_URL = '/api';
 
