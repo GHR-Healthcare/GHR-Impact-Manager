@@ -2,6 +2,28 @@
 
 ## Version History
 
+### 2.49.3 - "Extension Accepted" was ticked on seats with nothing in flight
+
+- Reported as "why is she marked as extension accepted". The checklist's read-only
+  Extension Accepted row fell back to `!!r.is_extension` on any seat with no Bullhorn
+  counterpart. `is_extension` means the contract hangs off a `Parent_Contract_ID` — that
+  the seat is itself the product of an **earlier** extension — not that its own extension
+  has been accepted
+- Maria Garcia's `362925` hangs off `355837`, so the checklist read Accepted while the
+  Designation on the same screen read *"Pending Extension Review — no approval activity
+  recorded yet"*. The Designation was right: nothing is in flight for that seat
+- **13 of 23 unlinked seats** were ticked against a Designation that said otherwise — 12
+  "Pending Extension Review" and one "Awaiting Vendor Approval", which is self-
+  contradictory. Several were 3–4 days from ending, so the screen claimed the work was
+  done on the seats that needed it most
+- Both call sites now share one `Utils.extensionAccepted()`, which reads the Designation
+  and nothing else. Contradictions go to **0 by construction**, and the tick count lines
+  up exactly with the 77 Accepted designations
+- The 42 linked seats where **Bullhorn already shows the end moved past the original but
+  the VMS recorded no acceptance** are no longer silently ticked. They now carry an amber
+  note saying so, because that is usually the VMS record being behind rather than the
+  extension not having happened — but it is evidence, not a second way to be accepted
+
 ### 2.49.2 - shrink-0 on the tab bar made the whole page scroll sideways
 
 - Found while auditing the live MSP prototype, not reported: at 1280px the **page

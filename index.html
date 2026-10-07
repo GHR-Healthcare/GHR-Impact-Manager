@@ -1009,7 +1009,7 @@
     const $ = (id) => document.getElementById(id);
 
     // App version - loaded from environment variable via API, with fallback
-    let APP_VERSION = '2.49.2';
+    let APP_VERSION = '2.49.3';
 
     const API_BASE_URL = '/api';
 
@@ -3035,6 +3035,8 @@
        * "Approved to Offer" internally and still sit at "Pending Extension
        * Review" externally, and that gap is the thing worth seeing.
        */
+      EXT_STAGE_ACCEPTED: 'Extension Accepted',
+
       EXT_STAGES: ['Pending Extension Review', 'Awaiting Client Approval',
                    'Awaiting Vendor Approval', 'Extension Accepted',
                    // Not in the spec's list, but the B4 report carries it on
@@ -3092,6 +3094,49 @@
           return { stage: manual, why: 'set by hand on this tab', manual: true };
         }
         return { stage: derived, why, manual: false };
+      },
+
+      /* Whether THIS seat's own extension has been accepted.
+       *
+       * The two callers below used to compute it inline, and the fallback for a
+       * seat with no Bullhorn counterpart was `!!r.is_extension`. That is a
+       * different question: is_extension means the contract hangs off a
+       * Parent_Contract_ID -- that the seat is itself the product of an EARLIER
+       * extension -- not that its own extension has been accepted. Maria
+       * Garcia's 362925 hangs off 355837, so it read "Extension Accepted" while
+       * the Designation on the same screen read "Pending Extension Review --
+       * no approval activity recorded yet". Both cannot be true, and the
+       * Designation was the correct one: nothing is in flight for that seat.
+       *
+       * Measured on the live MSP book: 13 of the 23 unlinked seats were ticked
+       * accepted against a Designation that said otherwise, 12 of them
+       * "Pending Extension Review" and one "Awaiting Vendor Approval" -- which
+       * is flatly self-contradictory. Several were 3 and 4 days from ending,
+       * so the screen was telling a PM the work was done on exactly the seats
+       * that needed it most.
+       *
+       * The Designation is already derived server-side from the VMS accept
+       * signals (mod_status, b4_report_extended, b4_ext_awarded), so read that
+       * one derivation instead of inventing a second. The end-date comparison
+       * stays for linked seats, where both systems carrying an end past the
+       * original IS independent evidence of acceptance.
+       */
+      extensionAccepted(r) {
+        return Utils.extensionStage(r).stage === Utils.EXT_STAGE_ACCEPTED;
+      },
+
+      /* Bullhorn's end date has moved past the original, but the VMS accept
+       * signals have not fired. 42 live seats are in this state. It is NOT a
+       * second way to be accepted -- making it one put two disagreeing truths
+       * on one screen, which is what started this -- but it is real evidence
+       * and worth showing, because it usually means the VMS side of the
+       * record is behind rather than that nothing happened.
+       */
+      extensionEndMovedInAts(r) {
+        const m = r.match || {};
+        return m.state === 'linked'
+          && !!(r.match_original_end && r.match_end_date
+                && r.match_end_date > r.match_original_end);
       },
 
       /* One day is "1 day". Every surface that prints a day count goes through
@@ -9170,9 +9215,7 @@
           return { owner: isPm ? 'PM' : 'Recruiter', who: isPm ? pm : rec, action: step.blurb };
         }
         // Every team checkpoint is done, so the ball is no longer ours.
-        const accepted = m.state === 'linked'
-          ? !!(r.match_original_end && r.match_end_date && r.match_end_date > r.match_original_end)
-          : !!r.is_extension;
+        const accepted = Utils.extensionAccepted(r);
         return accepted
           ? { owner: 'System', who: null, action: 'Extension confirmed in the source systems' }
           : { owner: 'Client', who: r.hiring_manager || null,
@@ -9278,9 +9321,7 @@
         // Acceptance is system-confirmed, never a checkbox. On a linked seat
         // the systems agreeing that the end date moved past the original IS
         // the acceptance; elsewhere it is the source's own extension evidence.
-        const accepted = r.match && r.match.state === 'linked'
-          ? !!(r.match_original_end && r.match_end_date && r.match_end_date > r.match_original_end)
-          : !!r.is_extension;
+        const accepted = Utils.extensionAccepted(r);
         return `
               <!-- 5/7, not 50/50, and the editable form lifted out to full
                    width. The form used to sit inside the right column, which
@@ -9328,10 +9369,15 @@
                       <span class="mt-0.5 ${accepted ? 'text-emerald-600' : 'text-slate-400'}">${accepted ? '&#10003;' : '&#9675;'}</span>
                       <span class="flex-1">
                         <span class="block text-xs font-semibold text-slate-600">Extension Accepted</span>
-                        <span class="block text-[10px] text-slate-400">${
-                          r.match && r.match.state === 'linked'
-                            ? 'Confirmed when both systems carry an end date past the original — not editable.'
-                            : 'Confirmed from the source system — not editable.'}</span>
+                        <span class="block text-[10px] text-slate-400">Confirmed from the source system &mdash; not editable.</span>
+                        ${!accepted && Utils.extensionEndMovedInAts(r) ? `
+                          <span class="block text-[10px] text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1 mt-1 leading-snug">
+                            Bullhorn already shows this end moved to
+                            <b>${View.esc(String(r.match_end_date).slice(0, 10))}</b>
+                            from ${View.esc(String(r.match_original_end).slice(0, 10))}, but
+                            ${View.esc(r.source_system || 'the VMS')} has recorded no acceptance.
+                            Usually the VMS record is behind rather than the extension not having happened.
+                          </span>` : ''}
                       </span>
                       <span class="text-[10px] text-slate-400">System</span>
                     </div>
