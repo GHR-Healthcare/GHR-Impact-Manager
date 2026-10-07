@@ -75,11 +75,28 @@ def _extension_stage(r):
     asserting a status with no provenance.
     """
     # VNDLY: the latest Date Extension modification on the work order.
+    #
+    # The staging table carries exactly four Status values for 'Date Extension',
+    # measured 2026-10-07: None 417, Accepted 313, Cancelled 198, Submitted 62.
+    # Only 'accepted' and 'submitted' were mapped, so Cancelled fell through to
+    # the default: a withdrawn extension was presented as "Pending Extension
+    # Review", i.e. work still to do, on a seat where the modification had
+    # already been pulled. That 198 is every date-extension modification ever
+    # recorded; on seats actually inside the 45-day window it is 9 (against 41
+    # with no modification at all, 26 accepted and 22 submitted). Small, but
+    # wrong in the direction that wastes a PM's time.
+    #
+    # 'None' is left falling through deliberately. It means the modification
+    # exists but has not been submitted, and the extension workflow is explicit
+    # that a seat must not carry a client-facing VMS status until the PM has
+    # actually submitted it to the client. The default is the honest label there.
     mod = (r.get('mod_status') or '').strip().lower()
     if mod == 'accepted':
         return EXT_STAGE_ACCEPTED, 'VNDLY date extension accepted'
     if mod in ('submitted', 'pending'):
         return EXT_STAGE_VENDOR, 'VNDLY date extension submitted, awaiting vendor'
+    if mod in ('cancelled', 'canceled'):
+        return EXT_STAGE_DECLINED, 'VNDLY date extension cancelled'
 
     # B4: the Network Activity Report, when it has been loaded, states the
     # assignment type outright -- so it outranks anything inferred below.

@@ -2,6 +2,22 @@
 
 ## Version History
 
+### 2.49.4 - A cancelled VNDLY extension read as "still to do"
+
+- The `Date Extension` modification status carries four values, measured 2026-10-07:
+  `None` 417, `Accepted` 313, `Cancelled` 198, `Submitted` 62. Only `accepted` and
+  `submitted` were mapped, so **`Cancelled` fell through to the default** and a withdrawn
+  extension was labelled "Pending Extension Review" — work still to do, on a seat whose
+  modification had already been pulled
+- On seats actually inside the 45-day window that is **9** (against 41 with no
+  modification at all, 26 accepted, 22 submitted). Small, but wrong in the direction that
+  wastes a PM's time
+- `None` is left falling through deliberately: the modification exists but has not been
+  submitted, and the extension workflow is explicit that a seat must not carry a
+  client-facing VMS status before the PM has submitted it to the client
+- VNDLY-only, so prototype-only — the Extensions tab is not on production MSP, and the
+  non-MSP book is Bullhorn + Symplr
+
 ### 2.49.3 - "Extension Accepted" was ticked on seats with nothing in flight
 
 - Reported as "why is she marked as extension accepted". The checklist's read-only
