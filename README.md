@@ -2,6 +2,29 @@
 
 ## Version History
 
+### 2.51.0 - The clinician's own extension answer, from Bullhorn
+
+- Donny Wright's Extension Request automation (enabled 2026-10-09: approved placements,
+  Cooper only, Nursing division, journey starts 45 days before the end date) writes the
+  clinician's reply onto the Bullhorn placement — `customInt10` *Candidate Extension
+  Response* and `customTextBlock7` *Candidate Extension Comments*. Both are now read
+- **This is the stage-2 signal the extension workflow asks for and neither VMS carries.**
+  "Interested in extending? Yes with RTO / Yes no RTO / No" maps one-for-one onto the
+  picker's four values, with `Possibly` covering the workflow's *Unclear → needs review*
+  branch
+- **`0` is not one of the picker's values.** It sits on 3,837 placements as an unset
+  default and is nulled in the query, so it never reads as an answer. Taking
+  `customInt10` at face value would have invented ~3,800 responses
+- Shown on the **Gather RTO** step, ranked: typed here > the clinician's own answer > the
+  VMS copy. The clinician outranks the VMS because it is them speaking rather than a
+  transcribed field, and the free text is where the dates actually arrive — one live
+  reply reads *"Updated RTO October 30, November 13"*. A bare `Yes - no RTO` with no
+  comment still counts; it closes the step rather than leaving it open
+- Read from `BH_PLACEMENT_RAW` in the warehouse, which carries both columns and was
+  verified to match the live Bullhorn mirror exactly, so no second connection is needed.
+  All four branches return the same row shape; Symplr returns nulls, having no Bullhorn
+  placement behind it
+
 ### 2.50.0 - Trend PDF export, and accounts with open reqs are in scope
 
 - **Export PDF on the Trend tab** (Matthew Kyle): the chart plus the breakdown and

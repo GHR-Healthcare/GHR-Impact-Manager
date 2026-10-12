@@ -1009,7 +1009,7 @@
     const $ = (id) => document.getElementById(id);
 
     // App version - loaded from environment variable via API, with fallback
-    let APP_VERSION = '2.50.0';
+    let APP_VERSION = '2.51.0';
 
     const API_BASE_URL = '/api';
 
@@ -8214,8 +8214,23 @@
           // empty on MSP: since 2.40.0 B4 supplies RTO from the contract
           // submission and VNDLY from the contractor record, so this field is
           // a correction to the source rather than the only copy of it.
+          //
+          // Between the two sits the clinician's OWN answer, from Donny's
+          // Bullhorn Extension Request automation. It outranks the VMS copy
+          // because it is the clinician speaking rather than a field someone
+          // transcribed, and the free text is where the actual dates arrive
+          // ("Updated RTO October 30, November 13"). It loses to a value typed
+          // here, which is a deliberate correction.
           const mine = (View.extensionEdit(r).rto || '').trim();
+          const said = (r.cand_ext_comments || '').trim();
+          const reply = r.cand_ext_response_label;
           if (mine) { text = mine; origin = 'Recorded here'; }
+          else if (said || reply) {
+            // "Yes - no RTO" with no free text is still an answer, and a
+            // useful one: it closes the step rather than leaving it open.
+            text = said || reply;
+            origin = 'Clinician' + (said && reply ? ' · ' + reply : '');
+          }
           else { text = r.recorded_rto; origin = r.source_system; }
         } else if (key === 'sendExtension') {
           text = r.extension_note; origin = r.source_system;

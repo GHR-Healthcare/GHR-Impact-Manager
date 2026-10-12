@@ -58,6 +58,25 @@ EXT_STAGE_ACCEPTED = 'Extension Accepted'
 # Not in the spec's list, but present in the B4 report on 10 live seats. A
 # declined offer is a finished decision, not one still waiting to be made.
 EXT_STAGE_DECLINED = 'Extension Declined'
+
+# Donny Wright's Extension Request automation (Bullhorn), enabled 2026-10-09:
+# approved placements, Cooper only, Nursing division, journey starts 45 days
+# before the end date. The clinician's reply lands on the placement record as
+# customInt10 "Candidate Extension Response", free text in customTextBlock7
+# "Candidate Extension Comments".
+#
+# This is the clinician-interest signal the extension workflow's stage 2 asks
+# for and nothing in either VMS carries -- "Interested in extending? Yes with
+# RTO / Yes no RTO / No" maps onto it one for one.
+#
+# 0 is not one of the picker's values. It sits on 3,837 placements as an unset
+# default and is nulled at the query, so it never reads as an answer.
+EXT_RESPONSE_LABELS = {
+    1: 'Yes - with RTO',
+    2: 'Yes - no RTO',
+    3: 'No',
+    4: 'Possibly',
+}
 EXT_STAGES = (EXT_STAGE_REVIEW, EXT_STAGE_CLIENT, EXT_STAGE_VENDOR,
               EXT_STAGE_ACCEPTED, EXT_STAGE_DECLINED)
 
@@ -171,6 +190,9 @@ def _b4_rows(cursor, horizon, include_affiliate):
                    pd.IsExtension                               AS match_is_extension,
                    CAST(pd.DateOriginalEnd AS DATE)             AS match_original_end,
                    NULLIF(LTRIM(RTRIM(pd.Recruiter)), '')       AS Recruiter,
+                   NULLIF(bpr.customInt10, 0)                   AS cand_ext_response,
+                   NULLIF(LTRIM(RTRIM(CAST(bpr.customTextBlock7 AS NVARCHAR(MAX)))), '')
+                                                                AS cand_ext_comments,
                    CASE WHEN pd.IsExtension = 1 THEN 'Yes'
                         WHEN pd.IsExtension = 0 THEN 'No' END   AS source_is_extension,
                    ROW_NUMBER() OVER (PARTITION BY LTRIM(RTRIM(l.Contract_ID))
@@ -178,6 +200,8 @@ def _b4_rows(cursor, horizon, include_affiliate):
             FROM dbo.BH_PLACEMENT_RAW_TO_B4HealthOrder l WITH (NOLOCK)
             INNER JOIN dbo.PLACEMENT_DIM pd WITH (NOLOCK)
                     ON pd.Source_Placement_ID = l.placementID
+            LEFT JOIN dbo.BH_PLACEMENT_RAW bpr WITH (NOLOCK)
+                   ON bpr.placementID = l.placementID
         ) z WHERE rn = 1;
         CREATE INDEX ix_b4bh ON #b4_bh (contract_id);
 
@@ -282,6 +306,8 @@ def _b4_rows(cursor, horizon, include_affiliate):
             bh.match_status                             AS match_status,
             bh.match_clinician                          AS match_clinician,
             bh.Recruiter                                AS recruiter,
+            bh.cand_ext_response                        AS cand_ext_response,
+            bh.cand_ext_comments                        AS cand_ext_comments,
             -- IsExtension does NOT mean "this seat has been extended" -- it
             -- means the placement IS an extension of a prior assignment.
             -- Verified against the chain rule (same clinician + same client,
@@ -411,6 +437,13 @@ def _vndly_rows(cursor, horizon, include_affiliate):
             NULLIF(LTRIM(RTRIM(cd.CandidateName)), '')     AS match_clinician,
             CAST(pd.DateOriginalEnd AS DATE)               AS match_original_end,
             NULLIF(LTRIM(RTRIM(pd.Recruiter)), '')         AS bh_recruiter,
+            -- Donny's Extension Request automation writes the clinician's reply
+            -- straight onto the Bullhorn placement. 0 is NOT one of its values
+            -- (the picker is 1-4) and sits on 3,837 placements as an unset
+            -- default, so it is nulled here rather than read as a response.
+            NULLIF(bp.customInt10, 0)                      AS cand_ext_response,
+            NULLIF(LTRIM(RTRIM(CAST(bp.customTextBlock7 AS NVARCHAR(MAX)))), '')
+                                                           AS cand_ext_comments,
             pd.DateEnd                                     AS order_end
         INTO #bh_wo
         FROM dbo.BH_PLACEMENT_RAW bp WITH (NOLOCK)
@@ -581,6 +614,8 @@ def _vndly_rows(cursor, horizon, include_affiliate):
             bh.match_clinician                           AS match_clinician,
             -- Reachable now that the work order resolves to a placement.
             bh.bh_recruiter                              AS recruiter,
+            bh.cand_ext_response                        AS cand_ext_response,
+            bh.cand_ext_comments                        AS cand_ext_comments,
             NULL                                         AS source_is_extension,
             /* VNDLY keeps RTO on the contractor, reached through the work-order
              * cross-reference. 58 of the 296 work orders ending in the window
@@ -733,6 +768,9 @@ def _bullhorn_ext_rows(cursor, app_conn, horizon):
             -- View_Placement -- the mapping GetContractsComparison already
             -- runs on. ownerID above is the record owner, not the recruiter.
             NULLIF(LTRIM(RTRIM(p.customText12)), '')      AS recruiter,
+            NULLIF(p.customInt10, 0)                      AS cand_ext_response,
+            NULLIF(LTRIM(RTRIM(CAST(p.customTextBlock7 AS NVARCHAR(MAX)))), '')
+                                                          AS cand_ext_comments,
             -- EXTENSION MILESTONES, as far as Bullhorn records them.
             --
             -- customText14 ("Extension?") is the book's own answer to whether
@@ -886,6 +924,8 @@ def _symplr_ext_rows(cursor, app_conn, horizon):
             -- lt_order carries the booker (BookedByUserID, used above for the
             -- account manager) but no separate recruiter.
             NULL                                          AS recruiter,
+            CAST(NULL AS INT)                             AS cand_ext_response,
+            CAST(NULL AS NVARCHAR(MAX))                   AS cand_ext_comments,
             NULL                                          AS source_is_extension,
             NULL                                          AS recorded_rto,
             NULL                                          AS match_is_extension,
@@ -1065,6 +1105,12 @@ def _serialize(rows):
         stage, why = _extension_stage(r)
         r['extension_stage'] = stage
         r['extension_stage_why'] = why
+        # The clinician's own answer, from the Bullhorn automation. Kept beside
+        # the designation rather than folded into it: the designation tracks
+        # where the request has got to with the CLIENT and VENDOR, this is
+        # whether the clinician wants it at all, and a seat can easily be
+        # "Awaiting Vendor Approval" with the clinician having said Possibly.
+        r['cand_ext_response_label'] = EXT_RESPONSE_LABELS.get(r.get('cand_ext_response'))
         r['match'] = _match_panel(r)
         # `is_extension` on the row is per-source evidence that this seat has
         # been extended before (a B4 parent chain, a VNDLY date past its
