@@ -1009,7 +1009,7 @@
     const $ = (id) => document.getElementById(id);
 
     // App version - loaded from environment variable via API, with fallback
-    let APP_VERSION = '2.56.0';
+    let APP_VERSION = '2.57.0';
 
     const API_BASE_URL = '/api';
 
@@ -3154,6 +3154,30 @@
             && Utils.extensionStage(r).stage === Utils.EXT_STAGES[0]) {
           out.push({ key: 'lapsing', label: 'About to lapse',
             detail: `Ends in ${Utils.days(d)} with no approval activity recorded in either system.` });
+        }
+        /* The clinician has answered and the designation does not reflect it.
+         *
+         * Two shapes, one exception: "No" means the seat needs a backfill
+         * decision that nothing in either VMS will ever tell us, and "Possibly"
+         * means someone has to go back to them. Both are the clinician having
+         * said something the pipeline has not caught up with.
+         *
+         * Small today on purpose: Donny's automation runs on Cooper Nursing
+         * only, 84 placements enrolled, and 5 replies had landed when this was
+         * written. It grows with the rollout rather than needing a rewrite.
+         */
+        const said = r.cand_ext_response_label;
+        if (said) {
+          const stage = Utils.extensionStage(r).stage;
+          if (/^No$/i.test(said) && stage !== 'Extension Declined') {
+            out.push({ key: 'clinician_no', label: 'Clinician declined',
+              detail: 'The clinician answered “No” but the seat is still '
+                    + `${stage}. It needs a close or backfill decision.` });
+          } else if (/Possibly/i.test(said)) {
+            out.push({ key: 'clinician_maybe', label: 'Clinician unsure',
+              detail: 'The clinician answered “Possibly” — someone has to go back to them'
+                    + ' before this can move.' });
+          }
         }
         return out;
       },

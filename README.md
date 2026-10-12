@@ -2,6 +2,22 @@
 
 ## Version History
 
+### 2.57.0 - Clinician-response exceptions, and a null state could erase a save
+
+- **A null state is now refused rather than stored.** `json.dumps(None)` is the string
+  `"null"`, which persists cleanly and reads back as nothing — and the `MERGE` would write
+  it straight over a real saved state. `impactmgr.workspace_state` already holds one row
+  in that shape (`extension/CUH-3-345`, 2026-10-01). It is inert on read because
+  `extensionEdit` guards with `saved && saved.stage`, but **the same write against a
+  record that had state would have silently erased it.** The refusal is not audited or
+  counted either, so the change log cannot record an edit that never happened
+- **Two more exceptions, from the clinician's own answer:** "No" on a seat that is not
+  Declined (it needs a close or backfill decision nothing in either VMS will supply), and
+  "Possibly" (someone has to go back to them)
+- Honest about the size: Donny's automation runs on Cooper Nursing only, 84 placements
+  enrolled, **5 replies landed** when this was written — so it flags 2–3 seats today. It
+  scales with the rollout rather than needing a rewrite
+
 ### 2.56.0 - Recruiter comes from Bullhorn's commission record
 
 - Requested: *"recruiter should pull from bullhorn placement recruiters."* It was reading

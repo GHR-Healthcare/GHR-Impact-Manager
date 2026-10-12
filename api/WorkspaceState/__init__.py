@@ -66,6 +66,16 @@ def _get(cursor, scope):
 
 
 def _put(cursor, scope, entity_id, state, user):
+    # A null state is never a legitimate save, and the MERGE below would write
+    # it straight over a real one -- json.dumps(None) is the string "null", so
+    # it stores cleanly and reads back as nothing. impactmgr.workspace_state
+    # already carries one row in that shape (extension/CUH-3-345, 2026-10-01).
+    # It is inert on read, because extensionEdit guards with `saved &&
+    # saved.stage`, but the same write against a record that HAD state would
+    # have silently erased it. Refused rather than stored.
+    if state is None:
+        print(f'workspace-state: refused a null state for {scope}/{entity_id}')
+        return False
     payload = json.dumps(state, default=str)
     if len(payload.encode('utf-8')) > MAX_STATE_BYTES:
         raise ValueError(f'state too large for {scope}/{entity_id}')
@@ -84,6 +94,7 @@ def _put(cursor, scope, entity_id, state, user):
     """, scope, entity_id,
          payload, datetime.datetime.utcnow(), user,
          scope, entity_id, payload, datetime.datetime.utcnow(), user)
+    return True
 
 
 def _audit(cursor, scope, entity_id, state, user):
@@ -131,6 +142,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
         # Accept one edit or a batch, so a meeting can flush several at once.
         items = body if isinstance(body, list) else [body]
         saved = 0
+        skipped = 0
         for item in items:
             scope = (item or {}).get('scope')
             entity_id = str((item or {}).get('entityId') or '').strip()
@@ -143,14 +155,19 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                     json.dumps({'error': 'entityId required'}),
                     mimetype='application/json', status_code=400)
             state = item.get('state')
-            _put(cursor, scope, entity_id, state, user)
+            # A refused (null) state must not be audited or counted either --
+            # otherwise the change log records an edit that never happened.
+            if not _put(cursor, scope, entity_id, state, user):
+                skipped += 1
+                continue
             _audit(cursor, scope, entity_id, state, user)
             saved += 1
 
         conn.commit()
-        print(f'WorkspaceState: saved {saved} item(s) for {user}')
+        print(f'WorkspaceState: saved {saved} item(s) for {user}'
+              + (f', refused {skipped} null state(s)' if skipped else ''))
         return func.HttpResponse(
-            json.dumps({'saved': saved}),
+            json.dumps({'saved': saved, 'skipped': skipped}),
             mimetype='application/json', status_code=200)
 
     except ValueError as e:
