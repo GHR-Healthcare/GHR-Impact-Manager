@@ -2,6 +2,24 @@
 
 ## Version History
 
+### 2.60.0 - Per-diem presence was overstated by 75%
+
+- **#94 — Symplr orderless shifts were collapsed to `MIN(start)..MAX(end)` per (client,
+  worker).** A per-diem worker with shifts in week 1 and again in week 8 became a single
+  assignment spanning all eight weeks, and the frontend counts a worker present for every
+  week an assignment overlaps — so six idle weeks were reported as staffed
+- Measured across 1,810 groups: **505 (28%) spanned more than twice their actual shift
+  days**, the worst 283 days, and the mean span was **93 days against 53 actually worked**
+- Now grouped into **contiguous blocks** (gaps and islands — a new block starts when a
+  shift begins more than a day after the furthest end so far). 1,810 rows become 25,314,
+  which sounds expensive and is not: **1ms** on the live set, and the rewritten query
+  returns 20,938 rows against the real 193-client scope
+- **#10 — every worker at the same client shared one `position_id`**, because the
+  orderless stats rows emitted `customerid` alone, in the same namespace as the
+  `lt_orderid` rows. The frontend keys on it (`id: String(row.position_id || ...)`), so
+  distinct workers collapsed onto each other. Now `sym-ord-<customerid>-<filledby>`:
+  unique per worker and unable to collide with an `lt_orderid` or a Bullhorn `placementID`
+
 ### 2.59.1 - Dropped errors, and a retention policy the client controlled
 
 - **#79 — `GetStatsData` collected `errors` and then dropped them from the payload.** A

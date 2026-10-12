@@ -228,7 +228,15 @@ def _symplr_stats_data():
         cursor.execute(f'''
             SELECT
                 'Symplr' AS source_system,
-                CAST(o.customerid AS NVARCHAR(50)) AS position_id,
+                -- customerid alone made every worker at the same client share
+                -- one position_id, and put those ids in the same namespace as
+                -- the lt_orderid-derived rows above. The frontend keys on
+                -- position_id (`id: String(row.position_id || ...)`), so
+                -- distinct workers collapsed onto each other. Composite and
+                -- prefixed: unique per worker, and no longer able to collide
+                -- with an lt_orderid or a Bullhorn placementID. (GH #10)
+                CONCAT('sym-ord-', CAST(o.customerid AS NVARCHAR(50)),
+                       '-', CAST(o.filledby AS NVARCHAR(50))) AS position_id,
                 LTRIM(RTRIM(ISNULL(MAX(pt.firstname), '') + ' ' + ISNULL(MAX(pt.lastname), ''))) AS candidate_name,
                 'GHR' AS agency,
                 MAX(pc.clientname) AS facility,

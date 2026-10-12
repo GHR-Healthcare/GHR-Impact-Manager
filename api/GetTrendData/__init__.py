@@ -438,7 +438,49 @@ def _symplr_trend_data():
     scope_filter_orders = symplr_scope_filter('o.customerid', master_ids=symplr_master_ids)
     division_case_orders = symplr_division_case_expr('o.customerid')
     try:
+        # Grouped into CONTIGUOUS blocks of shift work, not collapsed to
+        # MIN..MAX per (client, worker).
+        #
+        # A per-diem worker with shifts in week 1 and again in week 8 at the
+        # same client used to emit a single assignment spanning all eight
+        # weeks, and the frontend counts a worker present for every week an
+        # assignment overlaps -- so the six idle weeks were reported as
+        # staffed. Measured 2026-10-12 across 1,810 groups: 505 of them (28%)
+        # spanned more than twice their actual shift days, the worst 283 days,
+        # and the mean span was 93 days against 53 days actually worked. A 75%
+        # overstatement of per-diem presence. (GH #94)
+        #
+        # Gaps and islands: a new block starts when a shift begins more than a
+        # day after the furthest end seen so far for that pair. 1,810 rows
+        # become 25,314, which sounds expensive and is not -- the window
+        # functions measured 1ms on the live set.
         cursor.execute(f'''
+            WITH shifts AS (
+                SELECT o.customerid, o.filledby, o.specialty, o.nursetype,
+                       CAST(o.jobdatestart AS DATE) AS sd,
+                       CAST(ISNULL(o.jobdateend, o.jobdatestart) AS DATE) AS ed
+                FROM dbo.orders o WITH (NOLOCK)
+                WHERE o.status = 'filled'
+                    AND (o.lt_orderid IS NULL OR o.lt_orderid = 0)
+                    AND o.filledby IS NOT NULL AND o.filledby > 0
+                    AND o.jobdatestart IS NOT NULL
+                    AND (o.jobdateend IS NULL OR o.jobdateend >= DATEADD(WEEK, -4, GETDATE()))
+                    AND {scope_filter_orders}
+            ), marked AS (
+                SELECT *, MAX(ed) OVER (PARTITION BY customerid, filledby
+                                        ORDER BY sd, ed
+                                        ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING) AS prev_max
+                FROM shifts
+            ), flagged AS (
+                SELECT *, CASE WHEN prev_max IS NULL OR sd > DATEADD(DAY, 1, prev_max)
+                               THEN 1 ELSE 0 END AS new_block
+                FROM marked
+            ), blocked AS (
+                SELECT *, SUM(new_block) OVER (PARTITION BY customerid, filledby
+                                               ORDER BY sd, ed
+                                               ROWS UNBOUNDED PRECEDING) AS block_no
+                FROM flagged
+            )
             SELECT
                 'Symplr' AS source_system,
                 LTRIM(RTRIM(ISNULL(MAX(pt.firstname), '') + ' ' + ISNULL(MAX(pt.lastname), ''))) AS worker_name,
@@ -456,20 +498,14 @@ def _symplr_trend_data():
                 'filled' AS status,
                 NULL AS bill_rate,
                 NULL AS weekly_hours,
-                CAST(MIN(o.jobdatestart) AS DATE) AS startDate,
-                CAST(MAX(o.jobdateend)   AS DATE) AS endDate
-            FROM dbo.orders o
+                MIN(o.sd) AS startDate,
+                MAX(o.ed) AS endDate
+            FROM blocked o
             LEFT JOIN dbo.profile_client pc ON o.customerid = pc.recordid
             LEFT JOIN dbo.profile_client m  ON pc.MasterClientID = m.recordid
             LEFT JOIN dbo.regions r ON r.regionid = TRY_CAST(pc.region AS INT)
             LEFT JOIN dbo.profile_temp   pt ON o.filledby   = pt.recordid
-            WHERE o.status = 'filled'
-                AND (o.lt_orderid IS NULL OR o.lt_orderid = 0)
-                AND o.filledby IS NOT NULL AND o.filledby > 0
-                AND o.jobdatestart IS NOT NULL
-                AND (o.jobdateend IS NULL OR o.jobdateend >= DATEADD(WEEK, -4, GETDATE()))
-                AND {scope_filter_orders}
-            GROUP BY o.customerid, o.filledby
+            GROUP BY o.customerid, o.filledby, o.block_no
         ''')
         columns = [column[0] for column in cursor.description]
         for row in cursor.fetchall():
