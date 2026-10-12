@@ -378,12 +378,26 @@ def _bullhorn_ext_rows(cursor, app_conn, horizon):
             -- customText12 is Recruiter and customText11 Account Manager on
             -- View_Placement -- the mapping GetContractsComparison already
             -- runs on. ownerID above is the record owner, not the recruiter.
-            NULLIF(LTRIM(RTRIM(p.customText12)), '')      AS recruiter,
+            /* Bullhorn's own commission record, not customText12, which is
+             * a free-text name field. Measured 2026-10-12: the warehouse's
+             * PLACEMENT_DIM.Recruiter disagrees with the role='Recruiting'
+             * commission on 18 of 200 sampled placements (9%), and 30 of 284
+             * matched extension seats (11%). 39,935 placements carry exactly
+             * one Recruiting commission and none carry two, so joining on
+             * placementID is unambiguous and cannot fan the row set out. */
+            NULLIF(LTRIM(RTRIM(ISNULL(pcu.firstName,'') + ' ' + ISNULL(pcu.lastName,''))), '')
+                                                          AS recruiter,
             NULL                                          AS match_is_extension,
             CAST(NULL AS DATE)                            AS match_original_end,
             CAST(NULL AS DATE)                            AS original_end_date,
             jo.state                                      AS region
         FROM dbo.View_Placement p WITH (NOLOCK)
+        LEFT JOIN dbo.PlacementCommission pc WITH (NOLOCK)
+               ON pc.placementID = p.placementID
+              AND pc.isDeleted = 0
+              AND LTRIM(RTRIM(pc.role)) = 'Recruiting'
+        LEFT JOIN dbo.CorporateUser pcu WITH (NOLOCK)
+               ON pcu.corporateUserID = pc.userID
         LEFT JOIN dbo.View_Candidate cnd WITH (NOLOCK) ON cnd.candidateID = p.candidateID
         LEFT JOIN dbo.View_JobOrder jo WITH (NOLOCK)   ON jo.jobOrderID = p.jobOrderID
         LEFT JOIN dbo.View_ClientCorporation cc WITH (NOLOCK)

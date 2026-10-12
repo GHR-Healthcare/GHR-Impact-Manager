@@ -2,6 +2,20 @@
 
 ## Version History
 
+### 2.21.13 - The Extensions tab showed the wrong recruiter
+
+- Recruiter was read from `customText12`, a free-text name field, rather than from
+  Bullhorn's own commission record. **The two disagree on roughly 1 in 9** — 18 of 200
+  sampled placements (9%), and 30 of 284 matched extension seats (11%)
+- Now joins `PlacementCommission` where `role = 'Recruiting'`, via `CorporateUser` for the
+  name. **39,935 placements carry exactly one Recruiting commission and none carry two**,
+  so joining on `placementID` is unambiguous and cannot fan the row set out — verified
+  before relying on it
+- Non-MSP only, which is the whole of it in production: the Extensions tab is hidden on
+  production MSP. The MSP-side cross-server lookup stays on the prototype, where that tab
+  is actually reachable
+- Query run against the live mirror, not just compiled
+
 ### 2.21.12 - Accounts with open requisitions were outside the Non-MSP book
 
 - Non-MSP scope was "someone on assignment **today**", so an account with live openings
