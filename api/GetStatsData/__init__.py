@@ -297,8 +297,12 @@ def _non_msp_stats(req: func.HttpRequest) -> func.HttpResponse:
     print(f"non-MSP stats: {len(on_assignment)} active, {len(upcoming)} upcoming, "
           f"{len(recently_ended)} recently ended (errors: {errors or 'none'})")
     return func.HttpResponse(
+        # `errors` was collected above and then dropped here, so a failed
+        # Bullhorn or Symplr branch served a 200 of half the book with nothing
+        # to distinguish it from a genuinely small one. Same defect GH #86
+        # fixed in GetFinancialData and GH #102 in the YoY branch. (GH #79)
         json.dumps({'onAssignment': on_assignment, 'upcoming': upcoming,
-                    'recentlyEnded': recently_ended}, default=str),
+                    'recentlyEnded': recently_ended, 'errors': errors}, default=str),
         mimetype="application/json",
         status_code=200,
     )

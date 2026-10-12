@@ -2,6 +2,20 @@
 
 ## Version History
 
+### 2.59.1 - Dropped errors, and a retention policy the client controlled
+
+- **#79 — `GetStatsData` collected `errors` and then dropped them from the payload.** A
+  failed Bullhorn or Symplr branch served a 200 containing half the book, indistinguishable
+  from a genuinely small one. Exactly the defect #86 fixed in `GetFinancialData` and #102
+  in the YoY branch; this was the third instance of the same shape
+- **#80 — snapshot retention was ordered by a client-supplied timestamp.** `DELETE ... WHERE
+  id NOT IN (SELECT TOP 100 ... ORDER BY snapshot_timestamp DESC)`, where
+  `snapshot_timestamp` comes straight from the request body. A skewed clock pins a client
+  at the top of that ordering and pushes real history out; a past timestamp makes a client
+  delete its own snapshot on the next write. Now ordered by the IDENTITY `id` — insertion
+  order, server-assigned, not influenceable by the caller. The timestamp is still stored
+  and still what the history UI shows; it simply no longer decides what survives
+
 ### 2.59.0 - Three silent failures that all read as good data
 
 - **#93 — a failed scope query collapsed the book from ~2,280 clients to about 15.**
