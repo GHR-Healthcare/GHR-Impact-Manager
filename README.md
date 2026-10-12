@@ -2,6 +2,21 @@
 
 ## Version History
 
+### 2.58.2 - GH #100: an empty list wiped global config
+
+- The three replace-all config POSTs — client allowlist, system mappings, PM mappings —
+  each validate individual entries and refuse bad ones, but an **empty** list passed
+  validation cleanly and then `DELETE FROM` the table. The reported trigger needs no
+  malice: the Settings modal saving after a failed GET sends `[]`, and the response looks
+  entirely successful
+- Refused now with `400 empty_replacement`, unless `confirm_empty: true` is sent, so a
+  deliberate clear is still possible
+- **Authorization is unchanged** — that half of the issue is a trade-off accepted earlier
+  (GH #52/#81: settings are open by design). This fixes the accidental wipe, not the
+  permission model
+- Verified by driving all three handlers with an empty body against a cursor that raises
+  if it ever sees a `DELETE`: three passes, no delete reached
+
 ### 2.58.1 - GH #101: a dead VMS query reported every placement as missing
 
 - `GetContractsComparison` wraps each VMS load in `try/except: print(...)`. If both fail,

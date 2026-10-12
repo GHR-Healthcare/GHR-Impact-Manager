@@ -78,6 +78,19 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             record_change(cursor, 'config.pm_mappings', 'all',
                           {'action': 'replace_all', 'count': len(mappings)}, _user)
 
+            # An empty replacement is almost always a bug, not an intent:
+            # the Settings modal saving after a failed GET sends [] and would
+            # wipe PM mappings for everyone, with a 200 and nothing in the
+            # response to suggest anything went wrong. A deliberate clear is
+            # still possible with confirm_empty. (GH #100)
+            if not mappings and not bool(body.get('confirm_empty')):
+                return func.HttpResponse(
+                    json.dumps({'error': 'empty_replacement',
+                                'detail': 'Refusing to delete every row on an empty list. '
+                                          'Send confirm_empty: true if that is intended.'}),
+                    mimetype="application/json",
+                    status_code=400,
+                )
             cursor.execute('DELETE FROM impactmgr.pm_mappings')
 
             saved = 0
