@@ -2,6 +2,20 @@
 
 ## Version History
 
+### 2.60.2 - #91: 'Scheduled Starts' was off by exactly one day
+
+- `Math.round((new Date(r.current_start) - new Date()) / 86400000)` mixes two clocks: a
+  bare `YYYY-MM-DD` parses as **UTC midnight**, `new Date()` is the **local instant**. West
+  of UTC — all of our timezones — the difference is short by the offset and the rounding
+  tips it a whole day
+- Demonstrated in `America/New_York`: a start **today** evaluated to `-1` and was excluded
+  from "next 14 days"; a start **15 days out** evaluated to `14` and was included. The
+  window was shifted by one in both directions, so the KPI was wrong at both ends
+- New `Utils.daysUntilLocal()` normalises both sides to local midnight, so the difference
+  is exact whole days with no rounding. All five boundary cases now classify correctly
+- Note: the finding was labelled `likely-fixed` by an automated pass. It was not fixed —
+  the expression was still present at `index.html:10635`
+
 ### 2.60.1 - #79 again: 2.59.1 fixed the wrong branch
 
 - App Factory's automated closure check reopened #79 and was **right**. 2.59.1 added

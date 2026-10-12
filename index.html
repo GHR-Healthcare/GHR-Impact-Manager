@@ -1009,7 +1009,7 @@
     const $ = (id) => document.getElementById(id);
 
     // App version - loaded from environment variable via API, with fallback
-    let APP_VERSION = '2.60.1';
+    let APP_VERSION = '2.60.2';
 
     const API_BASE_URL = '/api';
 
@@ -3197,6 +3197,29 @@
           }
         }
         return out;
+      },
+
+      /* Whole local calendar days from today to a bare 'YYYY-MM-DD' date.
+       *
+       * Date-only strings parse as UTC midnight; `new Date()` is a local
+       * instant. Subtracting them mixes the two and drifts by a day in any
+       * timezone west of UTC, which is all of ours. Both sides are normalised
+       * to local midnight here so the difference is exact whole days and no
+       * rounding is involved. (GH #91)
+       */
+      daysUntilLocal(dateStr) {
+        if (!dateStr) return null;
+        const m = String(dateStr).slice(0, 10).match(/^(\d{4})-(\d{2})-(\d{2})$/);
+        if (!m) {
+          const d = new Date(dateStr);
+          if (isNaN(d)) return null;
+          const t = new Date(); t.setHours(0, 0, 0, 0);
+          const o = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+          return Math.round((o - t) / 86400000);
+        }
+        const target = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+        const today = new Date(); today.setHours(0, 0, 0, 0);
+        return Math.round((target - today) / 86400000);
       },
 
       extensionAccepted(r) {
@@ -10632,8 +10655,17 @@
         const repeatMovers = rows.filter(r => (Number(r.move_count) || 0) >= 2).length;
         const scheduledSoon = rows.filter(r => {
           if (!r.current_start) return false;
-          const d = Math.round((new Date(r.current_start) - new Date()) / 86400000);
-          return d >= 0 && d <= 14;
+          /* Both sides compared as LOCAL calendar days.
+           *
+           * `new Date('2026-10-15')` parses a bare YYYY-MM-DD as UTC midnight,
+           * while `new Date()` is the local instant -- so west of UTC the
+           * subtraction is short by the offset and Math.round tips the result
+           * a whole day. A start today read as -1 and dropped out of the 0..14
+           * window; a start 14 days out fell in or out depending on the hour
+           * the page was opened. (GH #91)
+           */
+          const d = Utils.daysUntilLocal(r.current_start);
+          return d !== null && d >= 0 && d <= 14;
         }).length;
         View.renderKpiCards([
           { label: 'Scheduled Starts', val: scheduledSoon, sub: 'next 14 days',
