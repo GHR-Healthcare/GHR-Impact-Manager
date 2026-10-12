@@ -134,8 +134,12 @@ def get_manual_allowlist_ids(app_conn):
 
 def discover_active_client_ids(bullhorn_cursor):
     """
-    Any clientCorporationID that is tagged with at least one non-MSP division
-    AND either has someone on assignment RIGHT NOW, or has an OPEN requisition.
+    Any clientCorporationID tagged with at least one non-MSP division that has
+    someone on assignment RIGHT NOW, an OPEN requisition, or placement history
+    inside the 60-week reporting window.
+
+    The name is kept for its many call sites, but "active" now means "in the
+    book", not "staffed today" -- see the third arm and GH #98.
 
     The open-requisition arm was added 2026-10-12. Scope used to be defined by
     current placements alone, which meant an account with live openings and
@@ -198,6 +202,33 @@ def discover_active_client_ids(bullhorn_cursor):
                         ON d.clientCorporationID = j.clientCorporationID
                 WHERE j.isDeleted = 0
                   AND LTRIM(RTRIM(j.status)) = 'Accepting Candidates'
+
+                UNION
+
+                -- or placements inside the historical window, even with
+                -- nothing current. GH #98: scope was defined by the PRESENT
+                -- and then applied to 60 weeks of the PAST, so every account
+                -- that churned out lost its history and the prior-year line
+                -- sloped up on a book that was flat to down. Measured
+                -- 2026-10-12 after the open-requisition arm above: 857 tagged
+                -- clients still held 2,849 placements of in-window history
+                -- that no historical series could see.
+                --
+                -- This adds NO current headcount: a client with someone on
+                -- assignment today is already caught by the first arm, so
+                -- everything this contributes is history. KPI tiles do not
+                -- move; trend and year-over-year gain the missing past.
+                --
+                -- 61 weeks, matching the widest historical window in use
+                -- (GetYoYTrendData's 60 weeks plus a week of slack).
+                SELECT DISTINCT p.clientCorporationID
+                FROM dbo.View_Placement p
+                INNER JOIN in_division d
+                        ON d.clientCorporationID = p.clientCorporationID
+                WHERE p.isDeleted = 0
+                  AND p.dateBegin IS NOT NULL
+                  AND (p.dateEnd IS NULL
+                       OR p.dateEnd >= DATEADD(WEEK, -61, CAST(GETDATE() AS DATE)))
             ) z
         """)
         return {int(row[0]) for row in bullhorn_cursor.fetchall() if row[0] is not None}

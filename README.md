@@ -2,6 +2,22 @@
 
 ## Version History
 
+### 2.58.0 - GH #98: the prior-year line was drawn on 63% of the history
+
+- Scope was defined by the **present** — someone on assignment today, or (since 2.50.0) an
+  open requisition — and then applied to **60 weeks of the past**. Every account that
+  churned out lost its history, so the year-over-year line sloped up on a book that was
+  flat to down
+- Third arm added: clients with placements inside the 61-week reporting window, even with
+  nothing current. Auto-discovery **1,455 → 2,322**; effective scope **1,421 → 2,282**
+- **Current headcount does not move: 1,049 → 1,049.** A client with someone on assignment
+  today was already caught by the first arm, so everything this adds is history. Verified
+  rather than argued from construction
+- **In-window placement history 4,848 → 7,701, +2,853 (+59%).** The prior-year series was
+  being drawn on 63% of the real history
+- Expect trend and year-over-year on Non-MSP to step when this lands. That is the point —
+  but anyone comparing this week to last will see it
+
 ### 2.57.0 - Clinician-response exceptions, and a null state could erase a save
 
 - **A null state is now refused rather than stored.** `json.dumps(None)` is the string
