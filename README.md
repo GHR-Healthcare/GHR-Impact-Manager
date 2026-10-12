@@ -2,6 +2,21 @@
 
 ## Version History
 
+### 2.21.14 - A null state could silently erase a saved record
+
+- `json.dumps(None)` is the string `"null"`, which persists cleanly and reads back as
+  nothing — and the `MERGE` in `_put` wrote it straight over whatever was there. A save
+  carrying a null state against a record that **had** state would have erased it without
+  error
+- One row already exists in that shape (`extension/CUH-3-345`, 2026-10-01). It is inert on
+  read, because the client guards with `saved && saved.stage`, so nothing is currently
+  broken — this closes the path rather than repairing damage
+- Null states are now refused, and a refused write is **neither audited nor counted**,
+  so the change log cannot record an edit that never happened. The response reports
+  `skipped` alongside `saved`
+- The existing row is left alone rather than deleted: it is inert, and it is a user's own
+  record
+
 ### 2.21.13 - The Extensions tab showed the wrong recruiter
 
 - Recruiter was read from `customText12`, a free-text name field, rather than from
