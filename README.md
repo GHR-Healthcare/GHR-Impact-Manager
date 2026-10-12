@@ -2,6 +2,21 @@
 
 ## Version History
 
+### 2.21.15 - GH #98: the prior-year line was drawn on 63% of the history
+
+- Non-MSP scope was defined by the **present** — someone on assignment today, or (since
+  2.21.12) an open requisition — then applied to **60 weeks of the past**. Every account
+  that churned out lost its history, so year-over-year sloped **up on a book that was flat
+  to down**. The chart's whole purpose is that comparison
+- Clients with placements inside the 61-week window are now in scope even with nothing
+  current. Effective scope **1,421 → 2,282**
+- **Current headcount is unchanged: 1,049 → 1,049** — measured, not assumed. A client
+  staffed today was already in scope, so everything this adds is history
+- **In-window history 4,848 → 7,701, +2,853 placements (+59%)**
+- **Trend and year-over-year on Non-MSP will step when this deploys.** The new numbers are
+  the correct ones, but a week-to-week comparison will show the jump
+- MSP is unaffected: this is the non-MSP book only
+
 ### 2.21.14 - A null state could silently erase a saved record
 
 - `json.dumps(None)` is the string `"null"`, which persists cleanly and reads back as
