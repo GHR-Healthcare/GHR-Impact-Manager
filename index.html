@@ -1009,7 +1009,7 @@
     const $ = (id) => document.getElementById(id);
 
     // App version - loaded from environment variable via API, with fallback
-    let APP_VERSION = '2.58.0';
+    let APP_VERSION = '2.58.1';
 
     const API_BASE_URL = '/api';
 
@@ -1384,6 +1384,15 @@
             const body = await cResp.json();
             if (!cResp.ok) {
                 s.contractsData = { error: body.error || `HTTP ${cResp.status}` };
+            } else if (body && body.degraded) {
+                /* A VMS feed failed, so the server withheld the buckets rather
+                 * than reporting every Bullhorn placement as missing from the
+                 * VMS -- which is what an empty assignment list looks like to
+                 * the matcher. Surfaced as an error so the screen says the
+                 * comparison could not be run, instead of showing three empty
+                 * lists that read as "everything reconciles". (GH #101) */
+                s.contractsData = { error: 'Comparison unavailable — a source system did not load: '
+                                           + (body.errors || []).join('; ') };
             } else {
                 s.contractsData = body;
             }

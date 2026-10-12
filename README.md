@@ -2,6 +2,22 @@
 
 ## Version History
 
+### 2.58.1 - GH #101: a dead VMS query reported every placement as missing
+
+- `GetContractsComparison` wraps each VMS load in `try/except: print(...)`. If both fail,
+  `assignment_records` stays empty, the matcher takes its `if not a_list` branch for every
+  name, and the endpoint returns **200 with a reconciliation claiming every Bullhorn
+  placement is missing from the VMS**. There was no `errors` field, so a consumer could
+  not tell a real discrepancy report from a total data-load failure
+- Per-source errors are collected, and when any source fails the three buckets are
+  **withheld rather than emitted** — an empty-or-everything list is worse than no list,
+  because it reads as a finding
+- The frontend reports it as *"Comparison unavailable — a source system did not load"*
+  instead of rendering three empty lists that look like a clean reconciliation
+- Filed by App Factory and **confirmed before fixing**: both swallowing handlers are at
+  lines 100 and 132, the `missing_in_b4vndly.extend(b_list)` branch is at 233, and the
+  payload carried no `errors` key
+
 ### 2.58.0 - GH #98: the prior-year line was drawn on 63% of the history
 
 - Scope was defined by the **present** — someone on assignment today, or (since 2.50.0) an
