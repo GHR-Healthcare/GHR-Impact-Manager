@@ -2,6 +2,27 @@
 
 ## Version History
 
+### 2.52.0 - The extension modal is four tabs
+
+- Built from the tabbed redesign: **Designation · Checkpoints & notes · System match ·
+  Seat & rates**, each with a live subtitle (the current designation, "N of 3 done", the
+  match state, "Bill, GM, dates, record"). One ~800px wall becomes 241–555px per tab
+- Re-implemented in our idiom rather than dropped in. The design file is a Vue-style
+  template against its own design system; this is our template literals, our Tailwind,
+  our `EXT_DECISIONS` and `Utils.extensionStage` wiring. Colours and conventions
+  unchanged, as asked
+- **Every panel renders and inactive ones are hidden.** `SAVE_EXTENSION` reads each field
+  with `querySelector(...)?.value || ''`, so a field *not* in the DOM saves as an empty
+  string and **wipes the stored value**. Rendering only the active tab would have
+  silently deleted the RTO, notes and new end date every time someone saved from another
+  tab. The `Declined/Backfill` reason field keeps a hidden input for the same reason
+- Tab switching toggles classes rather than re-rendering, so text typed but not yet saved
+  survives. The choice is held on the store, so a save or stepping to the next seat comes
+  back to the same tab
+- Verified by walking all four tabs against a live row: correct labels, exactly one panel
+  visible, **no save field missing on any tab**, no sideways scroll, a typed RTO value
+  surviving a switch away and back, and no page errors
+
 ### 2.51.1 - 2.51.0 shipped a broken VNDLY branch
 
 - I added `cand_ext_response` / `cand_ext_comments` to the SELECT lists in 2.51.0 but not

@@ -1009,7 +1009,7 @@
     const $ = (id) => document.getElementById(id);
 
     // App version - loaded from environment variable via API, with fallback
-    let APP_VERSION = '2.51.1';
+    let APP_VERSION = '2.52.0';
 
     const API_BASE_URL = '/api';
 
@@ -3925,6 +3925,38 @@
      * Requested by Matthew Kyle: "add a button to export the trend graph and
      * data from the trend tab... the below charts to be exported as 1 file".
      * One file, several pages. */
+    /* Extension modal tabs.
+     *
+     * Toggles classes rather than re-rendering. Two reasons: a re-render would
+     * discard anything typed but not yet saved (the RTO box, the notes), and
+     * every panel is already in the DOM because SAVE_EXTENSION reads its fields
+     * with querySelector(...)?.value || '' -- a field that is not rendered
+     * saves as an empty string and wipes the stored value.
+     *
+     * The choice is kept on the store so a legitimate re-render (after a save,
+     * or stepping to the next seat) comes back to the same tab.
+     */
+    window.setExtTab = (n) => {
+      n = Number(n) || 1;
+      window.store.state.extTab = n;
+      document.querySelectorAll('[data-exttab]').forEach(el => {
+        el.classList.toggle('hidden', Number(el.dataset.exttab) !== n);
+      });
+      document.querySelectorAll('[data-exttab-btn]').forEach(btn => {
+        const on = Number(btn.dataset.exttabBtn) === n;
+        btn.setAttribute('aria-selected', String(on));
+        btn.classList.toggle('border-blue-600', on);
+        btn.classList.toggle('bg-white', on);
+        btn.classList.toggle('border-transparent', !on);
+        btn.classList.toggle('hover:bg-slate-50', !on);
+        const [label] = btn.children;
+        if (label) {
+          label.classList.toggle('text-blue-700', on);
+          label.classList.toggle('text-slate-500', !on);
+        }
+      });
+    };
+
     window.exportTrendPDF = async () => {
       const chartCanvas = document.getElementById('trendChart');
       if (!chartCanvas) { window.showToast?.('No trend chart to export', 'error'); return; }
@@ -9415,156 +9447,185 @@
         // the systems agreeing that the end date moved past the original IS
         // the acceptance; elsewhere it is the source's own extension evidence.
         const accepted = Utils.extensionAccepted(r);
+        const tab = window.store.state.extTab || 1;
+        const tabDefs = [
+          ['Designation',          st.stage],
+          ['Checkpoints & notes',  `${View.EXT_STEPS.filter(x => e.steps[x.key]).length} of ${View.EXT_STEPS.length} done`],
+          ['System match',         View.matchSummary(r).label],
+          ['Seat & rates',         'Bill, GM, dates, record'],
+        ];
+        const tabBar = `
+          <div class="flex gap-1 border-b border-slate-200 -mt-1 mb-4 overflow-x-auto" role="tablist">
+            ${tabDefs.map(([label, sub], i) => {
+              const n = i + 1, on = tab === n;
+              return `
+                <button type="button" role="tab" aria-selected="${on}"
+                        onclick="window.setExtTab(${n})"
+                        class="ext-tab-btn shrink-0 text-left px-3 py-2 border-b-2 transition-colors ${
+                          on ? 'border-blue-600 bg-white' : 'border-transparent hover:bg-slate-50'}"
+                        data-exttab-btn="${n}">
+                  <span class="block text-xs font-bold ${on ? 'text-blue-700' : 'text-slate-500'}">${label}</span>
+                  <span class="block text-[10px] text-slate-400 truncate max-w-[180px]" title="${View.esc(String(sub))}">${View.esc(String(sub))}</span>
+                </button>`;
+            }).join('')}
+          </div>`;
+        // Every panel renders; the inactive ones are hidden rather than skipped.
+        // See the note on SAVE_EXTENSION above -- a field missing from the DOM
+        // saves as '' and wipes the stored value.
+        const panel = (n, inner) => `
+          <div data-exttab="${n}" class="${tab === n ? '' : 'hidden'}">${inner}</div>`;
+
         return `
-              <!-- 5/7, not 50/50, and the editable form lifted out to full
-                   width. The form used to sit inside the right column, which
-                   made that column ~690px of content against ~300px on the
-                   left: the left ended with roughly 370px of dead white space
-                   while the right overflowed and scrolled. Out here the form
-                   gets the whole 1200px, the right column loses the height it
-                   was lending it, and neither column has to scroll. -->
-              <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
-                <div class="lg:col-span-5">${View.systemMatchPanel(r)}</div>
-                <div class="lg:col-span-7">
-                  <div class="flex items-center justify-between gap-2 mb-1 pb-2 border-b border-slate-100">
-                    <h5 class="text-xs font-bold uppercase tracking-wide text-slate-500">Extension Progress</h5>
-                    <span class="text-[9px] font-bold text-slate-500 bg-slate-100 border border-slate-200 rounded-full px-2 py-0.5">
-                      Team-owned workflow
-                    </span>
-                  </div>
-                  <p class="text-[10px] text-slate-400 mb-3">
-                    The team owns the client, RTO and send checkpoints. Acceptance stays system-confirmed.
-                  </p>
-                  <div class="grid grid-cols-4 gap-2 mb-3">
-                    ${tile('PM', View.esc(pm))}
-                    ${tile('Recruiter', rec ? View.esc(rec) : '<span class="text-slate-300 italic">—</span>')}
-                    ${tile('Days Left', r.days_left != null ? r.days_left : '—')}
-                    ${/* Same call the URGENCY column makes, not the raw server field:
-                          a seat whose systems disagree is floored at High in the
-                          column, and the panel saying Medium for the same seat is
-                          exactly the split the feedback asked us to close. */''}
-                    ${tile('Urgency', View.extensionUrgencyLabel(r))}
-                  </div>
-                  ${View.rateGmInline(r)}
-                  <div class="space-y-1.5 mt-3">
-                    ${View.EXT_STEPS.map(st => `
-                      <label class="flex items-start gap-2 bg-white border border-slate-200 rounded-lg px-3 py-2 cursor-pointer hover:border-slate-300">
-                        <input type="checkbox" class="mt-0.5 w-4 h-4 ext-step" data-id="${r.id}" data-step="${st.key}" ${e.steps[st.key] ? 'checked' : ''}>
-                        <span class="flex-1">
-                          <span class="block text-xs font-semibold text-slate-700">${st.label}</span>
-                          <span class="block text-[10px] text-slate-400">${st.blurb}</span>
-                          ${View.extStepEvidence(r, st.key, !!e.steps[st.key])}
-                        </span>
-                        <span class="text-[10px] text-slate-400 whitespace-nowrap">${
-                          st.owner === 'pm' ? `PM · ${View.esc(pm)}` : recLabel}</span>
-                      </label>`).join('')}
-                    <div class="flex items-start gap-2 bg-slate-100 border border-slate-200 rounded-lg px-3 py-2">
-                      <span class="mt-0.5 ${accepted ? 'text-emerald-600' : 'text-slate-400'}">${accepted ? '&#10003;' : '&#9675;'}</span>
-                      <span class="flex-1">
-                        <span class="block text-xs font-semibold text-slate-600">Extension Accepted</span>
-                        <span class="block text-[10px] text-slate-400">Confirmed from the source system &mdash; not editable.</span>
-                        ${!accepted && Utils.extensionEndMovedInAts(r) ? `
-                          <span class="block text-[10px] text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1 mt-1 leading-snug">
-                            Bullhorn already shows this end moved to
-                            <b>${View.esc(String(r.match_end_date).slice(0, 10))}</b>
-                            from ${View.esc(String(r.match_original_end).slice(0, 10))}, but
-                            ${View.esc(r.source_system || 'the VMS')} has recorded no acceptance.
-                            Usually the VMS record is behind rather than the extension not having happened.
-                          </span>` : ''}
-                      </span>
-                      <span class="text-[10px] text-slate-400">System</span>
-                    </div>
-                  </div>
-                  <p class="text-[10px] text-slate-400 mt-3 leading-snug">
-                    Linked backfill isn&rsquo;t shown &mdash; nothing in the source systems ties an ending seat to its replacement job.
-                  </p>
+              ${tabBar}
+
+              ${panel(1, `
+                <div class="mb-3">
+                  ${View.taskStrip({ decision: e.decision, decisionLabel: 'Client Decision',
+                                     owner: ball.owner, who: ball.who, action: ball.action,
+                                     due: Utils.actionDue(r.days_left, r.end_date) })}
                 </div>
-              </div>
-                  <div class="mt-3 pt-3 border-t border-slate-100">
-                    ${View.taskStrip({ decision: e.decision, decisionLabel: 'Client Decision',
-                                       owner: ball.owner, who: ball.who, action: ball.action,
-                                       due: Utils.actionDue(r.days_left, r.end_date) })}
-                    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                      <div>
-                        <label class="block text-[10px] font-semibold text-slate-500 uppercase tracking-wide mb-1">Client Decision</label>
-                        <select class="ext-decision w-full bg-white border border-slate-300 rounded-md px-3 py-2 text-sm" data-id="${r.id}">
-                          ${View.EXT_DECISIONS.map(d => `<option ${e.decision === d ? 'selected' : ''}>${d}</option>`).join('')}
-                        </select>
-                      </div>
-                      <div>
-                        <label class="block text-[10px] font-semibold text-slate-500 uppercase tracking-wide mb-1">Extension Designation</label>
-                        <select class="ext-stage w-full bg-white border border-slate-300 rounded-md px-3 py-2 text-sm" data-id="${r.id}">
-                          <option value="" ${e.stage ? '' : 'selected'}>Auto &mdash; ${View.esc(st.stage)}</option>
-                          ${Utils.EXT_STAGES.map(d => `<option ${e.stage === d ? 'selected' : ''}>${d}</option>`).join('')}
-                        </select>
-                        ${st.superseded ? `
-                          <p class="text-[10px] text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1 mt-1 leading-snug">
-                            Showing <b>${View.esc(st.stage)}</b> from the source system, which has moved past the
-                            <b>${View.esc(st.superseded)}</b> set here. Your selection is still stored &mdash; it takes
-                            effect again only if the source falls back behind it.</p>`
-                        : `<p class="text-[10px] text-slate-400 mt-1">${
-                          st.manual
-                            ? 'Set by hand. Choose Auto to follow the VMS again.'
-                            : `Derived: ${View.esc(st.why)}. Switch to Awaiting Client Approval once the PMO has it in front of the client.`}</p>`}
-                      </div>
-                      <div>
-                        <label class="block text-[10px] font-semibold text-slate-500 uppercase tracking-wide mb-1">Shared Notes</label>
-                        <textarea class="ext-notes w-full bg-white border border-slate-300 rounded-md px-3 py-2 text-xs h-[38px]"
-                                  data-id="${r.id}" placeholder="Client or extension context…">${e.notes}</textarea>
-                      </div>
-                    </div>
-                    <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-3">
-                      <div>
-                        <label class="block text-[10px] font-semibold text-slate-500 uppercase tracking-wide mb-1">New End Date</label>
-                        <input type="date" class="ext-new-end w-full bg-white border border-slate-300 rounded-md px-3 py-2 text-sm"
-                               data-id="${r.id}" value="${View.esc(e.newEnd)}">
-                        <div class="text-[9px] text-slate-400 mt-0.5">${
-                          r.end_date ? 'Current end ' + View.esc(String(r.end_date).slice(0, 10)) : 'no current end on file'}</div>
-                      </div>
-                      <div>
-                        <label class="block text-[10px] font-semibold text-slate-500 uppercase tracking-wide mb-1">Requested Time Off</label>
-                        <input type="text" class="ext-rto w-full bg-white border border-slate-300 rounded-md px-3 py-2 text-sm"
-                               data-id="${r.id}" value="${View.esc(e.rto)}"
-                               placeholder="${r.recorded_rto ? View.esc(String(r.recorded_rto).slice(0, 40)) : 'e.g. 7/1-7/5, 8/26 — or None'}">
-                        <div class="text-[9px] text-slate-400 mt-0.5">${
-                          r.recorded_rto
-                            ? 'Placeholder is what ' + View.esc(r.source_system || 'the source') + ' already has'
-                            : 'Not recorded in the source system'}</div>
-                      </div>
-                      <div>
-                        <label class="block text-[10px] font-semibold text-slate-500 uppercase tracking-wide mb-1">Is An Extension</label>
-                        <select class="ext-flag w-full bg-white border border-slate-300 rounded-md px-3 py-2 text-sm" data-id="${r.id}">
-                          ${[['', 'Use the source'], ['Yes', 'Yes — override'], ['No', 'No — override']]
-                            .map(([v, l]) => `<option value="${v}" ${e.isExt === v ? 'selected' : ''}>${l}</option>`).join('')}
-                        </select>
-                        <div class="text-[9px] text-slate-400 mt-0.5">Source says ${
-                          r.source_is_extension ? View.esc(r.source_is_extension)
-                            : (r.is_extension ? 'Yes' : 'nothing')}</div>
-                      </div>
-                    </div>
-                    ${/Declined|Backfill/.test(e.decision) ? `
-                      <div class="mt-3">
-                        <label class="block text-[10px] font-semibold text-slate-500 uppercase tracking-wide mb-1">
-                          Reason &mdash; ${View.esc(e.decision)}</label>
-                        <input type="text" class="ext-reason w-full bg-white border border-slate-300 rounded-md px-3 py-2 text-sm"
-                               data-id="${r.id}" value="${View.esc(e.reason)}"
-                               placeholder="Why the seat is not extending">
-                      </div>` : ''}
-                    <div class="flex items-center gap-3 mt-3">
-                      ${/* The modal has its own Save in the footer; two save
-                            buttons on one record is an invitation to press the
-                            wrong one. The inline button stays for the expanded
-                            row, which has no footer. */''}
-                      ${opts && opts.inModal ? '' : `<button onclick="store.dispatch('SAVE_EXTENSION','${r.id}')"
-                              class="px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-md text-xs font-semibold shadow-sm">
-                        Save Extension Update
-                      </button>`}
-                      ${meta?.updatedBy ? `<span class="text-[10px] text-slate-400">Last saved by ${meta.updatedBy}${
-                        meta.updatedAt ? ' · ' + new Date(meta.updatedAt).toLocaleString() : ''}</span>` : ''}
-                    </div>
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label class="block text-[10px] font-semibold text-slate-500 uppercase tracking-wide mb-1">Client Decision</label>
+                    <select class="ext-decision w-full bg-white border border-slate-300 rounded-md px-3 py-2 text-sm" data-id="${r.id}">
+                      ${View.EXT_DECISIONS.map(d => `<option ${e.decision === d ? 'selected' : ''}>${d}</option>`).join('')}
+                    </select>
                   </div>
-              <!-- Rate & GM moved into the record above (View.rateGmInline).
-                   It used to render here as a full-width strip. -->`;
+                  <div>
+                    <label class="block text-[10px] font-semibold text-slate-500 uppercase tracking-wide mb-1">Extension Designation</label>
+                    <select class="ext-stage w-full bg-white border border-slate-300 rounded-md px-3 py-2 text-sm" data-id="${r.id}">
+                      <option value="" ${e.stage ? '' : 'selected'}>Auto &mdash; ${View.esc(st.stage)}</option>
+                      ${Utils.EXT_STAGES.map(d => `<option ${e.stage === d ? 'selected' : ''}>${d}</option>`).join('')}
+                    </select>
+                    ${st.superseded ? `
+                      <p class="text-[10px] text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1 mt-1 leading-snug">
+                        Showing <b>${View.esc(st.stage)}</b> from the source system, which has moved past the
+                        <b>${View.esc(st.superseded)}</b> set here. Your selection is still stored &mdash; it takes
+                        effect again only if the source falls back behind it.</p>`
+                    : `<p class="text-[10px] text-slate-400 mt-1">${
+                      st.manual
+                        ? 'Set by hand. Choose Auto to follow the VMS again.'
+                        : `Derived: ${View.esc(st.why)}. Switch to Awaiting Client Approval once the PMO has it in front of the client.`}</p>`}
+                  </div>
+                </div>
+                ${/Declined|Backfill/.test(e.decision) ? `
+                  <div class="mt-3">
+                    <label class="block text-[10px] font-semibold text-slate-500 uppercase tracking-wide mb-1">
+                      Reason &mdash; ${View.esc(e.decision)}</label>
+                    <input type="text" class="ext-reason w-full bg-white border border-slate-300 rounded-md px-3 py-2 text-sm"
+                           data-id="${r.id}" value="${View.esc(e.reason)}"
+                           placeholder="Why the seat is not extending">
+                  </div>` : `
+                  <input type="hidden" class="ext-reason" data-id="${r.id}" value="${View.esc(e.reason)}">`}
+              `)}
+
+              ${panel(2, `
+                <div class="flex items-center justify-between gap-2 mb-1 pb-2 border-b border-slate-100">
+                  <h5 class="text-xs font-bold uppercase tracking-wide text-slate-500">Extension Progress</h5>
+                  <span class="text-[9px] font-bold text-slate-500 bg-slate-100 border border-slate-200 rounded-full px-2 py-0.5">
+                    Team-owned workflow
+                  </span>
+                </div>
+                <p class="text-[10px] text-slate-400 mb-3">
+                  The team owns the client, RTO and send checkpoints. Acceptance stays system-confirmed.
+                </p>
+                <div class="space-y-1.5">
+                  ${View.EXT_STEPS.map(stp => `
+                    <label class="flex items-start gap-2 bg-white border border-slate-200 rounded-lg px-3 py-2 cursor-pointer hover:border-slate-300">
+                      <input type="checkbox" class="mt-0.5 w-4 h-4 ext-step" data-id="${r.id}" data-step="${stp.key}" ${e.steps[stp.key] ? 'checked' : ''}>
+                      <span class="flex-1">
+                        <span class="block text-xs font-semibold text-slate-700">${stp.label}</span>
+                        <span class="block text-[10px] text-slate-400">${stp.blurb}</span>
+                        ${View.extStepEvidence(r, stp.key, !!e.steps[stp.key])}
+                      </span>
+                      <span class="text-[10px] text-slate-400 whitespace-nowrap">${
+                        stp.owner === 'pm' ? `PM · ${View.esc(pm)}` : recLabel}</span>
+                    </label>`).join('')}
+                  <div class="flex items-start gap-2 bg-slate-100 border border-slate-200 rounded-lg px-3 py-2">
+                    <span class="mt-0.5 ${accepted ? 'text-emerald-600' : 'text-slate-400'}">${accepted ? '&#10003;' : '&#9675;'}</span>
+                    <span class="flex-1">
+                      <span class="block text-xs font-semibold text-slate-600">Extension Accepted</span>
+                      <span class="block text-[10px] text-slate-400">Confirmed from the source system &mdash; not editable.</span>
+                      ${!accepted && Utils.extensionEndMovedInAts(r) ? `
+                        <span class="block text-[10px] text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1 mt-1 leading-snug">
+                          Bullhorn already shows this end moved to
+                          <b>${View.esc(String(r.match_end_date).slice(0, 10))}</b>
+                          from ${View.esc(String(r.match_original_end).slice(0, 10))}, but
+                          ${View.esc(r.source_system || 'the VMS')} has recorded no acceptance.
+                          Usually the VMS record is behind rather than the extension not having happened.
+                        </span>` : ''}
+                    </span>
+                    <span class="text-[10px] text-slate-400">System</span>
+                  </div>
+                </div>
+                <div class="mt-3">
+                  <label class="block text-[10px] font-semibold text-slate-500 uppercase tracking-wide mb-1">Shared Notes</label>
+                  <textarea class="ext-notes w-full bg-white border border-slate-300 rounded-md px-3 py-2 text-xs h-[64px]"
+                            data-id="${r.id}" placeholder="Client or extension context…">${e.notes}</textarea>
+                </div>
+                <p class="text-[10px] text-slate-400 mt-3 leading-snug">
+                  Linked backfill isn&rsquo;t shown &mdash; nothing in the source systems ties an ending seat to its replacement job.
+                </p>
+              `)}
+
+              ${panel(3, View.systemMatchPanel(r))}
+
+              ${panel(4, `
+                <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-3">
+                  ${tile('PM', View.esc(pm))}
+                  ${tile('Recruiter', rec ? View.esc(rec) : '<span class="text-slate-300 italic">—</span>')}
+                  ${tile('Days Left', r.days_left != null ? r.days_left : '—')}
+                  ${/* Same call the URGENCY column makes, not the raw server field:
+                        a seat whose systems disagree is floored at High in the
+                        column, and the panel saying Medium for the same seat is
+                        exactly the split the feedback asked us to close. */''}
+                  ${tile('Urgency', View.extensionUrgencyLabel(r))}
+                </div>
+                ${View.rateGmInline(r)}
+                <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-3">
+                  <div>
+                    <label class="block text-[10px] font-semibold text-slate-500 uppercase tracking-wide mb-1">New End Date</label>
+                    <input type="date" class="ext-new-end w-full bg-white border border-slate-300 rounded-md px-3 py-2 text-sm"
+                           data-id="${r.id}" value="${View.esc(e.newEnd)}">
+                    <div class="text-[9px] text-slate-400 mt-0.5">${
+                      r.end_date ? 'Current end ' + View.esc(String(r.end_date).slice(0, 10)) : 'no current end on file'}</div>
+                  </div>
+                  <div>
+                    <label class="block text-[10px] font-semibold text-slate-500 uppercase tracking-wide mb-1">Requested Time Off</label>
+                    <input type="text" class="ext-rto w-full bg-white border border-slate-300 rounded-md px-3 py-2 text-sm"
+                           data-id="${r.id}" value="${View.esc(e.rto)}"
+                           placeholder="${r.recorded_rto ? View.esc(String(r.recorded_rto).slice(0, 40)) : 'e.g. 7/1-7/5, 8/26 — or None'}">
+                    <div class="text-[9px] text-slate-400 mt-0.5">${
+                      r.cand_ext_response_label
+                        ? 'Clinician replied &ldquo;' + View.esc(r.cand_ext_response_label) + '&rdquo;'
+                        : r.recorded_rto
+                          ? 'Placeholder is what ' + View.esc(r.source_system || 'the source') + ' already has'
+                          : 'Not recorded in the source system'}</div>
+                  </div>
+                  <div>
+                    <label class="block text-[10px] font-semibold text-slate-500 uppercase tracking-wide mb-1">Is An Extension</label>
+                    <select class="ext-flag w-full bg-white border border-slate-300 rounded-md px-3 py-2 text-sm" data-id="${r.id}">
+                      ${[['', 'Use the source'], ['Yes', 'Yes — override'], ['No', 'No — override']]
+                        .map(([v, l]) => `<option value="${v}" ${e.isExt === v ? 'selected' : ''}>${l}</option>`).join('')}
+                    </select>
+                    <div class="text-[9px] text-slate-400 mt-0.5">Source says ${
+                      r.source_is_extension ? View.esc(r.source_is_extension)
+                        : (r.is_extension ? 'Yes' : 'nothing')}</div>
+                  </div>
+                </div>
+                <div class="flex items-center gap-3 mt-3">
+                  ${/* The modal has its own Save in the footer; two save
+                        buttons on one record is an invitation to press the
+                        wrong one. The inline button stays for the expanded
+                        row, which has no footer. */''}
+                  ${opts && opts.inModal ? '' : `<button onclick="store.dispatch('SAVE_EXTENSION','${r.id}')"
+                          class="px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-md text-xs font-semibold shadow-sm">
+                    Save Extension Update
+                  </button>`}
+                  ${meta?.updatedBy ? `<span class="text-[10px] text-slate-400">Last saved by ${meta.updatedBy}${
+                    meta.updatedAt ? ' · ' + new Date(meta.updatedAt).toLocaleString() : ''}</span>` : ''}
+                </div>
+              `)}`;
       },
 
       extensions() {
