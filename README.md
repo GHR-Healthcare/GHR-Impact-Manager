@@ -2,6 +2,24 @@
 
 ## Version History
 
+### 2.56.0 - Recruiter comes from Bullhorn's commission record
+
+- Requested: *"recruiter should pull from bullhorn placement recruiters."* It was reading
+  `PLACEMENT_DIM.Recruiter` from the warehouse on MSP and `customText12` — a free-text
+  name field — on non-MSP. Neither is Bullhorn's record of who recruited the seat
+- **The warehouse disagrees with Bullhorn on about 1 in 9.** 18 of 200 sampled placements
+  (9%), and on the live extensions payload **30 of 284 matched seats (11%)** now show a
+  different, correct name
+- **No splits to resolve.** 39,935 placements carry exactly one `role='Recruiting'`
+  commission and none carry two, so joining on `placementID` is unambiguous and cannot
+  fan the row set out — checked before relying on it
+- Non-MSP joins `PlacementCommission` inline, since that branch already runs on the
+  Bullhorn mirror. MSP needs a second connection, because its rows come from the
+  warehouse and the commission table is not mirrored there — so it is a post-pass keyed
+  on the matched `placementID`, in chunks of 1,000
+- Best effort: if the lookup fails the warehouse name stays. A slightly stale recruiter
+  beats a blank column
+
 ### 2.55.0 - Exception monitoring, as a filter rather than a notification
 
 - Two exceptions, both detected reliably, surfaced as a clickable count on the Extensions

@@ -768,7 +768,15 @@ def _bullhorn_ext_rows(cursor, app_conn, horizon):
             -- customText12 is Recruiter and customText11 Account Manager on
             -- View_Placement -- the mapping GetContractsComparison already
             -- runs on. ownerID above is the record owner, not the recruiter.
-            NULLIF(LTRIM(RTRIM(p.customText12)), '')      AS recruiter,
+            /* The placement's recruiter of record, from Bullhorn's own
+             * commission table rather than customText12, which is a free-text
+             * name field. Measured 2026-10-12 against 200 sampled placements:
+             * every one has exactly a single role='Recruiting' commission --
+             * 39,935 placements, zero splits, so there is no ambiguity about
+             * which name is "the" recruiter -- and the warehouse's
+             * PLACEMENT_DIM.Recruiter disagrees with it on 18 of 200 (9%). */
+            NULLIF(LTRIM(RTRIM(ISNULL(pcu.firstName,'') + ' ' + ISNULL(pcu.lastName,''))), '')
+                                                          AS recruiter,
             NULLIF(p.customInt10, 0)                      AS cand_ext_response,
             NULLIF(LTRIM(RTRIM(CAST(p.customTextBlock7 AS NVARCHAR(MAX)))), '')
                                                           AS cand_ext_comments,
@@ -795,6 +803,14 @@ def _bullhorn_ext_rows(cursor, app_conn, horizon):
             CAST(NULL AS DATE)                            AS original_end_date,
             jo.state                                      AS region
         FROM dbo.View_Placement p WITH (NOLOCK)
+        -- One Recruiting commission per placement (verified: 39,935 placements,
+        -- none with more than one), so this cannot fan the row set out.
+        LEFT JOIN dbo.PlacementCommission pc WITH (NOLOCK)
+               ON pc.placementID = p.placementID
+              AND pc.isDeleted = 0
+              AND LTRIM(RTRIM(pc.role)) = 'Recruiting'
+        LEFT JOIN dbo.CorporateUser pcu WITH (NOLOCK)
+               ON pcu.corporateUserID = pc.userID
         LEFT JOIN dbo.View_Candidate cnd WITH (NOLOCK) ON cnd.candidateID = p.candidateID
         LEFT JOIN dbo.View_JobOrder jo WITH (NOLOCK)   ON jo.jobOrderID = p.jobOrderID
         LEFT JOIN dbo.View_ClientCorporation cc WITH (NOLOCK)
@@ -976,6 +992,68 @@ def _non_msp_rows(horizon):
             if conn is not None:
                 conn.close()
     return rows, errors
+
+
+def _apply_commission_recruiters(rows):
+    """Overwrite the recruiter with Bullhorn's commission record.
+
+    MSP seats reach Bullhorn through the warehouse, whose PLACEMENT_DIM carries
+    its own Recruiter column -- and that column disagrees with Bullhorn's own
+    role='Recruiting' commission on 18 of 200 sampled placements (9%). The
+    commission table is the record of who actually recruited the seat, so it
+    wins. It lives on the Bullhorn mirror, not the warehouse, hence the second
+    connection.
+
+    Safe to join on placementID alone: 39,935 placements carry exactly one
+    Recruiting commission and none carry two, so there is no split to resolve
+    and no fan-out to guard against.
+
+    Best effort. A failure here leaves the warehouse name in place rather than
+    blanking the column -- a slightly stale recruiter beats an empty one.
+    """
+    ids = {int(r['match_id']) for r in rows
+           if r.get('match_id') not in (None, '') and str(r['match_id']).isdigit()}
+    if not ids:
+        return
+    conn = None
+    try:
+        conn = get_bullhorn_conn()
+        if conn is None:
+            return
+        cur = conn.cursor()
+        cur.execute('SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED')
+        out, ids = {}, sorted(ids)
+        for i in range(0, len(ids), 1000):
+            chunk = ids[i:i + 1000]
+            cur.execute(f"""
+                SELECT pc.placementID,
+                       NULLIF(LTRIM(RTRIM(ISNULL(cu.firstName,'') + ' '
+                                        + ISNULL(cu.lastName,''))), '')
+                FROM dbo.PlacementCommission pc WITH (NOLOCK)
+                LEFT JOIN dbo.CorporateUser cu WITH (NOLOCK)
+                       ON cu.corporateUserID = pc.userID
+                WHERE pc.isDeleted = 0
+                  AND LTRIM(RTRIM(pc.role)) = 'Recruiting'
+                  AND pc.placementID IN ({','.join(str(x) for x in chunk)})
+            """)
+            for pid, name in cur.fetchall():
+                if name:
+                    out[int(pid)] = name
+        hit = 0
+        for r in rows:
+            mid = r.get('match_id')
+            if mid in (None, '') or not str(mid).isdigit():
+                continue
+            name = out.get(int(mid))
+            if name and name != r.get('recruiter'):
+                r['recruiter'] = name
+                hit += 1
+        print(f"Extensions: commission recruiters applied to {hit} of {len(rows)} rows")
+    except Exception as e:
+        print(f"Extensions: commission recruiter lookup skipped: {e}")
+    finally:
+        if conn is not None:
+            conn.close()
 
 
 def _apply_credentials(rows):
@@ -1232,6 +1310,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                     errors.append(err)
                 rows.extend(got)
 
+        _apply_commission_recruiters(rows)
         rows = _serialize(rows)
         rows.sort(key=lambda r: (r.get('days_left') if r.get('days_left') is not None else 9999))
         b4n = sum(1 for r in rows if r['source_system'] == 'B4')
