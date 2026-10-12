@@ -1009,7 +1009,7 @@
     const $ = (id) => document.getElementById(id);
 
     // App version - loaded from environment variable via API, with fallback
-    let APP_VERSION = '2.53.1';
+    let APP_VERSION = '2.54.0';
 
     const API_BASE_URL = '/api';
 
@@ -2006,6 +2006,13 @@
               // without a refetch -- see GetRateIntel.
               { key: 'rate',       route: 'rate-intel',      pick: d => d.peers || [], meta: d => d.coverage || null },
             ];
+            /* Stage 5's daily series. Loaded alongside the stage feeds but kept
+             * off `stageLoads` because it is not a row set -- the panel reads it
+             * whole, and a failure here must not blank the Extensions list. */
+            fetch(`${API_BASE_URL}/extension-metrics?days=30`)
+              .then(r => r.ok ? r.json() : null)
+              .then(d => { if (d && !d.error) { window.store.state.extMetrics = d; window.store.dispatch('REFRESH_UI'); } })
+              .catch(e => console.warn('extension-metrics:', e));
             await Promise.all(stageLoads.map(async ({ key, route, pick, meta }) => {
               try {
                 const resp = await fetch(`${API_BASE_URL}/${route}`);
@@ -8458,6 +8465,79 @@
        * SET_EXT_FILTER fires on change (not input), so a re-render can't land
        * mid-keystroke.
        */
+      /* Stage 5 of the extension workflow -- "Key Outputs in Impact Manager":
+       * daily approvals, daily accepted extensions, and pipeline by status.
+       *
+       * The three pipeline counts come off the rows already loaded, not the
+       * endpoint, so this panel and the list underneath it can never disagree.
+       * Only the daily series needs the server, because it is history rather
+       * than current state.
+       *
+       * B4 and VNDLY are shown side by side and never summed. B4's dates are
+       * real events (Offer_Date is the client approving, Date_Awarded is the
+       * spec's "moves to Work Order"); VNDLY's vocabulary is looser, carries no
+       * client-versus-vendor split at all, and its series is rebuilt from
+       * deduped modification events. One combined "accepted" number would merge
+       * two different definitions.
+       */
+      extMetricsPanel(rows) {
+        const m = window.store.state.extMetrics;
+        const n = stage => (rows || []).filter(r => Utils.extensionStage(r).stage === stage).length;
+        const counts = [
+          ['Awaiting Client',  n('Awaiting Client Approval'), 'bg-amber-50 border-amber-200 text-amber-800'],
+          ['Awaiting Vendor',  n('Awaiting Vendor Approval'), 'bg-blue-50 border-blue-200 text-blue-800'],
+          ['Accepted',         n(Utils.EXT_STAGE_ACCEPTED),   'bg-emerald-50 border-emerald-200 text-emerald-800'],
+        ];
+        const bars = (series, keys, title) => {
+          if (!series || !series.length) return `<div class="text-[10px] text-slate-400 italic">${title}: no activity in the window</div>`;
+          const max = Math.max(1, ...series.map(d => Math.max(...keys.map(([k]) => Number(d[k]) || 0))));
+          return `
+            <div>
+              <div class="text-[9px] uppercase tracking-wide text-slate-400 font-semibold mb-1">${title}</div>
+              <div class="flex items-end gap-[3px] h-10">
+                ${series.slice(-30).map(d => `
+                  <div class="flex-1 flex flex-col justify-end gap-[1px]" title="${View.esc(d.day)} — ${
+                    keys.map(([k, lbl]) => `${lbl} ${Number(d[k]) || 0}`).join(', ')}">
+                    ${keys.map(([k, , cls]) => {
+                      const v = Number(d[k]) || 0;
+                      return v ? `<div class="${cls} rounded-sm" style="height:${Math.max(2, Math.round(v / max * 28))}px"></div>` : '';
+                    }).join('')}
+                  </div>`).join('')}
+              </div>
+              <div class="flex gap-3 mt-1">
+                ${keys.map(([k, lbl, cls]) => `<span class="text-[9px] text-slate-500 flex items-center gap-1">
+                  <span class="${cls} w-2 h-2 rounded-sm inline-block"></span>${lbl}
+                  <b class="text-slate-700">${series.reduce((a, d) => a + (Number(d[k]) || 0), 0)}</b></span>`).join('')}
+              </div>
+            </div>`;
+        };
+        return `
+          <div class="bg-white border border-slate-200 rounded-xl p-3 mb-3 shadow-sm">
+            <div class="flex items-start gap-4 flex-wrap">
+              <div class="flex gap-2">
+                ${counts.map(([label, v, cls]) => `
+                  <div class="border ${cls} rounded-lg px-3 py-2 min-w-[108px]">
+                    <div class="text-[9px] uppercase tracking-wide font-semibold opacity-70">${label}</div>
+                    <div class="text-lg font-bold leading-tight">${v}</div>
+                  </div>`).join('')}
+              </div>
+              <div class="flex-1 min-w-[260px] grid grid-cols-1 sm:grid-cols-2 gap-4">
+                ${m ? bars(m.b4, [['approvals', 'Approvals', 'bg-blue-500'], ['accepted', 'Accepted', 'bg-emerald-500']],
+                           `B4 &middot; last ${m.days} days`) : '<div class="text-[10px] text-slate-400 italic">Loading daily activity…</div>'}
+                ${m ? bars(m.vndly, [['submitted', 'Submitted', 'bg-blue-500'], ['accepted', 'Accepted', 'bg-emerald-500'], ['cancelled', 'Cancelled', 'bg-rose-400']],
+                           `VNDLY &middot; last ${m.days} days`) : ''}
+              </div>
+            </div>
+            ${m && m.errors && m.errors.length ? `
+              <div class="text-[10px] text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1 mt-2">
+                Partial: ${View.esc(m.errors.join('; '))}</div>` : ''}
+            <p class="text-[9px] text-slate-400 mt-2 leading-snug">
+              B4 dates are recorded events &mdash; approval is the client offer, accepted is conversion to a work order.
+              VNDLY reports a single status with no client/vendor split, so the two are shown separately rather than added.
+            </p>
+          </div>`;
+      },
+
       extSearchBar(total, shown) {
         const f = window.store.state.extFilter || { endFrom: '', endTo: '', status: 'All' };
         const gb = window.store.state.extGroupBy || 'designation';
@@ -9891,7 +9971,7 @@
         // bands above the table, which do the same split and are clickable,
         // and Decision Mix could only ever show one grey ring until decisions
         // are recorded. Extension Search takes this slot instead.
-        const intel = View.extSearchBar(all.length, rows.length);
+        const intel = View.extMetricsPanel(all) + View.extSearchBar(all.length, rows.length);
         if (el) el.innerHTML = View.stageShell('extensions', 'Extensions',
           'GHR contracts ending within 45 days. Day colors count down to contract end — '
           + 'deeper red means fewer days remain to secure a decision.',
@@ -16426,6 +16506,7 @@
         expandedPending: new Set(),
         // Spec's designation model is the default grouping on Extensions.
         extGroupBy: 'designation',
+        extMetrics: null,
         // Analysis strips default open; collapsed state is per stage view.
         intelOpen: {},
         onboardingRows: [], onboardingMeta: null, onboardingLoaded: false, onboardingError: null,

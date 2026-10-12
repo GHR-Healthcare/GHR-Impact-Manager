@@ -2,6 +2,30 @@
 
 ## Version History
 
+### 2.54.0 - Stage 5: daily approvals and accepted extensions
+
+- The workflow's "Key Outputs in Impact Manager" — daily approvals, daily accepted
+  extensions, pipeline by status — now sit in a panel at the top of the Extensions tab
+- **No new infrastructure, and no snapshotting.** Both headline numbers are already
+  stored as dates, so the series is a `GROUP BY` rather than something that has to be
+  accumulated going forward. `Offer_Date` is the client approving; `Date_Awarded` is the
+  spec's *"count accepted extensions only when the modification moves to Work Order"*
+- New endpoint `api/GetExtensionMetrics` (`/api/extension-metrics?days=30`). The three
+  pipeline counts are computed from the rows already loaded, **not** the endpoint, so the
+  panel and the list beneath it cannot disagree
+- **The VNDLY series needed real handling.** Measured across the 1,035 `Date Extension`
+  rows: 1,035 raw rows are only **813 distinct events** (one is stored six times over),
+  `Revision Number` is **not** a time ordering (revision 8 precedes revision 7 on the
+  same work order), and **417 rows carry no status at all**. So it is `SELECT DISTINCT`
+  on (work order, status, last-modified), ordered by date alone, nulls excluded — 478
+  usable events
+- **The two books are shown side by side and never summed.** B4's dates are recorded
+  events and distinguish client from vendor; VNDLY reports one looser status with no such
+  split. A combined "accepted" would merge two definitions
+- Corrects something said earlier in the day: VNDLY's `Last Modified` is *not* a drifting
+  last-touched timestamp. The rows are event snapshots, so it is usable history — the
+  real limits are duplication, ordering and nulls
+
 ### 2.53.1 - The Awaiting Client lever the spec actually asked for
 
 - The spec asks for it by name — *"Add a lever that is titled Awaiting Client so we can
