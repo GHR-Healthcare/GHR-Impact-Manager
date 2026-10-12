@@ -2,6 +2,27 @@
 
 ## Version History
 
+### 2.55.0 - Exception monitoring, as a filter rather than a notification
+
+- Two exceptions, both detected reliably, surfaced as a clickable count on the Extensions
+  panel and a banner in the modal where the work happens:
+  - **ATS ahead of the VMS** — Bullhorn shows the end moved past the original but the VMS
+    has recorded no acceptance. **42 seats**
+  - **About to lapse** — ends within 7 days and still reads Pending Extension Review, so
+    nothing has been recorded in either system. **34 seats**
+- **Thresholds measured, not guessed.** "Ending soon with nothing recorded" returns 2 at
+  3 days, 34 at 7, and 59 at 14. Seven is the one that is both urgent and small enough to
+  clear. Together the two flag 73 of 331 seats — about a fifth
+- **A third candidate was dropped because it can never fire.** "Past its end date and
+  still pending" is impossible: the feed bounds `End_Date BETWEEN today AND +45 days`, so
+  `days_left` runs 0..45 with no negatives. Building that detector would have been dead
+  code that looked like a working safeguard
+- **Deliberately not a push alert.** There is no scheduler in this app — SWA managed
+  functions are HTTP-trigger only — and no mail sender anywhere in the API. A daily digest
+  would need `Mail.Send` added to the app registration by an AAD admin plus an external
+  cron. A count where people already look is the honest version until someone owns a
+  destination, and the volume has been watched for a week
+
 ### 2.54.0 - Stage 5: daily approvals and accepted extensions
 
 - The workflow's "Key Outputs in Impact Manager" — daily approvals, daily accepted

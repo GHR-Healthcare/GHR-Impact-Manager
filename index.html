@@ -1009,7 +1009,7 @@
     const $ = (id) => document.getElementById(id);
 
     // App version - loaded from environment variable via API, with fallback
-    let APP_VERSION = '2.54.0';
+    let APP_VERSION = '2.55.0';
 
     const API_BASE_URL = '/api';
 
@@ -3128,6 +3128,36 @@
        * stays for linked seats, where both systems carrying an end past the
        * original IS independent evidence of acceptance.
        */
+      /* Stage 5's "exception monitoring", kept to the two we can detect
+       * reliably and at a volume someone will actually work.
+       *
+       * Thresholds are measured, not guessed. On the live MSP book of 331
+       * seats: 42 carry an ATS/VMS mismatch, and "ending soon with nothing
+       * recorded" returns 2 at 3 days, 34 at 7, and 59 at 14. Seven days is
+       * the one that is both urgent and small enough to clear.
+       *
+       * "Past its end date and still pending" is deliberately NOT here. The
+       * feed bounds End_Date to BETWEEN today AND +45 days, so days_left runs
+       * 0..45 with no negatives -- that detector could never fire.
+       */
+      EXT_LAPSE_DAYS: 7,
+
+      extensionExceptions(r) {
+        const out = [];
+        if (Utils.extensionEndMovedInAts(r) && !Utils.extensionAccepted(r)) {
+          out.push({ key: 'ats_ahead', label: 'ATS ahead of the VMS',
+            detail: `Bullhorn shows the end moved to ${String(r.match_end_date).slice(0, 10)}`
+                  + ` but ${r.source_system || 'the VMS'} has recorded no acceptance.` });
+        }
+        const d = r.days_left;
+        if (d != null && d <= Utils.EXT_LAPSE_DAYS
+            && Utils.extensionStage(r).stage === Utils.EXT_STAGES[0]) {
+          out.push({ key: 'lapsing', label: 'About to lapse',
+            detail: `Ends in ${Utils.days(d)} with no approval activity recorded in either system.` });
+        }
+        return out;
+      },
+
       extensionAccepted(r) {
         return Utils.extensionStage(r).stage === Utils.EXT_STAGE_ACCEPTED;
       },
@@ -8514,12 +8544,36 @@
         return `
           <div class="bg-white border border-slate-200 rounded-xl p-3 mb-3 shadow-sm">
             <div class="flex items-start gap-4 flex-wrap">
-              <div class="flex gap-2">
+              <div class="flex gap-2 flex-wrap">
                 ${counts.map(([label, v, cls]) => `
                   <div class="border ${cls} rounded-lg px-3 py-2 min-w-[108px]">
                     <div class="text-[9px] uppercase tracking-wide font-semibold opacity-70">${label}</div>
                     <div class="text-lg font-bold leading-tight">${v}</div>
                   </div>`).join('')}
+                ${(() => {
+                  /* Exceptions, as a filter rather than a notification. There
+                   * is no scheduler in this app -- SWA managed functions are
+                   * HTTP-only -- and no mail sender, so a push alert would need
+                   * a tenant permission change and an external cron. A count
+                   * where people already look is the honest version of this
+                   * until someone owns a destination for it. */
+                  const ex = (rows || []).filter(x => Utils.extensionExceptions(x).length);
+                  const on = !!window.store.state.extExceptionsOnly;
+                  if (!ex.length && !on) return '';
+                  const by = {};
+                  ex.forEach(x => Utils.extensionExceptions(x).forEach(e => { by[e.label] = (by[e.label] || 0) + 1; }));
+                  return `
+                    <button type="button" onclick="store.dispatch('TOGGLE_EXT_EXCEPTIONS')"
+                            title="${Object.entries(by).map(([k, v]) => `${k}: ${v}`).join(' · ')}"
+                            class="text-left border rounded-lg px-3 py-2 min-w-[132px] transition-colors ${
+                              on ? 'bg-rose-600 border-rose-600 text-white'
+                                 : 'bg-rose-50 border-rose-200 text-rose-800 hover:bg-rose-100'}">
+                      <div class="text-[9px] uppercase tracking-wide font-semibold ${on ? 'opacity-80' : 'opacity-70'}">Exceptions${on ? ' · showing' : ''}</div>
+                      <div class="text-lg font-bold leading-tight">${ex.length}</div>
+                      <div class="text-[9px] ${on ? 'opacity-80' : 'opacity-70'} truncate">${
+                        Object.entries(by).map(([k, v]) => `${v} ${k.toLowerCase()}`).join(', ') || 'none'}</div>
+                    </button>`;
+                })()}
               </div>
               <div class="flex-1 min-w-[260px] grid grid-cols-1 sm:grid-cols-2 gap-4">
                 ${m ? bars(m.b4, [['approvals', 'Approvals', 'bg-blue-500'], ['accepted', 'Accepted', 'bg-emerald-500']],
@@ -9595,6 +9649,22 @@
 
               ${panel(1, `
                 ${(() => {
+                  /* Why this seat is flagged, stated where the action happens.
+                   * The count on the tab gets someone here; this tells them
+                   * what to do about it without making them infer it from the
+                   * ladder. */
+                  const ex = Utils.extensionExceptions(r);
+                  if (!ex.length) return '';
+                  return `
+                    <div class="bg-rose-50 border border-rose-200 rounded-lg px-3 py-2 mb-3">
+                      <div class="text-[9px] uppercase tracking-wide text-rose-700 font-semibold mb-1">
+                        ${ex.length === 1 ? 'Exception' : ex.length + ' exceptions'}</div>
+                      ${ex.map(x => `
+                        <div class="text-xs text-rose-900 font-semibold">${View.esc(x.label)}</div>
+                        <div class="text-[10px] text-rose-700 leading-snug mb-0.5">${View.esc(x.detail)}</div>`).join('')}
+                    </div>`;
+                })()}
+                ${(() => {
                   /* The four designations, as a pipeline. From the V1 spec:
                    * these replace the old Confirm Client / Send Extension /
                    * Extension Accepted checklist, and each one names where it
@@ -9853,6 +9923,10 @@
           { label: '13-Wk',           key: 'extension_value_13wk', align: 'right', w: '7%' },
         ];
         const all = (s.extensionsRows || []).filter(View.stageFilter);
+        // The exceptions card filters the list in place rather than opening a
+        // separate view -- the point is to act on the seat, which means the
+        // same row, same modal, same save path.
+        const exOnly = !!s.extExceptionsOnly;
         // Built from `all`, before the per-column filters narrow anything, so
         // picking a name never empties the list you picked it from.
         extCols.forEach(c => {
@@ -9860,7 +9934,8 @@
         });
         View.stageColCount.extensions = extCols.length;
         const rows = View.stageApply('extensions',
-          all.filter(View.extSearchMatch), extCols);
+          all.filter(View.extSearchMatch)
+             .filter(r => !exOnly || Utils.extensionExceptions(r).length), extCols);
         const money = v => (v || v === 0) ? '$' + Number(v).toLocaleString(undefined, { maximumFractionDigits: 0 }) : '—';
         const expiring = rows.filter(r => r.days_left != null && r.days_left <= 14).length;
         const events = rows.reduce((a, r) => a + (Number(r.extension_events || r.ext_events) || 0), 0);
@@ -16507,6 +16582,7 @@
         // Spec's designation model is the default grouping on Extensions.
         extGroupBy: 'designation',
         extMetrics: null,
+        extExceptionsOnly: false,
         // Analysis strips default open; collapsed state is per stage view.
         intelOpen: {},
         onboardingRows: [], onboardingMeta: null, onboardingLoaded: false, onboardingError: null,
@@ -16833,6 +16909,11 @@
               break;
             }
 
+            case 'TOGGLE_EXT_EXCEPTIONS': {
+              s.extExceptionsOnly = !s.extExceptionsOnly;
+              View.extensions();
+              break;
+            }
             case 'SET_EXT_GROUP_BY': {
               s.extGroupBy = payload === 'workflow' ? 'workflow' : 'designation';
               View.extensions();
