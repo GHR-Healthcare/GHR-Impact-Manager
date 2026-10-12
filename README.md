@@ -2,6 +2,25 @@
 
 ## Version History
 
+### 2.53.1 - The Awaiting Client lever the spec actually asked for
+
+- The spec asks for it by name — *"Add a lever that is titled Awaiting Client so we can
+  manually switch that to show that the PMO has the extension in front of the client"* —
+  and we only had it as one option among five in the designation dropdown
+- **It matters more than a UI nicety.** Stage 3 of the workflow is "Extension Submitted
+  to Client = Yes", which had **no representation anywhere in the app**, and the Send
+  Extension checkbox that came closest is the one 2.53.0 removed. Flipping this lever is
+  now the record of that handoff — the one step in the workflow no VMS reports
+- Writes through the same `.ext-stage` select, so there is one stored designation and
+  nothing to keep in sync
+- **Repaints in place rather than re-rendering.** The first attempt re-opened the row
+  detail, which reads the stage back out of *saved* workspace state — so the lever
+  snapped straight back to off, and would have discarded any other unsaved edit on the
+  record. Same hazard as the tabs
+- Known rough edge: the ladder above still shows the saved designation until you press
+  Save, so the lever can read on while the ladder still says Pending Extension Review.
+  Correct on save; re-rendering to fix it would reintroduce the wipe
+
 ### 2.53.0 - The four designations replace the checklist
 
 - From *Extension Tracker in Impact V1.docx*: the four designations go **"in place of"**

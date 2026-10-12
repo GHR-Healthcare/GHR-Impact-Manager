@@ -1009,7 +1009,7 @@
     const $ = (id) => document.getElementById(id);
 
     // App version - loaded from environment variable via API, with fallback
-    let APP_VERSION = '2.53.0';
+    let APP_VERSION = '2.53.1';
 
     const API_BASE_URL = '/api';
 
@@ -3936,6 +3936,41 @@
      * The choice is kept on the store so a legitimate re-render (after a save,
      * or stepping to the next seat) comes back to the same tab.
      */
+    /* The Awaiting Client lever. Drives the designation select rather than
+     * holding its own value, so there is exactly one stored designation and
+     * nothing to reconcile. Dispatching through the select's own change event
+     * keeps whatever wiring is attached to it working. */
+    window.toggleAwaitingClient = (id) => {
+      const sel = document.querySelector(`.ext-stage[data-id="${id}"]`);
+      if (!sel) return;
+      const on = sel.value !== 'Awaiting Client Approval';
+      sel.value = on ? 'Awaiting Client Approval' : '';
+      sel.dispatchEvent(new Event('change', { bubbles: true }));
+
+      /* Repaint in place. Re-opening the row detail would read e.stage back out
+       * of the SAVED workspace state, which this has not written yet, so the
+       * lever would snap straight back to off -- and it would throw away any
+       * other unsaved edit on the record while doing it. */
+      const sw = document.querySelector(`[role="switch"][data-lever-id="${id}"]`);
+      if (!sw) return;
+      sw.setAttribute('aria-checked', String(on));
+      sw.classList.toggle('bg-amber-500', on);
+      sw.classList.toggle('bg-slate-300', !on);
+      const knob = sw.firstElementChild;
+      if (knob) { knob.classList.toggle('left-[18px]', on); knob.classList.toggle('left-0.5', !on); }
+      const card = sw.parentElement;
+      if (card) {
+        card.classList.toggle('border-amber-300', on);
+        card.classList.toggle('bg-amber-50', on);
+        card.classList.toggle('border-slate-200', !on);
+        card.classList.toggle('bg-white', !on);
+      }
+      const blurb = card && card.querySelector('[data-lever-blurb]');
+      if (blurb) blurb.textContent = on
+        ? 'Recorded as in front of the client. Switch off to follow the VMS again.'
+        : 'Switch on once the PMO has sent the extension to the client. No VMS reports this, so it is recorded here.';
+    };
+
     window.setExtTab = (n) => {
       n = Number(n) || 1;
       window.store.state.extTab = n;
@@ -9521,6 +9556,38 @@
                         <span class="shrink-0 text-[9px] uppercase tracking-wide ${cur ? 'text-slate-500 font-bold' : 'text-slate-300'}">${passed ? 'Passed' : cur ? 'Current' : 'Upcoming'}</span>
                       </div>`;
                   }).join('')}</div>`;
+                })()}
+                ${(() => {
+                  /* The spec asks for this by name: "Add a lever that is titled
+                   * Awaiting Client so we can manually switch that to show that
+                   * the PMO has the extension in front of the client."
+                   *
+                   * It is a lever rather than one option among five because
+                   * flipping it IS the record of stage 3 -- the PM having sent
+                   * the extension to the client. Nothing in either VMS carries
+                   * that, and the Send Extension checkbox that used to stand in
+                   * for it is gone, replaced by this ladder. Burying it in the
+                   * dropdown would leave the workflow's one manual handoff with
+                   * no obvious home.
+                   *
+                   * It writes through the same .ext-stage select, so there is
+                   * one stored value and no second thing to keep in sync. */
+                  const on = e.stage === 'Awaiting Client Approval';
+                  return `
+                    <div class="flex items-start gap-3 border ${on ? 'border-amber-300 bg-amber-50' : 'border-slate-200 bg-white'} rounded-lg px-3 py-2.5 mb-3">
+                      <button type="button" role="switch" aria-checked="${on}"
+                              onclick="window.toggleAwaitingClient('${r.id}')" data-lever-id="${r.id}"
+                              class="shrink-0 mt-0.5 w-9 h-5 rounded-full transition-colors relative ${on ? 'bg-amber-500' : 'bg-slate-300'}"
+                              title="Record that the PMO has this in front of the client">
+                        <span class="absolute top-0.5 ${on ? 'left-[18px]' : 'left-0.5'} w-4 h-4 bg-white rounded-full shadow transition-all"></span>
+                      </button>
+                      <span class="flex-1 min-w-0">
+                        <span class="block text-xs font-semibold text-slate-700">Awaiting Client</span>
+                        <span class="block text-[10px] text-slate-500 leading-snug" data-lever-blurb>${on
+                          ? 'Recorded as in front of the client. Switch off to follow the VMS again.'
+                          : 'Switch on once the PMO has sent the extension to the client. No VMS reports this, so it is recorded here.'}</span>
+                      </span>
+                    </div>`;
                 })()}
                 <div>
                   <label class="block text-[10px] font-semibold text-slate-500 uppercase tracking-wide mb-1">Extension Designation</label>
