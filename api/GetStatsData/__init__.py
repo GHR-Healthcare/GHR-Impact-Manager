@@ -365,6 +365,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
         )
         
         cursor = conn.cursor()
+        msp_errors = []  # GH #79: collected AND returned, see the payload below
         on_assignment = []
         upcoming = []
         recently_ended = []
@@ -407,6 +408,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                 on_assignment.append(row_dict)
         except Exception as e:
             print(f"Error loading B4 active assignments: {e}")
+            msp_errors.append(f'B4 active: {e}')
         
         # ============================================================
         # B4Health - Upcoming Starts
@@ -445,6 +447,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                 upcoming.append(row_dict)
         except Exception as e:
             print(f"Error loading B4 upcoming: {e}")
+            msp_errors.append(f'B4 upcoming: {e}')
         
         # ============================================================
         # VNDLY - Active Assignments (from Work Orders)
@@ -480,6 +483,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                 on_assignment.append(row_dict)
         except Exception as e:
             print(f"Error loading VNDLY active assignments: {e}")
+            msp_errors.append(f'VNDLY active: {e}')
         
         # ============================================================
         # VNDLY - Upcoming Starts (confirmed but not yet started)
@@ -515,6 +519,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                 upcoming.append(row_dict)
         except Exception as e:
             print(f"Error loading VNDLY upcoming: {e}")
+            msp_errors.append(f'VNDLY upcoming: {e}')
         
         conn.close()
         
@@ -578,6 +583,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                     recently_ended.append(row_dict)
             except Exception as e:
                 print(f"Error loading {label} recently ended: {e}")
+                msp_errors.append(f'{label} recently ended: {e}')
 
         b4_active = len([r for r in on_assignment if r.get('source_system') == 'B4'])
         vndly_active = len([r for r in on_assignment if r.get('source_system') == 'VNDLY'])
@@ -588,6 +594,12 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             'onAssignment': on_assignment,
             'upcoming': upcoming,
             'recentlyEnded': recently_ended,
+            # The MSP branch has five swallowing handlers and returned none of
+            # them, so a dead B4 or VNDLY feed served a 200 of half the book.
+            # 2.59.1 added this to the NON-MSP response by mistake and left the
+            # MSP one -- which is the branch the finding actually cited --
+            # untouched. (GH #79)
+            'errors': msp_errors,
         }
         write_cache(_key, _payload, build_ms=int((time.time() - _started) * 1000),
                     refreshed_by='live-request')

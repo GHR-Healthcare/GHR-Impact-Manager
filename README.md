@@ -2,6 +2,18 @@
 
 ## Version History
 
+### 2.60.1 - #79 again: 2.59.1 fixed the wrong branch
+
+- App Factory's automated closure check reopened #79 and was **right**. 2.59.1 added
+  `errors` to the **non-MSP** response in `GetStatsData`; the finding cited the **MSP**
+  branch, whose payload had no `errors` key at all and whose **five** swallowing handlers
+  only printed. A dead B4 or VNDLY feed still served a 200 containing half the book
+- All five now record which feed failed (`B4 active`, `B4 upcoming`, `VNDLY active`,
+  `VNDLY upcoming`, `<label> recently ended`) and the MSP payload returns them
+- Worth recording as a process note: the first fix passed every check I ran — the file was
+  right, the diff was right, it compiled, and the key appeared in a response. It was still
+  in the wrong one of two responses in the same file
+
 ### 2.60.0 - Per-diem presence was overstated by 75%
 
 - **#94 — Symplr orderless shifts were collapsed to `MIN(start)..MAX(end)` per (client,
