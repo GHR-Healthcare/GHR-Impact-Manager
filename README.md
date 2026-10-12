@@ -2,6 +2,24 @@
 
 ## Version History
 
+### 2.51.1 - 2.51.0 shipped a broken VNDLY branch
+
+- I added `cand_ext_response` / `cand_ext_comments` to the SELECT lists in 2.51.0 but not
+  to the two things that actually carry them: the `OUTER APPLY (SELECT TOP 1 ...)` that
+  reads `#bh_wo`, and the outer `SELECT ... INTO #b4_bh`. Both branches referenced
+  `bh.cand_ext_response`, which neither returned, so **the VNDLY branch failed at
+  runtime** — it was live on prototype for about half an hour
+- Found by tracing an unrelated fan-out, not by testing the change. The Python compiled
+  and the temp-table preps ran; neither exercises the query that broke
+- Both now run against the live warehouse: VNDLY **78 seats**, B4 **348 seats**, and the
+  one live clinician reply comes through — *"I found another contract closer to home !"*
+  against a `No`
+- Separately, and **not** caused by this: `#bh_wo` holds **282,199 rows for 528 distinct
+  links**, a 534× fan-out, because `BH_PLACEMENT_RAW_TO_B4HealthOrder` is joined on
+  `clientCorporationID` alone just to look up a tenant name. The `OUTER APPLY` collapses
+  it to one row per work order, so output is correct and the cost is performance only.
+  The comment above it still claims "106 links"
+
 ### 2.51.0 - The clinician's own extension answer, from Bullhorn
 
 - Donny Wright's Extension Request automation (enabled 2026-10-09: approved placements,

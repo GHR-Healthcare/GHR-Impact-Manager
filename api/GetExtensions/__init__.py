@@ -177,7 +177,8 @@ def _b4_rows(cursor, horizon, include_affiliate):
         IF OBJECT_ID('tempdb..#b4_bh') IS NOT NULL DROP TABLE #b4_bh;
         SELECT contract_id, match_id, match_start_date, match_end_date,
                match_status, match_clinician, match_is_extension,
-               match_original_end, Recruiter, source_is_extension
+               match_original_end, Recruiter, source_is_extension,
+               cand_ext_response, cand_ext_comments
         INTO #b4_bh
         FROM (
             SELECT LTRIM(RTRIM(l.Contract_ID))                  AS contract_id,
@@ -655,7 +656,7 @@ def _vndly_rows(cursor, horizon, include_affiliate):
             SELECT TOP 1
                 b.match_id, b.match_start_date, b.match_end_date,
                 b.match_status, b.match_clinician, b.match_original_end,
-                b.bh_recruiter
+                b.bh_recruiter, b.cand_ext_response, b.cand_ext_comments
             FROM #bh_wo b
             WHERE b.tenant = LEFT(w.WOSystemKey, CHARINDEX('-', w.WOSystemKey + '-') - 1)
               AND b.woid   = LTRIM(RTRIM(w.[Work Order Id]))
