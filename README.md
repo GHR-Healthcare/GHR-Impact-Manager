@@ -2,6 +2,28 @@
 
 ## Version History
 
+### 2.53.0 - The four designations replace the checklist
+
+- From *Extension Tracker in Impact V1.docx*: the four designations go **"in place of"**
+  the Confirm Client / Gather RTO / Send Extension / Extension Accepted checklist — the
+  screenshot in the doc is that exact checklist — and *"We can keep Gather RTO under
+  Awaiting Vendor Approval as they are hand in hand"*
+- The Designation tab is now a **four-rung ladder**, each rung carrying the doc's own
+  sourcing so the screen shows its working rather than asserting a status:
+  - **Pending Extension Review** — no decision recorded in either system
+  - **Awaiting Client Approval** — VNDLY pending modifications, awaiting client; manual
+    lever here until the VNDLY process changes
+  - **Awaiting Vendor Approval** — VNDLY "Work Order Extensions – Pending Approval", or
+    B4 Network Activity filtered to "extension offer pending" for GHR divisions
+  - **Extension Accepted** — migrates to a new contract on the Trends tab
+- `Extension Declined` is **not** a rung. It is a seat leaving the ladder, so a declined
+  seat gets a banner with its reason instead of a position
+- **Confirm Client and Send Extension stay in the DOM as hidden checkboxes.**
+  `SAVE_EXTENSION` rebuilds `steps` from whatever `.ext-step` boxes it finds, so removing
+  them outright would have dropped their stored values on the next save
+- Tab 2's subtitle was "N of 3 done", which is meaningless with one checkpoint left; it
+  now shows the client decision
+
 ### 2.52.0 - The extension modal is four tabs
 
 - Built from the tabbed redesign: **Designation · Checkpoints & notes · System match ·
