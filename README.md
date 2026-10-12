@@ -2,6 +2,26 @@
 
 ## Version History
 
+### 2.59.0 - Three silent failures that all read as good data
+
+- **#93 — a failed scope query collapsed the book from ~2,280 clients to about 15.**
+  `discover_active_client_ids` swallowed its exception and returned an empty set, so
+  `resolve_scope_client_ids` fell back to the hardcoded rollup plus the manual allowlist
+  and every non-MSP endpoint served a 200 of drastically understated numbers, with nothing
+  on screen looking wrong. It raises now. All nine call sites wrap it in `try/finally`
+  with no `except`, so it surfaces as a real error — **a scope we cannot compute is not a
+  small scope.** `get_manual_allowlist_ids` still swallows, which is defensible and now
+  says why: losing a handful of manual additions shrinks the book at the margin rather
+  than gutting it
+- **#28 — `GetChanges` returned 200 with an empty list on a DB failure**, which the client
+  renders as "this record has no history". A dead query read as a clean audit trail. Now
+  500, with the detail logged rather than echoed, and the frontend records the failure
+  instead of silently showing nothing
+- **#66 — saving a meeting nulled `started_at`.** The MERGE set it unconditionally from
+  the body, so the stage-completion autosave — which sends only changed fields — erased
+  when the meeting began. Now `COALESCE(?, started_at)`, matching `recap_html` three lines
+  below, which already had exactly this protection
+
 ### 2.58.2 - GH #100: an empty list wiped global config
 
 - The three replace-all config POSTs — client allowlist, system mappings, PM mappings —

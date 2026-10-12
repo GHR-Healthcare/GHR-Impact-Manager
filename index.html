@@ -1009,7 +1009,7 @@
     const $ = (id) => document.getElementById(id);
 
     // App version - loaded from environment variable via API, with fallback
-    let APP_VERSION = '2.58.2';
+    let APP_VERSION = '2.59.0';
 
     const API_BASE_URL = '/api';
 
@@ -1746,9 +1746,17 @@
                 if (changesResponse.ok) {
                     const changesData = await changesResponse.json();
                     changeLog = changesData.changes || [];
+                } else {
+                    /* A non-OK response left changeLog empty and said nothing,
+                     * so a failed load rendered as "this record has no
+                     * history" -- the audit trail reading clean because it
+                     * could not be read at all. The endpoint returns 500 for
+                     * this now rather than 200 with an empty list. (GH #28) */
+                    throw new Error(`HTTP ${changesResponse.status}`);
                 }
             } catch (changesError) {
                 console.warn('Could not load changes from database:', changesError);
+                window.store.state.changeLogError = String(changesError.message || changesError);
                 // Try localStorage in demo mode
                 try {
                     const localChanges = localStorage.getItem('ghr_demo_changes');

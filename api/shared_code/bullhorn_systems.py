@@ -128,6 +128,10 @@ def get_manual_allowlist_ids(app_conn):
         return {int(row[0]) for row in cursor.fetchall() if row[0] is not None}
     except Exception as e:
         # Non-fatal — hardcoded rollup + auto-active still keep the dashboard populated.
+        # Still swallows, deliberately, and unlike discover_active_client_ids
+        # above that is defensible: the allowlist is a handful of manual
+        # additions on top of a book of thousands, so losing it shrinks scope
+        # at the margin instead of gutting it. Logged so it is not invisible.
         print(f"get_manual_allowlist_ids: swallowed error, returning empty set: {e}")
         return set()
 
@@ -233,8 +237,19 @@ def discover_active_client_ids(bullhorn_cursor):
         """)
         return {int(row[0]) for row in bullhorn_cursor.fetchall() if row[0] is not None}
     except Exception as e:
-        print(f"discover_active_client_ids: swallowed error, returning empty set: {e}")
-        return set()
+        # Raise. This used to swallow and return an empty set, which is the
+        # worst available answer: resolve_scope_client_ids would fall back to
+        # the hardcoded rollup plus the manual allowlist, so the non-MSP book
+        # silently collapsed from ~2,280 clients to about 15 and every endpoint
+        # served a 200 full of drastically understated numbers. Nothing on the
+        # screen would look wrong.
+        #
+        # All nine call sites wrap this in `try: ... finally:` with no except,
+        # so the exception reaches each endpoint's own handler and surfaces as
+        # an error -- which is the honest outcome. A scope we cannot compute is
+        # not a small scope. (GH #93)
+        print(f"discover_active_client_ids failed: {e}")
+        raise
 
 
 # MSP accounts, excluded from the non-MSP book unconditionally.

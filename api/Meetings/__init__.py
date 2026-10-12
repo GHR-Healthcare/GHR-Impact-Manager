@@ -171,7 +171,15 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             USING (SELECT ? AS meeting_id) AS src ON t.meeting_id = src.meeting_id
             WHEN MATCHED THEN UPDATE SET
                 health_system = ?, facilities = ?, recipients = ?, stage = ?,
-                stages = ?, completed = ?, actions = ?, started_at = ?, ended_at = ?,
+                stages = ?, completed = ?,
+                actions = ?,
+                -- COALESCE, like recap_html below. A save that omits startedAt
+                -- used to write NULL straight over the stored value: the
+                -- stage-completion autosave sends only the fields it changed,
+                -- so finishing a meeting erased when it began. An explicit
+                -- clear is not a thing the UI offers. (GH #66)
+                started_at = COALESCE(?, started_at),
+                ended_at   = COALESCE(?, ended_at),
                 updated_at = ?, recap_html = COALESCE(?, recap_html),
                 updated_by = ?
             WHEN NOT MATCHED THEN
