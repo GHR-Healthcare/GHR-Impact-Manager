@@ -2,6 +2,24 @@
 
 ## Version History
 
+### 2.21.12 - Accounts with open requisitions were outside the Non-MSP book
+
+- Non-MSP scope was "someone on assignment **today**", so an account with live openings
+  and nobody yet working was invisible — to a tool whose job is tracking openings, fill
+  and trends. Southwest General (4971) was the reported case: tagged correctly, 6 open
+  requisitions, 0 on assignment
+- Not isolated. Measured 2026-10-12: **1,102 tagged non-MSP clients held 5,278 open
+  requisitions — 61% of every open requisition in Bullhorn.** Auto-discovery goes from
+  357 to 1,455 clients
+- `Accepting Candidates` is the only genuinely open status. `NOT IN (Closed, Filled,
+  Archive)` looks equivalent and is not: it sweeps in Cancelled (45,592) and Placed
+  (25,632), which inflated the same measurement to 53,222 before it was checked
+- **This moves numbers.** Headcount today changes by 1, but **1,030 placements enter the
+  60-week window**, so the trend and year-over-year series shift. That is the correct
+  direction — this is real non-MSP work the book was missing, the same under-reporting
+  recorded in #98 — but it is not an openings-only change
+- MSP is unaffected: `resolve_scope_client_ids` is the non-MSP book only
+
 ### 2.21.11 - Non-MSP's header made the whole page scroll sideways
 
 - At 1280px — an ordinary laptop width — the **document itself** scrolled horizontally by
