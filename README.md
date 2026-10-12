@@ -2,6 +2,27 @@
 
 ## Version History
 
+### 2.50.0 - Trend PDF export, and accounts with open reqs are in scope
+
+- **Export PDF on the Trend tab** (Matthew Kyle): the chart plus the breakdown and
+  Weekly Summary tables, as one file. The chart is pulled through `canvas.toDataURL()`
+  rather than the clone path the Financials export uses — `cloneNode` on a `<canvas>`
+  copies the element and **not its pixels**, so cloning the trend card yields a blank
+  white box where the graph should be. Verified by running the export against a drawn
+  canvas: 1.1MB, valid `%PDF`, and the clone-loses-pixels check confirmed true
+- **Non-MSP scope now counts open requisitions, not just current placements.** Scope was
+  "someone on assignment today", so an account with live openings and nobody yet working
+  was invisible to a tool whose job is openings, fill and trends. Southwest General
+  (4971) was the reported case — tagged correctly, 6 open reqs, 0 on assignment
+- Not isolated: **1,102 tagged non-MSP clients held 5,278 open requisitions — 61% of
+  every open req in Bullhorn.** Auto-discovery goes 357 → 1,455 clients
+- `Accepting Candidates` is the only genuinely open status. `NOT IN (Closed, Filled,
+  Archive)` looks equivalent and is not — it sweeps in Cancelled (45,592) and Placed
+  (25,632), which inflated the same figure to 53,222 before it was checked
+- **Knock-on worth knowing:** headcount today moves by 1, but **1,030 placements enter
+  the 60-week window**, so trend and YoY shift. That is the correct direction — this is
+  real non-MSP work the book was missing — but it is not an openings-only change
+
 ### 2.49.4 - A cancelled VNDLY extension read as "still to do"
 
 - The `Date Extension` modification status carries four values, measured 2026-10-07:

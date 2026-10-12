@@ -134,8 +134,23 @@ def get_manual_allowlist_ids(app_conn):
 
 def discover_active_client_ids(bullhorn_cursor):
     """
-    Any clientCorporationID with a placement that's on-assignment RIGHT NOW
-    AND whose client is tagged with at least one non-MSP division.
+    Any clientCorporationID that is tagged with at least one non-MSP division
+    AND either has someone on assignment RIGHT NOW, or has an OPEN requisition.
+
+    The open-requisition arm was added 2026-10-12. Scope used to be defined by
+    current placements alone, which meant an account with live openings and
+    nobody yet working was invisible to a tool whose job is tracking openings,
+    fill and trends. Southwest General (4971) was the reported case: tagged
+    correctly, 6 open requisitions, 0 on assignment, therefore absent.
+
+    It was not an isolated case. Measured 2026-10-12: 1,102 tagged non-MSP
+    clients were out of scope while holding 5,278 open requisitions between
+    them -- 61% of every open requisition in Bullhorn.
+
+    'Accepting Candidates' is the only genuinely open status. Filtering on
+    `status NOT IN ('Closed','Filled','Archive')` looks equivalent and is not:
+    it sweeps in Cancelled (45,592) and Placed (25,632), which inflated the
+    same measurement to 53,222 before it was checked.
 
     Matches how KPIs count headcount: status IN (Approved, Onboarding) with
     today falling between dateBegin and dateEnd. Cheap single query on an
@@ -152,21 +167,38 @@ def discover_active_client_ids(bullhorn_cursor):
             "'" + d.replace("'", "''") + "'" for d in sorted(NON_MSP_DIVISIONS)
         )
         bullhorn_cursor.execute(f"""
-            SELECT DISTINCT p.clientCorporationID
-            FROM dbo.View_Placement p
-            INNER JOIN dbo.View_ClientCorporation cc
-                ON p.clientCorporationID = cc.clientCorporationID
-            WHERE p.isDeleted = 0
-              AND p.status IN ('Approved','Onboarding')
-              AND p.dateBegin <= CAST(GETDATE() AS DATE)
-              AND (p.dateEnd IS NULL OR p.dateEnd >= CAST(GETDATE() AS DATE))
-              AND cc.customTextBlock1 IS NOT NULL
-              AND cc.customTextBlock1 <> ''
-              AND EXISTS (
-                  SELECT 1
-                  FROM STRING_SPLIT(cc.customTextBlock1, ',') s
-                  WHERE LTRIM(RTRIM(s.value)) IN ({divisions_sql})
-              )
+            WITH in_division AS (
+                SELECT cc.clientCorporationID
+                FROM dbo.View_ClientCorporation cc
+                WHERE cc.customTextBlock1 IS NOT NULL
+                  AND cc.customTextBlock1 <> ''
+                  AND EXISTS (
+                      SELECT 1
+                      FROM STRING_SPLIT(cc.customTextBlock1, ',') s
+                      WHERE LTRIM(RTRIM(s.value)) IN ({divisions_sql})
+                  )
+            )
+            SELECT clientCorporationID FROM (
+                -- someone on assignment today
+                SELECT DISTINCT p.clientCorporationID
+                FROM dbo.View_Placement p
+                INNER JOIN in_division d
+                        ON d.clientCorporationID = p.clientCorporationID
+                WHERE p.isDeleted = 0
+                  AND p.status IN ('Approved','Onboarding')
+                  AND p.dateBegin <= CAST(GETDATE() AS DATE)
+                  AND (p.dateEnd IS NULL OR p.dateEnd >= CAST(GETDATE() AS DATE))
+
+                UNION
+
+                -- or an open requisition, even with nobody placed yet
+                SELECT DISTINCT j.clientCorporationID
+                FROM dbo.View_JobOrder j
+                INNER JOIN in_division d
+                        ON d.clientCorporationID = j.clientCorporationID
+                WHERE j.isDeleted = 0
+                  AND LTRIM(RTRIM(j.status)) = 'Accepting Candidates'
+            ) z
         """)
         return {int(row[0]) for row in bullhorn_cursor.fetchall() if row[0] is not None}
     except Exception as e:

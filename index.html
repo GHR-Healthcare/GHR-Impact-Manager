@@ -1009,7 +1009,7 @@
     const $ = (id) => document.getElementById(id);
 
     // App version - loaded from environment variable via API, with fallback
-    let APP_VERSION = '2.49.4';
+    let APP_VERSION = '2.50.0';
 
     const API_BASE_URL = '/api';
 
@@ -3913,6 +3913,84 @@
       window.showToast(`Exported ${csvRows.length - 1} shift records`, 'success');
     };
 
+
+    /* Trend tab -> one PDF: the chart, then the two tables beneath it.
+     *
+     * Deliberately NOT a clone of the chart. cloneNode on a <canvas> copies the
+     * element and NOT its pixels, so cloning the trend card yields a blank
+     * white box where the graph should be -- which is why the chart is pulled
+     * through toDataURL() and the tables, which are plain markup, go through
+     * the clone path.
+     *
+     * Requested by Matthew Kyle: "add a button to export the trend graph and
+     * data from the trend tab... the below charts to be exported as 1 file".
+     * One file, several pages. */
+    window.exportTrendPDF = async () => {
+      const chartCanvas = document.getElementById('trendChart');
+      if (!chartCanvas) { window.showToast?.('No trend chart to export', 'error'); return; }
+      Utils.setLoading(true, 'Generating PDF...');
+      try {
+        if (!window.jspdf || !window.jspdf.jsPDF) throw new Error('jsPDF not loaded. Refresh and try again.');
+        const { jsPDF } = window.jspdf;
+        const pdf = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
+        const pageW = pdf.internal.pageSize.getWidth();
+        const pageH = pdf.internal.pageSize.getHeight();
+        const margin = 8;
+        const usableW = pageW - margin * 2;
+        const usableH = pageH - margin * 2;
+        let first = true;
+
+        const heading = (text, sub) => {
+          pdf.setFontSize(13); pdf.setTextColor(30, 41, 59);
+          pdf.text(text, margin, margin + 6);
+          if (sub) { pdf.setFontSize(8); pdf.setTextColor(100, 116, 139); pdf.text(sub, margin, margin + 11); }
+          return margin + (sub ? 15 : 10);
+        };
+
+        // --- page 1: the graph, straight off the live canvas ---
+        const y = heading('Headcount Trend',
+          `${(window.store?.state?.dataSource === 'non_msp') ? 'Non-MSP' : 'MSP'} · exported ${new Date().toLocaleString()}`);
+        const img = chartCanvas.toDataURL('image/png', 1.0);
+        const aspect = chartCanvas.height / chartCanvas.width;
+        const h = Math.min(usableW * aspect, usableH - (y - margin) - 4);
+        pdf.addImage(img, 'PNG', margin, y, usableW, h);
+        first = false;
+
+        // --- the tables, cloned offscreen so controls and scrollbars drop out ---
+        const capture = async (el, title) => {
+          if (!el) return;
+          const wrap = document.createElement('div');
+          wrap.style.cssText = 'position:absolute;left:-9999px;top:0;width:1500px;background:#fff;padding:24px 16px 16px;';
+          const clone = el.cloneNode(true);
+          clone.querySelectorAll('button').forEach(b => b.remove());
+          // let the full table render rather than its scroll window
+          clone.querySelectorAll('.overflow-x-auto').forEach(d => { d.style.overflow = 'visible'; });
+          wrap.appendChild(clone);
+          document.body.appendChild(wrap);
+          const canvas = await html2canvas(wrap, { scale: 1.5, useCORS: true, backgroundColor: '#ffffff', logging: false });
+          document.body.removeChild(wrap);
+          if (!first) pdf.addPage('a4', 'landscape');
+          first = false;
+          const top = heading(title);
+          const iw = usableW, ih = (canvas.height / canvas.width) * iw;
+          const fit = Math.min(ih, usableH - (top - margin) - 4);
+          pdf.addImage(canvas.toDataURL('image/jpeg', 0.8), 'JPEG', margin, top, iw * (fit / ih), fit);
+        };
+
+        const label = document.getElementById('trendBreakdownLabel')?.textContent?.trim() || 'Breakdown';
+        await capture(document.getElementById('pdfTrendBreakdown'), label);
+        await capture(document.getElementById('pdfTrendWeekly'), 'Weekly Summary');
+
+        const stamp = new Date().toISOString().slice(0, 10);
+        pdf.save(`Headcount_Trend_${stamp}.pdf`);
+        window.showToast?.('Trend PDF exported.', 'success');
+      } catch (e) {
+        console.error('Trend PDF export failed:', e);
+        window.showToast?.('Export failed: ' + (e.message || e), 'error');
+      } finally {
+        Utils.setLoading(false);
+      }
+    };
 
     window.exportFinancialPDF = async () => {
       const container = document.getElementById('financialsContent');
@@ -14404,6 +14482,10 @@
               <button id="trendYoYBtn" onclick="window.toggleTrendYoY()" class="flex items-center gap-1 px-2.5 py-1 rounded-md text-[10px] font-semibold text-slate-500 hover:text-slate-700 hover:bg-slate-100 transition-colors border border-slate-200">
                 <i data-lucide="calendar" class="w-3 h-3"></i> <span id="trendYoYLabel">Show Prior Year</span>
               </button>
+              <button onclick="window.exportTrendPDF()" title="Chart and both tables, as one PDF"
+                      class="flex items-center gap-1 px-2.5 py-1 rounded-md text-[10px] font-semibold text-slate-500 hover:text-slate-700 hover:bg-slate-100 transition-colors border border-slate-200">
+                <i data-lucide="file-down" class="w-3 h-3"></i> Export PDF
+              </button>
               <!-- Fill Rate toggle removed. Was hidden on non-MSP in v2.0.2 (every
                    series is a flat 100% line without an affiliate split or pending
                    funnel). On MSP the math was misleading: "Total Fill Rate" =
@@ -14439,7 +14521,7 @@
             <div id="trendChartLegend" class="flex flex-wrap justify-center gap-x-5 gap-y-2 mb-3 text-[11px] text-slate-600"></div>
             <canvas id="trendChart" height="100"></canvas>
           </div>
-          <div class="mt-6">
+          <div class="mt-6" id="pdfTrendBreakdown">
             <div class="flex items-center gap-2 mb-2">
               <h3 class="text-sm font-bold text-slate-600" id="trendBreakdownLabel">Category</h3>
               ${hideAffiliateSplit ? '' : `<span class="text-slate-400 text-[10px]"><span class="text-blue-600">GHR</span> / <span class="text-purple-600">Affiliate</span></span>`}
@@ -14456,7 +14538,7 @@
               </table>
             </div>
           </div>
-          <div class="mt-6">
+          <div class="mt-6" id="pdfTrendWeekly">
             <h3 class="text-sm font-bold text-slate-600 mb-2">Weekly Summary</h3>
             <div class="rounded-lg border border-slate-200 overflow-x-auto">
               <table class="w-full text-xs">
