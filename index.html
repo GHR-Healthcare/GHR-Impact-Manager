@@ -940,7 +940,7 @@
     const $ = (id) => document.getElementById(id);
 
     // App version - loaded from environment variable via API, with fallback
-    let APP_VERSION = '2.21.17';
+    let APP_VERSION = '2.21.18';
 
     const API_BASE_URL = '/api';
 
@@ -2951,6 +2951,20 @@
         return total ? Math.round((completed / total) * 100) : 0;
       },
 
+      /* A job the client has paused. VNDLY's own dashboard counts these as
+       * open jobs, so they belong in the list and in every COUNT of the open
+       * book -- that is what makes our 74 agree with theirs. They do NOT
+       * belong in anything that reads days-open as a performance signal:
+       * nobody is failing to fill a req that is on hold, and the held ones are
+       * older than the active ones, so leaving them in would have doubled the
+       * open book and inflated Avg Days Open and Critical with it.
+       *
+       * The VNDLY feed spells it 'Hold'; the UI and B4 say 'On Hold' in
+       * places, hence the loose test. */
+      isJobOnHold(job) {
+        return /hold/i.test(String((job && job.status) || ''));
+      },
+
       getAgingColorClasses(days, system) {
         const rules = CONSTANTS.AGING_RULES[system] || CONSTANTS.AGING_RULES.default;
         const { yellow, red, darkRed } = rules.thresholds;
@@ -3152,6 +3166,10 @@
           const filteredJobs = s.jobs.filter(job => {
             // Check days >= 16
             if (!job.daysPast || job.daysPast < 16) return false;
+
+            // A req the client paused is not aging on us and should not be
+            // chased by this report.
+            if (Utils.isJobOnHold(job)) return false;
 
             // Exclude Perm Placement only
             const program = String(job.program || '').toLowerCase();
@@ -3735,14 +3753,15 @@
         try {
           // Match the on-screen view: bucket per system per service-line per month
           const SERVICE_LINES = ['Nursing', 'Allied', 'Locums', 'Non-Clinical', 'Other'];
-          const newSlBucket = () => ({ ghrBilling: 0, affBilling: 0, ghrHeadcount: 0, affHeadcount: 0 });
+          const newSlBucket = () => ({ ghrBilling: 0, affBilling: 0, ghrHeadcount: 0, affHeadcount: 0, ghrW: new Set(), affW: new Set() });
           const newSysBucket = () => {
-            const b = { ghrBilling: 0, affBilling: 0, ghrHeadcount: 0, affHeadcount: 0, byLine: {} };
+            const b = { ghrBilling: 0, affBilling: 0, ghrHeadcount: 0, affHeadcount: 0, ghrW: new Set(), affW: new Set(), byLine: {} };
             SERVICE_LINES.forEach(sl => { b.byLine[sl] = newSlBucket(); });
             return b;
           };
 
           const monthMap = {};
+          const hasWorkerIds = rawData.some(r => Array.isArray(r.workers));
           const systemSet = new Set();
           const monthSet = new Set();
 
@@ -3755,6 +3774,10 @@
             if (!monthMap[m][sys]) monthMap[m][sys] = newSysBucket();
             const sysB = monthMap[m][sys];
             const slB = sysB.byLine[sl];
+            if (Array.isArray(r.workers) && r.workers.length) {
+              const w = r.vendor_type === 'GHR' ? 'ghrW' : 'affW';
+              for (const id of r.workers) { sysB[w].add(id); slB[w].add(id); }
+            }
             if (r.vendor_type === 'GHR') {
               sysB.ghrBilling += r.estimated_billing || 0;
               sysB.ghrHeadcount += r.headcount || 0;
@@ -3767,6 +3790,19 @@
               slB.affHeadcount += r.headcount || 0;
             }
           });
+
+          // Same union-not-sum rule as the on-screen view above, so an
+          // exported deck cannot disagree with the screen it came from.
+          if (hasWorkerIds) {
+            Object.values(monthMap).forEach(bySys => Object.values(bySys).forEach(b => {
+              b.ghrHeadcount = b.ghrW.size;
+              b.affHeadcount = b.affW.size;
+              SERVICE_LINES.forEach(sl => {
+                const l = b.byLine[sl];
+                if (l) { l.ghrHeadcount = l.ghrW.size; l.affHeadcount = l.affW.size; }
+              });
+            }));
+          }
 
           const months = [...monthSet].sort();
           const systems = [...systemSet].sort();
@@ -4938,7 +4974,8 @@
           cells = cell('Open Jobs', open.length.toLocaleString(), 'text-slate-800',
                        `${openings.toLocaleString()} opening${openings === 1 ? '' : 's'}`)
                 + cell('Aged 16+ Days',
-                       open.filter(j => (Number(j.daysPast) || 0) >= 16).length.toLocaleString(),
+                       open.filter(j => !Utils.isJobOnHold(j) && (Number(j.daysPast) || 0) >= 16)
+                           .length.toLocaleString(),
                        'text-red-600', 'of the open book')
                 + exposureCell;
         }
@@ -9255,8 +9292,13 @@
         }).length;
         const ghrFillRate = activeCount > 0 ? Math.round((ghrActive / activeCount) * 100) : 0;
         
-        // Calculate overall fill rate (active contracts / (active + open positions))
-        const overallFillRate = (activeCount + total) > 0 ? Math.round((activeCount / (activeCount + total)) * 100) : 0;
+        // Calculate overall fill rate (active contracts / (active + open positions)).
+        // Held reqs are excluded from the denominator -- they are open jobs by
+        // VNDLY's count but not fillable demand, and counting them would read
+        // as a drop in fill rate the moment a client pauses a req.
+        const openWorkable = list.filter(j => !Utils.isJobOnHold(j)).length;
+        const overallFillRate = (activeCount + openWorkable) > 0
+          ? Math.round((activeCount / (activeCount + openWorkable)) * 100) : 0;
 
         if (!total) {
           container.innerHTML = `
@@ -9268,14 +9310,19 @@
           return;
         }
 
-        const avgDays = Math.round(list.reduce((a, b) => a + b.daysPast, 0) / total);
+        // Held reqs count as open jobs (VNDLY's definition) but are not aging
+        // on us, so every day-based figure below is measured on the workable
+        // book only. See Utils.isJobOnHold.
+        const workable = list.filter(j => !Utils.isJobOnHold(j));
+        const avgDays = workable.length
+          ? Math.round(workable.reduce((a, b) => a + b.daysPast, 0) / workable.length) : 0;
         const avgMargin = (list.reduce((a, b) => a + parseFloat(b.margin || 0), 0) / total).toFixed(1);
 
         let pendingDaysSum = 0, pendingCount = 0, ghr = 0, av = 0, critical = 0;
         list.forEach(j => {
           ghr += j.ghrSubs; av += j.avSubs;
           const rules = CONSTANTS.AGING_RULES[j.system] || CONSTANTS.AGING_RULES.default;
-          if (j.daysPast >= rules.thresholds.red) critical++;
+          if (!Utils.isJobOnHold(j) && j.daysPast >= rules.thresholds.red) critical++;
           (j.candidates || []).forEach(c => { if (!Utils.isDeclinedNow(j.id, c) && c.date) { pendingDaysSum += Utils.calcDays(c.date); pendingCount++; } });
         });
 
@@ -9547,9 +9594,10 @@
         // Aggregate data: { month: { system: { ghrBilling, affBilling, ghrHeadcount, affHeadcount,
         //                                       byLine: { Nursing: {...}, Allied: {...}, ... } } } }
         const monthMap = {};
-        const newSlBucket = () => ({ ghrBilling: 0, affBilling: 0, ghrHeadcount: 0, affHeadcount: 0, ghrHours: 0, affHours: 0 });
+        const hasWorkerIds = filteredData.some(r => Array.isArray(r.workers));
+        const newSlBucket = () => ({ ghrBilling: 0, affBilling: 0, ghrHeadcount: 0, affHeadcount: 0, ghrHours: 0, affHours: 0, ghrW: new Set(), affW: new Set() });
         const newSysBucket = () => {
-          const b = { ghrBilling: 0, affBilling: 0, ghrHeadcount: 0, affHeadcount: 0, ghrHours: 0, affHours: 0, byLine: {} };
+          const b = { ghrBilling: 0, affBilling: 0, ghrHeadcount: 0, affHeadcount: 0, ghrHours: 0, affHours: 0, ghrW: new Set(), affW: new Set(), byLine: {} };
           SERVICE_LINES.forEach(sl => { b.byLine[sl] = newSlBucket(); });
           return b;
         };
@@ -9569,6 +9617,11 @@
           const lineBucket = sysBucket.byLine[sl];
           const hours = r.hours_worked || 0;
 
+          if (Array.isArray(r.workers) && r.workers.length) {
+            const w = r.vendor_type === 'GHR' ? 'ghrW' : 'affW';
+            for (const id of r.workers) { sysBucket[w].add(id); lineBucket[w].add(id); }
+          }
+
           if (r.vendor_type === 'GHR') {
             sysBucket.ghrBilling += r.estimated_billing || 0;
             sysBucket.ghrHeadcount += r.headcount || 0;
@@ -9585,6 +9638,39 @@
             lineBucket.affHours += hours;
           }
         });
+
+        // Headcount is the SIZE OF THE UNION of these rows' workers, never the
+        // sum of their counts. Each row is one (facility, category, service
+        // line, vendor) group, and a clinician who worked two facilities, or
+        // changed care type mid-month, or billed through B4 before a cutover
+        // and VNDLY after, appears in several of them. Summing counted them
+        // once per group: measured 2026-10-20 that ran 10-35% above the real
+        // number of people in every month of the default thirteen, and 84%
+        // high for Cooper's April cutover month (280 shown, 152 people).
+        //
+        // GetFinancialData sends the dense worker ids behind each row's count
+        // for exactly this. When they are absent -- the non-MSP book, which
+        // does not send them yet -- the old sum stands rather than showing a
+        // number built from a partial union, which would under-count instead.
+        //
+        // Still approximate at one level up: the cross-system total below sums
+        // these, so someone who worked at two health systems in a month counts
+        // under each. Measured across the thirteen months that is 2-28 people
+        // against 756-1,147 (0.2-3%, worst in Dec 2025 -- holiday cover moves
+        // people between systems), plus 0-2 a month who billed under both GHR
+        // and an affiliate. Left alone deliberately: fixing it needs
+        // month-level sets to chase a rounding error, where the union above
+        // removed up to a third.
+        if (hasWorkerIds) {
+          Object.values(monthMap).forEach(bySys => Object.values(bySys).forEach(b => {
+            b.ghrHeadcount = b.ghrW.size;
+            b.affHeadcount = b.affW.size;
+            SERVICE_LINES.forEach(sl => {
+              const l = b.byLine[sl];
+              if (l) { l.ghrHeadcount = l.ghrW.size; l.affHeadcount = l.affW.size; }
+            });
+          }));
+        }
 
         // Generate picker months: last 36 months up to current month
         const pickerMonths = [];

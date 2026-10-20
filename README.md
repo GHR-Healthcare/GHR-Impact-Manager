@@ -2,6 +2,33 @@
 
 ## Version History
 
+### 2.21.18 - Monthly headcount counted the same person several times
+- The Financial tab's monthly headcount was the **sum** of each row's distinct
+  count, and the rows are split by facility, care type, service line and
+  vendor. Anyone who appeared in more than one of those groups was counted
+  once per group. Measured against the warehouse across the default thirteen
+  months, all systems: the displayed figure ran **10-35% above the real number
+  of people every single month**.
+- Worst case is a cutover month. A clinician who billed through B4 before a
+  B4 -> VNDLY migration and through VNDLY after is one person with rows in two
+  sources in the same month. Cooper's April showed **280 against 152 real
+  people, 84% high**. The existing dedup could not catch this: it is a *spend*
+  dedup, and correctly so -- it drops B4 shifts already covered by a VNDLY
+  billing cycle (255 of 1,078 rows for Cooper April) -- but both halves of a
+  migrated assignment are real work, so the person survives in both books.
+- `GetFinancialData` now sends the dense worker ids behind each row's count and
+  the client counts the union instead of summing. Verified against the
+  warehouse: 0 mismatches across all 5,545 row groups, and every monthly total
+  equal to an independently measured distinct count.
+- Payload cost is about 16k ids over thirteen months (~100KB), which keeps the
+  number exact under every facility and category filter rather than only in the
+  unfiltered view. If the ids are missing -- the non-MSP book, which does not
+  send them yet -- the old sum stands, because a partial union would
+  under-count instead.
+- Still approximate one level up: the cross-system total sums the per-system
+  figures, so someone who worked at two health systems counts under each. That
+  is 2-28 people a month against 756-1,147 (0.2-3%) and is left alone.
+
 ### 2.21.17 - The headcount trend fell off a cliff at the billing watermark
 
 - Reported from the business: *"this figure keeps migrating over every week and showing a
