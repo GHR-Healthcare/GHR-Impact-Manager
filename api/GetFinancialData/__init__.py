@@ -473,7 +473,13 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
         _started = time.time()
         # One source failing must not be reported as a whole book. (GH #86)
         msp_errors = []
-        _key = cache_key('financial-data', 'msp')
+        # 'msp-v2' because 2.63.0 changed the SHAPE of this payload (rows now
+        # carry worker ids). A cached v1 entry is still served happily by the
+        # client -- it just falls back to summing, i.e. to the old wrong
+        # headcount -- and the cache holds for 26 hours, so a bare deploy
+        # would leave the fix invisible for a day. Changing the key retires
+        # the old entries immediately.
+        _key = cache_key('financial-data', 'msp-v2')
         if default_range:
             _cached = read_cache(_key)
             if _cached is not None:
