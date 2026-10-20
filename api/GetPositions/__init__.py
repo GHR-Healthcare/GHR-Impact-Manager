@@ -683,7 +683,22 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                 [Job Status] AS status,
                 [Health System] AS health_system
             FROM dbo.STAGING_VNDLY_JOBS
-            WHERE [Job Status] = 'Active'
+            -- 'Hold' belongs here because VNDLY's own dashboard counts it as an
+            -- open job: its "Jobs" tile reads 74 for Cooper, which is 31 Active
+            -- plus 43 on hold, and we were reporting 31. Mike's call on
+            -- 2026-10-20 was that VNDLY is the definition and both this app and
+            -- ghr-marketintel match it.
+            --
+            -- Status values in the feed, measured the same day: Closed 837,
+            -- Hold 70, Active 47, Pending Approval 20, Rejected 1. The value is
+            -- 'Hold', not 'On Hold'. Pending Approval stays out -- it is not in
+            -- VNDLY's tile either, and the client has not approved the req yet.
+            --
+            -- This more than doubles the VNDLY open book (47 -> 117 rows), and
+            -- the added rows are older than the Active ones, so anything that
+            -- reads days-open as a performance signal has to exclude them.
+            -- Utils.isJobOnHold does that; see the aging KPIs in index.html.
+            WHERE LTRIM(RTRIM([Job Status])) IN ('Active', 'Hold')
             ORDER BY [Job Approval Date] DESC
         ''')
         

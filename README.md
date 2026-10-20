@@ -2,6 +2,25 @@
 
 ## Version History
 
+### 2.22.0 - Open positions now match VNDLY: held reqs are open jobs
+- VNDLY's own dashboard counts a held req as an open job. Its "Jobs" tile reads
+  **74** for Cooper -- 31 Active plus 43 on hold -- and we were reporting the
+  31. `GetPositions` now takes `[Job Status] IN ('Active', 'Hold')`, so this app
+  and ghr-marketintel both answer with VNDLY's number.
+- Feed values measured 2026-10-20: Closed 837, Hold 70, Active 47, Pending
+  Approval 20, Rejected 1. The value is spelled `Hold`, not `On Hold`. Pending
+  Approval stays out, because it is not in VNDLY's tile either and the client
+  has not approved the req yet.
+- This more than doubles the VNDLY open book, 47 rows to 117, and the added
+  rows are older than the Active ones. So held reqs count everywhere the open
+  book is **counted**, and are excluded everywhere days-open is read as a
+  **performance signal**: Avg Days Open, Critical, Aged 16+, the overall
+  fill-rate denominator, and the Travel Aging Report. Nobody is failing to
+  fill a req the client paused.
+- One predicate, `Utils.isJobOnHold`, so those surfaces cannot drift apart.
+- Cooper reads 73 today against the dashboard's 74: the jobs feed has the same
+  lag as the modifications feed, and one job has closed since the screenshot.
+
 ### 2.21.18 - Monthly headcount counted the same person several times
 - The Financial tab's monthly headcount was the **sum** of each row's distinct
   count, and the rows are split by facility, care type, service line and
