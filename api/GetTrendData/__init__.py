@@ -37,14 +37,24 @@ BULLHORN_ACTIVE_STATUSES = (
 # Excluded as never-happened: Rejected, Withdrawn, Offer Declined, Cancelled.
 # Excluded as pre-start funnel: Applied, Offer Released, Verification In Progress,
 # Ready to Onboard (these belong to the pending queries below).
-VNDLY_RAN_STATUSES = ('Active', 'Ended', 'Ended by Job Close')
+# 'Ended by Job Close' is NOT a completed assignment -- it is an applicant who
+# was never selected, closed out when the job closed. Measured 2026-10-20
+# across all 561 of them: 0 have spend, 0 have an Onboarded Date, 0 have an
+# End Reason. 'Ended' by contrast is 356 work orders, all 356 onboarded and
+# all 356 carrying an end reason.
+#
+# It used to sit here, where the spend guard was expected to drop it -- but
+# the guard's name-match fallback let 55 through, matching a same-named
+# worker's spend on a DIFFERENT work order. Those were counted as real
+# assignments. (ghr-marketintel flagged this; confirmed against the warehouse.)
+VNDLY_RAN_STATUSES = ('Active', 'Ended')
 
 # Terminal members of the set above. Their [End Date] is the ORIGINALLY SCHEDULED
 # end, not the date the assignment actually stopped — 'Ended by Job Close' rows
 # carry end dates over a year out. Counting those as still-running would inflate
 # current and future headcount, so the effective end is capped at today: a
 # terminal status cannot still be running.
-VNDLY_TERMINAL_STATUSES = ('Ended', 'Ended by Job Close')
+VNDLY_TERMINAL_STATUSES = ('Ended',)
 
 # VNDLY pre-start pipeline statuses. 'Ready to Onboard' was previously missing
 # here even though the Pending tab's own statusBucket() classifies it.

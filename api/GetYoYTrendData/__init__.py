@@ -29,8 +29,18 @@ BULLHORN_YOY_STATUSES = (
 # more damaging here than on the 4-week lookback: a full year of status drift
 # meant nearly every prior-year assignment had been flipped to a terminal status
 # and dropped out, so the prior-year overlay read far below the current year.
-VNDLY_RAN_STATUSES = ('Active', 'Ended', 'Ended by Job Close')
-VNDLY_TERMINAL_STATUSES = ('Ended', 'Ended by Job Close')
+# 'Ended by Job Close' is NOT a completed assignment -- it is an applicant who
+# was never selected, closed out when the job closed. Measured 2026-10-20
+# across all 561 of them: 0 have spend, 0 have an Onboarded Date, 0 have an
+# End Reason. 'Ended' by contrast is 356 work orders, all 356 onboarded and
+# all 356 carrying an end reason.
+#
+# It used to sit here, where the spend guard was expected to drop it -- but
+# the guard's name-match fallback let 55 through, matching a same-named
+# worker's spend on a DIFFERENT work order. Those were counted as real
+# assignments. (ghr-marketintel flagged this; confirmed against the warehouse.)
+VNDLY_RAN_STATUSES = ('Active', 'Ended')
+VNDLY_TERMINAL_STATUSES = ('Ended',)
 
 
 def _sql_list(values):

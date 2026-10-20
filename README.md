@@ -2,6 +2,20 @@
 
 ## Version History
 
+### 2.21.16 - 'Ended by Job Close' was counted as a completed assignment
+
+- Raised by the ghr-marketintel session, confirmed against the warehouse. The status means
+  **an applicant who was never selected**, closed out when the job closed — not a finished
+  assignment. Across all **561**: 0 have spend, 0 have an Onboarded Date, 0 have an End
+  Reason. `Ended` is 356 work orders, all onboarded and all with an end reason
+- It sat in `VNDLY_RAN_STATUSES`, where the spend guard should have dropped it. **The
+  guard's name-match fallback let 55 through**, matching a same-named worker's spend on a
+  *different* work order — so 55 non-assignments were counted as real
+- **This moves MSP numbers.** Trend and year-over-year on MSP lose those 55 phantom
+  assignments. The new figures are the correct ones, but it is a visible change on an
+  instance that normally only receives bug fixes — which is what this is
+- Non-MSP is unaffected: that book is Bullhorn + Symplr and reads no VNDLY statuses
+
 ### 2.21.15 - GH #98: the prior-year line was drawn on 63% of the history
 
 - Non-MSP scope was defined by the **present** — someone on assignment today, or (since
