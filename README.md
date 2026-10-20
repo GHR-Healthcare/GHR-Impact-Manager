@@ -2,6 +2,24 @@
 
 ## Version History
 
+### 2.21.17 - The headcount trend fell off a cliff at the billing watermark
+
+- Reported from the business: *"this figure keeps migrating over every week and showing a
+  major loss of headcount."* Reproduced and fixed
+- For a terminal VNDLY work order we derived the end date **from spend** rather than from
+  `[End Date]`. Right for settled history — but spend only extends as far as billing has
+  progressed, so **every ended assignment was truncated at the spend watermark**, weeks
+  past it lost their entire ended population at once, and the cliff walked forward each
+  week as invoices loaded. That walking is the "migrating" in the report
+- Cooper, measured 2026-10-20 against a watermark of `2026-10-10`: the shipped series
+  dropped **-62** in the week commencing 10-17; guarded it drops -6 and the curve is
+  smooth. It also corrected the opposite end — trailing spend had been holding ended
+  workers past their real end, inflating older weeks
+- The guard: spend may only establish an **early** stop when billing has progressed past
+  the date it claims. Within 14 days of the watermark it proves nothing, so the scheduled
+  end is used
+- Verified by rendering and running the real query, not by compiling
+
 ### 2.21.16 - 'Ended by Job Close' was counted as a completed assignment
 
 - Raised by the ghr-marketintel session, confirmed against the warehouse. The status means

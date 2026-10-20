@@ -86,7 +86,29 @@ def _sql_list(values):
 # Requires the outer STAGING_VNDLY_WORKORDERS to be aliased as `wo`.
 VNDLY_EFFECTIVE_END_SQL = f'''CASE
         WHEN wo.[Current Status] IN ({_sql_list(VNDLY_TERMINAL_STATUSES)})
-            THEN COALESCE(ws.wo_end, ns.name_end)
+            THEN CASE
+                -- Spend can only prove an EARLY stop if billing has progressed
+                -- PAST the date it claims. Inside the billing lag window it
+                -- proves nothing except that invoices have not arrived yet.
+                --
+                -- Without this guard every ended assignment was truncated at
+                -- the spend watermark, so the headcount series fell off a
+                -- cliff the moment billing data ran out -- and the cliff
+                -- walked forward each week as spend loaded, which is exactly
+                -- what was reported: "this figure keeps migrating over every
+                -- week and showing a major loss of headcount".
+                --
+                -- Measured for Cooper on 2026-10-20, watermark 2026-10-10:
+                --   shipped  225 218 215 153 154   (-62 at w/c 10-17)
+                --   guarded  169 161 162 156 154   (-6, no cliff)
+                -- It also corrected the other end: trailing spend had been
+                -- holding ended workers on assignment past their real end,
+                -- inflating the older weeks by ~56.
+                WHEN COALESCE(ws.wo_end, ns.name_end)
+                     >= DATEADD(DAY, -14, (SELECT wm FROM #vndly_spend_watermark))
+                    THEN wo.[End Date]
+                ELSE COALESCE(ws.wo_end, ns.name_end)
+            END
         ELSE wo.[End Date]
     END'''
 
@@ -138,6 +160,14 @@ VNDLY_SPEND_TEMPS_SQL = """
      AND s.[Billing Cycle Start Date] <= DATEADD(DAY, 14, TRY_CAST(wo.[End Date] AS DATE))
     GROUP BY CAST(LTRIM(RTRIM(wo.WOSystemKey)) AS NVARCHAR(100));
     CREATE INDEX ix_vns ON #vndly_name_spend (wokey);
+
+    IF OBJECT_ID('tempdb..#vndly_spend_watermark') IS NOT NULL DROP TABLE #vndly_spend_watermark;
+    -- How far billing has actually progressed. Everything at or after this
+    -- date is "not invoiced yet", not "stopped early". See
+    -- VNDLY_EFFECTIVE_END_SQL for why that distinction is load-bearing.
+    SELECT MAX([Billing Cycle End Date]) AS wm
+    INTO #vndly_spend_watermark
+    FROM dbo.STAGING_VNDLY_SPEND WITH (NOLOCK);
 """
 
 # Every query using the two constants above must carry these joins.
