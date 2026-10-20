@@ -1009,7 +1009,7 @@
     const $ = (id) => document.getElementById(id);
 
     // App version - loaded from environment variable via API, with fallback
-    let APP_VERSION = '2.62.0';
+    let APP_VERSION = '2.63.0';
 
     const API_BASE_URL = '/api';
 
@@ -4400,14 +4400,15 @@
         try {
           // Match the on-screen view: bucket per system per service-line per month
           const SERVICE_LINES = ['Nursing', 'Allied', 'Locums', 'Non-Clinical', 'Other'];
-          const newSlBucket = () => ({ ghrBilling: 0, affBilling: 0, ghrHeadcount: 0, affHeadcount: 0 });
+          const newSlBucket = () => ({ ghrBilling: 0, affBilling: 0, ghrHeadcount: 0, affHeadcount: 0, ghrW: new Set(), affW: new Set() });
           const newSysBucket = () => {
-            const b = { ghrBilling: 0, affBilling: 0, ghrHeadcount: 0, affHeadcount: 0, byLine: {} };
+            const b = { ghrBilling: 0, affBilling: 0, ghrHeadcount: 0, affHeadcount: 0, ghrW: new Set(), affW: new Set(), byLine: {} };
             SERVICE_LINES.forEach(sl => { b.byLine[sl] = newSlBucket(); });
             return b;
           };
 
           const monthMap = {};
+          const hasWorkerIds = rawData.some(r => Array.isArray(r.workers));
           const systemSet = new Set();
           const monthSet = new Set();
 
@@ -4420,6 +4421,10 @@
             if (!monthMap[m][sys]) monthMap[m][sys] = newSysBucket();
             const sysB = monthMap[m][sys];
             const slB = sysB.byLine[sl];
+            if (Array.isArray(r.workers) && r.workers.length) {
+              const w = r.vendor_type === 'GHR' ? 'ghrW' : 'affW';
+              for (const id of r.workers) { sysB[w].add(id); slB[w].add(id); }
+            }
             if (r.vendor_type === 'GHR') {
               sysB.ghrBilling += r.estimated_billing || 0;
               sysB.ghrHeadcount += r.headcount || 0;
@@ -4432,6 +4437,19 @@
               slB.affHeadcount += r.headcount || 0;
             }
           });
+
+          // Same union-not-sum rule as the on-screen view above, so an
+          // exported deck cannot disagree with the screen it came from.
+          if (hasWorkerIds) {
+            Object.values(monthMap).forEach(bySys => Object.values(bySys).forEach(b => {
+              b.ghrHeadcount = b.ghrW.size;
+              b.affHeadcount = b.affW.size;
+              SERVICE_LINES.forEach(sl => {
+                const l = b.byLine[sl];
+                if (l) { l.ghrHeadcount = l.ghrW.size; l.affHeadcount = l.affW.size; }
+              });
+            }));
+          }
 
           const months = [...monthSet].sort();
           const systems = [...systemSet].sort();
@@ -11745,9 +11763,10 @@
         // Aggregate data: { month: { system: { ghrBilling, affBilling, ghrHeadcount, affHeadcount,
         //                                       byLine: { Nursing: {...}, Allied: {...}, ... } } } }
         const monthMap = {};
-        const newSlBucket = () => ({ ghrBilling: 0, affBilling: 0, ghrHeadcount: 0, affHeadcount: 0, ghrHours: 0, affHours: 0 });
+        const hasWorkerIds = filteredData.some(r => Array.isArray(r.workers));
+        const newSlBucket = () => ({ ghrBilling: 0, affBilling: 0, ghrHeadcount: 0, affHeadcount: 0, ghrHours: 0, affHours: 0, ghrW: new Set(), affW: new Set() });
         const newSysBucket = () => {
-          const b = { ghrBilling: 0, affBilling: 0, ghrHeadcount: 0, affHeadcount: 0, ghrHours: 0, affHours: 0, byLine: {} };
+          const b = { ghrBilling: 0, affBilling: 0, ghrHeadcount: 0, affHeadcount: 0, ghrHours: 0, affHours: 0, ghrW: new Set(), affW: new Set(), byLine: {} };
           SERVICE_LINES.forEach(sl => { b.byLine[sl] = newSlBucket(); });
           return b;
         };
@@ -11767,6 +11786,11 @@
           const lineBucket = sysBucket.byLine[sl];
           const hours = r.hours_worked || 0;
 
+          if (Array.isArray(r.workers) && r.workers.length) {
+            const w = r.vendor_type === 'GHR' ? 'ghrW' : 'affW';
+            for (const id of r.workers) { sysBucket[w].add(id); lineBucket[w].add(id); }
+          }
+
           if (r.vendor_type === 'GHR') {
             sysBucket.ghrBilling += r.estimated_billing || 0;
             sysBucket.ghrHeadcount += r.headcount || 0;
@@ -11783,6 +11807,40 @@
             lineBucket.affHours += hours;
           }
         });
+
+        // Headcount is the SIZE OF THE UNION of these rows' workers, never the
+        // sum of their counts. Each row is one (facility, category, service
+        // line, vendor) group, and a clinician who worked two facilities, or
+        // changed care type mid-month, or billed through B4 before a cutover
+        // and VNDLY after, appears in several of them. Summing counted them
+        // once per group: measured 2026-10-20 that ran 10-35% above the real
+        // number of people in every month of the default thirteen, and 84%
+        // high for Cooper's April cutover month (280 shown, 152 people).
+        //
+        // GetFinancialData sends the dense worker ids behind each row's count
+        // for exactly this. When they are absent -- a cached payload written
+        // by an older build, or the non-MSP book, which does not send them yet
+        // -- the old sum stands rather than showing a number built from a
+        // partial union, which would under-count instead.
+        //
+        // Still approximate at one level up: the cross-system total below sums
+        // these, so someone who worked at two health systems in a month counts
+        // under each. Measured across the thirteen months that is 2-28 people
+        // against 756-1,147 (0.2-3%, worst in Dec 2025 -- holiday cover moves
+        // people between systems), plus 0-2 a month who billed under both GHR
+        // and an affiliate. Left alone deliberately: fixing it needs
+        // month-level sets to chase a rounding error, where the union above
+        // removed up to a third.
+        if (hasWorkerIds) {
+          Object.values(monthMap).forEach(bySys => Object.values(bySys).forEach(b => {
+            b.ghrHeadcount = b.ghrW.size;
+            b.affHeadcount = b.affW.size;
+            SERVICE_LINES.forEach(sl => {
+              const l = b.byLine[sl];
+              if (l) { l.ghrHeadcount = l.ghrW.size; l.affHeadcount = l.affW.size; }
+            });
+          }));
+        }
 
         // Generate picker months: last 36 months up to current month
         const pickerMonths = [];

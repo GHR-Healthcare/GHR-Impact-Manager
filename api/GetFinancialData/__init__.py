@@ -1,5 +1,6 @@
 import azure.functions as func
 from concurrent.futures import ThreadPoolExecutor
+from collections import defaultdict
 import pyodbc
 import os
 import json
@@ -20,6 +21,105 @@ from shared_code.symplr_systems import (
     build_division_case_expr as symplr_division_case_expr,
     resolve_scope_master_ids as symplr_resolve_scope,
 )
+
+# The B4 dedup prelude. Shared verbatim by the billings aggregate and the
+# worker-identity query that sits beside it -- if the two ever saw different
+# deduped rows, headcount would stop matching the billings printed next to it.
+_B4_DEDUP_CTE = """
+                WITH VNDLYTransitionedKeys AS (
+                    SELECT DISTINCT
+                        CASE
+                            WHEN [Health System] LIKE '%Cooper%'   THEN 'cooper'
+                            WHEN [Health System] LIKE '%RUMC%'
+                              OR [Health System] LIKE '%Richmond%' THEN 'rumc'
+                            WHEN [Health System] LIKE '%Redeemer%' THEN 'redeemer'
+                            ELSE NULL
+                        END AS sys_canon,
+                        LOWER(LTRIM(RTRIM(
+                            CONCAT([Contractor First Name], ' ', [Contractor Last Name])
+                        ))) AS norm_worker,
+                        CAST([Billing Cycle Start Date] AS DATE) AS cycle_start,
+                        CAST([Billing Cycle End Date] AS DATE) AS cycle_end
+                    FROM dbo.STAGING_VNDLY_SPEND
+                    WHERE [Billing Cycle Start Date] >= {date_from}
+                        AND [Billing Cycle Start Date] < {date_to}
+                        AND ([Health System] LIKE '%Cooper%'
+                          OR [Health System] LIKE '%RUMC%'
+                          OR [Health System] LIKE '%Richmond%'
+                          OR [Health System] LIKE '%Redeemer%')
+                ),
+                B4WithKey AS (
+                    SELECT
+                        [Employee],
+                        [Work Date],
+                        [Health System],
+                        [Facility Name] AS facility,
+                        [Care Type] AS category,
+                        [Program] AS program,
+                        [Agency Name],
+                        [Bill Total],
+                        [Hours],
+                        CASE
+                            WHEN [Health System] LIKE '%Cooper%'   THEN 'cooper'
+                            WHEN [Health System] LIKE '%RUMC%'
+                              OR [Health System] LIKE '%Richmond%' THEN 'rumc'
+                            WHEN [Health System] LIKE '%Redeemer%' THEN 'redeemer'
+                            ELSE NULL
+                        END AS sys_canon,
+                        -- Normalize "Last, First" → "first last"; otherwise lower the existing string
+                        LOWER(LTRIM(RTRIM(
+                            CASE
+                                WHEN CHARINDEX(',', [Employee]) > 0
+                                THEN
+                                    LTRIM(RTRIM(SUBSTRING([Employee], CHARINDEX(',', [Employee]) + 1, 200)))
+                                    + ' '
+                                    + LTRIM(RTRIM(SUBSTRING([Employee], 1, CHARINDEX(',', [Employee]) - 1)))
+                                ELSE [Employee]
+                            END
+                        ))) AS norm_worker
+                    FROM dhc.B4HealthESR
+                    WHERE [Work Date] >= {date_from}
+                        AND [Work Date] < {date_to}
+                        AND [Health System] IS NOT NULL
+                        -- B4 data-entry bug: Sunrise shifts appear under both "Main" and
+                        -- "(California)" labels (same facilities in VA/NC, not CA), causing
+                        -- a 2x inflation. Drop the mislabeled rows until B4 team fixes.
+                        AND [Health System] <> 'Sunrise Senior Living Management (California)'
+                ),
+                B4NonTransitioned AS (
+                    -- Fast path: non-transitioned systems are kept as-is, no
+                    -- dedup needed. Splitting this out lets the optimizer skip
+                    -- the join entirely for the bulk of B4 rows.
+                    SELECT [Employee], [Work Date], [Health System],
+                           facility, category, program, [Agency Name],
+                           [Bill Total], [Hours]
+                    FROM B4WithKey
+                    WHERE sys_canon IS NULL
+                ),
+                B4TransitionedKept AS (
+                    -- Slow path: transitioned-system B4 rows that have NO
+                    -- matching VNDLY cycle (worker + system + date BETWEEN
+                    -- cycle_start AND cycle_end). LEFT JOIN ... WHERE NULL
+                    -- gives a stable anti-join plan vs. NOT EXISTS.
+                    SELECT b.[Employee], b.[Work Date], b.[Health System],
+                           b.facility, b.category, b.program, b.[Agency Name],
+                           b.[Bill Total], b.[Hours]
+                    FROM B4WithKey b
+                    LEFT JOIN VNDLYTransitionedKeys v
+                        ON v.sys_canon = b.sys_canon
+                       AND v.norm_worker = b.norm_worker
+                       AND CAST(b.[Work Date] AS DATE) BETWEEN v.cycle_start AND v.cycle_end
+                    WHERE b.sys_canon IS NOT NULL
+                      AND v.sys_canon IS NULL
+                ),
+                DeduplicatedESR AS (
+                    SELECT DISTINCT * FROM (
+                        SELECT * FROM B4NonTransitioned
+                        UNION ALL
+                        SELECT * FROM B4TransitionedKept
+                    ) all_b4
+                )
+"""
 
 # Mapping of B4 health system names to VNDLY health system names
 # Used to detect overlap and prefer VNDLY data when available
@@ -524,100 +624,9 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             # date ranges. Keep the b.sys_canon IS NULL OR ... wrapper too —
             # it makes the non-transitioned-system fast path explicit so the
             # optimizer can short-circuit before reaching the join.
-            cursor.execute(f'''
-                WITH VNDLYTransitionedKeys AS (
-                    SELECT DISTINCT
-                        CASE
-                            WHEN [Health System] LIKE '%Cooper%'   THEN 'cooper'
-                            WHEN [Health System] LIKE '%RUMC%'
-                              OR [Health System] LIKE '%Richmond%' THEN 'rumc'
-                            WHEN [Health System] LIKE '%Redeemer%' THEN 'redeemer'
-                            ELSE NULL
-                        END AS sys_canon,
-                        LOWER(LTRIM(RTRIM(
-                            CONCAT([Contractor First Name], ' ', [Contractor Last Name])
-                        ))) AS norm_worker,
-                        CAST([Billing Cycle Start Date] AS DATE) AS cycle_start,
-                        CAST([Billing Cycle End Date] AS DATE) AS cycle_end
-                    FROM dbo.STAGING_VNDLY_SPEND
-                    WHERE [Billing Cycle Start Date] >= {date_from}
-                        AND [Billing Cycle Start Date] < {date_to}
-                        AND ([Health System] LIKE '%Cooper%'
-                          OR [Health System] LIKE '%RUMC%'
-                          OR [Health System] LIKE '%Richmond%'
-                          OR [Health System] LIKE '%Redeemer%')
-                ),
-                B4WithKey AS (
-                    SELECT
-                        [Employee],
-                        [Work Date],
-                        [Health System],
-                        [Facility Name] AS facility,
-                        [Care Type] AS category,
-                        [Program] AS program,
-                        [Agency Name],
-                        [Bill Total],
-                        [Hours],
-                        CASE
-                            WHEN [Health System] LIKE '%Cooper%'   THEN 'cooper'
-                            WHEN [Health System] LIKE '%RUMC%'
-                              OR [Health System] LIKE '%Richmond%' THEN 'rumc'
-                            WHEN [Health System] LIKE '%Redeemer%' THEN 'redeemer'
-                            ELSE NULL
-                        END AS sys_canon,
-                        -- Normalize "Last, First" → "first last"; otherwise lower the existing string
-                        LOWER(LTRIM(RTRIM(
-                            CASE
-                                WHEN CHARINDEX(',', [Employee]) > 0
-                                THEN
-                                    LTRIM(RTRIM(SUBSTRING([Employee], CHARINDEX(',', [Employee]) + 1, 200)))
-                                    + ' '
-                                    + LTRIM(RTRIM(SUBSTRING([Employee], 1, CHARINDEX(',', [Employee]) - 1)))
-                                ELSE [Employee]
-                            END
-                        ))) AS norm_worker
-                    FROM dhc.B4HealthESR
-                    WHERE [Work Date] >= {date_from}
-                        AND [Work Date] < {date_to}
-                        AND [Health System] IS NOT NULL
-                        -- B4 data-entry bug: Sunrise shifts appear under both "Main" and
-                        -- "(California)" labels (same facilities in VA/NC, not CA), causing
-                        -- a 2x inflation. Drop the mislabeled rows until B4 team fixes.
-                        AND [Health System] <> 'Sunrise Senior Living Management (California)'
-                ),
-                B4NonTransitioned AS (
-                    -- Fast path: non-transitioned systems are kept as-is, no
-                    -- dedup needed. Splitting this out lets the optimizer skip
-                    -- the join entirely for the bulk of B4 rows.
-                    SELECT [Employee], [Work Date], [Health System],
-                           facility, category, program, [Agency Name],
-                           [Bill Total], [Hours]
-                    FROM B4WithKey
-                    WHERE sys_canon IS NULL
-                ),
-                B4TransitionedKept AS (
-                    -- Slow path: transitioned-system B4 rows that have NO
-                    -- matching VNDLY cycle (worker + system + date BETWEEN
-                    -- cycle_start AND cycle_end). LEFT JOIN ... WHERE NULL
-                    -- gives a stable anti-join plan vs. NOT EXISTS.
-                    SELECT b.[Employee], b.[Work Date], b.[Health System],
-                           b.facility, b.category, b.program, b.[Agency Name],
-                           b.[Bill Total], b.[Hours]
-                    FROM B4WithKey b
-                    LEFT JOIN VNDLYTransitionedKeys v
-                        ON v.sys_canon = b.sys_canon
-                       AND v.norm_worker = b.norm_worker
-                       AND CAST(b.[Work Date] AS DATE) BETWEEN v.cycle_start AND v.cycle_end
-                    WHERE b.sys_canon IS NOT NULL
-                      AND v.sys_canon IS NULL
-                ),
-                DeduplicatedESR AS (
-                    SELECT DISTINCT * FROM (
-                        SELECT * FROM B4NonTransitioned
-                        UNION ALL
-                        SELECT * FROM B4TransitionedKept
-                    ) all_b4
-                )
+            cursor.execute(
+                _B4_DEDUP_CTE.format(date_from=date_from, date_to=date_to)
+                + '''
                 SELECT
                     'B4' AS source_system,
                     FORMAT(DATEFROMPARTS(YEAR([Work Date]), MONTH([Work Date]), 1), 'yyyy-MM') AS month,
@@ -670,6 +679,130 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             import traceback
             traceback.print_exc()
             msp_errors.append(f"b4: {e}")
+
+        # ------------------------------------------------------------
+        # Worker identity per row group, so the client can count headcount
+        # DISTINCT across these rows instead of summing them.
+        #
+        # The UI buckets these rows by month and system (and by service line)
+        # and used to SUM each row's headcount. That double-counts anyone who
+        # appears in more than one group: a clinician who worked two
+        # facilities, whose care type changed mid-month, or -- worst -- who
+        # billed through B4 for the first half of a cutover month and VNDLY
+        # for the second. Measured against the warehouse 2026-10-20, all
+        # systems over the default thirteen months, the displayed figure ran
+        # 10-35% above the real number of people every single month, and
+        # Cooper's April cutover month by 84%: 280 shown against 152 people.
+        #
+        # The dedup above cannot fix this. It is a SPEND dedup -- it drops B4
+        # shifts already covered by a VNDLY billing cycle, which is right --
+        # but a clinician who migrated mid-month legitimately keeps B4 rows
+        # before the cutover and VNDLY rows after. One person, two sources,
+        # same month, and nothing at row level can tell that they are the
+        # same head. Measured for Cooper April: 255 of 1,078 B4 shift rows
+        # were deduped, yet all 146 workers survived in both books, 126 of
+        # them also present in VNDLY.
+        #
+        # So each row carries the dense ids of the workers behind its count
+        # and the client counts the union. ~16k ids over thirteen months,
+        # about 100KB of JSON, which keeps the number exact under every
+        # facility and category filter combination rather than only in the
+        # unfiltered view.
+        #
+        # Fail-safe: if either query fails no ids are attached at all, and
+        # the client falls back to summing. A PARTIAL union would silently
+        # under-count, which is worse than the over-count it replaces.
+        # ------------------------------------------------------------
+        worker_ids = {}
+        group_workers = defaultdict(set)
+
+        def _collect_workers(sql, label):
+            try:
+                cursor.execute(sql)
+                for mth, hs, fac, cat, sl, vt, nw in cursor.fetchall():
+                    if not nw:
+                        continue
+                    wid = worker_ids.setdefault(nw, len(worker_ids))
+                    group_workers[(mth, hs, fac, cat, sl, vt)].add(wid)
+                return True
+            except Exception as e:
+                print(f"Error loading {label} worker identity: {e}")
+                msp_errors.append(f"{label}-workers: {e}")
+                return False
+
+        # Same normalisation on both sides ("Last, First" -> "first last",
+        # lower-cased) or the union would not recognise a migrated clinician
+        # as one person -- which is the whole point.
+        vndly_workers_ok = _collect_workers(f'''
+            SELECT DISTINCT
+                FORMAT(DATEFROMPARTS(YEAR([Billing Cycle Start Date]), MONTH([Billing Cycle Start Date]), 1), 'yyyy-MM') AS month,
+                [Health System] AS health_system,
+                [Work Site Name] AS facility,
+                [Labor Type] AS category,
+                CASE
+                    WHEN [Labor Type] IN ('Nursing', 'Per Diem Nursing') THEN 'Nursing'
+                    WHEN [Labor Type] IN ('Allied', 'Per Diem Allied') THEN 'Allied'
+                    WHEN [Labor Type] = 'Physicians' THEN 'Locums'
+                    WHEN [Labor Type] = 'Non-Clinical' THEN 'Non-Clinical'
+                    ELSE 'Other'
+                END AS service_line,
+                CASE
+                    WHEN [Vendor Company Name] LIKE '%GHR%' OR [Vendor Company Name] LIKE '%Planet Healthcare%'
+                    THEN 'GHR' ELSE 'Affiliate'
+                END AS vendor_type,
+                LOWER(LTRIM(RTRIM(CONCAT([Contractor First Name], ' ', [Contractor Last Name])))) AS norm_worker
+            FROM dbo.STAGING_VNDLY_SPEND
+            WHERE [Billing Cycle Start Date] >= {date_from}
+                AND [Billing Cycle Start Date] < {date_to}
+                AND [Health System] IS NOT NULL
+        ''', 'vndly')
+
+        b4_workers_ok = _collect_workers(
+            _B4_DEDUP_CTE.format(date_from=date_from, date_to=date_to)
+            + '''
+                SELECT DISTINCT
+                    FORMAT(DATEFROMPARTS(YEAR([Work Date]), MONTH([Work Date]), 1), 'yyyy-MM') AS month,
+                    [Health System] AS health_system,
+                    facility,
+                    category,
+                    CASE
+                        WHEN program LIKE '%Nursing%' THEN 'Nursing'
+                        WHEN program LIKE '%Allied%' OR program LIKE '%Pharmacy%' THEN 'Allied'
+                        WHEN program LIKE '%Physician%' OR program LIKE '%Advanced Practices%' THEN 'Locums'
+                        WHEN program = 'Non-Clinical' OR program LIKE '%Information Technology%' THEN 'Non-Clinical'
+                        ELSE 'Other'
+                    END AS service_line,
+                    CASE
+                        WHEN [Agency Name] LIKE 'GHR%' OR [Agency Name] LIKE '%Planet Healthcare%'
+                        THEN 'GHR' ELSE 'Affiliate'
+                    END AS vendor_type,
+                    LOWER(LTRIM(RTRIM(
+                        CASE
+                            WHEN CHARINDEX(',', [Employee]) > 0
+                            THEN
+                                LTRIM(RTRIM(SUBSTRING([Employee], CHARINDEX(',', [Employee]) + 1, 200)))
+                                + ' '
+                                + LTRIM(RTRIM(SUBSTRING([Employee], 1, CHARINDEX(',', [Employee]) - 1)))
+                            ELSE [Employee]
+                        END
+                    ))) AS norm_worker
+                FROM DeduplicatedESR
+        ''', 'b4')
+
+        if vndly_workers_ok and b4_workers_ok:
+            for row in vndly_data + b4_data:
+                # service_line is part of the key because the aggregates group by
+                # it too: B4 splits one category across programs that map to
+                # different service lines, so a coarser key would hand each of
+                # those rows the union of all of them and over-count the
+                # per-service-line breakdown even while the system total stayed
+                # right. Measured: 383 of 5,547 row groups.
+                key = (row.get('month'), row.get('health_system'),
+                       row.get('facility'), row.get('category'),
+                       row.get('service_line'), row.get('vendor_type'))
+                row['workers'] = sorted(group_workers.get(key, ()))
+            print(f"financial-data(msp): attached {len(worker_ids)} worker ids "
+                  f"across {len(group_workers)} row groups")
 
         conn.close()
 
