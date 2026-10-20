@@ -1009,7 +1009,7 @@
     const $ = (id) => document.getElementById(id);
 
     // App version - loaded from environment variable via API, with fallback
-    let APP_VERSION = '2.64.0';
+    let APP_VERSION = '2.64.1';
 
     const API_BASE_URL = '/api';
 
@@ -5764,11 +5764,19 @@
         const expanded = s.expandedRows.has(job.id);
         const impact = Utils.calculateImpactPercent(job.levers);
         const isPerm = String(job.program).toLowerCase().includes('perm');
+        const onHold = Utils.isJobOnHold(job);
+        /* A held req gets the neutral bubble Perm already uses instead of an
+         * aging colour. Same reason in both cases: the number of days is a
+         * fact, but the urgency colour is a claim, and neither a perm search
+         * nor a req the client paused is aging on us. Without this, 70 of the
+         * 117 open jobs would have come back red the day held reqs started
+         * counting. */
+        const noAging = isPerm || onHold;
 
-        const colorClass = isPerm ? 'border border-slate-500 text-slate-700 bg-white' : Utils.getAgingColorClasses(job.daysPast, job.system);
-        const color = isPerm ? '' : colorClass.split(' ')[0];
-        const bubbleText = isPerm ? 'text-slate-700' : (color.includes('slate') ? 'text-slate-800' : 'text-white');
-        const bubbleClasses = isPerm ? 'border border-slate-500 bg-white' : `${color}`;
+        const colorClass = noAging ? 'border border-slate-500 text-slate-700 bg-white' : Utils.getAgingColorClasses(job.daysPast, job.system);
+        const color = noAging ? '' : colorClass.split(' ')[0];
+        const bubbleText = noAging ? 'text-slate-700' : (color.includes('slate') ? 'text-slate-800' : 'text-white');
+        const bubbleClasses = noAging ? 'border border-slate-500 bg-white' : `${color}`;
 
         const abbrSpecialty = Utils.abbreviate(job.specialty);
         const cleanSpec = abbrSpecialty.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
@@ -5830,7 +5838,7 @@
             <div class="col-span-1 text-center font-bold text-slate-700 text-sm">${job.numPositions || 1}</div>
             <div class="col-span-1 text-center font-bold text-xs ${job.billRateEstimated ? 'text-amber-600' : 'text-slate-700'}" title="${job.billRateEstimated ? 'Estimated (using suggested/max rate)' : ''}">${job.billRate}${job.billRateEstimated ? '*' : ''}</div>
             <div class="col-span-1 text-center">
-              <span class="inline-flex font-bold text-xs ${bubbleClasses} ${bubbleText} rounded-full w-8 h-8 items-center justify-center mx-auto">${job.daysPast}</span>
+              <span class="inline-flex font-bold text-xs ${bubbleClasses} ${bubbleText} rounded-full w-8 h-8 items-center justify-center mx-auto" title="${onHold ? 'On hold — open, but not aging on us' : job.daysPast + ' days open'}">${job.daysPast}</span>
             </div>
             <div class="col-span-1 text-center font-bold text-slate-700 hover:text-blue-600 z-10"
                  onclick="event.stopPropagation(); window.store.dispatch('OPEN_MODAL',{type:'margin',jobId:'${job.id}',val:'${job.margin}'})">${job.margin}%</div>
@@ -6814,11 +6822,19 @@
         const s = window.store.state;
         const impact = Utils.calculateImpactPercent(job.levers);
         const isPerm = String(job.program).toLowerCase().includes('perm');
-        const colorClass = isPerm ? 'border border-slate-500 text-slate-700 bg-white'
+        const onHold = Utils.isJobOnHold(job);
+        /* A held req gets the neutral bubble Perm already uses instead of an
+         * aging colour. Same reason in both cases: the number of days is a
+         * fact, but the urgency colour is a claim, and neither a perm search
+         * nor a req the client paused is aging on us. Without this, 70 of the
+         * 117 open jobs would have come back red the day held reqs started
+         * counting. */
+        const noAging = isPerm || onHold;
+        const colorClass = noAging ? 'border border-slate-500 text-slate-700 bg-white'
                                   : Utils.getAgingColorClasses(job.daysPast, job.system);
-        const color = isPerm ? '' : colorClass.split(' ')[0];
-        const bubbleText = isPerm ? 'text-slate-700' : (color.includes('slate') ? 'text-slate-800' : 'text-white');
-        const bubbleClasses = isPerm ? 'border border-slate-500 bg-white' : `${color}`;
+        const color = noAging ? '' : colorClass.split(' ')[0];
+        const bubbleText = noAging ? 'text-slate-700' : (color.includes('slate') ? 'text-slate-800' : 'text-white');
+        const bubbleClasses = noAging ? 'border border-slate-500 bg-white' : `${color}`;
         /* B4 writes many specialties doubled -- "Medical Assistant - Medical
          * Assistant", "CT TECH - CT TECH" -- on 62 of its 91 open orders. The
          * halves are identical, so the second is noise, and it doubled the
@@ -6874,7 +6890,7 @@
           <td class="px-3 py-2 text-center font-bold text-xs ${job.billRateEstimated ? 'text-amber-600' : 'text-slate-700'}"
               title="${job.billRateEstimated ? 'Estimated (using suggested/max rate)' : ''}">${job.billRate}${job.billRateEstimated ? '*' : ''}</td>
           <td class="px-3 py-2 text-center">
-            <span class="inline-flex font-bold text-xs ${bubbleClasses} ${bubbleText} rounded-full w-8 h-8 items-center justify-center mx-auto">${job.daysPast}</span>
+            <span class="inline-flex font-bold text-xs ${bubbleClasses} ${bubbleText} rounded-full w-8 h-8 items-center justify-center mx-auto" title="${onHold ? 'On hold — open, but not aging on us' : job.daysPast + ' days open'}">${job.daysPast}</span>
           </td>
           <td class="px-3 py-2 text-center font-bold text-slate-700 hover:text-blue-600 cursor-pointer"
               onclick="event.stopPropagation(); window.store.dispatch('OPEN_MODAL',{type:'margin',jobId:'${job.id}',val:'${job.margin}'})">${job.margin}%</td>
@@ -11446,6 +11462,13 @@
         const workable = list.filter(j => !Utils.isJobOnHold(j));
         const avgDays = workable.length
           ? Math.round(workable.reduce((a, b) => a + b.daysPast, 0) / workable.length) : 0;
+        // Spelled out under the count, because this number roughly doubled the
+        // day held reqs started counting as open jobs and nothing else on the
+        // screen would have explained why. Omitted entirely where there are no
+        // held reqs, so the Bullhorn and Symplr books gain no empty line.
+        const heldCount = total - workable.length;
+        const heldSub = heldCount
+          ? `${workable.length} active &middot; ${heldCount} on hold` : null;
         const avgMargin = (list.reduce((a, b) => a + parseFloat(b.margin || 0), 0) / total).toFixed(1);
 
         let pendingDaysSum = 0, pendingCount = 0, ghr = 0, av = 0, critical = 0;
@@ -11523,7 +11546,7 @@
                 { label: 'Submission Pending', val: `${avgPending} Days`, icon: 'hourglass', color: 'orange', tooltip: 'Average days submissions have been pending review' },
                 { label: 'Total Submissions', val: totalSubs.toLocaleString(), icon: 'users', color: 'blue', tooltip: 'All active submissions across visible open jobs' },
                 { label: 'Avg Margin', val: avgMargin + '%', icon: 'trending-up', color: 'green', tooltip: 'Average margin percentage across all open positions' },
-                { label: 'Total Jobs', val: `${total} / <span class="text-red-500">${critical}</span>`, icon: 'alert-triangle', color: 'red', tooltip: 'Total open positions / Critical (aging) positions' },
+                { label: 'Total Jobs', val: `${total} / <span class="text-red-500">${critical}</span>`, icon: 'alert-triangle', color: 'red', sub: heldSub, tooltip: 'Total open positions / Critical (aging) positions. Held reqs count as open -- VNDLY counts them -- but are left out of Critical, because a paused req is not aging on us.' },
                 { label: 'Fill Rate / Active', val: `${overallFillRate}% / ${activeCount}`, icon: 'check-circle', color: 'emerald', tooltip: 'Overall fill rate % / Total active on contract' },
               ]
             : [
@@ -11531,7 +11554,7 @@
                 { label: 'Submission Pending', val: `${avgPending} Days`, icon: 'hourglass', color: 'orange', tooltip: 'Average days submissions have been pending review' },
                 { label: 'Active Sub Mix', val: `${ghrPct}% / ${avPct}%`, icon: 'users', color: 'blue', tooltip: 'GHR submissions % / Agency Vendor submissions %' },
                 { label: 'Avg Margin', val: avgMargin + '%', icon: 'trending-up', color: 'green', tooltip: 'Average margin percentage across all open positions' },
-                { label: 'Total Jobs', val: `${total} / <span class="text-red-500">${critical}</span>`, icon: 'alert-triangle', color: 'red', tooltip: 'Total open positions / Critical (aging) positions' },
+                { label: 'Total Jobs', val: `${total} / <span class="text-red-500">${critical}</span>`, icon: 'alert-triangle', color: 'red', sub: heldSub, tooltip: 'Total open positions / Critical (aging) positions. Held reqs count as open -- VNDLY counts them -- but are left out of Critical, because a paused req is not aging on us.' },
                 { label: 'GHR / Overall Fill / Active', val: `${ghrFillRate}% / ${overallFillRate}% / ${activeCount}`, icon: 'check-circle', color: 'emerald', tooltip: 'GHR fill rate % / Overall fill rate % / Total active on contract' },
               ];
           container.innerHTML = cards.map(c => View.kpiCardHtml(c)).join('');
@@ -11558,8 +11581,10 @@
               ? 'Offers declined in the last 7 days. Declines with no recorded date are excluded.'
               : 'No offer date is recorded on any candidate here, so a post-offer decline cannot be identified. This is not zero declines.' },
           { label: 'Open Jobs', val: `${total} / <span class="text-red-500">${critical}</span>`,
-            icon: 'alert-triangle', color: 'red',
-            tooltip: 'Open positions in view / of those, aged past the critical threshold' },
+            icon: 'alert-triangle', color: 'red', sub: heldSub,
+            tooltip: 'Open positions in view / of those, aged past the critical threshold. '
+                   + 'Held reqs count as open -- VNDLY counts them -- but are left out of '
+                   + 'Critical, because a paused req is not aging on us.' },
           { label: 'Active Jobs', val: jobsWithActivity, icon: 'users', color: 'blue',
             tooltip: 'Open jobs carrying at least one live submission' },
           isNonMspKpi
@@ -11593,6 +11618,7 @@
               <span class="kpi-tooltip cursor-help" data-tooltip="${c.tooltip}"><i data-lucide="${c.icon}" class="w-3 h-3 sm:w-3.5 sm:h-3.5 text-${c.color}-500"></i></span>
             </div>
             <div class="text-base sm:text-xl font-bold text-slate-800 leading-tight">${c.val}</div>
+            ${c.sub ? `<div class="text-[9px] sm:text-[11px] text-slate-400 mt-0.5 leading-tight">${c.sub}</div>` : ''}
           </div>
         `;
       },

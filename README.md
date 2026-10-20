@@ -2,6 +2,21 @@
 
 ## Version History
 
+### 2.64.1 - Say which open jobs are on hold
+- 2.64.0 roughly doubled the open-jobs count and nothing on the screen said
+  why. Two changes so the number explains itself:
+- The count now carries a sub-line, `47 active &middot; 70 on hold`, on the
+  Total Jobs and Open Jobs cards. It is omitted where there are no held reqs,
+  so the Bullhorn and Symplr books gain no empty line.
+- A held req gets the **neutral aging bubble that Perm already uses** instead
+  of an urgency colour. Same reason in both cases: the day count is a fact, the
+  colour is a claim, and neither a perm search nor a req the client paused is
+  aging on us. Without this, 70 of the 117 open jobs would have come back red.
+  The bubble's hover says "On hold - open, but not aging on us".
+- Both tooltips now state the rule outright: held reqs count as open because
+  VNDLY counts them, and stay out of Critical because a paused req is not
+  aging on us.
+
 ### 2.64.0 - Open positions now match VNDLY: held reqs are open jobs
 - VNDLY's own dashboard counts a held req as an open job. Its "Jobs" tile reads
   **74** for Cooper -- 31 Active plus 43 on hold -- and we were reporting the
