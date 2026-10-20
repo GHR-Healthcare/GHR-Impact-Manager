@@ -49,8 +49,19 @@ RECENT_END_DAYS = 90
 BULLHORN_ENDED_SNAPSHOT_STATUSES = (
     'Completed', 'Termination', 'Cancellation',
 )
+# 'Ended by Job Close' is NOT a completed assignment -- it is an applicant who
+# was never selected, closed out when the job closed. Measured 2026-10-20
+# across all 561 of them: 0 have spend, 0 have an Onboarded Date, 0 have an
+# End Reason. 'Ended' by contrast is 356 work orders, all 356 onboarded and
+# all 356 carrying an end reason.
+#
+# It used to sit in the "ran" list, where the spend guard was expected to drop
+# it -- but the guard's name-match fallback let 55 of them through, matching a
+# same-named worker's spend on a DIFFERENT work order. Those were counted as
+# real assignments. Excluded outright now, which is what GetClosed and
+# GetOnboarding already did. (ghr-marketintel flagged this; confirmed here.)
 VNDLY_ENDED_SNAPSHOT_STATUSES = (
-    'Ended', 'Ended by Job Close',
+    'Ended',
 )
 
 BULLHORN_ACTIVE_SNAPSHOT_STATUSES = (

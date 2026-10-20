@@ -2,6 +2,24 @@
 
 ## Version History
 
+### 2.61.0 - 'Ended by Job Close' was never a completed assignment
+
+- Flagged by the ghr-marketintel session and confirmed here. **`Ended by Job Close` is an
+  applicant who was never selected**, closed out when the job closed — not a finished
+  assignment. Across all **561** of them: **0 have spend, 0 have an Onboarded Date, 0 have
+  an End Reason.** `Ended` by contrast is 356 work orders, all 356 onboarded and all 356
+  carrying an end reason
+- It sat in `VNDLY_RAN_STATUSES`, where the spend guard was expected to drop it. **The
+  guard's name-match fallback let 55 through** — matching a same-named worker's spend on a
+  *different* work order — so 55 unselected applicants were counted as real assignments in
+  trend, year-over-year and the ended-snapshot stats
+- Excluded outright from all three, which is what `GetClosed` and `GetOnboarding` already
+  did. `GetStatsData`'s own comment already stated the principle — *"pipeline outcomes on
+  seats nobody ever worked, not placement history"* — while listing this status as history
+- Note the name-match fallback is still right for `Ended`: it recovers real assignments
+  whose spend is keyed to a work order the XREF does not cover. The fix is removing the
+  status, not the fallback
+
 ### 2.60.2 - #91: 'Scheduled Starts' was off by exactly one day
 
 - `Math.round((new Date(r.current_start) - new Date()) / 86400000)` mixes two clocks: a
