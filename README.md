@@ -2,6 +2,30 @@
 
 ## Version History
 
+### 2.23.0 - Export CSV on the Extensions tab
+- An **Export CSV** button in the Extensions filter strip, for checking the app
+  against B4, VNDLY and Bullhorn by hand. 56 fields per seat.
+- It exports **the rows the table is showing**, after the stage filter, the
+  search strip, the column filters and the sort. Filter the screen to the seats
+  in question and the file holds those seats. The render stashes that row set,
+  so the export cannot drift from the table the way a second copy of the filter
+  chain would.
+- Each compared field ships as **VMS value, ATS value and verdict**, so a
+  mismatch row reads `2026-11-14` against `2026-12-05` rather than just
+  "Mismatch" — validating a derived figure means seeing both sides.
+- A field that was never compared (an unlinked seat) exports as `n/a` rather
+  than blank, which would read as "equal and empty".
+- Redact mode is honoured through `View.stageWorker`, so a masked screen cannot
+  be un-masked by exporting it. Notes keep their quotes but lose newlines, so a
+  line break in a note cannot split one record across two rows. A helper that
+  throws writes `#ERR ...` in its own cell instead of losing the file. UTF-8
+  BOM, so Excel reads accented clinician names correctly.
+- Six columns narrower than the prototype's version: this book has no
+  designation ladder, no per-seat exceptions list, no action-due countdown and
+  no clinician extension reply. Columns are not invented for fields that do not
+  exist here — a blank would read as "no exceptions" rather than "not measured
+  in this book".
+
 ### 2.22.0 - Open positions now match VNDLY: held reqs are open jobs
 - VNDLY's own dashboard counts a held req as an open job. Its "Jobs" tile reads
   **74** for Cooper -- 31 Active plus 43 on hold -- and we were reporting the
