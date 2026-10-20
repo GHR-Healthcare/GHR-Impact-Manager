@@ -28,9 +28,29 @@ obj/
 # on a public URL.
 .claude/
 
-# Vendor API documentation. Kept locally, never committed: the root of this
-# repo is served by the Static Web App, and staticwebapp.config.json gates
-# only /, /*.html and /api/* behind authentication -- a real file at the root
-# with no matching route would be publicly fetchable.
+# Reference material: vendor documentation, and the spec files and feedback
+# decks that come over from the team. Kept locally, never committed.
+#
+# The original reason was that app_location is "/" on all four workflows, so
+# the repo root IS the deployed site, and staticwebapp.config.json gated only
+# /, /*.html and /api/* -- anything else at the root was served anonymously.
+# That hole is closed: there is now a catch-all "/*" route requiring
+# authentication, placed last, and the config records which files were
+# verified returning 200 with no session before it existed.
+#
+# These stay ignored for the OTHER reason, which no route rule can fix: this
+# repository is PUBLIC. A committed file is readable on github.com by anyone,
+# and git history is immutable -- deleting it later does not unpublish it. So
+# client specs, vendor documentation and internal workbooks do not go in.
+#
+# Wildcards rather than exact names on purpose: the recurring case is the NEXT
+# spec document arriving, and it should be caught without anyone having to
+# remember this file. No tracked file has any of these extensions.
 VNDLY API Docs.pdf
 *.pdf
+*.docx
+*.doc
+*.xlsx
+*.xls
+*.pptx
+*.zip
