@@ -2,6 +2,27 @@
 
 ## Version History
 
+### 2.65.0 - Export CSV on the Extensions tab
+- An **Export CSV** button in the Extensions filter strip, for checking the app
+  against B4, VNDLY and Bullhorn by hand. 62 fields per seat.
+- It exports **the rows the table is showing**, after the stage filter, the
+  search strip, the exceptions-only toggle, the column filters and the sort.
+  Filter the screen to the seats in question and the file holds those seats.
+  The render stashes that row set, so the export cannot drift from the table
+  the way a second copy of the filter chain would.
+- Every derived verdict ships **next to the raw values that produced it**: the
+  designation with its "why", and for each compared field the VMS value, the
+  ATS value and the verdict. A mismatch row reads `2026-11-14` against
+  `2026-12-05`, not just "Mismatch" — validating a derived figure means seeing
+  both sides.
+- A field that was never compared (an unlinked seat) exports as `n/a` rather
+  than blank, which would read as "equal and empty".
+- Redact mode is honoured through `View.stageWorker`, so a masked screen cannot
+  be un-masked by exporting it. Notes keep their quotes but lose newlines, so a
+  line break in a note cannot split one record across two rows. A helper that
+  throws writes `#ERR ...` in its own cell instead of losing the file.
+- UTF-8 BOM, so Excel reads accented clinician names correctly.
+
 ### 2.64.1 - Say which open jobs are on hold
 - 2.64.0 roughly doubled the open-jobs count and nothing on the screen said
   why. Two changes so the number explains itself:
