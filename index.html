@@ -1009,7 +1009,7 @@
     const $ = (id) => document.getElementById(id);
 
     // App version - loaded from environment variable via API, with fallback
-    let APP_VERSION = '2.63.0';
+    let APP_VERSION = '2.64.0';
 
     const API_BASE_URL = '/api';
 
@@ -3250,6 +3250,20 @@
         return `${r} day${r === 1 ? '' : 's'}`;
       },
 
+      /* A job the client has paused. VNDLY's own dashboard counts these as
+       * open jobs, so they belong in the list and in every COUNT of the open
+       * book -- that is what makes our 74 agree with theirs. They do NOT
+       * belong in anything that reads days-open as a performance signal:
+       * nobody is failing to fill a req that is on hold, and the held ones are
+       * older than the active ones, so leaving them in would have doubled the
+       * open book and inflated Avg Days Open and Critical with it.
+       *
+       * The VNDLY feed spells it 'Hold'; the UI and B4 say 'On Hold' in
+       * places, hence the loose test. */
+      isJobOnHold(job) {
+        return /hold/i.test(String((job && job.status) || ''));
+      },
+
       agingBand(days) {
         if (days == null) return 'low';
         if (days <= 7) return 'critical';
@@ -3672,6 +3686,10 @@
           const filteredJobs = s.jobs.filter(job => {
             // Check days >= 16
             if (!job.daysPast || job.daysPast < 16) return false;
+
+            // A req the client paused is not aging on us and should not be
+            // chased by this report.
+            if (Utils.isJobOnHold(job)) return false;
 
             // Exclude Perm Placement only
             const program = String(job.program || '').toLowerCase();
@@ -5649,7 +5667,8 @@
           cells = cell('Open Jobs', open.length.toLocaleString(), 'text-slate-800',
                        `${openings.toLocaleString()} opening${openings === 1 ? '' : 's'}`)
                 + cell('Aged 16+ Days',
-                       open.filter(j => (Number(j.daysPast) || 0) >= 16).length.toLocaleString(),
+                       open.filter(j => !Utils.isJobOnHold(j) && (Number(j.daysPast) || 0) >= 16)
+                           .length.toLocaleString(),
                        'text-red-600', 'of the open book')
                 + exposureCell;
         }
@@ -6098,8 +6117,10 @@
         {
           const openings = list.reduce((a, j) => a + (Number(j.numPositions) || 1), 0);
           const subs = list.reduce((a, j) => a + (Number(j.ghrSubs) || 0) + (Number(j.avSubs) || 0), 0);
-          const avgAge = list.length ? Math.round(list.reduce((a, j) => a + (Number(j.daysPast) || 0), 0) / list.length) : 0;
-          const stale = list.filter(j => (Number(j.daysPast) || 0) >= 16).length;
+          const aging = list.filter(j => !Utils.isJobOnHold(j));
+          const avgAge = aging.length
+            ? Math.round(aging.reduce((a, j) => a + (Number(j.daysPast) || 0), 0) / aging.length) : 0;
+          const stale = aging.filter(j => (Number(j.daysPast) || 0) >= 16).length;
           View.renderKpiCards([
             { label: 'Priority Jobs', val: list.length, icon: 'flame', color: 'orange' },
             { label: 'Openings', val: openings, icon: 'hash', color: 'blue' },
@@ -11401,8 +11422,13 @@
         }).length;
         const ghrFillRate = activeCount > 0 ? Math.round((ghrActive / activeCount) * 100) : 0;
         
-        // Calculate overall fill rate (active contracts / (active + open positions))
-        const overallFillRate = (activeCount + total) > 0 ? Math.round((activeCount / (activeCount + total)) * 100) : 0;
+        // Calculate overall fill rate (active contracts / (active + open positions)).
+        // Held reqs are excluded from the denominator -- they are open jobs by
+        // VNDLY's count but not fillable demand, and counting them would read
+        // as a drop in fill rate the moment a client pauses a req.
+        const openWorkable = list.filter(j => !Utils.isJobOnHold(j)).length;
+        const overallFillRate = (activeCount + openWorkable) > 0
+          ? Math.round((activeCount / (activeCount + openWorkable)) * 100) : 0;
 
         if (!total) {
           container.innerHTML = `
@@ -11414,14 +11440,19 @@
           return;
         }
 
-        const avgDays = Math.round(list.reduce((a, b) => a + b.daysPast, 0) / total);
+        // Held reqs count as open jobs (VNDLY's definition) but are not aging
+        // on us, so every day-based figure below is measured on the workable
+        // book only. See Utils.isJobOnHold.
+        const workable = list.filter(j => !Utils.isJobOnHold(j));
+        const avgDays = workable.length
+          ? Math.round(workable.reduce((a, b) => a + b.daysPast, 0) / workable.length) : 0;
         const avgMargin = (list.reduce((a, b) => a + parseFloat(b.margin || 0), 0) / total).toFixed(1);
 
         let pendingDaysSum = 0, pendingCount = 0, ghr = 0, av = 0, critical = 0;
         list.forEach(j => {
           ghr += j.ghrSubs; av += j.avSubs;
           const rules = CONSTANTS.AGING_RULES[j.system] || CONSTANTS.AGING_RULES.default;
-          if (j.daysPast >= rules.thresholds.red) critical++;
+          if (!Utils.isJobOnHold(j) && j.daysPast >= rules.thresholds.red) critical++;
           (j.candidates || []).forEach(c => { if (!Utils.isDeclinedNow(j.id, c) && c.date) { pendingDaysSum += Utils.calcDays(c.date); pendingCount++; } });
         });
 
