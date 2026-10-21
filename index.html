@@ -940,7 +940,7 @@
     const $ = (id) => document.getElementById(id);
 
     // App version - loaded from environment variable via API, with fallback
-    let APP_VERSION = '2.23.0';
+    let APP_VERSION = '2.24.0';
 
     const API_BASE_URL = '/api';
 
@@ -1438,6 +1438,11 @@
             ['Program',             r => r.program],
             ['Clinician',           r => View.stageWorker(r)],
             ['Agency',              r => r.agency],
+            // The badge the row already shows, as a column you can filter on.
+            // Without it the free-text agency is the only clue that a seat
+            // belongs to a competitor, and 19 of the 29 seats Matt could not
+            // reconcile on 2026-10-21 were exactly that.
+            ['GHR / Affiliate',     r => View.stageAgencyLabel(r) === 'GHR' ? 'GHR' : 'Affiliate'],
             ['Contract ID',         r => r.contract_id],
             ['Tenant',              r => r.tenant],
             ['Work Order ID',       r => r.woid],
@@ -8267,8 +8272,20 @@
         const grpCount = g => rows.filter(r => View.extensionGroup(r) === g).length;
         const exceptions = rows.filter(r => (r.match?.counts?.bad || 0) > 0).length;
         const highUrgency = rows.filter(r => View.extensionUrgencyLabel(r) === 'High').length;
+        /* This tab is the whole vendor panel on MSP, not GHR's seats: the
+         * fetch asks for includeAffiliate=1 deliberately, because GHR manages
+         * the panel. The card said "GHR Ending in 45 Days" and counted all of
+         * it, which is simply a false label -- measured 2026-10-21, 166 of the
+         * 529 rows in the window are other agencies' assignments. Matt pulled
+         * GHR's pending extensions, got 43, compared it to this tab and could
+         * not reconcile; 19 of the 29 seats he could not place were
+         * competitors'. The split is now on the card, and it is omitted on
+         * non-MSP, which has no affiliate concept at all. */
+        const ghrRows = rows.filter(r => View.stageAgencyLabel(r) === 'GHR').length;
+        const affRows = rows.length - ghrRows;
         View.renderKpiCards([
-          { label: 'GHR Ending in 45 Days', val: rows.length, sub: 'delivery view',
+          { label: 'Ending in 45 Days', val: rows.length,
+            sub: affRows ? `${ghrRows} GHR &middot; ${affRows} affiliate` : 'delivery view',
             icon: 'repeat', color: 'blue' },
           { label: 'No Decision', val: grpCount('NO DECISION'), sub: 'client direction missing',
             icon: 'help-circle', color: 'red' },
