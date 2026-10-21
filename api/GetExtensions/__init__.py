@@ -218,21 +218,41 @@ def _b4_rows(cursor, horizon, include_affiliate):
         CREATE INDEX ix_b4rto ON #b4_rto (contract_id);
 
         IF OBJECT_ID('tempdb..#b4_ext') IS NOT NULL DROP TABLE #b4_ext;
-        SELECT parent, MAX(rp) AS rp, MAX(re) AS re, MAX(rd) AS rd
+        -- The LATEST extension row per seat, not MAX() over every row it has
+        -- ever had. A seat can carry several, and independent MAX flags let an
+        -- old one outvote the current one: _extension_stage tests pending
+        -- before accepted, so any seat that was ever 'Extension Offer Pending'
+        -- read as awaiting vendor forever after it was accepted.
+        --
+        -- Measured 2026-10-21, both seats carrying two rows, and they show why
+        -- a precedence rule would be wrong in one direction or the other:
+        --
+        --   369683  pending  11/29->7/2  added 09-30
+        --           accepted 11/29->7/2  added 10-01   -> ACCEPTED (same
+        --           window; the offer was taken up). We showed pending.
+        --   370150  accepted 10/25->11/6 added 08-31
+        --           pending  11/11->5/8  added 10-20   -> AWAITING VENDOR (a
+        --           further extension is now on the table). We showed pending,
+        --           which was right by luck.
+        --
+        -- "Accepted beats pending" would fix the first and break the second.
+        -- Latest-wins settles both, and matches how the VNDLY modification is
+        -- already picked -- newest row, never a flag aggregated over history.
+        SELECT parent,
+               CASE WHEN atype = 'Extension Offer Pending'   THEN 1 ELSE 0 END AS rp,
+               CASE WHEN atype = 'Future Extension Accepted' THEN 1 ELSE 0 END AS re,
+               CASE WHEN atype = 'Extension Offer Declined'  THEN 1 ELSE 0 END AS rd
         INTO #b4_ext
         FROM (
             SELECT LTRIM(RTRIM(c.Parent_Contract_ID)) AS parent,
-                   CASE WHEN LTRIM(RTRIM(x.AssignmentType))='Extension Offer Pending'
-                        THEN 1 ELSE 0 END AS rp,
-                   CASE WHEN LTRIM(RTRIM(x.AssignmentType))='Future Extension Accepted'
-                        THEN 1 ELSE 0 END AS re,
-                   CASE WHEN LTRIM(RTRIM(x.AssignmentType))='Extension Offer Declined'
-                        THEN 1 ELSE 0 END AS rd
+                   LTRIM(RTRIM(x.AssignmentType))     AS atype,
+                   ROW_NUMBER() OVER (PARTITION BY LTRIM(RTRIM(c.Parent_Contract_ID))
+                                      ORDER BY x.DateAdded DESC, x.StartDate DESC) AS rn
             FROM dhc.B4HealthExtensionsOrder x WITH (NOLOCK)
             JOIN dhc.B4HealthOrder c WITH (NOLOCK)
               ON LTRIM(RTRIM(c.Contract_ID)) = LTRIM(RTRIM(x.AssignmentID))
             WHERE x.Agency LIKE '%GHR%' AND c.Parent_Contract_ID IS NOT NULL
-        ) z GROUP BY parent;
+        ) z WHERE rn = 1;
         CREATE INDEX ix_b4ext ON #b4_ext (parent);
 
         IF OBJECT_ID('tempdb..#b4_chain') IS NOT NULL DROP TABLE #b4_chain;
