@@ -2,20 +2,6 @@
 
 ## Version History
 
-### 2.24.1 - An accepted extension kept reading as awaiting vendor
-- `#b4_ext` took `MAX()` of each assignment type over **every** extension row a
-  seat had ever carried, and `_extension_stage` tests pending before accepted.
-  So any seat that was once `Extension Offer Pending` read as **Awaiting Vendor
-  Approval** forever, including after the offer was accepted.
-- Now takes the **latest** row per seat by `DateAdded`, the same way the VNDLY
-  modification is already picked. Never a flag aggregated over history.
-- "Accepted beats pending" would have been the wrong fix: one live seat has an
-  accepted offer for the same window (so it is accepted), the other has an
-  accepted extension followed by a *further* pending one (so it is awaiting
-  vendor). A precedence rule fixes one and breaks the other.
-- Verified against the real query before and after: 429 rows both times, one
-  seat changes, Awaiting Vendor 46 → 45, Extension Accepted 72 → 73.
-
 ### 2.24.0 - The Extensions tab is the whole panel, and now says so
 - Matt could not reconcile the tab against B4 and VNDLY: his manual pull of
   GHR's pending extensions gave **43**, the tab's file gave **68**. Both were
