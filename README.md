@@ -2,6 +2,29 @@
 
 ## Version History
 
+### 2.66.0 - The Extensions tab is the whole panel, and now says so
+- Matt could not reconcile the tab against B4 and VNDLY: his manual pull of
+  GHR's pending extensions gave **43**, the tab's file gave **68**. Both were
+  right. On MSP this tab fetches `includeAffiliate=1` deliberately — GHR runs
+  the vendor panel, so the window covers every agency's assignments, not GHR's.
+  Measured 2026-10-21: **166 of the 529 rows are other agencies' seats**.
+- Of the 29 seats Matt could not place, **19 are competitors'** — LanceSoft,
+  Cross Country, TalentBurst, Siemens Healthineers, Insight Global, TNAA and
+  others. Only **10 are GHR seats**, and 39 + 10 = the 49 GHR pending the tab
+  was really showing him.
+- The headline card said **"GHR Ending in 45 Days"** and counted all of it. A
+  false label on the one number people read first. It now reads "Ending in 45
+  Days" with the split underneath — `51 GHR · 20 affiliate` — and the split is
+  omitted on non-MSP, which has no affiliate concept.
+- The CSV export gained a **GHR / Affiliate** column beside the free-text
+  agency, so the panel can be filtered down to GHR's own book in one step. The
+  row badge was always on screen; it just could not be exported or sorted on.
+- Not changed, and worth a decision: the two B4 "offer pending" paths disagree
+  on scope. The Network Activity Report path is GHR-only (`x.Agency LIKE
+  '%GHR%'`) and produces 32 GHR / 0 affiliate; the child-submission chain has
+  no agency filter and produces 1 GHR / 13 affiliate. Same question, two
+  scopes.
+
 ### 2.65.0 - Export CSV on the Extensions tab
 - An **Export CSV** button in the Extensions filter strip, for checking the app
   against B4, VNDLY and Bullhorn by hand. 62 fields per seat.
