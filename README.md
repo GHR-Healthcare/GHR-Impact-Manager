@@ -35,6 +35,15 @@
   - KPIs render identically
 - The legacy renderers are still in the tree and simply switched off. Retiring
   them is separate work.
+- **Rollback:** `tools/rollback-release.sh` (dry run by default, `--yes` to
+  commit). The target is the `pre-3.0.0` tag, which is production as it ran
+  before this merge. It restores that tree as a *forward* commit on `main`
+  rather than reverting the merge — both apps deploy main's tip, so that is the
+  fastest way back, it keeps the rolled-back work reachable, and it avoids
+  `git revert -m 1` on a merge that may need re-merging. Two things it cannot
+  do for you and prints at the end: `APP_VERSION` on **both** apps, and
+  `DELETE FROM impactmgr.endpoint_cache` so no payload built by 3.0.0 is served
+  to 2.24.0 code inside the 26-hour TTL.
 - **Pre-merge `main`'s version numbering was retired.** Every entry below is
   the prototype's series, which is the one that survived. Nine commit subjects
   in `git log` (2.21.10 – 2.21.18) therefore cite versions with no entry here,
