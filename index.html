@@ -668,7 +668,7 @@
       <!-- Two Open Jobs surfaces, one shown. Production MSP keeps the original
            grid; non-MSP and the prototype get the stage table, which is what
            gives them sortable headers and per-column filters. Utils.impactUi()
-           decides, so MSP is untouched until the prototype branch merges. -->
+           decides. Both instances now answer true -- see Utils.impactUi. -->
       <!-- flex-1 min-h-0 flex flex-col is load-bearing, not decoration. This
            wrapper sits between listViewWrapper (flex flex-col md:h-full
            md:overflow-hidden) and the scroll container below, which carries
@@ -1009,7 +1009,7 @@
     const $ = (id) => document.getElementById(id);
 
     // App version - loaded from environment variable via API, with fallback
-    let APP_VERSION = '2.66.1';
+    let APP_VERSION = '3.0.0';
 
     const API_BASE_URL = '/api';
 
@@ -3491,16 +3491,24 @@
        * main serves BOTH production MSP and non-MSP, and only the stage tabs
        * were gated -- so every change on a SHARED surface (Open Jobs, the job
        * detail, Trend, the footer) reached production MSP, which was supposed
-       * to stay exactly as it was until the prototype branch merges. This is
+       * to stay exactly as it was while the redesign was in review. This is
        * the single switch those surfaces ask. The prototype branch overrides
        * it to true, which is its one deliberate divergence.
        */
       impactUi() {
-        // THE DELIBERATE DIVERGENCE ON THIS BRANCH. main returns
-        // dataSource === 'non_msp', so production MSP keeps its original
-        // surfaces; this branch exists to show reviewers MSP *with* the
-        // redesign, so it returns true for both instances. Merging to main is
-        // a matter of deciding this one line.
+        /* Both instances now run the IMPACT UI.
+         *
+         * This used to be the prototype branch's one deliberate divergence:
+         * main returned dataSource === 'non_msp' so production MSP kept the
+         * legacy surfaces, and the branch returned true so reviewers could see
+         * MSP with the redesign. The prototypes were signed off on 2026-10-23
+         * and the branch was merged, so true is now simply what ships.
+         *
+         * Kept as a method rather than inlined because the legacy renderers it
+         * gates are still in the tree -- see legacyListWrap -- and retiring
+         * them is a separate piece of work from turning them off. Anything
+         * still asking this question gets one answer from one place.
+         */
         return true;
       },
 
@@ -5869,7 +5877,7 @@
        * table changed a live tool for people who had not asked for it -- the
        * questions about "what are all these new filters" came from exactly that.
        * Both renderers now exist and Utils.impactUi() picks between them, so
-       * MSP is untouched until the prototype branch merges.
+       * Both instances now run the redesign; see Utils.impactUi.
        */
       listLegacy() {
         const s = window.store.state;
@@ -11705,7 +11713,7 @@
 
         /* Production MSP keeps its original six cards. The reference-spec row
          * below is part of the IMPACT redesign and belongs to non-MSP and the
-         * prototype until that branch merges.
+         * prototype, and now to both after the 3.0.0 merge.
          */
         if (!Utils.impactUi()) {
           const isNonMspKpi = s.dataSource === 'non_msp';

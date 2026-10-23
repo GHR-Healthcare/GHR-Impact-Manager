@@ -2,6 +2,38 @@
 
 ## Version History
 
+### 3.0.0 - Production becomes the prototype
+- The prototypes were signed off, so the rule that kept
+  `feature/msp-impact-prototype` out of `main` has done its job. **Both
+  instances now run the IMPACT UI.** `Utils.impactUi()` returns true: production
+  MSP gets the redesigned tabs instead of the legacy renderer.
+- **Merged as trees, not as hunks.** The branches were kept in sync by
+  committing the same work twice, so a line-by-line merge conflicted in 13
+  files and risked resolving a production fix the wrong way. The merge commit
+  records both parents with the prototype's tree exactly — `git diff
+  feature/msp-impact-prototype` is empty — which also gives the branches a sane
+  merge base for the first time, so the double-commit workflow can stop.
+- Taking the prototype wholesale was **checked, not assumed**: no file and no
+  `View`/`Utils` method exists only on `main` (148 methods against 183, 35 new,
+  0 lost), and the high-stakes main-only fixes — the display-name allowlist
+  bypass (2.21.7) and the workspace null-state guard (2.21.14) — are already
+  present byte-for-byte.
+- `MERGE_PLAN.md`'s biggest stated risk is **obsolete**. It warned that
+  `viewToggle` carried 78 lines on `main` the prototype lacked, including the
+  non-MSP hiding of Per Diem and Pending. The prototype has since replaced that
+  with a declarative `View.VIEWS` table carrying `mspOnly` on both, which hides
+  the buttons *and* bounces off a hidden tab before it renders.
+- What production MSP users see change, from rendering both trees as production
+  MSP with `tools/msp-bleed-check.js` — five differences, no console errors:
+  - three new tabs: **Closed, Extensions, Onboarding**
+  - four renamed: Financials → **Revenue**, Hot Jobs → **Priority Jobs**,
+    List → **Open Jobs**, Trend → **Trends**
+  - the job list swaps from the legacy table to the redesigned one
+  - the standing revenue bar's padding (`pb-16 sm:pb-20`)
+  - KPIs render identically
+- The legacy renderers are still in the tree and simply switched off. Retiring
+  them is separate work.
+
 ### 2.66.1 - An accepted extension kept reading as awaiting vendor
 - `#b4_ext` took `MAX()` of each assignment type over **every** extension row a
   seat had ever carried, and `_extension_stage` tests pending before accepted.
