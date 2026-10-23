@@ -2,6 +2,34 @@
 
 ## Version History
 
+### 3.0.1 - Non-MSP headcount counted the same person several times
+- The fix the MSP book got in 2.21.18, now on the **non-MSP** book. Bullhorn
+  and Symplr rows split by facility, care type, service line, division and
+  region, and the client summed each row's distinct count — so anyone
+  appearing in more than one group was counted once per group.
+- **Measured on the live Symplr book**, grouping on month/facility/category
+  alone (a *lower* bound, since the real query splits on three more
+  dimensions): the displayed figure ran **13–24% above the real number of
+  people, every month** of the default thirteen. October read 2,341 against
+  1,934.
+- Both sources now send the dense worker ids behind each row's count and the
+  client counts the union. Verified against live Symplr: **0 mismatches across
+  all 5,962 row groups**, and the corrected monthly series reproduces an
+  independent measurement exactly. The rendered billings aggregates are
+  unchanged on both sources.
+- Ids are prefixed by source, because the two books identify people
+  differently — Bullhorn by name, Symplr by `tempid` falling back to
+  `filledby`. There is no crosswalk, so someone appearing in both still counts
+  twice; the books cover different divisions, so that is rare. Within a book it
+  is now exact.
+- The **Bullhorn half is structurally identical but unverified against live
+  data** — that mirror is on a separate server this environment cannot reach.
+- The non-MSP cache book moved to `non_msp-v2`, since a v1 entry would make the
+  client fall back to summing for 26 hours. Both cache book names are now
+  constants shared with `RefreshCache`, which warms the same entries — a
+  literal in each file would have left the scheduler filling a cache nothing
+  reads, which is how the extensions cache failed silently in 2.38.1.
+
 ### 3.0.0 - Production becomes the prototype
 - The prototypes were signed off, so the rule that kept
   `feature/msp-impact-prototype` out of `main` has done its job. **Both

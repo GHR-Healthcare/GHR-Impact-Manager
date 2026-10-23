@@ -121,6 +121,17 @@ _B4_DEDUP_CTE = """
                 )
 """
 
+# Cache book names for this endpoint, bumped when the payload SHAPE changes.
+#
+# They live here as constants because RefreshCache warms the same entries and
+# has to write the key this module reads. When the MSP key moved to 'msp-v2'
+# and the non-MSP key to 'non_msp-v2' -- rows gained worker ids, so a v1 entry
+# makes the client silently fall back to summing -- a literal in each file
+# would have left the scheduler filling a cache nothing reads, which is
+# exactly how the extensions cache failed silently in 2.38.1.
+MSP_CACHE_BOOK = 'msp-v2'
+NON_MSP_CACHE_BOOK = 'non_msp-v2'
+
 # Mapping of B4 health system names to VNDLY health system names
 # Used to detect overlap and prefer VNDLY data when available
 B4_TO_VNDLY_SYSTEM_MAP = {
@@ -175,7 +186,11 @@ def _bullhorn_financial_data(date_from_sql: str, date_to_sql: str):
     scope_filter = build_scope_filter('p.clientCorporationID', client_ids=scope_ids)
     status_list = ', '.join("'" + s + "'" for s in BULLHORN_BILLABLE_STATUSES)
 
-    cursor.execute(f'''
+    # One CTE, two reads: the billings aggregate below and the worker-identity
+    # query after it. Built once rather than copied, so they cannot drift --
+    # if they ever saw different rows, headcount would stop matching the
+    # billings printed beside it.
+    _cte = f'''
         ;WITH Weeks AS (
             SELECT TOP 80
                 DATEADD(WEEK, 1 - ROW_NUMBER() OVER (ORDER BY (SELECT NULL)),
@@ -223,7 +238,9 @@ def _bullhorn_financial_data(date_from_sql: str, date_to_sql: str):
                 AND {scope_filter}
                 AND w.week_start >= {date_from_sql}
                 AND w.week_start < {date_to_sql}
-        )
+        )'''
+
+    cursor.execute(_cte + f'''
         SELECT
             'Bullhorn' AS source_system,
             month, health_system, facility, category, service_line, division, region,
@@ -245,6 +262,47 @@ def _bullhorn_financial_data(date_from_sql: str, date_to_sql: str):
         row_dict['hours_worked'] = float(row_dict.get('hours_worked') or 0)
         row_dict['gross_margin'] = float(row_dict.get('gross_margin') or 0)
         rows.append(row_dict)
+
+    # Worker identity per row group, so the client counts headcount DISTINCT
+    # across these rows instead of summing them. Same fix the MSP book got in
+    # 2.21.18: the rows split by facility, care type, service line, division
+    # and region, and anyone in more than one group was counted once per group.
+    # Measured on the live Symplr book over the default thirteen months,
+    # grouping on month/facility/category alone -- a LOWER bound, since the
+    # real query splits on three more dimensions -- the displayed figure ran
+    # 13-24% above the real number of people every single month.
+    #
+    # Ids are prefixed by source because the two non-MSP books identify people
+    # differently: Bullhorn by name, Symplr by tempid falling back to filledby.
+    # There is no crosswalk between them, so someone appearing in both still
+    # counts twice -- unchanged from before this fix, and the books cover
+    # different divisions so it is rare. Within a book it is now exact.
+    try:
+        cursor.execute(_cte + '''
+            SELECT DISTINCT month, health_system, facility, category,
+                   service_line, division, region, worker_name
+            FROM PlacementWeeks
+        ''')
+        groups, ids = {}, {}
+        for mth, hs, fac, cat, sl, div, reg, nw in cursor.fetchall():
+            if not nw:
+                continue
+            wid = ids.setdefault('bh:' + nw, len(ids))
+            groups.setdefault((mth, hs, fac, cat, sl, div, reg), set()).add(wid)
+        for r in rows:
+            key = (r.get('month'), r.get('health_system'), r.get('facility'),
+                   r.get('category'), r.get('service_line'), r.get('division'),
+                   r.get('region'))
+            r['workers'] = sorted(groups.get(key, ()))
+        print(f"bullhorn financial: {len(ids)} worker ids over {len(groups)} row groups")
+    except Exception as e:
+        # No ids at all rather than some: the client then falls back to
+        # summing, the old over-count. A PARTIAL union would under-count,
+        # which is worse than what it replaces.
+        print(f"bullhorn financial: worker identity skipped ({e})")
+        for r in rows:
+            r.pop('workers', None)
+
     conn.close()
     return rows
 
@@ -285,28 +343,9 @@ def _symplr_financial_data(date_from_sql: str, date_to_sql: str):
 
     # Aggregate actual billed shifts by month + (system, facility from join, category).
     # Workers come from lt_order so headcount is meaningful.
-    cursor.execute(f'''
-        SELECT
-            'Symplr' AS source_system,
-            FORMAT(CAST(o.jobdatestart AS DATE), 'yyyy-MM') AS month,
-            ({sym_case_o}) AS health_system,
-            pc.clientname AS facility,
-            ISNULL(lt.nursetype, 'Unknown') AS category,
-            ({SYMPLR_SERVICE_LINE_CASE.strip()}) AS service_line,
-            ISNULL(({sym_division_o}), 'Unknown') AS division,
-            pc.state AS region,
-            'GHR' AS vendor_type,
-            -- Per-shift orders have no lt_order row, so lt.tempid is NULL on
-            -- 414,452 of the rows in the window -- carrying $43.8M, more than
-            -- half the book -- and every one of those groups reported
-            -- headcount 0 beside real billings. Any $/head figure built on
-            -- them was wrong or divided by zero. filledby is the worker on an
-            -- orderless shift. (GH #48)
-            COUNT(DISTINCT COALESCE(CAST(lt.tempid AS NVARCHAR(100)),
-                                    NULLIF(LTRIM(RTRIM(CAST(o.filledby AS NVARCHAR(100)))), ''))) AS headcount,
-            SUM(ISNULL(o.totalbillamount, 0)) AS estimated_billing,
-            SUM(ISNULL(o.totalbillhours, 0)) AS hours_worked,
-            0 AS gross_margin
+    # One FROM/WHERE, two reads: the billings aggregate and the worker-identity
+    # query after it. Built once so the two cannot drift apart.
+    _sym_from = f'''
         FROM dbo.orders o
         LEFT JOIN dbo.lt_order lt ON o.lt_orderid = lt.lt_orderid
         LEFT JOIN dbo.profile_client pc ON o.customerid = pc.recordid
@@ -329,7 +368,31 @@ def _symplr_financial_data(date_from_sql: str, date_to_sql: str):
             AND ISNULL(o.totalbillhours, 0) <> 0
             AND CAST(o.jobdatestart AS DATE) >= {date_from_sql}
             AND CAST(o.jobdatestart AS DATE) < {date_to_sql}
-            AND {sym_scope_o}
+            AND {sym_scope_o}'''
+
+    cursor.execute(f'''
+        SELECT
+            'Symplr' AS source_system,
+            FORMAT(CAST(o.jobdatestart AS DATE), 'yyyy-MM') AS month,
+            ({sym_case_o}) AS health_system,
+            pc.clientname AS facility,
+            ISNULL(lt.nursetype, 'Unknown') AS category,
+            ({SYMPLR_SERVICE_LINE_CASE.strip()}) AS service_line,
+            ISNULL(({sym_division_o}), 'Unknown') AS division,
+            pc.state AS region,
+            'GHR' AS vendor_type,
+            -- Per-shift orders have no lt_order row, so lt.tempid is NULL on
+            -- 414,452 of the rows in the window -- carrying $43.8M, more than
+            -- half the book -- and every one of those groups reported
+            -- headcount 0 beside real billings. Any $/head figure built on
+            -- them was wrong or divided by zero. filledby is the worker on an
+            -- orderless shift. (GH #48)
+            COUNT(DISTINCT COALESCE(CAST(lt.tempid AS NVARCHAR(100)),
+                                    NULLIF(LTRIM(RTRIM(CAST(o.filledby AS NVARCHAR(100)))), ''))) AS headcount,
+            SUM(ISNULL(o.totalbillamount, 0)) AS estimated_billing,
+            SUM(ISNULL(o.totalbillhours, 0)) AS hours_worked,
+            0 AS gross_margin
+''' + _sym_from + f'''
         GROUP BY
             FORMAT(CAST(o.jobdatestart AS DATE), 'yyyy-MM'),
             ({sym_case_o}),
@@ -349,6 +412,42 @@ def _symplr_financial_data(date_from_sql: str, date_to_sql: str):
         row_dict['hours_worked'] = float(row_dict.get('hours_worked') or 0)
         row_dict['gross_margin'] = float(row_dict.get('gross_margin') or 0)
         rows.append(row_dict)
+
+    # Worker identity per row group -- see the note in _bullhorn_financial_data.
+    # The identity expression is COPIED FROM the aggregate's COUNT(DISTINCT ...)
+    # above and must stay identical to it, or a group's set size would stop
+    # matching the headcount it replaces. tempid where there is an lt_order row,
+    # filledby on the per-shift orders that have none (GH #48).
+    try:
+        cursor.execute(f'''
+            SELECT DISTINCT
+                FORMAT(CAST(o.jobdatestart AS DATE), 'yyyy-MM')     AS month,
+                ({sym_case_o})                                      AS health_system,
+                pc.clientname                                       AS facility,
+                ISNULL(lt.nursetype, 'Unknown')                     AS category,
+                ({SYMPLR_SERVICE_LINE_CASE.strip()})                AS service_line,
+                ISNULL(({sym_division_o}), 'Unknown')               AS division,
+                pc.state                                            AS region,
+                COALESCE(CAST(lt.tempid AS NVARCHAR(100)),
+                         NULLIF(LTRIM(RTRIM(CAST(o.filledby AS NVARCHAR(100)))), '')) AS worker
+        ''' + _sym_from)
+        groups, ids = {}, {}
+        for mth, hs, fac, cat, sl, div, reg, nw in cursor.fetchall():
+            if not nw:
+                continue
+            wid = ids.setdefault('sy:' + str(nw), len(ids))
+            groups.setdefault((mth, hs, fac, cat, sl, div, reg), set()).add(wid)
+        for r in rows:
+            key = (r.get('month'), r.get('health_system'), r.get('facility'),
+                   r.get('category'), r.get('service_line'), r.get('division'),
+                   r.get('region'))
+            r['workers'] = sorted(groups.get(key, ()))
+        print(f"symplr financial: {len(ids)} worker ids over {len(groups)} row groups")
+    except Exception as e:
+        print(f"symplr financial: worker identity skipped ({e})")
+        for r in rows:
+            r.pop('workers', None)
+
     conn.close()
     return rows
 
@@ -360,7 +459,7 @@ def _non_msp_financial(req: func.HttpRequest, date_from_sql: str, date_to_sql: s
     # was intermittently returning HTTP 500 -- 9.2s before the scope widened,
     # 19.9s after, which is close enough to the gateway limit that a cold plan
     # tips it over. Monthly billings do not move within a day.
-    key = cache_key('financial-data', 'non_msp')
+    key = cache_key('financial-data', NON_MSP_CACHE_BOOK)
     cached = read_cache(key) if cacheable else None
     if cached is not None:
         print(f"financial-data: served from cache ({cached.get('cachedAt')})")
@@ -479,7 +578,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
         # headcount -- and the cache holds for 26 hours, so a bare deploy
         # would leave the fix invisible for a day. Changing the key retires
         # the old entries immediately.
-        _key = cache_key('financial-data', 'msp-v2')
+        _key = cache_key('financial-data', MSP_CACHE_BOOK)
         if default_range:
             _cached = read_cache(_key)
             if _cached is not None:

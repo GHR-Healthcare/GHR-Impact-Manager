@@ -120,6 +120,12 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
     # refresh here rebuilds THIS instance's entries. The non-MSP app and the
     # MSP app each need their own scheduled call.
     book = 'non_msp' if is_non_msp() else 'msp'
+
+    def _cache_book(route, book):
+        if route == 'financial-data':
+            from GetFinancialData import MSP_CACHE_BOOK, NON_MSP_CACHE_BOOK
+            return NON_MSP_CACHE_BOOK if book == 'non_msp' else MSP_CACHE_BOOK
+        return book
     if book != 'non_msp':
         return func.HttpResponse(
             json.dumps({'skipped': 'caching is currently wired for the non-MSP book only',
@@ -140,7 +146,13 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                 results.append({'key': route, 'ok': False, 'ms': ms, 'errors': errors,
                                 'note': 'kept the previous cache'})
                 continue
-            wrote = write_cache(cache_key(route, book), payload, build_ms=ms,
+            # financial-data versions its cache book: the reader moved to
+            # 'non_msp-v2' when rows gained worker ids (3.0.1), so warming
+            # 'non_msp' here would fill an entry nothing ever reads and leave
+            # production rebuilding on every request. Imported rather than
+            # repeated so the two cannot drift.
+            wrote = write_cache(cache_key(route, _cache_book(route, book)),
+                                payload, build_ms=ms,
                                 refreshed_by=user or 'scheduler')
             results.append({'key': route, 'ok': bool(wrote), 'ms': ms})
         except Exception as e:
