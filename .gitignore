@@ -16,12 +16,16 @@ obj/
 
 # Claude Code settings. Neither file is committed.
 #
-# app_location is "/" on all four workflows, so the repo root IS the deployed
-# site, and staticwebapp.config.json gates only /, /*.html and /api/*.
-# Verified against production: GET /.claude/settings.json returned 200 with the
-# file's contents, unauthenticated, on both instances. Not credentials, but it
-# lists internal paths, resource group and database names, and the shape of our
-# tooling -- none of which belongs on a public URL.
+# The shared project-level settings.json used to be tracked, on the reasoning
+# that a permissions allowlist is team config worth sharing. It is not worth
+# what it costs here: app_location is "/" on all four workflows, so the repo
+# root IS the deployed site, and staticwebapp.config.json only gates /, /*.html
+# and /api/*. Verified against production -- GET /.claude/settings.json
+# returned 200 with the file's contents, unauthenticated, on both instances.
+#
+# The contents are not credentials, but they do list internal paths, resource
+# group and database names, and the shape of our tooling. None of that belongs
+# on a public URL.
 .claude/
 
 # Reference material: vendor documentation, and the spec files and feedback
@@ -42,6 +46,7 @@ obj/
 # Wildcards rather than exact names on purpose: the recurring case is the NEXT
 # spec document arriving, and it should be caught without anyone having to
 # remember this file. No tracked file has any of these extensions.
+VNDLY API Docs.pdf
 *.pdf
 *.docx
 *.doc

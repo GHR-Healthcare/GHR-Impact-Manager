@@ -65,11 +65,12 @@ def _bullhorn_hours_data():
             DATEADD(DAY, 6, CAST(w.week_start AS DATE)) AS billing_week_end,
             DATEADD(DAY, 6, CAST(w.week_start AS DATE)) AS item_date,
             -- TRY_CAST each column BEFORE the arithmetic. These are free text
-            -- in the Bullhorn views, and casting the product --
+            -- in the Bullhorn views, and a cast applied to the product --
             -- TRY_CAST(p.hoursPerDay * 5 AS ...) -- does not protect it: the
-            -- multiply runs first and one unparseable value aborts the whole
-            -- Bullhorn branch. Clean today (0 bad values across 52,026 live
-            -- placements), so this is hardening. (GH #49, #65)
+            -- multiply runs first and a single unparseable value aborts the
+            -- whole Bullhorn branch. Clean today (0 bad values across 52,026
+            -- live placements), so this is hardening rather than a correction.
+            -- GetTrendData's revenue SUM already does it this way. (GH #49, #65)
             TRY_CAST(p.hoursPerDay AS DECIMAL(10,2)) * 5 AS hours,
             p.status AS invoice_status,
             1 AS is_ghr

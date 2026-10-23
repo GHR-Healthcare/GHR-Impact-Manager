@@ -53,6 +53,31 @@ BULLHORN_TERMINAL_STATUSES = ('Placed', 'Placement')
 
 
 
+from shared_code.rate_scope import rate_category as _rate_category
+
+
+def _apply_rate_category(rows):
+    """
+    Stamp the engagement-type axis RATE RANK ranks within, on every row from
+    every source.
+
+    Applied to the finished list rather than inside each branch because the
+    four sources assemble rows in four different places -- Bullhorn and Symplr
+    through _apply_credential, B4 and VNDLY inline in main() -- and a rank that
+    exists on two books and not the other two is worse than none.
+
+    One call covers both vocabularies. Bullhorn's `program` IS employmentType
+    ('Travel'), which the peer set is built from, so it maps to itself; MSP's
+    is a programme name ('Travel Nursing'), which rate_category reads the
+    engagement type back out of. Anything that does not state one -- notably
+    B4's 'Contract (Nursing)' -- stays None and carries no rank rather than
+    being ranked against the wrong category.
+    """
+    for r in rows:
+        r['rate_category'] = _rate_category(r.get('program'))
+    return rows
+
+
 def _apply_credential(row_dict):
     """Fold both books into one credential vocabulary.
 
@@ -558,6 +583,7 @@ def _non_msp_positions(req: func.HttpRequest) -> func.HttpResponse:
         print(f"Symplr positions error: {e}")
         import traceback; traceback.print_exc()
         errors.append(f"symplr: {e}")
+    _apply_rate_category(positions)
     print(f"non-MSP positions: {len(positions)} rows (errors: {errors or 'none'})")
     return func.HttpResponse(
         json.dumps(positions, default=str),
@@ -829,6 +855,15 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                     [Vendor Withdrawn Date] AS vendor_withdrawn_date,
                     [Withdrawal Reason - Choice] AS withdrawal_reason_choice,
                     [Withdrawal Reason - Text] AS withdrawal_reason_text,
+                    -- "Under Review" in the funnel. VNDLY's own shortlist
+                    -- flag, and the stage that actually carries the volume on
+                    -- this book: 611 submissions are shortlisted and all 611
+                    -- are dated, while Client Interview Date is populated on
+                    -- only 20 of 1,356. The flow here is often Submitted ->
+                    -- Under Review -> Offer with no interview recorded, so a
+                    -- funnel without this stage loses where the work happens.
+                    [Is Shortlisted?] AS is_shortlisted,
+                    [Original Shortlisted Date] AS shortlisted_date,
                     [Offer Release Date] AS offer_date,
                     [Offer Accepted Date] AS offer_accepted_date,
                     [Onboarded Date] AS onboarded_date,
@@ -878,6 +913,15 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                         'agency': sub.get('agency') or 'Unknown',
                         'submitDate': sub.get('submission_date').isoformat() if sub.get('submission_date') and hasattr(sub.get('submission_date'), 'isoformat') else None,
                         'offerDate': sub.get('offer_date').isoformat() if sub.get('offer_date') and hasattr(sub.get('offer_date'), 'isoformat') else None,
+                        # Only when the flag says Yes. 4 of the 1,111 'No'
+                        # rows carry a date anyway, which is noise, and a
+                        # stage derived from noise is worse than an absent one.
+                        'shortlistedDate': (
+                            sub.get('shortlisted_date').isoformat()
+                            if str(sub.get('is_shortlisted') or '').strip().lower() == 'yes'
+                            and sub.get('shortlisted_date')
+                            and hasattr(sub.get('shortlisted_date'), 'isoformat')
+                            else None),
                         'awardedDate': sub.get('offer_accepted_date').isoformat() if sub.get('offer_accepted_date') and hasattr(sub.get('offer_accepted_date'), 'isoformat') else None,
                         'rto': sub.get('rto_date').isoformat() if sub.get('rto_date') and hasattr(sub.get('rto_date'), 'isoformat') else None,
                         'isDeclined': is_declined,
@@ -907,6 +951,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
         
         conn.close()
         
+        _apply_rate_category(positions)
         b4_count = len([p for p in positions if p.get('source_system') == 'B4'])
         vndly_count = len([p for p in positions if p.get('source_system') == 'VNDLY'])
         print(f"Returning {len(positions)} positions (B4: {b4_count}, VNDLY: {vndly_count})")

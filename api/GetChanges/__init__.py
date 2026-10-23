@@ -69,8 +69,13 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             status_code=200
         )
     except Exception as e:
+        # 500, not 200. An empty `changes` list with a 200 is indistinguishable
+        # from "this record has no history", and the client renders it as such
+        # -- so a dead query read as a clean audit trail. The detail stays in
+        # the log; pyodbc text carries server and driver internals. (GH #28, #29)
+        print(f"GetChanges failed: {e}")
         return func.HttpResponse(
-            json.dumps({'error': str(e), 'changes': []}),
+            json.dumps({'error': 'Could not load change history.'}),
             mimetype="application/json",
-            status_code=200
+            status_code=500
         )

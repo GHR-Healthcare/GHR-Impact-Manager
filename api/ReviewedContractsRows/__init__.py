@@ -2,7 +2,7 @@ import azure.functions as func
 import pyodbc
 import os
 import json
-from shared_code.auth import require_allowed_domain
+from shared_code.auth import require_allowed_domain, current_user_email
 
 
 def ensure_schema(cursor):
@@ -22,6 +22,10 @@ def ensure_schema(cursor):
             reviewed_at DATETIME2 DEFAULT SYSUTCDATETIME()
         )
     """)
+
+
+# Matches the row_key column width in the table above.
+MAX_ROW_KEY_LEN = 500
 
 
 def main(req: func.HttpRequest) -> func.HttpResponse:
@@ -67,11 +71,27 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
 
             action = (body.get('action') or '').strip().lower()
             key = (body.get('key') or '').strip()
-            user = (body.get('user') or '').strip() or None
+            # Reviewed-by is an audit field, so it comes from the signed-in
+            # principal rather than a body value the caller chooses. (GH #87)
+            user = current_user_email(req) or (body.get('user') or '').strip() or None
 
             if not key:
                 return func.HttpResponse(
                     json.dumps({'error': 'Missing key'}),
+                    mimetype="application/json", status_code=400
+                )
+
+            # row_key is NVARCHAR(500) NOT NULL UNIQUE. A longer key was
+            # inserted anyway and SQL Server answered "String or binary data
+            # would be truncated", which surfaced as a 500 carrying the raw
+            # driver message. The key is built by concatenating worker,
+            # facility and date fields, so an unusually long facility name is
+            # enough to trip it -- a validation error, not a server fault.
+            # (GH #43)
+            if len(key) > MAX_ROW_KEY_LEN:
+                return func.HttpResponse(
+                    json.dumps({'error': 'key_too_long', 'max': MAX_ROW_KEY_LEN,
+                                'got': len(key)}),
                     mimetype="application/json", status_code=400
                 )
 

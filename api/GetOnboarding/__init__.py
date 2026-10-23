@@ -2,7 +2,10 @@ import azure.functions as func
 import pyodbc
 import os
 import json
+import time
+from shared_code.endpoint_cache import cache_key, read_cache, write_cache
 from datetime import date
+from shared_code.rate_scope import value_13wk
 from shared_code.auth import require_allowed_domain
 from shared_code.data_source import (
     is_non_msp, get_bullhorn_conn, get_symplr_conn, get_appdb_conn,
@@ -617,11 +620,20 @@ def _finalize(rows):
             parts = line.split('|')
             if len(parts) < 3 or not parts[1] or not parts[2] or parts[1] == parts[2]:
                 continue
+            # The line carries a free-text user name, so a Bullhorn corporate
+            # user whose name contains a newline shifts every field on the next
+            # parse and fromisoformat raises -- which used to take down the
+            # whole Onboarding endpoint for every seat, not just this row. A
+            # line we cannot read is skipped. (GH #89)
+            try:
+                _from = date.fromisoformat(parts[1])
+                _to = date.fromisoformat(parts[2])
+            except (ValueError, TypeError):
+                continue
             moves.append({
                 'on': parts[0], 'from': parts[1], 'to': parts[2],
                 'by': (parts[3].strip() if len(parts) > 3 else '') or None,
-                'days': (lambda a, b: (b - a).days)(
-                    date.fromisoformat(parts[1]), date.fromisoformat(parts[2])),
+                'days': (_to - _from).days,
             })
         r['moves'] = moves
         r['compliance'] = _compliance(r)
@@ -702,7 +714,7 @@ def _finalize(rows):
             r['delay_measure'] = 'flagged'
             r['movement_tracked'] = False
         rate, hrs = r.get('bill_rate'), r.get('hours_per_week')
-        r['value_13wk'] = round(rate * hrs * 13, 2) if rate and hrs else None
+        r['value_13wk'] = value_13wk(rate, hrs, r.get('position_type'))
         out.append(r)
     return out
 
@@ -722,6 +734,22 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
     lookahead = _int_param('lookahead', ONBOARDING_LOOKAHEAD_DAYS)
     include_affiliate = str(req.params.get('includeAffiliate', '')).lower() in ('1', 'true', 'yes')
 
+    # Measured warm at 15.8s on MSP. Only the DEFAULT window is cached: the
+    # lookback/lookahead/affiliate parameters all change the result, and a key
+    # on the route alone would hand the default to a caller who asked for
+    # something else.
+    _started = time.time()
+    _cacheable = (lookback == ONBOARDING_LOOKBACK_DAYS
+                  and lookahead == ONBOARDING_LOOKAHEAD_DAYS)
+    _key = cache_key('onboarding-data', 'non_msp' if is_non_msp() else 'msp',
+                     'aff1' if include_affiliate else 'aff0')
+    if _cacheable:
+        _cached = read_cache(_key)
+        if _cached is not None:
+            print(f'onboarding-data: served from cache')
+            return func.HttpResponse(json.dumps(_cached, default=str),
+                                     mimetype='application/json', status_code=200)
+
     if is_non_msp():
         try:
             rows, errors = _non_msp_rows(lookback, lookahead)
@@ -733,6 +761,9 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             print(f"Onboarding(non_msp): {len(rows)} rows (Bullhorn {bhn}, Symplr {syn}; "
                   f"{tracked} with measurable movement; -{lookback}/+{lookahead}d; "
                   f"errors: {errors or 'none'})")
+            if _cacheable and not errors:
+                write_cache(_key, rows, build_ms=int((time.time() - _started) * 1000),
+                            refreshed_by='live-request')
             return func.HttpResponse(
                 json.dumps(rows, default=str),
                 mimetype='application/json', status_code=200)
@@ -776,7 +807,11 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
         b4n = sum(1 for r in rows if r['source_system'] == 'B4')
         vnn = sum(1 for r in rows if r['source_system'] == 'VNDLY')
         print(f"Onboarding: {len(rows)} rows (B4 {b4n}, VNDLY {vnn}; -{lookback}d/+{lookahead}d, "
-              f"affiliate={include_affiliate}; errors: {errors or 'none'})")
+              f"affiliate={include_affiliate}; {int((time.time()-_started)*1000)}ms; "
+              f"errors: {errors or 'none'})")
+        if _cacheable and not errors:
+            write_cache(_key, rows, build_ms=int((time.time() - _started) * 1000),
+                        refreshed_by='live-request')
         return func.HttpResponse(
             json.dumps(rows, default=str),
             mimetype="application/json",

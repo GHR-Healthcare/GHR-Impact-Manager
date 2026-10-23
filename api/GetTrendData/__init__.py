@@ -1,9 +1,12 @@
 import azure.functions as func
+from concurrent.futures import ThreadPoolExecutor
 import pyodbc
 import os
 import json
+import time
 from shared_code.auth import require_allowed_domain
 from shared_code.data_source import is_non_msp, get_bullhorn_conn, get_symplr_conn, get_appdb_conn
+from shared_code.endpoint_cache import cache_key, read_cache, write_cache
 from shared_code.bullhorn_systems import (
     build_system_case_expr,
     build_scope_filter,
@@ -43,10 +46,11 @@ BULLHORN_ACTIVE_STATUSES = (
 # End Reason. 'Ended' by contrast is 356 work orders, all 356 onboarded and
 # all 356 carrying an end reason.
 #
-# It used to sit here, where the spend guard was expected to drop it -- but
-# the guard's name-match fallback let 55 through, matching a same-named
-# worker's spend on a DIFFERENT work order. Those were counted as real
-# assignments. (ghr-marketintel flagged this; confirmed against the warehouse.)
+# It used to sit in the "ran" list, where the spend guard was expected to drop
+# it -- but the guard's name-match fallback let 55 of them through, matching a
+# same-named worker's spend on a DIFFERENT work order. Those were counted as
+# real assignments. Excluded outright now, which is what GetClosed and
+# GetOnboarding already did. (ghr-marketintel flagged this; confirmed here.)
 VNDLY_RAN_STATUSES = ('Active', 'Ended')
 
 # Terminal members of the set above. Their [End Date] is the ORIGINALLY SCHEDULED
@@ -84,6 +88,26 @@ def _sql_list(values):
 # week boundary. Using per-worker last-spend fixes both.
 #
 # Requires the outer STAGING_VNDLY_WORKORDERS to be aliased as `wo`.
+# CORRELATED TO THIS WORK ORDER, not just to the worker's name. (GH #46)
+#
+# The spend subquery used to match on [Contractor First Name] + [Contractor
+# Last Name] alone, with no work-order or date correlation. A contractor with
+# several assignments therefore had the latest spend week of ANY of them applied
+# to EVERY terminal work order, so an assignment that stopped in January kept
+# contributing headcount for as long as that person billed on anything else.
+# Two different people with the same name merged for the same reason.
+#
+# Correlating strictly by work order was the obvious fix and is wrong: measured
+# over 1,354 terminal work orders it corrects 12 but strips the end date from
+# 177 others, because the contractor cross-reference does not cover every work
+# order. Those fall to NULL, which this query reads as "still running" -- more
+# inflation, not less.
+#
+# So: the work-order-correlated end when the cross-reference has it, otherwise
+# the same-name spend BOUNDED to this work order's own window (14-day grace for
+# a late final cycle), which keeps a sibling assignment's billing out. Measured:
+# coverage 410 against 409 for name-only, and 44 overstated ends corrected by an
+# average of 67 days.
 VNDLY_EFFECTIVE_END_SQL = f'''CASE
         WHEN wo.[Current Status] IN ({_sql_list(VNDLY_TERMINAL_STATUSES)})
             THEN CASE
@@ -269,11 +293,12 @@ def _bullhorn_trend_data():
             p.status AS status,
             TRY_CAST(p.clientBillRate AS DECIMAL(10,2)) AS bill_rate,
             -- TRY_CAST each column BEFORE the arithmetic. These are free text
-            -- in the Bullhorn views, and casting the product --
+            -- in the Bullhorn views, and a cast applied to the product --
             -- TRY_CAST(p.hoursPerDay * 5 AS ...) -- does not protect it: the
-            -- multiply runs first and one unparseable value aborts the whole
-            -- Bullhorn branch. Clean today (0 bad values across 52,026 live
-            -- placements), so this is hardening. (GH #49, #65)
+            -- multiply runs first and a single unparseable value aborts the
+            -- whole Bullhorn branch. Clean today (0 bad values across 52,026
+            -- live placements), so this is hardening rather than a correction.
+            -- GetTrendData's revenue SUM already does it this way. (GH #49, #65)
             TRY_CAST(p.hoursPerDay AS DECIMAL(10,2)) * 5 AS weekly_hours,
             CAST(p.dateBegin AS DATE) AS startDate,
             CAST(p.dateEnd AS DATE) AS endDate
@@ -454,7 +479,49 @@ def _symplr_trend_data():
     scope_filter_orders = symplr_scope_filter('o.customerid', master_ids=symplr_master_ids)
     division_case_orders = symplr_division_case_expr('o.customerid')
     try:
+        # Grouped into CONTIGUOUS blocks of shift work, not collapsed to
+        # MIN..MAX per (client, worker).
+        #
+        # A per-diem worker with shifts in week 1 and again in week 8 at the
+        # same client used to emit a single assignment spanning all eight
+        # weeks, and the frontend counts a worker present for every week an
+        # assignment overlaps -- so the six idle weeks were reported as
+        # staffed. Measured 2026-10-12 across 1,810 groups: 505 of them (28%)
+        # spanned more than twice their actual shift days, the worst 283 days,
+        # and the mean span was 93 days against 53 days actually worked. A 75%
+        # overstatement of per-diem presence. (GH #94)
+        #
+        # Gaps and islands: a new block starts when a shift begins more than a
+        # day after the furthest end seen so far for that pair. 1,810 rows
+        # become 25,314, which sounds expensive and is not -- the window
+        # functions measured 1ms on the live set.
         cursor.execute(f'''
+            WITH shifts AS (
+                SELECT o.customerid, o.filledby, o.specialty, o.nursetype,
+                       CAST(o.jobdatestart AS DATE) AS sd,
+                       CAST(ISNULL(o.jobdateend, o.jobdatestart) AS DATE) AS ed
+                FROM dbo.orders o WITH (NOLOCK)
+                WHERE o.status = 'filled'
+                    AND (o.lt_orderid IS NULL OR o.lt_orderid = 0)
+                    AND o.filledby IS NOT NULL AND o.filledby > 0
+                    AND o.jobdatestart IS NOT NULL
+                    AND (o.jobdateend IS NULL OR o.jobdateend >= DATEADD(WEEK, -4, GETDATE()))
+                    AND {scope_filter_orders}
+            ), marked AS (
+                SELECT *, MAX(ed) OVER (PARTITION BY customerid, filledby
+                                        ORDER BY sd, ed
+                                        ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING) AS prev_max
+                FROM shifts
+            ), flagged AS (
+                SELECT *, CASE WHEN prev_max IS NULL OR sd > DATEADD(DAY, 1, prev_max)
+                               THEN 1 ELSE 0 END AS new_block
+                FROM marked
+            ), blocked AS (
+                SELECT *, SUM(new_block) OVER (PARTITION BY customerid, filledby
+                                               ORDER BY sd, ed
+                                               ROWS UNBOUNDED PRECEDING) AS block_no
+                FROM flagged
+            )
             SELECT
                 'Symplr' AS source_system,
                 LTRIM(RTRIM(ISNULL(MAX(pt.firstname), '') + ' ' + ISNULL(MAX(pt.lastname), ''))) AS worker_name,
@@ -472,20 +539,14 @@ def _symplr_trend_data():
                 'filled' AS status,
                 NULL AS bill_rate,
                 NULL AS weekly_hours,
-                CAST(MIN(o.jobdatestart) AS DATE) AS startDate,
-                CAST(MAX(o.jobdateend)   AS DATE) AS endDate
-            FROM dbo.orders o
+                MIN(o.sd) AS startDate,
+                MAX(o.ed) AS endDate
+            FROM blocked o
             LEFT JOIN dbo.profile_client pc ON o.customerid = pc.recordid
             LEFT JOIN dbo.profile_client m  ON pc.MasterClientID = m.recordid
             LEFT JOIN dbo.regions r ON r.regionid = TRY_CAST(pc.region AS INT)
             LEFT JOIN dbo.profile_temp   pt ON o.filledby   = pt.recordid
-            WHERE o.status = 'filled'
-                AND (o.lt_orderid IS NULL OR o.lt_orderid = 0)
-                AND o.filledby IS NOT NULL AND o.filledby > 0
-                AND o.jobdatestart IS NOT NULL
-                AND (o.jobdateend IS NULL OR o.jobdateend >= DATEADD(WEEK, -4, GETDATE()))
-                AND {scope_filter_orders}
-            GROUP BY o.customerid, o.filledby
+            GROUP BY o.customerid, o.filledby, o.block_no
         ''')
         columns = [column[0] for column in cursor.description]
         for row in cursor.fetchall():
@@ -534,9 +595,10 @@ def _symplr_trend_data():
                     -- GetHoursData and is safe if a worked shift later moves to
                     -- a terminal status other than 'filled'.
                     -- "<> 0", not "> 0": a credit/reversal carries negative
-                    -- hours and is real money leaving the book. "> 0" discarded
-                    -- $400k of them over 13 months while Financials kept them,
-                    -- which is half of why the two tabs disagreed. (GH #47)
+                    -- hours and is real money leaving the book. Gating on "> 0"
+                    -- discarded $400k of them over 13 months while Financials
+                    -- kept them, which is half of why the two tabs disagreed.
+                    -- (GH #47)
                     AND ISNULL(o.totalbillhours, 0) <> 0
                     AND {symplr_scope_filter('o.customerid', master_ids=symplr_master_ids)}
             )
@@ -575,40 +637,74 @@ def _non_msp_trend(req: func.HttpRequest) -> func.HttpResponse:
     and unions the results. Either side failing is logged but not fatal — the
     other source still contributes its rows.
     """
+    # Served from the cache table when one is fresh. This endpoint was measured
+    # at 16.8s on the widened non-MSP book and is a four-week lookback plus a
+    # four-week projection -- it does not move within a day, so recomputing it
+    # per request was buying nothing. See shared_code/endpoint_cache.
+    key = cache_key('trend-data', 'non_msp')
+    cached = read_cache(key)
+    if cached is not None:
+        print(f"trend-data: served from cache ({cached.get('cachedAt')})")
+        return func.HttpResponse(json.dumps(cached, default=str),
+                                 mimetype="application/json", status_code=200)
+
+    started = time.time()
     assignments = []
     weekly_revenue = []
     errors = []
 
-    try:
-        bh = _bullhorn_trend_data()
-        assignments.extend(bh['assignments'])
-        weekly_revenue.extend(bh['weekly_revenue'])
-    except Exception as e:
-        print(f"Bullhorn trend error: {e}")
-        import traceback; traceback.print_exc()
-        errors.append(f"bullhorn: {e}")
+    # The two branches hit DIFFERENT databases on their own connections and
+    # share no state, so running them one after the other only ever cost
+    # wall-clock. Measured on the deployed non-MSP instance, trend-data took
+    # 9.3s and financial-data 9.2s -- long enough that the tab reads as blank
+    # while it loads, and long enough to time out into an HTTP 500 on a colder
+    # environment. Run concurrently the endpoint costs the slower branch
+    # instead of the sum.
+    #
+    # Threads, not processes: this is I/O-bound waiting on SQL, so the GIL is
+    # released for the duration. Each branch opens and closes its own pyodbc
+    # connection inside its own thread, which is how they already worked.
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        bh_future = pool.submit(_bullhorn_trend_data)
+        sp_future = pool.submit(_symplr_trend_data)
 
-    try:
-        sp = _symplr_trend_data()
-        assignments.extend(sp['assignments'])
-        weekly_revenue.extend(sp['weekly_revenue'])
-        # Surface per-query errors so the frontend / a diagnostic can see them
-        # without needing Function App log access.
-        for e in sp.get('errors') or []:
-            errors.append(e)
-    except Exception as e:
-        print(f"Symplr trend error: {e}")
-        import traceback; traceback.print_exc()
-        errors.append(f"symplr: {e}")
+        try:
+            bh = bh_future.result()
+            assignments.extend(bh['assignments'])
+            weekly_revenue.extend(bh['weekly_revenue'])
+        except Exception as e:
+            print(f"Bullhorn trend error: {e}")
+            import traceback; traceback.print_exc()
+            errors.append(f"bullhorn: {e}")
+
+        try:
+            sp = sp_future.result()
+            assignments.extend(sp['assignments'])
+            weekly_revenue.extend(sp['weekly_revenue'])
+            # Surface per-query errors so the frontend / a diagnostic can see
+            # them without needing Function App log access.
+            for e in sp.get('errors') or []:
+                errors.append(e)
+        except Exception as e:
+            print(f"Symplr trend error: {e}")
+            import traceback; traceback.print_exc()
+            errors.append(f"symplr: {e}")
 
     print(f"Returning {len(assignments)} non-MSP trend assignments, 0 pending, {len(weekly_revenue)} weekly revenue rows (errors: {errors or 'none'})")
+    payload = {
+        'assignments': assignments,
+        'pending': [],
+        'weekly_revenue': weekly_revenue,
+        'errors': errors,
+    }
+    # Warm the cache from a live build so the next caller is fast even before a
+    # scheduler exists. Best-effort and never fails the response. Skipped when a
+    # branch errored, so a half-empty result cannot be served for a day.
+    if not errors:
+        write_cache(key, payload, build_ms=int((time.time() - started) * 1000),
+                    refreshed_by='live-request')
     return func.HttpResponse(
-        json.dumps({
-            'assignments': assignments,
-            'pending': [],
-            'weekly_revenue': weekly_revenue,
-            'errors': errors,
-        }, default=str),
+        json.dumps(payload, default=str),
         mimetype="application/json",
         status_code=200,
     )
@@ -626,6 +722,17 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
 
     if is_non_msp():
         return _non_msp_trend(req)
+
+    # The MSP branch runs its queries sequentially and was measured warm at
+    # 14.0s. It takes no parameters, so the whole response is cacheable --
+    # unlike extensions/closed/onboarding, there is no default window to guard.
+    _started = time.time()
+    _key = cache_key('trend-data', 'msp')
+    _cached = read_cache(_key)
+    if _cached is not None:
+        print('trend-data(msp): served from cache')
+        return func.HttpResponse(json.dumps(_cached, default=str),
+                                 mimetype='application/json', status_code=200)
 
     try:
         conn = pyodbc.connect(
@@ -908,13 +1015,17 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
 
         print(f"Returning {len(assignments)} trend assignments, {len(pending)} pending, {len(weekly_revenue)} weekly revenue rows (errors: {errors or 'none'})")
 
+        _payload = {
+            'assignments': assignments,
+            'pending': pending,
+            'weekly_revenue': weekly_revenue,
+            'errors': errors,
+        }
+        if not errors:
+            write_cache(_key, _payload, build_ms=int((time.time() - _started) * 1000),
+                        refreshed_by='live-request')
         return func.HttpResponse(
-            json.dumps({
-                'assignments': assignments,
-                'pending': pending,
-                'weekly_revenue': weekly_revenue,
-                'errors': errors,
-            }, default=str),
+            json.dumps(_payload, default=str),
             mimetype="application/json",
             status_code=200
         )

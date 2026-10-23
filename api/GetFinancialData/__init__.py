@@ -1,12 +1,15 @@
 import azure.functions as func
-import pyodbc
+from concurrent.futures import ThreadPoolExecutor
 from collections import defaultdict
+import pyodbc
 import os
 import json
+import time
 import re
 from datetime import datetime
 from shared_code.auth import require_allowed_domain
 from shared_code.data_source import is_non_msp, get_bullhorn_conn, get_symplr_conn, get_appdb_conn
+from shared_code.endpoint_cache import cache_key, read_cache, write_cache
 from shared_code.bullhorn_systems import (
     build_system_case_expr,
     build_scope_filter,
@@ -195,11 +198,12 @@ def _bullhorn_financial_data(date_from_sql: str, date_to_sql: str):
                 CAST(NULL AS NVARCHAR(50)) AS region,
                 LTRIM(RTRIM(ISNULL(c.firstName, '') + ' ' + ISNULL(c.lastName, ''))) AS worker_name,
                 -- TRY_CAST each column BEFORE the arithmetic. These are free text
-                -- in the Bullhorn views, and casting the product --
+                -- in the Bullhorn views, and a cast applied to the product --
                 -- TRY_CAST(p.hoursPerDay * 5 AS ...) -- does not protect it: the
-                -- multiply runs first and one unparseable value aborts the whole
-                -- Bullhorn branch. Clean today (0 bad values across 52,026 live
-                -- placements), so this is hardening. (GH #49, #65)
+                -- multiply runs first and a single unparseable value aborts the
+                -- whole Bullhorn branch. Clean today (0 bad values across 52,026
+                -- live placements), so this is hardening rather than a correction.
+                -- GetTrendData's revenue SUM already does it this way. (GH #49, #65)
                 ISNULL(TRY_CAST(p.clientBillRate AS DECIMAL(18,2)), 0)
                     * ISNULL(TRY_CAST(p.hoursPerDay AS DECIMAL(10,2)), 0) * 5 AS weekly_revenue,
                 ISNULL(TRY_CAST(p.hoursPerDay AS DECIMAL(10,2)), 0) * 5 AS weekly_hours,
@@ -293,9 +297,11 @@ def _symplr_financial_data(date_from_sql: str, date_to_sql: str):
             pc.state AS region,
             'GHR' AS vendor_type,
             -- Per-shift orders have no lt_order row, so lt.tempid is NULL on
-            -- 414,452 rows in the window carrying $43.8M -- every one of those
-            -- groups reported headcount 0 beside real billings, so any $/head
-            -- figure was wrong or divided by zero. (GH #48)
+            -- 414,452 of the rows in the window -- carrying $43.8M, more than
+            -- half the book -- and every one of those groups reported
+            -- headcount 0 beside real billings. Any $/head figure built on
+            -- them was wrong or divided by zero. filledby is the worker on an
+            -- orderless shift. (GH #48)
             COUNT(DISTINCT COALESCE(CAST(lt.tempid AS NVARCHAR(100)),
                                     NULLIF(LTRIM(RTRIM(CAST(o.filledby AS NVARCHAR(100)))), ''))) AS headcount,
             SUM(ISNULL(o.totalbillamount, 0)) AS estimated_billing,
@@ -307,14 +313,19 @@ def _symplr_financial_data(date_from_sql: str, date_to_sql: str):
         LEFT JOIN dbo.profile_client m  ON pc.MasterClientID = m.recordid
         LEFT JOIN dbo.regions r ON r.regionid = TRY_CAST(pc.region AS INT)
         WHERE o.jobdatestart IS NOT NULL
-            -- Worked orders OR credits -- not "> 0". Over 13 months on the
-            -- live Symplr book: worked (hours>0) 287,625 rows $85,001,816;
-            -- never ran (hours=0) 528,035 rows $141,958 phantom; credits
-            -- (hours<0) 1,351 rows -$400,541 real. This query counted all
-            -- three and carried the phantom revenue, while Trend gated on
-            -- "> 0" and threw away the credits -- the two tabs differed by
-            -- $258k. "<> 0" drops what never ran and keeps the reversals.
-            -- (GH #47)
+            -- Worked orders OR credits -- not "> 0". Measured over 13 months on
+            -- the live Symplr book, the three buckets are:
+            --
+            --   hours > 0  worked    287,625 rows   $85,001,816
+            --   hours = 0  never ran 528,035 rows      $141,958   <- phantom
+            --   hours < 0  credits     1,351 rows     -$400,541   <- real
+            --
+            -- Financials counted all three, so it carried the phantom revenue;
+            -- Trend gated on "> 0", so it threw away $400k of genuine credits.
+            -- Neither figure was right and the two tabs disagreed by $258k.
+            -- "<> 0" drops the orders that never ran and keeps the reversals,
+            -- which is both consistent across the surfaces and more correct
+            -- than either was. (GH #47)
             AND ISNULL(o.totalbillhours, 0) <> 0
             AND CAST(o.jobdatestart AS DATE) >= {date_from_sql}
             AND CAST(o.jobdatestart AS DATE) < {date_to_sql}
@@ -342,25 +353,59 @@ def _symplr_financial_data(date_from_sql: str, date_to_sql: str):
     return rows
 
 
-def _non_msp_financial(req: func.HttpRequest, date_from_sql: str, date_to_sql: str) -> func.HttpResponse:
+def _non_msp_financial(req: func.HttpRequest, date_from_sql: str, date_to_sql: str,
+                       cacheable: bool = False) -> func.HttpResponse:
     """Run Bullhorn + Symplr financial queries independently, union the results."""
+    # Served from the cache table when one is fresh. This is the endpoint that
+    # was intermittently returning HTTP 500 -- 9.2s before the scope widened,
+    # 19.9s after, which is close enough to the gateway limit that a cold plan
+    # tips it over. Monthly billings do not move within a day.
+    key = cache_key('financial-data', 'non_msp')
+    cached = read_cache(key) if cacheable else None
+    if cached is not None:
+        print(f"financial-data: served from cache ({cached.get('cachedAt')})")
+        return func.HttpResponse(json.dumps(cached, default=str),
+                                 mimetype="application/json", status_code=200)
+
+    started = time.time()
     monthly_data = []
     errors = []
-    try:
-        monthly_data.extend(_bullhorn_financial_data(date_from_sql, date_to_sql))
-    except Exception as e:
-        print(f"Bullhorn financial error: {e}")
-        import traceback; traceback.print_exc()
-        errors.append(f"bullhorn: {e}")
-    try:
-        monthly_data.extend(_symplr_financial_data(date_from_sql, date_to_sql))
-    except Exception as e:
-        print(f"Symplr financial error: {e}")
-        import traceback; traceback.print_exc()
-        errors.append(f"symplr: {e}")
+
+    # Concurrent for the same reason as GetTrendData: two independent
+    # databases, two connections, no shared state, so sequencing them only
+    # cost wall-clock. This endpoint was measured at 9.2s on the deployed
+    # non-MSP instance and was intermittently timing out into an HTTP 500 --
+    # the "Couldn't load financial data" the divisions were seeing. Running
+    # both at once costs the slower branch rather than the sum.
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        bh_future = pool.submit(_bullhorn_financial_data, date_from_sql, date_to_sql)
+        sp_future = pool.submit(_symplr_financial_data, date_from_sql, date_to_sql)
+
+        try:
+            monthly_data.extend(bh_future.result())
+        except Exception as e:
+            print(f"Bullhorn financial error: {e}")
+            import traceback; traceback.print_exc()
+            errors.append(f"bullhorn: {e}")
+        try:
+            monthly_data.extend(sp_future.result())
+        except Exception as e:
+            print(f"Symplr financial error: {e}")
+            import traceback; traceback.print_exc()
+            errors.append(f"symplr: {e}")
     print(f"Returning {len(monthly_data)} non-MSP financial rows (errors: {errors or 'none'})")
+    # errors was collected and then dropped, so a failed source rendered the tab
+    # with half the billings at HTTP 200 and no sign anything was missing -- a
+    # wrong money figure that looks authoritative. GetTrendData and GetClosed
+    # both return theirs. (GH #86)
+    payload = {'monthlyData': monthly_data, 'errors': errors}
+    # Warm from a live build, best-effort, and only when both branches
+    # succeeded -- a partial month would otherwise be served for a day.
+    if cacheable and not errors:
+        write_cache(key, payload, build_ms=int((time.time() - started) * 1000),
+                    refreshed_by='live-request')
     return func.HttpResponse(
-        json.dumps({'monthlyData': monthly_data}, default=str),
+        json.dumps(payload, default=str),
         mimetype="application/json",
         status_code=200,
     )
@@ -389,7 +434,12 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
         to_month = req.params.get('to')      # e.g. '2026-02'
 
         # Validate date format to prevent injection (strict YYYY-MM)
-        date_pattern = re.compile(r'^\d{4}-\d{2}$')
+        # Month 01-12 only. The old shape-only pattern accepted '2025-13'
+        # and '9999-99', which were inlined as a date literal and failed
+        # conversion inside SQL Server -- where the surrounding handler
+        # swallowed it and returned 200 with an empty result, so the UI
+        # showed 'no activity' rather than 'bad request'. (GH #35)
+        date_pattern = re.compile(r'^\d{4}-(0[1-9]|1[0-2])$')
         if from_month and not date_pattern.match(from_month):
             from_month = None
         if to_month and not date_pattern.match(to_month):
@@ -409,8 +459,33 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             # cycles show up immediately rather than waiting until next month.
             date_to = "DATEADD(MONTH, 1, DATEFROMPARTS(YEAR(GETDATE()), MONTH(GETDATE()), 1))"
 
+        # Only the default range is cacheable. fromMonth / toMonth produce a
+        # different answer, and a cache keyed on route alone would hand the
+        # default thirteen months to someone who asked for one quarter.
+        default_range = not from_month and not to_month
+
         if is_non_msp():
-            return _non_msp_financial(req, date_from, date_to)
+            return _non_msp_financial(req, date_from, date_to, cacheable=default_range)
+
+        # MSP had no caching at all: the block above lives inside
+        # _non_msp_financial, so this book has been rebuilding every request
+        # (3.2s warm). Same oversight the trend endpoint had.
+        _started = time.time()
+        # One source failing must not be reported as a whole book. (GH #86)
+        msp_errors = []
+        # 'msp-v2' because 2.63.0 changed the SHAPE of this payload (rows now
+        # carry worker ids). A cached v1 entry is still served happily by the
+        # client -- it just falls back to summing, i.e. to the old wrong
+        # headcount -- and the cache holds for 26 hours, so a bare deploy
+        # would leave the fix invisible for a day. Changing the key retires
+        # the old entries immediately.
+        _key = cache_key('financial-data', 'msp-v2')
+        if default_range:
+            _cached = read_cache(_key)
+            if _cached is not None:
+                print('financial-data(msp): served from cache')
+                return func.HttpResponse(json.dumps(_cached, default=str),
+                                         mimetype='application/json', status_code=200)
 
         conn = pyodbc.connect(
             f"DRIVER={{ODBC Driver 17 for SQL Server}};"
@@ -522,6 +597,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             print(f"Error loading VNDLY financial data: {e}")
             import traceback
             traceback.print_exc()
+            msp_errors.append(f"vndly: {e}")
 
         # ============================================================
         # B4Health - Monthly billings and headcounts from ESR data
@@ -606,6 +682,9 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                 b4_data.append(row_dict)
         except Exception as e:
             print(f"Error loading B4 financial data: {e}")
+            import traceback
+            traceback.print_exc()
+            msp_errors.append(f"b4: {e}")
 
         # ------------------------------------------------------------
         # Worker identity per row group, so the client can count headcount
@@ -654,6 +733,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                 return True
             except Exception as e:
                 print(f"Error loading {label} worker identity: {e}")
+                msp_errors.append(f"{label}-workers: {e}")
                 return False
 
         # Same normalisation on both sides ("Last, First" -> "first last",
@@ -717,8 +797,8 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
 
         if vndly_workers_ok and b4_workers_ok:
             for row in vndly_data + b4_data:
-                # service_line is part of the key because the aggregates group
-                # by it too: B4 splits one category across programs that map to
+                # service_line is part of the key because the aggregates group by
+                # it too: B4 splits one category across programs that map to
                 # different service lines, so a coarser key would hand each of
                 # those rows the union of all of them and over-count the
                 # per-service-line breakdown even while the system total stayed
@@ -750,8 +830,14 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
         b4_count = len([r for r in monthly_data if r.get('source_system') == 'B4'])
         print(f"Returning {len(monthly_data)} financial data rows (VNDLY: {vndly_count}, B4: {b4_count})")
 
+        _payload = {'monthlyData': monthly_data, 'errors': msp_errors}
+        # Never cache a partial book -- it would be served for a day. The
+        # non-MSP path already guards this way.
+        if default_range and not msp_errors:
+            write_cache(_key, _payload, build_ms=int((time.time() - _started) * 1000),
+                        refreshed_by='live-request')
         return func.HttpResponse(
-            json.dumps({'monthlyData': monthly_data}, default=str),
+            json.dumps(_payload, default=str),
             mimetype="application/json",
             status_code=200
         )

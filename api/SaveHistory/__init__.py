@@ -2,7 +2,8 @@ import azure.functions as func
 import pyodbc
 import os
 import json
-from shared_code.auth import require_allowed_domain
+from shared_code.auth import require_allowed_domain, current_user_email
+from shared_code.audit import record_change
 
 
 def ensure_schema(cursor):
@@ -52,13 +53,31 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             json.dumps(snapshot['data'])
         ))
 
-        # Keep only last 100 snapshots
+        record_change(cursor, 'config.history_snapshot',
+                      str(snapshot.get('timestamp') or ''),
+                      {'changeCount': snapshot.get('changeCount')},
+                      current_user_email(req))
+
+        # Keep the last 100 snapshots, ordered by the IDENTITY id -- insertion
+        # order, set by the server.
+        #
+        # This used to order by snapshot_timestamp, which comes straight from
+        # the request body. A client with a skewed clock, or one sending a
+        # far-future timestamp, pins itself at the top of that ordering and
+        # pushes real history out of the retention window; a client sending a
+        # past timestamp deletes its own snapshot on the next write. Neither
+        # needs malice, and the delete is silent either way.
+        #
+        # id is monotonic and server-assigned, so it cannot be influenced by
+        # the caller. snapshot_timestamp is still stored and still what the
+        # history UI displays -- it is just no longer what decides survival.
+        # (GH #80)
         cursor.execute('''
             DELETE FROM impactmgr.history_snapshots
             WHERE id NOT IN (
                 SELECT TOP 100 id
                 FROM impactmgr.history_snapshots
-                ORDER BY snapshot_timestamp DESC
+                ORDER BY id DESC
             )
         ''')
 

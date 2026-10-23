@@ -2,6 +2,8 @@ import azure.functions as func
 import pyodbc
 import os
 import json
+import time
+from shared_code.endpoint_cache import cache_key, read_cache, write_cache
 import datetime
 from shared_code.auth import require_allowed_domain
 from shared_code.vndly_reasons import canonical_reason, reason_category
@@ -57,9 +59,18 @@ SYMPLR_NON_OPPORTUNITY_REASONS = {'scheduling error', 'census dropped'}
 # Mapped exhaustively rather than by prefix matching so a new reason shows up
 # as unmapped instead of being silently folded into a neighbouring bucket.
 #
-#   (blank) 680 | Internal Staff 382 | Scheduling Error 316 | Competition 234
-#   Census Dropped 178 | Unable to Fill 58 | Other 19 | No Show 2 | Call-out 2
-#   Temp late and sent home 2 | DNR 1 | NSNC 1 | Picked up another shift 1
+#   (blank) 680 | Filled by Internal Staff 382 | Scheduling Error 316
+#   Filled by Competition 234 | Census Dropped 178 | Unable to Fill 58
+#   Other 19 | No Show 2 | Call-out 2 | Temp late and sent home 2 | DNR 1
+#   NSNC 1 | Picked up another shift 1
+#
+# The two "Filled by ..." values are written in full by Symplr. An earlier
+# version of this list abbreviated them to 'Internal Staff' and 'Competition',
+# which made the map below look wrong against its own documentation and was
+# reported as a bug (GH #63) -- competitive losses supposedly never counted.
+# They are counted: verified on the live book, 'Filled by Competition' maps to
+# 'Lost to competitor' on every row and nothing falls through unmapped. The
+# list, not the map, was wrong.
 #
 # 'Clinician fell through' is its own bucket because those orders were booked
 # and then failed — a service failure, not a sourcing failure. They still
@@ -261,30 +272,10 @@ def _closed_window(req, non_msp):
     return start, start + datetime.timedelta(days=6), 'previous week'
 
 
-# RATE RANK compares against Bullhorn job orders, whose category axis is
-# `employmentType` -- Travel / Local / Remote, an engagement type. MSP books a
-# programme instead, which fuses engagement type with service line: B4's
-# Program is 'Travel Nursing' / 'Local Contract Allied Health' / 'Contract
-# (Nursing)', VNDLY's Labor Type is 'Nursing' / 'Per Diem Nursing'. The two
-# vocabularies do not meet, so the engagement type is read back out of the
-# programme name -- but only where the name states it. 'Contract (Nursing)',
-# the single largest B4 bucket at 6,871 rows, could be travel or local and is
-# left unmapped rather than guessed: a Local seat ranked against Travel peers
-# reads as underpaid however well it is priced.
-#
-# Derivable on 16,749 of 29,106 B4 orders (58%). The rest carry no rank, which
-# is the honest answer.
-def _rate_category(programme):
-    p = (programme or '').lower()
-    if 'travel' in p:
-        return 'Travel'
-    if 'local' in p:
-        return 'Local'
-    if 'per diem' in p or 'perdiem' in p or 'prn' in p:
-        return 'Per Diem'
-    if 'remote' in p:
-        return 'Remote'
-    return None
+# Engagement-type axis for RATE RANK, shared with GetPositions so an open
+# job and a closed one rank on the same vocabulary. See shared_code/
+# rate_scope.py for why 'Contract (Nursing)' is deliberately unmapped.
+from shared_code.rate_scope import rate_category as _rate_category, value_13wk
 
 
 def _filled_by_and_revenue(row):
@@ -362,8 +353,36 @@ def _b4_rows(cursor, lookback):
             CAST(o.Start_Date AS DATE)                  AS start_date,
             TRY_CAST(o.Awarded_Rate AS DECIMAL(10,2))   AS bill_rate,
             TRY_CAST(o.Pay_Rate AS DECIMAL(10,2))       AS pay_rate,
-            TRY_CAST(o.Hours_per_Peek AS DECIMAL(10,2)) AS hours_per_week
+            TRY_CAST(o.Hours_per_Peek AS DECIMAL(10,2)) AS hours_per_week,
+            /* Bid activity. dhc.B4Health_Contract_Submissions is one row per
+             * agency submission against a contract, carrying Agency_Name --
+             * so total, GHR and competitive bids are all countable, and the
+             * winning supplier is already on the order as o.Agency.
+             *
+             * Safe as a correlated aggregate here: B4HealthOrder is 1:1 on
+             * Contract_ID (2,764 closed rows over 90 days, 2,764 distinct
+             * ids, max 1 row each), so nothing fans out. 2,534 of those 2,764
+             * (92%) carry at least one submission -- 7,737 bids, 4,280 GHR.
+             */
+            /* The population those bids were made against, so the client
+             * can aggregate without double counting. B4 is 1:1 on
+             * Contract_ID, so this is just the id; VNDLY repeats a job's bid
+             * count on each of its work orders (up to 49), so any sum across
+             * rows must be taken over DISTINCT bid_group.
+             */
+            'B4:' + LTRIM(RTRIM(o.Contract_ID))         AS bid_group,
+            ISNULL(b.total_bids, 0)                     AS total_bids,
+            ISNULL(b.ghr_bids, 0)                       AS ghr_bids,
+            ISNULL(b.total_bids, 0) - ISNULL(b.ghr_bids, 0) AS competitive_bids
         FROM dhc.B4HealthOrder o WITH (NOLOCK)
+        LEFT JOIN (
+            SELECT LTRIM(RTRIM(Contract_Assignment_ID)) AS cid,
+                   COUNT(*) AS total_bids,
+                   SUM(CASE WHEN Agency_Name LIKE '%GHR%'
+                             OR Agency_Name LIKE '%Planet%' THEN 1 ELSE 0 END) AS ghr_bids
+            FROM dhc.B4Health_Contract_Submissions WITH (NOLOCK)
+            GROUP BY LTRIM(RTRIM(Contract_Assignment_ID))
+        ) b ON b.cid = LTRIM(RTRIM(o.Contract_ID))
         WHERE o.Contract_Status LIKE 'Closed%'
     ''')
     rows = [dict(zip([c[0] for c in cursor.description], r)) for r in cursor.fetchall()]
@@ -419,8 +438,36 @@ def _vndly_rows(cursor, lookback):
             TRY_CAST(w.[Bill Rate] AS DECIMAL(10,2))      AS bill_rate,
             TRY_CAST(w.[Pay Rate] AS DECIMAL(10,2))       AS pay_rate,
             NULL                                          AS hours_per_week,
-            CASE WHEN TRY_CAST(w.[Onboarded Date] AS DATE) IS NOT NULL THEN 1 ELSE 0 END AS converted
+            CASE WHEN TRY_CAST(w.[Onboarded Date] AS DATE) IS NOT NULL THEN 1 ELSE 0 END AS converted,
+            /* Bid activity, aggregated PER JOB before it is joined.
+             *
+             * STAGING_VNDLY_SUBMISSIONS keys on [Job Id], and a job carries
+             * many work orders -- 1,498 work orders ending in the last 90
+             * days sit across only 404 distinct Job Ids, up to 49 work orders
+             * on one job. Joining submissions row-by-row inflated the count
+             * from 1,713 to 12,766, a factor of 7.5. The same fan-out the
+             * STAGING_VNDLY_JOBS join already had to collapse.
+             *
+             * Each work order therefore reports ITS JOB's bid count, which is
+             * the honest number: those vendors bid for that job. It follows
+             * that bids must never be SUMMED across rows -- count them over
+             * distinct jobs instead, which is what the KPI does.
+             */
+            -- See the B4 branch: a job's bids repeat across its work orders,
+            -- so aggregate over DISTINCT bid_group, never over rows.
+            'VNDLY:' + CAST(TRY_CAST(w.[Job Id] AS INT) AS NVARCHAR(20)) AS bid_group,
+            ISNULL(vb.total_bids, 0)                      AS total_bids,
+            ISNULL(vb.ghr_bids, 0)                        AS ghr_bids,
+            ISNULL(vb.total_bids, 0) - ISNULL(vb.ghr_bids, 0) AS competitive_bids
         FROM dbo.STAGING_VNDLY_WORKORDERS w WITH (NOLOCK)
+        LEFT JOIN (
+            SELECT [Job Id] AS job_id,
+                   COUNT(*) AS total_bids,
+                   SUM(CASE WHEN [Vendor Company Name] LIKE '%GHR%'
+                             OR [Vendor Company Name] LIKE '%Planet%' THEN 1 ELSE 0 END) AS ghr_bids
+            FROM dbo.STAGING_VNDLY_SUBMISSIONS WITH (NOLOCK)
+            GROUP BY [Job Id]
+        ) vb ON vb.job_id = TRY_CAST(w.[Job Id] AS INT)
         WHERE w.[Current Status] NOT IN
               ('Applied', 'Interviewing', 'Offer Released', 'Ready to Onboard',
                'Verification In Progress')
@@ -490,6 +537,16 @@ def _bullhorn_closed_rows(cursor, app_conn, lookback):
             -- (Travel / Local / Permanent / Remote / PRN), so the two
             -- vocabularies are identical rather than merely comparable.
             NULLIF(LTRIM(RTRIM(jo.employmentType)), '')    AS rate_category,
+            /* No bid concept on this book. Bullhorn is direct business --
+             * GHR is the only agency on the req, so "competitive bids" has no
+             * meaning rather than being zero. Symplr records no vendor
+             * competition either. Null, not 0, so the UI can say "not
+             * recorded on this book" instead of implying nobody bid.
+             */
+            NULL                                          AS bid_group,
+            NULL                                          AS total_bids,
+            NULL                                          AS ghr_bids,
+            NULL                                          AS competitive_bids,
             ISNULL(pl.n, 0)                               AS placement_count,
             CASE WHEN pl.n > 0
                  THEN CAST(DATEDIFF(HOUR, jo.dateAdded, pl.first_placed) AS FLOAT) / 24.0
@@ -512,12 +569,12 @@ def _bullhorn_closed_rows(cursor, app_conn, lookback):
             FROM dbo.View_Placement p WITH (NOLOCK)
             LEFT JOIN dbo.View_Candidate cnd WITH (NOLOCK) ON cnd.candidateID = p.candidateID
             -- A soft-deleted placement is not a fill. Without this the order
-            -- reports FILLED, and first_placed / clinician come from the
-            -- deleted row so days-to-close is anchored on it. Every other
+            -- reports FILLED, and first_placed / clinician are taken from the
+            -- deleted row, so days-to-close is anchored on it too. Every other
             -- View_Placement query in the repo filters this; this one did not.
-            -- Live mirror, 30 days: 1,049 resolved orders, 368 counted FILLED,
-            -- 365 with a live placement -- 3 filled only by a deleted one.
-            -- (GH #64)
+            -- Measured on the live mirror over 30 days: 1,049 resolved orders,
+            -- 368 counted FILLED, 365 with a live placement -- 3 were filled
+            -- only by a deleted one. (GH #64)
             WHERE p.jobOrderID = jo.jobOrderID
               AND p.isDeleted = 0
         ) pl
@@ -598,6 +655,16 @@ def _symplr_closed_rows(cursor, app_conn, lookback):
             -- Symplr records no engagement type, so these rows carry no rank
             -- rather than being ranked against a category they never stated.
             NULL                                          AS rate_category,
+            /* No bid concept on this book. Bullhorn is direct business --
+             * GHR is the only agency on the req, so "competitive bids" has no
+             * meaning rather than being zero. Symplr records no vendor
+             * competition either. Null, not 0, so the UI can say "not
+             * recorded on this book" instead of implying nobody bid.
+             */
+            NULL                                          AS bid_group,
+            NULL                                          AS total_bids,
+            NULL                                          AS ghr_bids,
+            NULL                                          AS competitive_bids,
             lt.status                                     AS status,
             CAST(lt.date_entered AS DATE)                 AS opened_on,
             CAST(COALESCE(lt.BookedByDT, lt.voiddt, lt.datetimemodified) AS DATE) AS closed_on,
@@ -801,8 +868,8 @@ def _aggregate_non_msp(rows, lookback, errors):
         r['specialty'] = (r.pop('specialty_raw', None) or '')
         r['region'] = normalize_state(r.get('region'))
         r['agency'] = 'GHR'
-        rate, hrs = r.get('bill_rate'), r.get('hours_per_week')
-        r['value_13wk'] = round(rate * hrs * 13, 2) if rate and hrs else None
+        r['value_13wk'] = value_13wk(r.get('bill_rate'), r.get('hours_per_week'),
+                                    r.get('category'))
         r['filled_by'], r['revenue'] = _filled_by_and_revenue(r)
 
     rows.sort(key=lambda r: r.get('closed_on') or '', reverse=True)
@@ -875,10 +942,27 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
     except (TypeError, ValueError):
         lookback = default_lookback
 
+    # Measured warm at 10.3s on non-MSP. Default window only -- an explicit
+    # from/to or days changes the result, and a key on the route alone would
+    # serve the default to a caller who asked for something else.
+    _started = time.time()
+    _cacheable = not (req.params.get('from') or req.params.get('to') or req.params.get('days'))
+    _key = cache_key('closed-data', 'non_msp' if non_msp else 'msp')
+    if _cacheable:
+        _cached = read_cache(_key)
+        if _cached is not None:
+            print('closed-data: served from cache')
+            return func.HttpResponse(json.dumps(_cached, default=str),
+                                     mimetype='application/json', status_code=200)
+
     if non_msp:
         try:
+            _payload = _non_msp_payload(lookback)
+            if _cacheable:
+                write_cache(_key, _payload, build_ms=int((time.time() - _started) * 1000),
+                            refreshed_by='live-request')
             return func.HttpResponse(
-                json.dumps(_non_msp_payload(lookback), default=str),
+                json.dumps(_payload, default=str),
                 mimetype='application/json', status_code=200)
         except Exception as e:
             print(f'Closed(non_msp) error: {e}')
@@ -944,8 +1028,8 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             # VNDLY carries no specialty field at all.
             r['specialty'] = (r.get('specialty') or r.get('care_type') or '') or ''
             r['rate_category'] = _rate_category(r.get('category'))
-            rate, hrs = r.get('bill_rate'), r.get('hours_per_week')
-            r['value_13wk'] = round(rate * hrs * 13, 2) if rate and hrs else None
+            r['value_13wk'] = value_13wk(r.get('bill_rate'), r.get('hours_per_week'),
+                                        r.get('category'))
             r['filled_by'], r['revenue'] = _filled_by_and_revenue(r)
 
             if not r.get('closed_on'):
@@ -991,7 +1075,11 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             },
         }
         print(f"Closed: {len(rows)} rows in {abs(lookback)}d {counts}; "
-              f"undated excluded {undated}; errors: {errors or 'none'}")
+              f"undated excluded {undated}; {int((time.time()-_started)*1000)}ms; "
+              f"errors: {errors or 'none'}")
+        if _cacheable and not errors:
+            write_cache(_key, payload, build_ms=int((time.time() - _started) * 1000),
+                        refreshed_by='live-request')
         return func.HttpResponse(
             json.dumps(payload, default=str),
             mimetype="application/json",

@@ -2,7 +2,26 @@
 
 ## Version History
 
-### 2.24.0 - The Extensions tab is the whole panel, and now says so
+### 2.66.1 - An accepted extension kept reading as awaiting vendor
+- `#b4_ext` took `MAX()` of each assignment type over **every** extension row a
+  seat had ever carried, and `_extension_stage` tests pending before accepted.
+  So any seat that was once `Extension Offer Pending` read as **Awaiting Vendor
+  Approval** forever, including after the offer was accepted.
+- Now takes the **latest** row per seat, ordered by `DateAdded`, the same way
+  the VNDLY modification is already picked. Never a flag aggregated over
+  history.
+- "Accepted beats pending" would have been the wrong fix. Both live cases,
+  measured 2026-10-21:
+  - **369683** pending 11/29→7/2 added 09-30, accepted 11/29→7/2 added 10-01 —
+    same window, the offer was taken up, so **Accepted**. We showed pending.
+  - **370150** accepted 10/25→11/6 added 08-31, pending 11/11→5/8 added 10-20 —
+    a *further* extension is now on the table, so **Awaiting Vendor** is right.
+  A precedence rule fixes one and breaks the other; latest-wins settles both.
+- Verified by running the real query before and after: 429 rows both times, one
+  seat changes (Galy Di Giulio, one of the ten Matt could not place), Awaiting
+  Vendor 46 → 45, Extension Accepted 72 → 73, nothing else moves.
+
+### 2.66.0 - The Extensions tab is the whole panel, and now says so
 - Matt could not reconcile the tab against B4 and VNDLY: his manual pull of
   GHR's pending extensions gave **43**, the tab's file gave **68**. Both were
   right. On MSP this tab fetches `includeAffiliate=1` deliberately — GHR runs
@@ -14,41 +33,54 @@
   was really showing him.
 - The headline card said **"GHR Ending in 45 Days"** and counted all of it. A
   false label on the one number people read first. It now reads "Ending in 45
-  Days" with the split underneath, omitted on non-MSP, which has no affiliate
-  concept.
+  Days" with the split underneath — `51 GHR · 20 affiliate` — and the split is
+  omitted on non-MSP, which has no affiliate concept.
 - The CSV export gained a **GHR / Affiliate** column beside the free-text
-  agency, so the panel can be filtered to GHR's own book in one step. The row
-  badge was always on screen; it just could not be exported or sorted on.
+  agency, so the panel can be filtered down to GHR's own book in one step. The
+  row badge was always on screen; it just could not be exported or sorted on.
 - Not changed, and worth a decision: the two B4 "offer pending" paths disagree
-  on scope. The Network Activity Report path is GHR-only and produces 32 GHR /
-  0 affiliate; the child-submission chain has no agency filter and produces
-  1 GHR / 13 affiliate. Same question, two scopes.
+  on scope. The Network Activity Report path is GHR-only (`x.Agency LIKE
+  '%GHR%'`) and produces 32 GHR / 0 affiliate; the child-submission chain has
+  no agency filter and produces 1 GHR / 13 affiliate. Same question, two
+  scopes.
 
-### 2.23.0 - Export CSV on the Extensions tab
+### 2.65.0 - Export CSV on the Extensions tab
 - An **Export CSV** button in the Extensions filter strip, for checking the app
-  against B4, VNDLY and Bullhorn by hand. 56 fields per seat.
+  against B4, VNDLY and Bullhorn by hand. 62 fields per seat.
 - It exports **the rows the table is showing**, after the stage filter, the
-  search strip, the column filters and the sort. Filter the screen to the seats
-  in question and the file holds those seats. The render stashes that row set,
-  so the export cannot drift from the table the way a second copy of the filter
-  chain would.
-- Each compared field ships as **VMS value, ATS value and verdict**, so a
-  mismatch row reads `2026-11-14` against `2026-12-05` rather than just
-  "Mismatch" — validating a derived figure means seeing both sides.
+  search strip, the exceptions-only toggle, the column filters and the sort.
+  Filter the screen to the seats in question and the file holds those seats.
+  The render stashes that row set, so the export cannot drift from the table
+  the way a second copy of the filter chain would.
+- Every derived verdict ships **next to the raw values that produced it**: the
+  designation with its "why", and for each compared field the VMS value, the
+  ATS value and the verdict. A mismatch row reads `2026-11-14` against
+  `2026-12-05`, not just "Mismatch" — validating a derived figure means seeing
+  both sides.
 - A field that was never compared (an unlinked seat) exports as `n/a` rather
   than blank, which would read as "equal and empty".
 - Redact mode is honoured through `View.stageWorker`, so a masked screen cannot
   be un-masked by exporting it. Notes keep their quotes but lose newlines, so a
   line break in a note cannot split one record across two rows. A helper that
-  throws writes `#ERR ...` in its own cell instead of losing the file. UTF-8
-  BOM, so Excel reads accented clinician names correctly.
-- Six columns narrower than the prototype's version: this book has no
-  designation ladder, no per-seat exceptions list, no action-due countdown and
-  no clinician extension reply. Columns are not invented for fields that do not
-  exist here — a blank would read as "no exceptions" rather than "not measured
-  in this book".
+  throws writes `#ERR ...` in its own cell instead of losing the file.
+- UTF-8 BOM, so Excel reads accented clinician names correctly.
 
-### 2.22.0 - Open positions now match VNDLY: held reqs are open jobs
+### 2.64.1 - Say which open jobs are on hold
+- 2.64.0 roughly doubled the open-jobs count and nothing on the screen said
+  why. Two changes so the number explains itself:
+- The count now carries a sub-line, `47 active &middot; 70 on hold`, on the
+  Total Jobs and Open Jobs cards. It is omitted where there are no held reqs,
+  so the Bullhorn and Symplr books gain no empty line.
+- A held req gets the **neutral aging bubble that Perm already uses** instead
+  of an urgency colour. Same reason in both cases: the day count is a fact, the
+  colour is a claim, and neither a perm search nor a req the client paused is
+  aging on us. Without this, 70 of the 117 open jobs would have come back red.
+  The bubble's hover says "On hold - open, but not aging on us".
+- Both tooltips now state the rule outright: held reqs count as open because
+  VNDLY counts them, and stay out of Critical because a paused req is not
+  aging on us.
+
+### 2.64.0 - Open positions now match VNDLY: held reqs are open jobs
 - VNDLY's own dashboard counts a held req as an open job. Its "Jobs" tile reads
   **74** for Cooper -- 31 Active plus 43 on hold -- and we were reporting the
   31. `GetPositions` now takes `[Job Status] IN ('Active', 'Hold')`, so this app
@@ -60,14 +92,14 @@
 - This more than doubles the VNDLY open book, 47 rows to 117, and the added
   rows are older than the Active ones. So held reqs count everywhere the open
   book is **counted**, and are excluded everywhere days-open is read as a
-  **performance signal**: Avg Days Open, Critical, Aged 16+, the overall
-  fill-rate denominator, and the Travel Aging Report. Nobody is failing to
-  fill a req the client paused.
+  **performance signal**: Avg Days Open, Critical, Aged 16+, the Priority view's
+  avg age and stale count, the overall fill-rate denominator, and the Travel
+  Aging Report. Nobody is failing to fill a req the client paused.
 - One predicate, `Utils.isJobOnHold`, so those surfaces cannot drift apart.
 - Cooper reads 73 today against the dashboard's 74: the jobs feed has the same
   lag as the modifications feed, and one job has closed since the screenshot.
 
-### 2.21.18 - Monthly headcount counted the same person several times
+### 2.63.0 - Monthly headcount counted the same person several times
 - The Financial tab's monthly headcount was the **sum** of each row's distinct
   count, and the rows are split by facility, care type, service line and
   vendor. Anyone who appeared in more than one of those groups was counted
@@ -83,352 +115,1507 @@
   migrated assignment are real work, so the person survives in both books.
 - `GetFinancialData` now sends the dense worker ids behind each row's count and
   the client counts the union instead of summing. Verified against the
-  warehouse: 0 mismatches across all 5,545 row groups, and every monthly total
-  equal to an independently measured distinct count.
+  warehouse: 0 mismatches across all 5,547 row groups, and all 14 monthly
+  totals equal an independently measured distinct count.
 - Payload cost is about 16k ids over thirteen months (~100KB), which keeps the
   number exact under every facility and category filter rather than only in the
-  unfiltered view. If the ids are missing -- the non-MSP book, which does not
-  send them yet -- the old sum stands, because a partial union would
-  under-count instead.
+  unfiltered view. If the ids are missing -- a cached payload from an older
+  build, or the non-MSP book, which does not send them yet -- the old sum
+  stands, because a partial union would under-count instead.
 - Still approximate one level up: the cross-system total sums the per-system
   figures, so someone who worked at two health systems counts under each. That
   is 2-28 people a month against 756-1,147 (0.2-3%) and is left alone.
 
-### 2.21.17 - The headcount trend fell off a cliff at the billing watermark
+### 2.62.0 - The headcount trend fell off a cliff at the billing watermark
 
 - Reported from the business: *"this figure keeps migrating over every week and showing a
   major loss of headcount."* Reproduced and fixed
-- For a terminal VNDLY work order we derived the end date **from spend** rather than from
-  `[End Date]`. Right for settled history — but spend only extends as far as billing has
-  progressed, so **every ended assignment was truncated at the spend watermark**, weeks
-  past it lost their entire ended population at once, and the cliff walked forward each
-  week as invoices loaded. That walking is the "migrating" in the report
-- Cooper, measured 2026-10-20 against a watermark of `2026-10-10`: the shipped series
-  dropped **-62** in the week commencing 10-17; guarded it drops -6 and the curve is
-  smooth. It also corrected the opposite end — trailing spend had been holding ended
-  workers past their real end, inflating older weeks
+- For a terminal work order we derived the end date **from spend** rather than from
+  `[End Date]`, on the reasoning that the scheduled end is not the date the assignment
+  actually stopped. Correct for settled history — but **spend only extends as far as
+  billing has progressed**, so every ended assignment was truncated at the spend
+  watermark. Weeks past it lost their entire ended population at once, and the cliff
+  **walked forward each week as invoices loaded**, which is exactly the "migrating" symptom
+- Measured for Cooper on 2026-10-20, watermark `2026-10-10`:
+
+  | week c/ | shipped | guarded |
+  |---|---|---|
+  | 09-26 | 225 | 169 |
+  | 10-03 | 218 | 161 |
+  | 10-10 | 215 | 162 |
+  | **10-17** | **153 (-62)** | **156 (-6)** |
+  | 10-24 | 154 | 154 |
+
 - The guard: spend may only establish an **early** stop when billing has progressed past
   the date it claims. Within 14 days of the watermark it proves nothing, so the scheduled
-  end is used
-- Verified by rendering and running the real query, not by compiling
+  end is used instead
+- It corrected the opposite end too — trailing spend had been holding ended workers on
+  assignment past their real end, inflating the older weeks by ~56
+- Separately confirms what the business flagged: `Ended by Job Close` had to come out of
+  the dataset (done in 2.61.0 / 2.21.16). That was worth ~115/week at Cooper on its own
 
-### 2.21.16 - 'Ended by Job Close' was counted as a completed assignment
+### 2.61.0 - 'Ended by Job Close' was never a completed assignment
 
-- Raised by the ghr-marketintel session, confirmed against the warehouse. The status means
-  **an applicant who was never selected**, closed out when the job closed — not a finished
-  assignment. Across all **561**: 0 have spend, 0 have an Onboarded Date, 0 have an End
-  Reason. `Ended` is 356 work orders, all onboarded and all with an end reason
-- It sat in `VNDLY_RAN_STATUSES`, where the spend guard should have dropped it. **The
-  guard's name-match fallback let 55 through**, matching a same-named worker's spend on a
-  *different* work order — so 55 non-assignments were counted as real
-- **This moves MSP numbers.** Trend and year-over-year on MSP lose those 55 phantom
-  assignments. The new figures are the correct ones, but it is a visible change on an
-  instance that normally only receives bug fixes — which is what this is
-- Non-MSP is unaffected: that book is Bullhorn + Symplr and reads no VNDLY statuses
+- Flagged by the ghr-marketintel session and confirmed here. **`Ended by Job Close` is an
+  applicant who was never selected**, closed out when the job closed — not a finished
+  assignment. Across all **561** of them: **0 have spend, 0 have an Onboarded Date, 0 have
+  an End Reason.** `Ended` by contrast is 356 work orders, all 356 onboarded and all 356
+  carrying an end reason
+- It sat in `VNDLY_RAN_STATUSES`, where the spend guard was expected to drop it. **The
+  guard's name-match fallback let 55 through** — matching a same-named worker's spend on a
+  *different* work order — so 55 unselected applicants were counted as real assignments in
+  trend, year-over-year and the ended-snapshot stats
+- Excluded outright from all three, which is what `GetClosed` and `GetOnboarding` already
+  did. `GetStatsData`'s own comment already stated the principle — *"pipeline outcomes on
+  seats nobody ever worked, not placement history"* — while listing this status as history
+- Note the name-match fallback is still right for `Ended`: it recovers real assignments
+  whose spend is keyed to a work order the XREF does not cover. The fix is removing the
+  status, not the fallback
 
-### 2.21.15 - GH #98: the prior-year line was drawn on 63% of the history
+### 2.60.2 - #91: 'Scheduled Starts' was off by exactly one day
 
-- Non-MSP scope was defined by the **present** — someone on assignment today, or (since
-  2.21.12) an open requisition — then applied to **60 weeks of the past**. Every account
-  that churned out lost its history, so year-over-year sloped **up on a book that was flat
-  to down**. The chart's whole purpose is that comparison
-- Clients with placements inside the 61-week window are now in scope even with nothing
-  current. Effective scope **1,421 → 2,282**
-- **Current headcount is unchanged: 1,049 → 1,049** — measured, not assumed. A client
-  staffed today was already in scope, so everything this adds is history
-- **In-window history 4,848 → 7,701, +2,853 placements (+59%)**
-- **Trend and year-over-year on Non-MSP will step when this deploys.** The new numbers are
-  the correct ones, but a week-to-week comparison will show the jump
-- MSP is unaffected: this is the non-MSP book only
+- `Math.round((new Date(r.current_start) - new Date()) / 86400000)` mixes two clocks: a
+  bare `YYYY-MM-DD` parses as **UTC midnight**, `new Date()` is the **local instant**. West
+  of UTC — all of our timezones — the difference is short by the offset and the rounding
+  tips it a whole day
+- Demonstrated in `America/New_York`: a start **today** evaluated to `-1` and was excluded
+  from "next 14 days"; a start **15 days out** evaluated to `14` and was included. The
+  window was shifted by one in both directions, so the KPI was wrong at both ends
+- New `Utils.daysUntilLocal()` normalises both sides to local midnight, so the difference
+  is exact whole days with no rounding. All five boundary cases now classify correctly
+- Note: the finding was labelled `likely-fixed` by an automated pass. It was not fixed —
+  the expression was still present at `index.html:10635`
 
-### 2.21.14 - A null state could silently erase a saved record
+### 2.60.1 - #79 again: 2.59.1 fixed the wrong branch
 
-- `json.dumps(None)` is the string `"null"`, which persists cleanly and reads back as
-  nothing — and the `MERGE` in `_put` wrote it straight over whatever was there. A save
-  carrying a null state against a record that **had** state would have erased it without
-  error
-- One row already exists in that shape (`extension/CUH-3-345`, 2026-10-01). It is inert on
-  read, because the client guards with `saved && saved.stage`, so nothing is currently
-  broken — this closes the path rather than repairing damage
-- Null states are now refused, and a refused write is **neither audited nor counted**,
-  so the change log cannot record an edit that never happened. The response reports
-  `skipped` alongside `saved`
-- The existing row is left alone rather than deleted: it is inert, and it is a user's own
-  record
+- App Factory's automated closure check reopened #79 and was **right**. 2.59.1 added
+  `errors` to the **non-MSP** response in `GetStatsData`; the finding cited the **MSP**
+  branch, whose payload had no `errors` key at all and whose **five** swallowing handlers
+  only printed. A dead B4 or VNDLY feed still served a 200 containing half the book
+- All five now record which feed failed (`B4 active`, `B4 upcoming`, `VNDLY active`,
+  `VNDLY upcoming`, `<label> recently ended`) and the MSP payload returns them
+- Worth recording as a process note: the first fix passed every check I ran — the file was
+  right, the diff was right, it compiled, and the key appeared in a response. It was still
+  in the wrong one of two responses in the same file
 
-### 2.21.13 - The Extensions tab showed the wrong recruiter
+### 2.60.0 - Per-diem presence was overstated by 75%
 
-- Recruiter was read from `customText12`, a free-text name field, rather than from
-  Bullhorn's own commission record. **The two disagree on roughly 1 in 9** — 18 of 200
-  sampled placements (9%), and 30 of 284 matched extension seats (11%)
-- Now joins `PlacementCommission` where `role = 'Recruiting'`, via `CorporateUser` for the
-  name. **39,935 placements carry exactly one Recruiting commission and none carry two**,
-  so joining on `placementID` is unambiguous and cannot fan the row set out — verified
-  before relying on it
-- Non-MSP only, which is the whole of it in production: the Extensions tab is hidden on
-  production MSP. The MSP-side cross-server lookup stays on the prototype, where that tab
-  is actually reachable
-- Query run against the live mirror, not just compiled
+- **#94 — Symplr orderless shifts were collapsed to `MIN(start)..MAX(end)` per (client,
+  worker).** A per-diem worker with shifts in week 1 and again in week 8 became a single
+  assignment spanning all eight weeks, and the frontend counts a worker present for every
+  week an assignment overlaps — so six idle weeks were reported as staffed
+- Measured across 1,810 groups: **505 (28%) spanned more than twice their actual shift
+  days**, the worst 283 days, and the mean span was **93 days against 53 actually worked**
+- Now grouped into **contiguous blocks** (gaps and islands — a new block starts when a
+  shift begins more than a day after the furthest end so far). 1,810 rows become 25,314,
+  which sounds expensive and is not: **1ms** on the live set, and the rewritten query
+  returns 20,938 rows against the real 193-client scope
+- **#10 — every worker at the same client shared one `position_id`**, because the
+  orderless stats rows emitted `customerid` alone, in the same namespace as the
+  `lt_orderid` rows. The frontend keys on it (`id: String(row.position_id || ...)`), so
+  distinct workers collapsed onto each other. Now `sym-ord-<customerid>-<filledby>`:
+  unique per worker and unable to collide with an `lt_orderid` or a Bullhorn `placementID`
 
-### 2.21.12 - Accounts with open requisitions were outside the Non-MSP book
+### 2.59.1 - Dropped errors, and a retention policy the client controlled
 
-- Non-MSP scope was "someone on assignment **today**", so an account with live openings
-  and nobody yet working was invisible — to a tool whose job is tracking openings, fill
-  and trends. Southwest General (4971) was the reported case: tagged correctly, 6 open
-  requisitions, 0 on assignment
-- Not isolated. Measured 2026-10-12: **1,102 tagged non-MSP clients held 5,278 open
-  requisitions — 61% of every open requisition in Bullhorn.** Auto-discovery goes from
-  357 to 1,455 clients
+- **#79 — `GetStatsData` collected `errors` and then dropped them from the payload.** A
+  failed Bullhorn or Symplr branch served a 200 containing half the book, indistinguishable
+  from a genuinely small one. Exactly the defect #86 fixed in `GetFinancialData` and #102
+  in the YoY branch; this was the third instance of the same shape
+- **#80 — snapshot retention was ordered by a client-supplied timestamp.** `DELETE ... WHERE
+  id NOT IN (SELECT TOP 100 ... ORDER BY snapshot_timestamp DESC)`, where
+  `snapshot_timestamp` comes straight from the request body. A skewed clock pins a client
+  at the top of that ordering and pushes real history out; a past timestamp makes a client
+  delete its own snapshot on the next write. Now ordered by the IDENTITY `id` — insertion
+  order, server-assigned, not influenceable by the caller. The timestamp is still stored
+  and still what the history UI shows; it simply no longer decides what survives
+
+### 2.59.0 - Three silent failures that all read as good data
+
+- **#93 — a failed scope query collapsed the book from ~2,280 clients to about 15.**
+  `discover_active_client_ids` swallowed its exception and returned an empty set, so
+  `resolve_scope_client_ids` fell back to the hardcoded rollup plus the manual allowlist
+  and every non-MSP endpoint served a 200 of drastically understated numbers, with nothing
+  on screen looking wrong. It raises now. All nine call sites wrap it in `try/finally`
+  with no `except`, so it surfaces as a real error — **a scope we cannot compute is not a
+  small scope.** `get_manual_allowlist_ids` still swallows, which is defensible and now
+  says why: losing a handful of manual additions shrinks the book at the margin rather
+  than gutting it
+- **#28 — `GetChanges` returned 200 with an empty list on a DB failure**, which the client
+  renders as "this record has no history". A dead query read as a clean audit trail. Now
+  500, with the detail logged rather than echoed, and the frontend records the failure
+  instead of silently showing nothing
+- **#66 — saving a meeting nulled `started_at`.** The MERGE set it unconditionally from
+  the body, so the stage-completion autosave — which sends only changed fields — erased
+  when the meeting began. Now `COALESCE(?, started_at)`, matching `recap_html` three lines
+  below, which already had exactly this protection
+
+### 2.58.2 - GH #100: an empty list wiped global config
+
+- The three replace-all config POSTs — client allowlist, system mappings, PM mappings —
+  each validate individual entries and refuse bad ones, but an **empty** list passed
+  validation cleanly and then `DELETE FROM` the table. The reported trigger needs no
+  malice: the Settings modal saving after a failed GET sends `[]`, and the response looks
+  entirely successful
+- Refused now with `400 empty_replacement`, unless `confirm_empty: true` is sent, so a
+  deliberate clear is still possible
+- **Authorization is unchanged** — that half of the issue is a trade-off accepted earlier
+  (GH #52/#81: settings are open by design). This fixes the accidental wipe, not the
+  permission model
+- Verified by driving all three handlers with an empty body against a cursor that raises
+  if it ever sees a `DELETE`: three passes, no delete reached
+
+### 2.58.1 - GH #101: a dead VMS query reported every placement as missing
+
+- `GetContractsComparison` wraps each VMS load in `try/except: print(...)`. If both fail,
+  `assignment_records` stays empty, the matcher takes its `if not a_list` branch for every
+  name, and the endpoint returns **200 with a reconciliation claiming every Bullhorn
+  placement is missing from the VMS**. There was no `errors` field, so a consumer could
+  not tell a real discrepancy report from a total data-load failure
+- Per-source errors are collected, and when any source fails the three buckets are
+  **withheld rather than emitted** — an empty-or-everything list is worse than no list,
+  because it reads as a finding
+- The frontend reports it as *"Comparison unavailable — a source system did not load"*
+  instead of rendering three empty lists that look like a clean reconciliation
+- Filed by App Factory and **confirmed before fixing**: both swallowing handlers are at
+  lines 100 and 132, the `missing_in_b4vndly.extend(b_list)` branch is at 233, and the
+  payload carried no `errors` key
+
+### 2.58.0 - GH #98: the prior-year line was drawn on 63% of the history
+
+- Scope was defined by the **present** — someone on assignment today, or (since 2.50.0) an
+  open requisition — and then applied to **60 weeks of the past**. Every account that
+  churned out lost its history, so the year-over-year line sloped up on a book that was
+  flat to down
+- Third arm added: clients with placements inside the 61-week reporting window, even with
+  nothing current. Auto-discovery **1,455 → 2,322**; effective scope **1,421 → 2,282**
+- **Current headcount does not move: 1,049 → 1,049.** A client with someone on assignment
+  today was already caught by the first arm, so everything this adds is history. Verified
+  rather than argued from construction
+- **In-window placement history 4,848 → 7,701, +2,853 (+59%).** The prior-year series was
+  being drawn on 63% of the real history
+- Expect trend and year-over-year on Non-MSP to step when this lands. That is the point —
+  but anyone comparing this week to last will see it
+
+### 2.57.0 - Clinician-response exceptions, and a null state could erase a save
+
+- **A null state is now refused rather than stored.** `json.dumps(None)` is the string
+  `"null"`, which persists cleanly and reads back as nothing — and the `MERGE` would write
+  it straight over a real saved state. `impactmgr.workspace_state` already holds one row
+  in that shape (`extension/CUH-3-345`, 2026-10-01). It is inert on read because
+  `extensionEdit` guards with `saved && saved.stage`, but **the same write against a
+  record that had state would have silently erased it.** The refusal is not audited or
+  counted either, so the change log cannot record an edit that never happened
+- **Two more exceptions, from the clinician's own answer:** "No" on a seat that is not
+  Declined (it needs a close or backfill decision nothing in either VMS will supply), and
+  "Possibly" (someone has to go back to them)
+- Honest about the size: Donny's automation runs on Cooper Nursing only, 84 placements
+  enrolled, **5 replies landed** when this was written — so it flags 2–3 seats today. It
+  scales with the rollout rather than needing a rewrite
+
+### 2.56.0 - Recruiter comes from Bullhorn's commission record
+
+- Requested: *"recruiter should pull from bullhorn placement recruiters."* It was reading
+  `PLACEMENT_DIM.Recruiter` from the warehouse on MSP and `customText12` — a free-text
+  name field — on non-MSP. Neither is Bullhorn's record of who recruited the seat
+- **The warehouse disagrees with Bullhorn on about 1 in 9.** 18 of 200 sampled placements
+  (9%), and on the live extensions payload **30 of 284 matched seats (11%)** now show a
+  different, correct name
+- **No splits to resolve.** 39,935 placements carry exactly one `role='Recruiting'`
+  commission and none carry two, so joining on `placementID` is unambiguous and cannot
+  fan the row set out — checked before relying on it
+- Non-MSP joins `PlacementCommission` inline, since that branch already runs on the
+  Bullhorn mirror. MSP needs a second connection, because its rows come from the
+  warehouse and the commission table is not mirrored there — so it is a post-pass keyed
+  on the matched `placementID`, in chunks of 1,000
+- Best effort: if the lookup fails the warehouse name stays. A slightly stale recruiter
+  beats a blank column
+
+### 2.55.0 - Exception monitoring, as a filter rather than a notification
+
+- Two exceptions, both detected reliably, surfaced as a clickable count on the Extensions
+  panel and a banner in the modal where the work happens:
+  - **ATS ahead of the VMS** — Bullhorn shows the end moved past the original but the VMS
+    has recorded no acceptance. **42 seats**
+  - **About to lapse** — ends within 7 days and still reads Pending Extension Review, so
+    nothing has been recorded in either system. **34 seats**
+- **Thresholds measured, not guessed.** "Ending soon with nothing recorded" returns 2 at
+  3 days, 34 at 7, and 59 at 14. Seven is the one that is both urgent and small enough to
+  clear. Together the two flag 73 of 331 seats — about a fifth
+- **A third candidate was dropped because it can never fire.** "Past its end date and
+  still pending" is impossible: the feed bounds `End_Date BETWEEN today AND +45 days`, so
+  `days_left` runs 0..45 with no negatives. Building that detector would have been dead
+  code that looked like a working safeguard
+- **Deliberately not a push alert.** There is no scheduler in this app — SWA managed
+  functions are HTTP-trigger only — and no mail sender anywhere in the API. A daily digest
+  would need `Mail.Send` added to the app registration by an AAD admin plus an external
+  cron. A count where people already look is the honest version until someone owns a
+  destination, and the volume has been watched for a week
+
+### 2.54.0 - Stage 5: daily approvals and accepted extensions
+
+- The workflow's "Key Outputs in Impact Manager" — daily approvals, daily accepted
+  extensions, pipeline by status — now sit in a panel at the top of the Extensions tab
+- **No new infrastructure, and no snapshotting.** Both headline numbers are already
+  stored as dates, so the series is a `GROUP BY` rather than something that has to be
+  accumulated going forward. `Offer_Date` is the client approving; `Date_Awarded` is the
+  spec's *"count accepted extensions only when the modification moves to Work Order"*
+- New endpoint `api/GetExtensionMetrics` (`/api/extension-metrics?days=30`). The three
+  pipeline counts are computed from the rows already loaded, **not** the endpoint, so the
+  panel and the list beneath it cannot disagree
+- **The VNDLY series needed real handling.** Measured across the 1,035 `Date Extension`
+  rows: 1,035 raw rows are only **813 distinct events** (one is stored six times over),
+  `Revision Number` is **not** a time ordering (revision 8 precedes revision 7 on the
+  same work order), and **417 rows carry no status at all**. So it is `SELECT DISTINCT`
+  on (work order, status, last-modified), ordered by date alone, nulls excluded — 478
+  usable events
+- **The two books are shown side by side and never summed.** B4's dates are recorded
+  events and distinguish client from vendor; VNDLY reports one looser status with no such
+  split. A combined "accepted" would merge two definitions
+- Corrects something said earlier in the day: VNDLY's `Last Modified` is *not* a drifting
+  last-touched timestamp. The rows are event snapshots, so it is usable history — the
+  real limits are duplication, ordering and nulls
+
+### 2.53.1 - The Awaiting Client lever the spec actually asked for
+
+- The spec asks for it by name — *"Add a lever that is titled Awaiting Client so we can
+  manually switch that to show that the PMO has the extension in front of the client"* —
+  and we only had it as one option among five in the designation dropdown
+- **It matters more than a UI nicety.** Stage 3 of the workflow is "Extension Submitted
+  to Client = Yes", which had **no representation anywhere in the app**, and the Send
+  Extension checkbox that came closest is the one 2.53.0 removed. Flipping this lever is
+  now the record of that handoff — the one step in the workflow no VMS reports
+- Writes through the same `.ext-stage` select, so there is one stored designation and
+  nothing to keep in sync
+- **Repaints in place rather than re-rendering.** The first attempt re-opened the row
+  detail, which reads the stage back out of *saved* workspace state — so the lever
+  snapped straight back to off, and would have discarded any other unsaved edit on the
+  record. Same hazard as the tabs
+- Known rough edge: the ladder above still shows the saved designation until you press
+  Save, so the lever can read on while the ladder still says Pending Extension Review.
+  Correct on save; re-rendering to fix it would reintroduce the wipe
+
+### 2.53.0 - The four designations replace the checklist
+
+- From *Extension Tracker in Impact V1.docx*: the four designations go **"in place of"**
+  the Confirm Client / Gather RTO / Send Extension / Extension Accepted checklist — the
+  screenshot in the doc is that exact checklist — and *"We can keep Gather RTO under
+  Awaiting Vendor Approval as they are hand in hand"*
+- The Designation tab is now a **four-rung ladder**, each rung carrying the doc's own
+  sourcing so the screen shows its working rather than asserting a status:
+  - **Pending Extension Review** — no decision recorded in either system
+  - **Awaiting Client Approval** — VNDLY pending modifications, awaiting client; manual
+    lever here until the VNDLY process changes
+  - **Awaiting Vendor Approval** — VNDLY "Work Order Extensions – Pending Approval", or
+    B4 Network Activity filtered to "extension offer pending" for GHR divisions
+  - **Extension Accepted** — migrates to a new contract on the Trends tab
+- `Extension Declined` is **not** a rung. It is a seat leaving the ladder, so a declined
+  seat gets a banner with its reason instead of a position
+- **Confirm Client and Send Extension stay in the DOM as hidden checkboxes.**
+  `SAVE_EXTENSION` rebuilds `steps` from whatever `.ext-step` boxes it finds, so removing
+  them outright would have dropped their stored values on the next save
+- Tab 2's subtitle was "N of 3 done", which is meaningless with one checkpoint left; it
+  now shows the client decision
+
+### 2.52.0 - The extension modal is four tabs
+
+- Built from the tabbed redesign: **Designation · Checkpoints & notes · System match ·
+  Seat & rates**, each with a live subtitle (the current designation, "N of 3 done", the
+  match state, "Bill, GM, dates, record"). One ~800px wall becomes 241–555px per tab
+- Re-implemented in our idiom rather than dropped in. The design file is a Vue-style
+  template against its own design system; this is our template literals, our Tailwind,
+  our `EXT_DECISIONS` and `Utils.extensionStage` wiring. Colours and conventions
+  unchanged, as asked
+- **Every panel renders and inactive ones are hidden.** `SAVE_EXTENSION` reads each field
+  with `querySelector(...)?.value || ''`, so a field *not* in the DOM saves as an empty
+  string and **wipes the stored value**. Rendering only the active tab would have
+  silently deleted the RTO, notes and new end date every time someone saved from another
+  tab. The `Declined/Backfill` reason field keeps a hidden input for the same reason
+- Tab switching toggles classes rather than re-rendering, so text typed but not yet saved
+  survives. The choice is held on the store, so a save or stepping to the next seat comes
+  back to the same tab
+- Verified by walking all four tabs against a live row: correct labels, exactly one panel
+  visible, **no save field missing on any tab**, no sideways scroll, a typed RTO value
+  surviving a switch away and back, and no page errors
+
+### 2.51.1 - 2.51.0 shipped a broken VNDLY branch
+
+- I added `cand_ext_response` / `cand_ext_comments` to the SELECT lists in 2.51.0 but not
+  to the two things that actually carry them: the `OUTER APPLY (SELECT TOP 1 ...)` that
+  reads `#bh_wo`, and the outer `SELECT ... INTO #b4_bh`. Both branches referenced
+  `bh.cand_ext_response`, which neither returned, so **the VNDLY branch failed at
+  runtime** — it was live on prototype for about half an hour
+- Found by tracing an unrelated fan-out, not by testing the change. The Python compiled
+  and the temp-table preps ran; neither exercises the query that broke
+- Both now run against the live warehouse: VNDLY **78 seats**, B4 **348 seats**, and the
+  one live clinician reply comes through — *"I found another contract closer to home !"*
+  against a `No`
+- Separately, and **not** caused by this: `#bh_wo` holds **282,199 rows for 528 distinct
+  links**, a 534× fan-out, because `BH_PLACEMENT_RAW_TO_B4HealthOrder` is joined on
+  `clientCorporationID` alone just to look up a tenant name. The `OUTER APPLY` collapses
+  it to one row per work order, so output is correct and the cost is performance only.
+  The comment above it still claims "106 links"
+
+### 2.51.0 - The clinician's own extension answer, from Bullhorn
+
+- Donny Wright's Extension Request automation (enabled 2026-10-09: approved placements,
+  Cooper only, Nursing division, journey starts 45 days before the end date) writes the
+  clinician's reply onto the Bullhorn placement — `customInt10` *Candidate Extension
+  Response* and `customTextBlock7` *Candidate Extension Comments*. Both are now read
+- **This is the stage-2 signal the extension workflow asks for and neither VMS carries.**
+  "Interested in extending? Yes with RTO / Yes no RTO / No" maps one-for-one onto the
+  picker's four values, with `Possibly` covering the workflow's *Unclear → needs review*
+  branch
+- **`0` is not one of the picker's values.** It sits on 3,837 placements as an unset
+  default and is nulled in the query, so it never reads as an answer. Taking
+  `customInt10` at face value would have invented ~3,800 responses
+- Shown on the **Gather RTO** step, ranked: typed here > the clinician's own answer > the
+  VMS copy. The clinician outranks the VMS because it is them speaking rather than a
+  transcribed field, and the free text is where the dates actually arrive — one live
+  reply reads *"Updated RTO October 30, November 13"*. A bare `Yes - no RTO` with no
+  comment still counts; it closes the step rather than leaving it open
+- Read from `BH_PLACEMENT_RAW` in the warehouse, which carries both columns and was
+  verified to match the live Bullhorn mirror exactly, so no second connection is needed.
+  All four branches return the same row shape; Symplr returns nulls, having no Bullhorn
+  placement behind it
+
+### 2.50.0 - Trend PDF export, and accounts with open reqs are in scope
+
+- **Export PDF on the Trend tab** (Matthew Kyle): the chart plus the breakdown and
+  Weekly Summary tables, as one file. The chart is pulled through `canvas.toDataURL()`
+  rather than the clone path the Financials export uses — `cloneNode` on a `<canvas>`
+  copies the element and **not its pixels**, so cloning the trend card yields a blank
+  white box where the graph should be. Verified by running the export against a drawn
+  canvas: 1.1MB, valid `%PDF`, and the clone-loses-pixels check confirmed true
+- **Non-MSP scope now counts open requisitions, not just current placements.** Scope was
+  "someone on assignment today", so an account with live openings and nobody yet working
+  was invisible to a tool whose job is openings, fill and trends. Southwest General
+  (4971) was the reported case — tagged correctly, 6 open reqs, 0 on assignment
+- Not isolated: **1,102 tagged non-MSP clients held 5,278 open requisitions — 61% of
+  every open req in Bullhorn.** Auto-discovery goes 357 → 1,455 clients
 - `Accepting Candidates` is the only genuinely open status. `NOT IN (Closed, Filled,
-  Archive)` looks equivalent and is not: it sweeps in Cancelled (45,592) and Placed
-  (25,632), which inflated the same measurement to 53,222 before it was checked
-- **This moves numbers.** Headcount today changes by 1, but **1,030 placements enter the
-  60-week window**, so the trend and year-over-year series shift. That is the correct
-  direction — this is real non-MSP work the book was missing, the same under-reporting
-  recorded in #98 — but it is not an openings-only change
-- MSP is unaffected: `resolve_scope_client_ids` is the non-MSP book only
+  Archive)` looks equivalent and is not — it sweeps in Cancelled (45,592) and Placed
+  (25,632), which inflated the same figure to 53,222 before it was checked
+- **Knock-on worth knowing:** headcount today moves by 1, but **1,030 placements enter
+  the 60-week window**, so trend and YoY shift. That is the correct direction — this is
+  real non-MSP work the book was missing — but it is not an openings-only change
 
-### 2.21.11 - Non-MSP's header made the whole page scroll sideways
+### 2.49.4 - A cancelled VNDLY extension read as "still to do"
 
-- At 1280px — an ordinary laptop width — the **document itself** scrolled horizontally by
-  43px on Non-MSP. A document-level sideways scroll is the one overflow signal that is
-  never a false positive, because nothing is scrolling it deliberately
-- The tab-bar wrapper carried `shrink-0`, so it could never narrow, and `#viewToggles`
-  had no `overflow-x-auto` to fall back on. Ten tabs simply did not fit, so the page grew
-  instead. `shrink-0` → `min-w-0`, and `overflow-x-auto min-w-0` added to the tab row, so
-  the tabs scroll themselves
-- **MSP is unaffected and unchanged.** It renders seven tabs, which fit, so the overflow
-  never occurred there and `min-w-0` never engages — measured identical before and after:
-  0px page overflow, 0px tab scroll, 7 tabs. Found on the prototype (ten tabs) and
-  confirmed against Non-MSP's tab set before shipping
-- Measured at 1280px: Non-MSP 43px → **0px**
+- The `Date Extension` modification status carries four values, measured 2026-10-07:
+  `None` 417, `Accepted` 313, `Cancelled` 198, `Submitted` 62. Only `accepted` and
+  `submitted` were mapped, so **`Cancelled` fell through to the default** and a withdrawn
+  extension was labelled "Pending Extension Review" — work still to do, on a seat whose
+  modification had already been pulled
+- On seats actually inside the 45-day window that is **9** (against 41 with no
+  modification at all, 26 accepted, 22 submitted). Small, but wrong in the direction that
+  wastes a PM's time
+- `None` is left falling through deliberately: the modification exists but has not been
+  submitted, and the extension workflow is explicit that a seat must not carry a
+  client-facing VMS status before the PM has submitted it to the client
+- VNDLY-only, so prototype-only — the Extensions tab is not on production MSP, and the
+  non-MSP book is Bullhorn + Symplr
 
-### 2.21.10 - Year-over-year trend no longer times out on Non-MSP (GH #97, #46, #45)
+### 2.49.3 - "Extension Accepted" was ticked on seats with nothing in flight
 
-- **#97 — the Non-MSP year-over-year overlay returned a 500 after 45 seconds**, so the
-  comparison line never drew. The gateway gives up at 45s and the endpoint was past it.
-  Two causes, both the same mistake in two places:
-  - The Symplr branch built its 60 weeks and its placement union as CTEs. SQL Server
-    inlines a CTE, so the week table was rebuilt per placement and the union re-scanned
-    per week. Materialised into `#yoy_weeks` and `#yoy_pl` with an index on the date
-    range, it is 5.5s for the same 12,806 rows — it had been over four minutes
-  - The Bullhorn branch resolved each placement's health system with a nested `CASE`
-    over the mapping list. Replaced with `build_system_rollup_values()` — the same
-    mapping as a `VALUES` list joined once. 6.1s for 65,034 rows. The helper lives in
-    `shared_code/bullhorn_systems.py` beside the `CASE` builder the other endpoints
-    still use, so the mapping stays defined once
-- **#46 — the VNDLY spend lookups were correlated subqueries** re-evaluated per work
-  order, in both `GetTrendData` and `GetYoYTrendData`. Pre-aggregated into
-  `#vndly_wo_spend` / `#vndly_name_spend`: **13,840ms to 164ms**, measured on the live
-  warehouse. The same fix also makes the terminal-work-order test *correct* — the old
-  name match was unbounded, so a same-named worker's spend on a **different**
-  assignment kept a work order that never ran alive. Of 861 terminal work orders the
-  bounded version drops 8 false positives (name-matched spend 35-220 days past their
-  own end date, or ending before they started) and adds 26 real ones the name match
-  missed, now linked through `WOSystemKey`, which is unique 1,815 of 1,815
-- **#45 — `Access-Control-Allow-Origin: *` removed** from `GetYoYTrendData`
+- Reported as "why is she marked as extension accepted". The checklist's read-only
+  Extension Accepted row fell back to `!!r.is_extension` on any seat with no Bullhorn
+  counterpart. `is_extension` means the contract hangs off a `Parent_Contract_ID` — that
+  the seat is itself the product of an **earlier** extension — not that its own extension
+  has been accepted
+- Maria Garcia's `362925` hangs off `355837`, so the checklist read Accepted while the
+  Designation on the same screen read *"Pending Extension Review — no approval activity
+  recorded yet"*. The Designation was right: nothing is in flight for that seat
+- **13 of 23 unlinked seats** were ticked against a Designation that said otherwise — 12
+  "Pending Extension Review" and one "Awaiting Vendor Approval", which is self-
+  contradictory. Several were 3–4 days from ending, so the screen claimed the work was
+  done on the seats that needed it most
+- Both call sites now share one `Utils.extensionAccepted()`, which reads the Designation
+  and nothing else. Contradictions go to **0 by construction**, and the tick count lines
+  up exactly with the 77 Accepted designations
+- The 42 linked seats where **Bullhorn already shows the end moved past the original but
+  the VMS recorded no acceptance** are no longer silently ticked. They now carry an amber
+  note saying so, because that is usually the VMS record being behind rather than the
+  extension not having happened — but it is evidence, not a second way to be accepted
 
-### 2.21.9 - Rate-Intel weeks, and free-text arithmetic hardened (GH #92, #49, #65)
+### 2.49.2 - shrink-0 on the tab bar made the whole page scroll sideways
 
-- **#92 — Rate Intel bucketed weeks to MONDAY** while every other weekly series in the
-  app buckets to SUNDAY, despite the comment directly above it saying "Sunday-based".
-  Worse than an off-by-one: for a Sunday the old expression returned the *previous*
-  Monday — six days earlier, a different week. Verified across a full week of dates; all
-  seven disagreed with the other endpoints, so any comparison of a rate week against a
-  trend week was joining the wrong bucket
-- **#92 also — the endpoint never pinned `DATEFIRST`.** It opens a raw `pyodbc.connect`
-  instead of going through `data_source._pin_datefirst`, so `DATEPART(WEEKDAY)` depended
-  on the server's language default. Now `SET DATEFIRST 7`, as elsewhere
-- **#49, #65 — free-text columns were multiplied before being cast.**
-  `TRY_CAST(p.hoursPerDay * 5 AS DECIMAL)` casts the product, so the multiply runs first
-  and one unparseable value aborts the whole Bullhorn branch; `GetFinancialData` had no
-  `TRY_CAST` at all. Each column is cast first now. **Latent, not active** — 0 bad values
-  across 52,026 live placements — so this guards against a silent partial book rather
-  than correcting a figure
+- Found while auditing the live MSP prototype, not reported: at 1280px the **page
+  itself** scrolled horizontally — 49px on Open Jobs, 50px on Extensions, 87px on
+  Closed. A document-level sideways scroll is the one overflow signal that is never a
+  false positive, since nothing is scrolling it on purpose
+- The tab bar already carried `overflow-x-auto` and a comment saying ten tabs should
+  "degrade to a scroll on narrow screens instead of breaking the header layout". Its
+  wrapper carried `shrink-0`, which meant the wrapper never narrowed, so the inner
+  scroll could never engage and the page broke instead — the exact outcome the comment
+  said it was preventing
+- `shrink-0` → `min-w-0` on the wrapper, `min-w-0` added to `#viewToggles`. Measured at
+  1280/1366/1440: page overflow 49/0/0 → **0/0/0**, tab-bar scroll 0 → 261/205/157
+- `sm:ml-auto` is kept, so the right-anchoring that stopped the 446px of tab drift
+  between views still holds
 
-### 2.21.8 - Three number-correctness fixes (GH #64, #47, #48)
+### 2.49.1 - The new source block rendered empty on the seats it was for
 
-Each verified against the source data before any figure moved. Applied here because
-production non-MSP is where these numbers are actually read.
+- The `What <source> records` block added in 2.49.0 led with `woid || contract_id`.
+  Both come back **null** on MSP rows — the populated identifier is `parent_ref`. I took
+  the field names from the SQL aliases instead of from a live payload, and a live check
+  on the MSP prototype showed the block absent on exactly the seats it was written for
+- Field list now verified against a real `extensions-data` response and rendered against
+  a real unlinked row rather than an invented fixture: `B4 Ref`, start, end, hours/wk,
+  agency, unit, manager, status all populate
 
-- **#64 — a soft-deleted placement counted as a fill.** `GetClosed`'s placement-existence
-  apply had no `p.isDeleted = 0`, unlike every other `View_Placement` query in the repo,
-  so a deleted placement made a resolved order report FILLED and supplied the
-  `first_placed` that days-to-close anchors on. Live mirror over 30 days: 1,049 resolved
-  orders, 368 counted FILLED, 365 with a live placement — **3 filled only by a deleted
-  row**
-- **#47 — the Financials and Trend tabs disagreed, and neither was right.** Over 13
-  months of Symplr orders: worked (`hours > 0`) 287,625 rows / $85,001,816; never ran
-  (`hours = 0`) 528,035 rows / **$141,958 phantom**; credits (`hours < 0`) 1,351 rows /
-  **−$400,541 real**. Financials counted all three and carried the phantom revenue;
-  Trend gated on `> 0` and discarded the credits; the two differed by $258k. Both use
-  `<> 0` now — drops what never ran, keeps the reversals
-- **#48 — half the Symplr book reported headcount 0.** `COUNT(DISTINCT lt.tempid)` is
-  null for per-shift orders with no `lt_order` row: 414,452 rows carrying $43.8M showed
-  real billings beside a headcount of zero. Falling back to `o.filledby` turns 149,309
-  orderless worked rows from **0** into **2,536** distinct workers
+### 2.49.0 - The extension modal's left column had 193px of dead space
 
-### 2.21.7 - The domain allowlist could be bypassed through the display-name claim
+- **Reported from the prototype: whitespace in the extension popup.** Measured it rather
+  than eyeballed it — on a seat with no counterpart record the left column's content
+  ended 193px above the right column's, and that block of nothing read as a rendering
+  fault. An earlier pass (2.39.1) moved the form out to fix a different gap; this is the
+  remaining one, and it only shows on seats the crosswalk cannot link
+- **Cause:** the grid item stretched to the row height but its *content* did not, so the
+  extension-window bar floated wherever the short content left it. The panel is now a
+  full-height flex column and the bar is pinned with `mt-auto`, so it bottoms out level
+  with the right column instead of hanging mid-air
+- **That alone only moved the gap, so the column now carries real content.** New
+  `What <source> records` block on no-match and single-system seats: the source
+  identifier — the key that *would* have done the linking if anything carried it across
+  — plus start, end, hours, agency, unit, hiring manager and status. Empty fields are
+  dropped rather than rendered as blanks, so a sparse seat gets a short list and not an
+  empty table
+- Verified by rendering the modal locally against a stubbed API and measuring both
+  columns: 193px gap before, 0px after
 
-- `EMAIL_CLAIM_TYPES` included `.../identity/claims/name` and `_extract_email` returned
-  the first candidate containing an `@`. This provider accepts **any** Microsoft
-  account, and the holder of a personal one sets their own display name — so an account
-  named `someone@ghrhealthcare.com` passed the domain gate and reached every `/api/*`
-  endpoint whenever `userDetails` itself carried no `@`. Display name is user-controlled
-  text, not an identity
-- The claim is removed, and explicit claims (`emailaddress`, `upn`,
-  `preferred_username`, `email`, `emails`) are now checked **before** `userDetails`
-- Verified against both attack shapes and four legitimate sign-in shapes, including
-  email-only-in-`userDetails`, which was the lockout risk in removing a claim type
-- Reported by the app-factory scan as GH #26
+### 2.48.3 - The non-MSP prior-year overlay works (GH #97)
 
-### 2.21.6 - The site stops serving the repo it is deployed from
-- Only `/`, `/*.html` and `/api/*` were gated. `app_location` is `/` on all four
-  workflows, so the repo root **is** the deployed site and everything else was served
-  anonymously. Verified against production with no session: `MERGE_PLAN.md`,
-  `DAN_UI_FEEDBACK.md`, `NON_MSP_FILTER_AUDIT.md`, `BULLHORN_PORT_SPEC.md`, `CLAUDE.md`,
-  `staticwebapp.config.json`, `.github/workflows/*` and `tools/*` all returned **200**.
-  Those carry client names, headcounts, revenue figures and database and table names
-- One `"/*"` → `authenticated` rule, placed **last** so every anonymous exception above
-  still wins: `/api/health`, `/.auth/*`, `/favicon.ico`. `ghr-commissions` already runs
-  this exact rule in production
-- Config only. No UI and no code changed
-- Tested on the non-MSP prototype before coming here: the documents went 200 → 302, while
-  `/api/health` and `/favicon.ico` stayed 200, and a real Logic App run still
-  authenticated through its `x-api-key` and rebuilt both caches
+The Symplr branch took **over four minutes** — it blew the gateway on its own, which is
+why that overlay never loaded. The cause was the one this codebase keeps producing:
+**SQL Server inlines a CTE**, so `Placements` — which contains a `GROUP BY` over 817k
+orders — was re-evaluated for each of the 60 weeks it is joined to.
 
-### 2.21.5 - Money formatting, and a settings file that was being published
-Bug fixes only; the UI work from the 2026-09-30 feedback stays on the prototype.
+Materialised into temp tables instead:
 
-- **Closed KPIs rendered annualised revenue as `+$112428.3k`** -- a number that reads as
-  a hundred thousand when it means a hundred *million*. That formatter had no millions
-  branch at all. Seen live on production non-MSP. All seven money formatters now share
+| step | |
+|---|---|
+| build placements | 1,735ms (8,683 rows) |
+| build weeks | 1ms |
+| join + `GROUP BY` | **553ms** (26,089 rows) |
+
+**4+ minutes → 2.3s**, same output. Sixth time in this codebase that an inlined CTE or a
+correlated subquery has had to be materialised.
+
+Also fixed here: the `DECLARE`/`INSERT` added in 2.48.2 had no `SET NOCOUNT ON`, so
+pyodbc read the INSERT's rowcount as the first result set and the **Bullhorn** branch
+died with `'NoneType' object is not iterable` in 5s. Found with the per-branch
+`?debug=bullhorn|symplr` mode added while chasing this, which is kept — running one
+branch at a time answers inside the gateway where running both does not.
+
+### 2.48.2 - The YoY system rollup was a CASE evaluated 334k times (GH #97)
+
+Measuring the proposed fix for #97 disproved it, and turned up the real cost.
+
+- **Aggregating to `system` saves nothing on non-MSP.** `system` falls through to the
+  per-client name there, so week x system is still **38,271 rows** against week x facility's
+  59,104 — the grouping was never the problem
+- **The `system_case` CASE was.** `build_system_case_expr` renders a 13-branch CASE that
+  SQL Server evaluates once per row, and across the 60-week join that is 334k rows:
+  **25.1s with the CASE against 10.1s** joining the same mapping as a table, for
+  byte-identical output (44,749 rows, 281,124 summed headcount)
+- `build_system_rollup_values()` emits that mapping as a `VALUES` list; the YoY Bullhorn
+  branch declares it as a table variable and joins. The CASE form stays everywhere the
+  row count makes it irrelevant
+
+Also recorded while measuring: the client **sums** `headcount` across rows, but each row
+is a `COUNT(DISTINCT worker)` — so a worker at two facilities in one week is counted
+twice. Summed 282,961 against 268,347 truly distinct, a **5.4% overstatement** that
+applies to MSP today as well. Noted on #97 rather than changed here.
+
+### 2.48.1 - The actual cause of the dead YoY overlay
+
+Parallelising and caching in 2.48.0 was not enough — the endpoint still returned a 500,
+because **one branch alone exceeded the gateway**. Measured each in turn:
+
+| | |
+|---|---|
+| Symplr `lt_order` half | 2.4s |
+| Symplr **orderless** half | **60.7s** |
+
+The orderless branch joined `profile_client`, `profile_temp` and `regions` across all
+**817k** orders and aggregated afterwards. Grouping the orders first and joining the
+lookups to the much smaller result is **6.9s**, for byte-identical output — 76,406 week
+rows, 2,782 distinct workers.
+
+The derived table is aliased `o` so the injected `{sys_case_orders}`,
+`{division_case_orders}` and `{scope_orders}` expressions, all built against
+`'o.customerid'`, still bind.
+
+### 2.48.0 - The non-MSP prior-year overlay was dead, and its filters lied (GH #50)
+
+Found while verifying #50: **`yoy-trend-data` was returning a 500 on non-MSP** — 45.2s
+against the 45s gateway — so the prior-year overlay never loaded on that book at all.
+MSP answered in 9.1s and was fine. The same uncached code is on `main`, so production
+non-MSP has the same dead overlay.
+
+- **Fixed by running the two sources concurrently and caching the result.** Bullhorn and
+  Symplr ran one after the other with nothing cached, and a sixty-week historical series
+  does not move within a day. Each branch gets its own connection
+- **The endpoint also dropped its `errors` list from the payload**, the same defect
+  `financial-data` had in #86 — a failed source rendered the overlay with half the book
+  and no sign of it. Now returned, and a partial result is never cached
+- **#50 -- the two prior-year filter guards disagreed with each other, silently.** The
+  payload is a weekly aggregate by system / category / facility / division / region /
+  vendor_type and carries **no profession or specialty column**. The profession guard
+  short-circuited on `undefined` and kept 100% of rows, so a filtered current year was
+  compared against an unfiltered prior year; the specialty guard compared `''` against
+  the selection, matched nothing, and made the overlay vanish instead. Both short-circuit
+  the same way now, and the tab states plainly that the prior-year line is not filtered
+  by profession or specialty when such a filter is active — rather than leaving the
+  reader to infer it from a wrong delta
+
+### 2.47.1 - Rate-Intel weeks were off by a week, and free-text arithmetic hardened (GH #92, #49, #65)
+
+- **#92 -- Rate Intel bucketed weeks to MONDAY while every other weekly series in the app
+  buckets to SUNDAY**, despite the comment directly above it saying "Sunday-based". Worse
+  than an off-by-one: for a Sunday the old expression returned the *previous* Monday, six
+  days earlier — a different week entirely. Verified across a full week of dates; all
+  seven disagreed with `GetTrendData` / `GetHoursData` / `GetFinancialData` /
+  `GetYoYTrendData`. Any client-side comparison of a rate week against a trend week was
+  joining the wrong bucket
+- **#92 also: this endpoint never pinned `DATEFIRST`.** It opens a raw `pyodbc.connect`
+  rather than going through `data_source._pin_datefirst`, so `DATEPART(WEEKDAY)` depended
+  on the server's language default. `SET DATEFIRST 7` now, as every other MSP endpoint
+  does
+- **#49, #65 -- free-text columns multiplied before being cast.** `clientBillRate` and
+  `hoursPerDay` are free text in the Bullhorn views;
+  `TRY_CAST(p.hoursPerDay * 5 AS DECIMAL)` casts the *product*, so the multiply runs
+  first and one unparseable value aborts the whole Bullhorn branch —
+  `GetFinancialData` had no `TRY_CAST` at all. Each column is cast before the arithmetic
+  now, in `GetFinancialData`, `GetTrendData` and `GetHoursData`.
+  **Latent, not active:** 0 bad values across 52,026 live placements, so this is
+  hardening against a silent partial book rather than a figure that was wrong
+
+### 2.47.0 - Three number-correctness fixes, verified against the source data (GH #64, #47, #48)
+
+- **#64 -- a soft-deleted placement counted as a fill.** The placement-existence apply in
+  `GetClosed` had no `p.isDeleted = 0`, unlike every other `View_Placement` query in the
+  repo, so a deleted placement made a resolved order report FILLED and supplied the
+  `first_placed` that days-to-close is anchored on. Measured on the live mirror over 30
+  days: 1,049 resolved orders, 368 counted FILLED, 365 with a live placement — **3 were
+  filled only by a deleted row**
+- **#47 -- Financials and Trend disagreed, and neither was right.** Over 13 months of
+  Symplr orders:
+
+  | bucket | rows | revenue |
+  |---|---|---|
+  | worked (`hours > 0`) | 287,625 | $85,001,816 |
+  | never ran (`hours = 0`) | 528,035 | **$141,958 phantom** |
+  | credit/reversal (`hours < 0`) | 1,351 | **−$400,541 real** |
+
+  Financials counted all three, so it carried the phantom revenue. Trend gated on
+  `> 0`, so it discarded $400k of genuine credits. The two tabs differed by $258k. Both
+  now use `<> 0`, which drops the orders that never ran and keeps the reversals — more
+  correct than either was, not merely consistent. The issue proposed adopting Trend's
+  `> 0`, which would have silently overstated revenue by $400k
+- **#48 -- half the Symplr book reported headcount 0.** `COUNT(DISTINCT lt.tempid)` is
+  null for per-shift orders with no `lt_order` row: 414,452 rows carrying $43.8M. Those
+  groups showed real billings beside a headcount of zero, so any $/head figure was wrong
+  or divided by zero. Falling back to `o.filledby` turns 149,309 orderless worked rows
+  from headcount **0** into **2,536** distinct workers
+
+### 2.46.0 - Meeting attribution, and the allowlist stops wiping itself (GH #88, #68, #41)
+
+- **#88 -- meetings stay team-wide; what was missing was the author of an edit.**
+  Confirmed as the intended model: meetings are between the whole team, and
+  division/department scoping is a later concern. So the control is attribution, as it
+  is for settings. `created_by` was set on insert only, so an edit left `updated_at`
+  with nobody against it; there is now an `updated_by` column (additive migration, same
+  idiom as the others in that file), set on both branches of the MERGE, and each save
+  joins the shared `impactmgr.changes` timeline
+- **#68 -- a POST with no `allowlist` key deleted every forced client.** The handler
+  replaces the whole table, and an absent key defaulted to `[]`, so `{}` wiped the
+  configuration for both sources and committed. Those ids drive scope resolution across
+  every non-MSP endpoint, so the accounts simply vanished from the dashboard. An absent
+  key is now a 400; send `[]` explicitly to clear. A non-numeric `client_id` is
+  **rejected** rather than silently dropped, for the same reason -- a payload whose ids
+  were all malformed used to clear the table and report success
+- **#41 -- closed as accepted.** Browser-side redaction is the agreed model
+
+### 2.45.0 - Record who changed settings (GH #52, #81)
+
+Settings are open by design — anyone who can sign in may edit the client allowlist, the
+system mappings and the PM mappings. So the control is **attribution, not
+authorisation**: every config write now lands in `impactmgr.changes` against the
+signed-in principal, giving one queryable timeline of who changed what and when.
+
+- **`shared_code/audit.py`** holds the one implementation. It is the mirror
+  `WorkspaceState` has used for a while, factored out so the config endpoints record
+  changes the same way instead of each inventing its own
+- **Newly attributed:** `GetSystemMappings`, `GetPMMappings`, `SaveHistory`. The audit
+  row is written **before** the delete in the replace-all handlers, so a failure
+  part-way still leaves the attempt attributed
+- **`GetClientAllowlist`** already stored `added_by` per row; it now also appears on the
+  shared timeline, and its `_user_from_req` prefers the verified principal email so this
+  endpoint attributes the same way the others do
+- **Fixes the other half of #69.** `WorkspaceState`'s local copy built the row id as
+  `scope:entity:timestamp` with no length cap against an `NVARCHAR(100)` column, so a
+  long entity id overflowed and — the audit write being best-effort — the row was
+  dropped without a trace. The shared helper trims the entity id and keeps the timestamp
+  that makes it unique
+- Audited every endpoint that writes: all nine now attribute. (`GetPositions` matched the
+  first scan on the comment `# Update counts`, not SQL — it is read-only)
+
+### 2.44.1 - The #46 fix was correct and far too slow
+
+A regression I shipped in 2.43.2 and did not catch, because I verified the fix's
+**correctness** and never its **cost**.
+
+- The new effective-end expression was two correlated subqueries evaluated per work
+  order: **29.8s** on its own. `trend-data` returned a **500** on its first cold rebuild
+  — the 45s gateway. It looked fine immediately after the deploy only because the cache
+  was still serving a payload built by the old code; the shape bump in 2.43.3 forced the
+  rebuild and exposed it
+- Pre-aggregated into `#vndly_wo_spend` / `#vndly_name_spend` once per request and
+  joined: **1.6s**, with identical coverage (410 of 1,354 terminal work orders) and the
+  same 44 corrected end dates. The rendered query was executed against the warehouse
+  before shipping this time, not just reasoned about
+- This is the third time in this codebase that a correlated construct has had to be
+  materialised. SQL Server re-runs a correlated subquery and inlines a CTE, so any set
+  consulted once per row needs a temp table — the same fix the extensions endpoint
+  needed twice in 2.41.1 and 2.41.2
+
+### 2.44.0 - Security batch from the issue backlog (GH #16, #23, #27, #42, #87)
+
+- **#27, #87 -- audit attribution came from the request body.** `SaveChange` and
+  `ReviewedContractsRows` stored whatever `user` the caller sent. On the browser side
+  that value is `getCurrentUser()`, which can be a name typed into a `prompt()` and kept
+  in `localStorage`, or the literal string `Anonymous` -- so the change log was
+  self-asserted and any caller could attribute a change to anyone. Both now use
+  `current_user_email(req)`, which re-reads the auth header. `Meetings` already did this;
+  `GetClientAllowlist` reads the SWA principal headers
+- **#16 -- the privacy-mode password fell back to the literal `'2026'`** when
+  `PRIVACY_PASSWORD` was unset, so a misconfigured deploy would ship a guessable code
+  that un-redacts competitor and affiliate worker names. It is set on all four
+  environments, so nothing operational sat behind that default. Now fails closed,
+  compares with `hmac.compare_digest` (a plain `==` leaks match length through timing on
+  what is otherwise an unthrottled oracle), logs failed attempts with the caller, and no
+  longer echoes exception text. Real throttling needs shared state these stateless
+  functions do not have -- noted on the issue rather than pretended
+- **#42 -- `SearchUsers` interpolated the query into a Graph `$search` term.** The term
+  is quoted, so `a" OR "mail:ceo` closed the quote and ran an arbitrary directory search
+  under the app's `User.Read.All` permission. Graph has no escape for a quote inside a
+  search term, so quotes, backslashes, parentheses and the boolean operators are stripped
+  instead. `o'brien` still searches correctly
+- **#23 -- toast messages were interpolated into `innerHTML`.** Callers pass
+  server-derived strings in (`"Could not save: " + e.message`), making every toast a sink
+  for whatever text an API returned. The message is set with `textContent` now
+
+### 2.43.3 - Bump the cache shape for #86's new field
+
+- `financial-data` gained an `errors` field in 2.43.2 and `PAYLOAD_SHAPE` was not
+  bumped, so MSP kept serving the pre-change payload from cache and the field was
+  absent on that book — the precise failure the shape version exists to prevent.
+  Caught by checking the live response rather than assuming the deploy was enough
+
+### 2.43.2 - Triage of the three remaining high-severity issues (GH #46, #63, #86)
+
+Verified each against the live data before changing any figure. One was a false
+positive, two were real.
+
+- **#63 is a false positive — and the code's own comment caused it.** The report said
+  the Symplr void-reason map never matches, so competitive losses count as zero. The
+  live book disagrees: `Filled by Competition` maps to `Lost to competitor` on every
+  row, Symplr contributes 44 of 58 unfilled with a reason (75.9% coverage), and nothing
+  falls through unmapped. The map keys were right; the **inventory comment above them**
+  abbreviated the values to `Internal Staff` / `Competition`, which is what the scan
+  read. Comment corrected to the real vocabulary
+- **#86 is real.** Both MSP source blocks caught, logged and continued without recording
+  anything, and the non-MSP path collected an `errors` list and then dropped it from the
+  payload. One failed source rendered the tab with half the billings at HTTP 200 and no
+  indication — a wrong money figure that looks authoritative. Both paths report their
+  errors now, a partial result is never cached, and the Financials tab shows the same
+  amber partial-load banner the Trend tab already uses
+- **#46 is real, but its suggested fix would have made it worse.** The spend subquery
+  matched contractor first+last name with no work-order or date correlation, so a
+  worker's latest billing week was applied to every terminal work order they ever had.
+  Correlating strictly by work order — what the issue proposes — corrects 12 of 1,354
+  but strips the end date from **177** others, which this query then reads as "still
+  running". The fix is work-order correlation **with a bounded same-name fallback**
+  (limited to that work order's own window, 14-day grace). Measured: coverage 410 vs 409
+  for name-only, and **44 overstated ends corrected, averaging 67 days**. Applied to
+  both the Trend and prior-year endpoints
+
+### 2.43.1 - Robustness batch from the issue backlog (10 issues, no behaviour change)
+
+Fixes that only affect failure paths -- crashes on bad input, leaked connections and
+leaked error detail. Nothing here moves a number on a working request.
+
+- **#30, #29 (SaveChange)** -- `id`/`timestamp`/`jobId`/`type` were indexed directly, so
+  a body missing any of them, a non-object body, or invalid JSON raised
+  KeyError/ValueError and surfaced as a 500 carrying the raw driver message. Validated
+  up front with a 400 naming the missing fields; the exception text is logged, not
+  returned
+- **#69 (SaveChange)** -- `changes.id` is `NVARCHAR(100)`, and a longer id was a
+  truncation error rather than a saved row. Rejected with a 400
+- **#67 (Meetings)** -- `limit` was clamped only at the top, so `?limit=-5` produced
+  `SELECT TOP -5` and a 500. Clamped at both ends
+- **#43 (ReviewedContractsRows)** -- `row_key` is `NVARCHAR(500)`; a longer key hit
+  "String or binary data would be truncated" as a 500. The key is concatenated from
+  worker/facility/date fields, so a long facility name was enough. Now a 400
+- **#89 (GetOnboarding)** -- the movement-history line carries a free-text user name, so
+  a Bullhorn user whose name contains a newline shifted every field and
+  `date.fromisoformat` raised, **taking down the whole endpoint for every seat**. An
+  unreadable line is skipped
+- **#35, #95 (GetFinancialData, GetPerDiemData)** -- the month regex checked shape only,
+  accepting `2025-13` and `9999-99`, which failed conversion inside SQL Server where the
+  handler swallowed it and returned 200 with nothing. The UI said "no activity" for what
+  was a bad request. Month is now `01`-`12`
+- **#45 (GetYoYTrendData, GetPendingData)** -- `Access-Control-Allow-Origin: *` on
+  authenticated data endpoints, inconsistent with every other endpoint. Removed
+- **#53, #40 (GetClientAllowlist)** -- the POST deletes every row before re-inserting and
+  had no rollback and no close on the failure path. pyodbc defaults to
+  `autocommit=False` so the transaction *was* rolled back -- but only whenever the leaked
+  connection happened to be collected. Explicit rollback, and closed in a `finally`
+- **#72, #29 (GetContractsComparison)** -- `pos_conn` was closed only on the happy path,
+  so any raise after it opened leaked it. Closed in a `finally`, and the error response
+  no longer returns raw exception text
+
+### 2.43.0 - Two security findings from the issue backlog (GH #26, #78)
+
+- **#26 (high) -- the domain allowlist could be bypassed through the display-name
+  claim, and this was live on `main`.** `EMAIL_CLAIM_TYPES` included the
+  `.../identity/claims/name` claim and `_extract_email` returned the first candidate
+  containing an `@`. The provider accepts any Microsoft account and the holder of a
+  personal one sets their own display name, so an account named
+  `someone@ghrhealthcare.com` passed the gate and reached every `/api/*` endpoint
+  whenever `userDetails` itself carried no `@`. Display name is user-controlled text,
+  not an identity. The claim is gone and explicit claims are now checked **before**
+  `userDetails`. Verified against both attack shapes and three legitimate sign-in
+  shapes, including the email-only-in-userDetails case
+- **#78 (high) -- partly stale, partly real.** The report said there is no HTML escaping
+  anywhere; there are two helpers (`View.esc`, 127 uses, and `_escapeAttr`) and the
+  reproduction it gives, the Non-MSP client allowlist, is fully escaped. But the
+  **system-mappings table was not**: `system_name` went into `innerHTML` as a text node
+  and into a `value=""` attribute with no escaping at all, and `incumbent` escaped only
+  the double quote. Operator-entered through the mappings admin endpoint, so it was
+  stored XSS for anyone opening Settings. All three now go through `_escapeAttr`
+
+### 2.42.2 - "Comparable Median 0 days" was measuring data entry
+
+The Closed detail read **"This Job 56 days vs Comparable Median 0 days"** across 20
+peers -- a comparison that tells a reviewer nothing.
+
+- `days_to_close` is `DATEDIFF(HOUR, job added, first placement) / 24`, so a record
+  keyed in retroactively -- job order and placement entered together -- scores **0**.
+  That is data-entry timing, not recruiting speed
+- Measured on the live non-MSP book: of 881 closed rows only 248 carry a number at all,
+  and **99 of those (40%) are exactly 0**, with another 38 under a day. The median came
+  out 0.38 and rendered as "0 days". Excluding sub-day entries gives **7 days** against
+  the same peers
+- The comparable set now requires at least a full day. The row's **own** days-to-close
+  is untouched -- the filter governs only what it is measured against -- and the
+  "Avg Days to Close" KPI uses the same rule, since it was being pulled toward zero by
+  the same rows
+
+### 2.42.1 - Settle the rate-intel scoping question
+
+`GetRateIntel` pools every Bullhorn job order as a peer, MSP included. That has been
+flagged twice as a possible correctness problem; it is not one, and the evidence is now
+in the query.
+
+- MSP is **2,501 of 43,011 peer rows (5.8%)** over the 90-day window
+- The global gap -- MSP $74.65 against non-MSP $90.77 -- is a **profession-mix effect,
+  not a rate gap**. Ranking happens within profession + specialty + category, and inside
+  the same bucket MSP is mostly *higher*: RN/ER/Travel $91.94 vs $86.51, RN/OR/Travel
+  $100.90 vs $93.21, RRT/Hospital/Travel $91.14 vs $84.04
+- Scoping it out would move ranks by 1-3% of each bucket, in the direction of making
+  seats look better paid, and would gut the thin Local/PRN pools where MSP supplies most
+  of the comparables -- RN/Med/Surg Tele/Local is 92 MSP rows against 23 non-MSP, an 80%
+  reduction. Still above `minPeers` (3), but far noisier
+- **Decision: leave it pooled.** Recorded in the query comment so it is not re-opened
+
+### 2.42.0 - Cache the last three uncached endpoints
+
+- **`stats-data`** was the slowest endpoint on either book -- **6.9s warm on non-MSP**,
+  1.9MB -- and uncached. It takes no request parameters, so the whole response caches
+  with no default-window guard. The non-MSP branch returns its own response, so it
+  warms the cache explicitly: a read in front of both books with a write on only one is
+  how the extensions cache failed silently in 2.38.1
+- **`rate-intel`** is the biggest payload in the app at 4.8MB, 2.7s on MSP and 4.3s on
+  non-MSP, also parameterless and now cached
+- **`financial-data` had no caching on MSP at all.** The cache block lives inside
+  `_non_msp_financial()`, so that book rebuilt on every request (3.2s warm) while the
+  endpoint appeared to have caching. The same oversight the trend endpoint had in
+  2.39.0. The default-range guard is hoisted so both books share it
+
+### 2.41.3 - Modal pass after the dropdown-to-popup switch
+
+Walked every modal on both apps at 1440, 1280 and 1100px.
+
+- **The body gave no sign it scrolled.** The modal caps at 92vh, so on a laptop the
+  detail is often taller than the box and the last row was sliced mid-label -- it read
+  as a rendering fault rather than as "there is more below". A pure-CSS scroll cue now
+  shows a soft shadow at the top only when content is above and at the bottom only when
+  content is below: the `local` gradients travel with the content and mask the shadow at
+  each end, the `scroll` radials stay put. No JS, no scroll listener
+- **Closed and Pending stacked to one column across the whole 1024-1280 band** --
+  ordinary laptop width -- because their grids broke at `xl`. The modal is `max-w-1200`
+  and still ~976px wide at a 1024px viewport, so there is room for two and three panels
+  from `lg`. Lowering the breakpoint turns a modal that scrolled into one that fits
+- The list modal's own grids are left at `xl`: that renderer is shared with production
+  MSP's legacy in-place expand, and this is not a production-MSP change
+
+### 2.41.2 - The last of the per-row work in the extensions build
+
+- **The five B4 extension signals were correlated `EXISTS`**, one set per row: **10.0s
+  for 444 rows**, against **1.6s** pre-aggregated into `#b4_ext` / `#b4_chain` for the
+  same answers (15 offer-pending, 72 accepted, 9 declined, 87 awarded, 38 chain-pending)
+- With the crosswalk fix in 2.41.1 this is the third correlated construct replaced in
+  this endpoint. The pattern is consistent: SQL Server re-runs a correlated subquery and
+  inlines a CTE, so any set consulted once per row has to be materialised
+
+### 2.41.1 - The extensions build was correlated per row
+
+The cold build was 35-41s and had twice returned a 500 at the 45s gateway. It scaled
+at roughly **5.5s fixed + 62ms per row** -- the signature of per-row work, not a slow
+base query.
+
+- **The B4 Bullhorn crosswalk was a correlated `OUTER APPLY`**, re-evaluated once per
+  row: **13.1s for 444 rows**, against **2.7s** pre-resolved into a temp table for
+  identical output (the same 292 links). The RTO lookup had the same shape and is
+  resolved the same way
+- **My earlier timings missed this** because they used `SELECT COUNT(*)`, which lets
+  the optimiser skip the SELECT list entirely. The cost only appears when the columns
+  are actually produced -- 3.8s counting, 13.1s returning
+- Same fix the VNDLY link needed in 2.41.0, for the same reason: SQL Server inlines a
+  CTE and re-runs a correlated subquery, so a set that is used once per row has to be
+  materialised
+
+### 2.41.0 - VNDLY seats reach Bullhorn
+
+Every VNDLY seat on the Extensions tab read "No Bullhorn record joins to this seat" --
+0 of 90 linked, no recruiter, no System Match. The bridge was there all along:
+**`BH_PLACEMENT_RAW.customText56` holds the VNDLY work order** (`WO00270`), matching
+`STAGING_VNDLY_WORKORDERS.[Work Order Id]`.
+
+- **It cannot be joined on its own.** `[Work Order Id]` restarts per tenant: of 973
+  ids, 376 are unique to one tenant but **370 appear in two and 227 in three**, so a
+  bare join would have sent the majority of seats to the wrong health system. The
+  `WOSystemKey` prefix names the tenant (CUH / IHN / RH / RUMC) and the B4 crosswalk
+  maps a Bullhorn client to the same health systems, so the real key is the work order
+  id *plus that tenant's clients*. The two systems spell the names differently --
+  VNDLY's "Redeemer Health" and "RUMC" against the crosswalk's "Holy Redeemer Hospital"
+  and "Richmond University Medical Center" -- so the mapping is explicit
+- **Result:** 106 of 298 work orders in the window reach a placement, and 97 of those
+  resolve to a single candidate. The extra placements on the other 9 are a seat that
+  changed hands; the clinician-name comparison picks the right one, and where even that
+  disagrees the System Match panel reports the mismatch rather than hiding it. Those
+  seats now carry a recruiter and a real end-date comparison
+- **Built as a temp table, not a CTE.** SQL Server inlines a CTE, so as one the link
+  set was re-evaluated once per work order and the query took **103 seconds**. Built
+  once into `#bh_wo` it is **3.4s** for the same 106 links
+- The old comment asserting no link exists is kept and corrected: what it tested was
+  right, its conclusion was not. Every attempt had looked for a VNDLY-side key pointing
+  at Bullhorn, never a custom field on the Bullhorn side carrying a VNDLY id
+
+### 2.40.1 - The cache was caching a URL nobody asks for
+
+- **MSP requests `extensions-data` and `onboarding-data` with `?includeAffiliate=1`**,
+  and the cache only stored the bare default -- so on MSP the cache was never read.
+  Measured on the live prototype: the uncalled default served in **265ms** while the
+  URL the app actually calls took **41s, then 35s**, close enough to the 45s gateway
+  timeout to fail outright. The 21s-to-250ms win reported in 2.38.1/2.39.0 was real for
+  the default URL and did not reach the MSP app
+- The parameter is part of the key now rather than a reason to refuse caching, so both
+  variants are cached. `cache_key` takes a `variant`
+
+### 2.40.0 - RTO from both VMS books; the source can overtake a hand-set status
+
+- **RTO now reaches the app.** It read 0 on all 404 seats, and the "Gather RTO"
+  checkpoint said "not in data" for everyone. The Bullhorn path cannot supply it --
+  `BH_PLACEMENT_RAW` holds Blocks 1-5 and 10, so `customTextBlock9` never reaches the
+  warehouse -- but both VMS books record it themselves. **B4** keeps it on the contract
+  submission (18 of the 314 GHR seats in the live window); **VNDLY** keeps it on the
+  contractor, reached through the work-order cross-reference (58 of 296). Shown as
+  written -- "Approved RTO: 6/1-6/5" -- rather than parsed into dates it may not be
+- **A hand-set designation no longer outranks the source forever.** "Awaiting Client
+  Approval" exists because no VMS can see that the PMO has the extension in front of
+  the client; it fills a gap, it does not overrule the VMS. Letting it win
+  unconditionally meant a seat set by hand kept that status permanently -- VNDLY could
+  report the offer out to the vendor, or B4 record the extension accepted, and the tab
+  would still read "Awaiting Client" because someone typed it once. The two are now
+  compared by position in the pipeline: if the source has moved past the hand-set
+  value, the source wins and the record says so. The selection is kept, not discarded,
+  and takes effect again if the source falls back behind it
+- **Cache keys carry a payload-shape version.** A deploy does not clear the cache
+  table, so a shape change was invisible for up to 26 hours -- the endpoint kept
+  serving the old payload built by the old code, which is exactly what adding
+  `recorded_rto` would have done
+
+### 2.39.2 - Two defects the modal pass turned up
+
+- **Lever labels rendered straight across their card border.** Two lever panels sit
+  side by side and each splits into two cards, so a card is ~140px and its label box
+  ~86px after the checkbox and padding -- "Requirements" needs ~100px at that size.
+  The labels break now instead of overflowing
+- **Onboarding's movement panel contradicted the tiles beside it.** With an empty moves
+  list it showed, in green, "No start-date movement recorded" -- while "Total Moves 3"
+  and "Net Slip +28 days" sat immediately above. An empty list does not mean the start
+  never moved: the source can count moves without itemising them. It now says so, and
+  only claims no movement when the count agrees
+
+### 2.39.1 - Modal layout: remove the dead space
+
+Walked every modal on both apps and measured where the room was going.
+
+- **Extensions was the worst.** The editable form sat inside the right column, which
+  made that column ~690px of content against ~300px on the left: the left ended with
+  roughly **370px of dead white space** while the right overflowed and scrolled (126%
+  of the available height). The columns are now 5/7 rather than 50/50, and the form is
+  lifted out to full width below both -- so the form gets the whole 1200px, the right
+  column loses the height it was lending it, and neither column scrolls. Client
+  Decision, Extension Designation and Shared Notes now sit three across instead of
+  wrapping in a half-width column
+- **The List modal's Submission Log reserved a fixed 224px** (`h-56`) whether it held
+  one submission or twenty, so a job with a single submission showed ~180px of empty
+  box. It sizes to its content now and only scrolls past the cap
+- **Pending's middle panel promised "who else is submitted" and showed two counts.**
+  That left it short against the panels either side -- the dead space and the
+  unanswered question were the same problem. It now lists the peers by name with their
+  agency, from data already loaded for the counts
+
+### 2.39.0 - Cache the three remaining slow endpoints
+
+Warm measurements before this change: onboarding-data **15.8s** (MSP), trend-data
+**14.0s** (MSP), closed-data **10.3s** (non-MSP).
+
+- **onboarding-data and closed-data** now read and warm the endpoint cache, default
+  window only. Both take parameters that change the result -- lookback/lookahead and
+  from/to/days -- so a key on the route alone would serve the default to a caller who
+  asked for something else
+- **trend-data's MSP branch** is cached too. It takes no parameters at all, so unlike
+  the others there is no default window to guard. The existing cache block sat inside
+  `_non_msp_trend()`, which only ever runs on the non-MSP path -- so MSP had never been
+  cached despite the endpoint appearing to have caching
+- **Caveat:** the scheduler (`RefreshCache`) still only knows `trend-data` and
+  `financial-data` on non-MSP. The new keys are warmed by the first live request after
+  expiry, so that one caller still pays the full build
+
+### 2.38.1 - The extensions cache was writing and never serving
+
+- `read_cache` stamped `cachedAt` onto the payload unconditionally. `extensions-data`
+  returns a bare JSON **array**, so that raised `TypeError` on every read -- and the
+  fail-open `except` swallowed it and computed live. The cache wrote correctly, 845KB,
+  and reported itself healthy in `cache_status`; the only visible symptom was that a
+  cached endpoint stayed exactly as slow as an uncached one. Only an object can carry
+  the stamp, so only an object gets it now
+
+### 2.38.0 - Extensions endpoint: parallel feeds and a cache
+
+- **extensions-data was returning a 500.** Measured warm at 21-23s, and the first
+  request after a deploy took **43.6s** -- past the 45s SWA gateway timeout, so the tab
+  got an error rather than a slow answer. The B4 and VNDLY branches were running
+  sequentially on one cursor despite being independent reads
+- **The two branches now run concurrently**, each on its own connection, as
+  `GetTrendData` and `GetFinancialData` already do. A pyodbc connection cannot be
+  shared across threads, and sharing the single cursor was the serialisation being
+  fixed
+- **Cached through `shared_code/endpoint_cache`**, default window only. `horizon` and
+  `includeAffiliate` both change the result, so a key on the route alone would hand a
+  45-day default to a caller who asked for 90 -- the exact bug the financial-data cache
+  shipped with
+- **Header: the book subtitle moved back under the title.** The density pass had put it
+  on the title line, where it sat beside the version number and read as part of it
+- **"Symplr Education" is now just "Symplr".** Non-Acute comes through the same source,
+  so naming only Education understated the book
+
+### 2.37.1 - Scope the B4 extension report to GHR
+
+- The Network Activity Report is registry-level and lists every vendor in the program
+  -- AppleOne, LanceSoft, BAYADA, Triage and the rest -- which is not GHR's book. The
+  three designation lookups now require a GHR agency. No row changes today: all 96
+  extensions on GHR seats in the window are already GHR's own, because the tab is fed
+  from Bullhorn and an affiliate's extension never reaches it. It is there so an
+  affiliate picking up a GHR seat's extension can never read as GHR extending it
+
+### 2.37.0 - Extension designations, from VNDLY and B4
+
+Aligns the Extensions tab to the Extension Criteria spec. Nothing was removed: the
+45-day Bullhorn window, the Client Decision lever and the workflow grouping all stay
+as they were, and the designation is added alongside them.
+
+- **A designation per seat, derived from the VMS rather than typed in.** Where the
+  extension has actually got to, on its own axis from the Client Decision. The decision
+  is GHR's position on whether to extend; the designation is how far the request has
+  got with the client and the vendor. A seat can be "Approved to Offer" internally and
+  still sit at "Pending Extension Review" externally, and that gap is the thing worth
+  seeing. One function, `Utils.extensionStage`, owns it for every surface
+- **Both VMS books feed it.** VNDLY: the latest `Date Extension` modification on the
+  work order, from `STAGING_VNDLY_WORKODER_MODIFICATIONS` -- the "Pending Modifications
+  - Awaiting Vendor" report, read from staging instead of exported by hand. `Submitted`
+  means awaiting vendor, `Accepted` means done. B4: `dhc.B4HealthExtensionsOrder`, the
+  Network Activity Report, with the contract parent/child chain as a second,
+  independent read
+- **The B4 report's AssignmentID is the child contract, not the seat that is ending.**
+  Joined straight to `Contract_ID` it matched 205 of 205 rows and was wrong every time:
+  none of the 29 pending offers landed on an order ending inside 45 days, because the
+  child carries the *extended* end date. The hop through `Parent_Contract_ID` puts the
+  designation on the seat a reviewer is looking at. The check that it is right: the
+  report finds 87 accepted in the window, and the contract chain independently finds
+  the same 87
+- **"Awaiting Client Approval" is the manual lever the spec asks for.** It has no VMS
+  signal -- it means the PMO has put the extension in front of the client -- so it is
+  set by hand and applied over whatever is derived. A dot on the badge marks any
+  designation set by hand, so a stale manual value cannot pass for live data
+- **A fifth designation the spec did not list: Extension Declined.** The B4 report
+  carries it on 10 live seats. Folding those into "Pending Extension Review" would have
+  put a settled decision back on the chase list
+- **Group by Designation or Workflow**, defaulting to Designation. The original
+  workflow grouping is the only view of what the team has done rather than what the
+  systems report, so it stays one click away
+
+Live counts at release: 87 accepted, 28 awaiting vendor and 10 declined from the B4
+report; 3 awaiting vendor and 88 accepted from VNDLY.
+
+### 2.36.6 - One day is "1 day"
+
+- Four surfaces printed a raw day count and read "1 days": the Pending stage age, the
+  Closed days-to-close tile, the comparable-median tile and the comparison bars.
+  `Utils.days(n)` now owns rounding and the plural, and all four call it, so they
+  cannot drift apart
+
+### 2.36.5 - Pending opens the modal; days-to-close reads as days
+
+- **Pending was the last tab still expanding in place.** Every other tab on the
+  redesigned UI opens the row-detail modal, so a reviewer working down the list got
+  a different interaction on this one surface. `pendingDetailBody` is now split out
+  of its `<tr>` wrapper -- the same treatment `extensionDetailBody` and
+  `onboardingDetailBody` already had -- and the modal renders it. Pending rows have
+  no id of their own, so the record is matched on the composite `__key` the table
+  builds. Gated on `impactUi()` at the same switch point as `TOGGLE_ROW`, so
+  production MSP keeps its legacy in-place expand and is provably untouched
+- **"Days to Close 55.88"** rendered the raw fraction with no unit, directly beside a
+  tile reading "0 days". Rounded to whole days and labelled, in the tile, the
+  comparison bars and the Closed table cell
+- **"Comparable Median" was clipped to "Comparable Medi…"** in the bar chart -- the
+  label column was 104px. Widened to 132px
+
+### 2.36.4 - Restore the 778 Closed rows 2.36.3 hid on non-MSP
+
+- **Making Closed expandable on non-MSP silently dropped 88% of the table.** One flag
+  was doing two unrelated jobs: gating whether a row opens, *and* choosing the group
+  vocabulary. Turning it on in 2.36.3 also switched non-MSP to the MSP group names
+  (`GHR WON` / `AFFILIATE WON` / `MISSED`), but non-MSP rows carry
+  `FILLED` / `UNFILLED` / `CANCELED` -- so 778 of 883 rows matched no group and
+  vanished from the page. The API was returning all 883 the whole time. The group
+  list is a property of the book and is now keyed on the data source; expandability
+  is independent of it
+- **How it surfaced:** the re-audit counted 105 rendered rows against 883 from the
+  endpoint, and 105 was *exactly* the CANCELED count -- the signature of a group
+  filter, not of a lost query
+
+### 2.36.3 - UI pass across both prototypes
+Found by walking every tab on both prototype instances and opening a row modal on each.
+
+- **Closed rows now open on non-MSP too.** They were hard-gated to MSP because the
+  detail's second section is vendor share and bid activity, which do not exist on the
+  non-MSP book. Rather than withhold the whole record, that section is dropped on
+  non-MSP and section one -- revenue, bill rate, rate rank, days to close against
+  comparables, outcome, owner -- takes the full width. It is just as meaningful on
+  direct business
+- **Billings headline used the month in progress.** On 1 October it read
+  **"Total Billings (Oct-26) $0 ▼100%"** -- a day-old month compared against a full
+  September. It now uses the last *complete* month and says so. The tables below still
+  show every month including the partial one; only the summary has to compare like with
+  like
+- **The filter row crushed instead of wrapping.** Eleven `flex-1` controls with no
+  minimum width squeezed until `Min`/`Max` rendered as "Mi"/"Ma". A 132px floor makes
+  the row wrap, which is what `flex-wrap` was there for
+- **"Start IMPACT Meeting" wrapped to two lines** in the cramped header; now
+  `whitespace-nowrap shrink-0`
+- **The system/facility cell was five stacked lines**, making it the tallest cell in
+  every table and holding Open Jobs to four rows on a 900px screen. The relationship
+  badge moves onto the system line, where it reads as an attribute of the system
+
+### 2.36.0 - Density pass, money formatting, and dropdown filters
+From the 2026-09-30 feedback list.
+
+- **One money formatter, and one of the five was wrong.** The Closed KPI formatter had
+  no millions branch at all, so annualised revenue rendered as **`+$112428.3k`** -- a
+  number that reads as a hundred thousand when it means a hundred *million*. Reported
+  from the call as "9348K instead of 9.35M". All seven call sites now share
   `Utils.fmtMoney`
-- Millions start at **950,000**, so a figure a whisker under a million stops understating
-  itself: 950k-999k shows `$1.00M`, 948k stays `$948K`
-- **`.claude/settings.json` was publicly fetchable.** `app_location` is `/` on all four
-  workflows, so the repo root is the deployed site, and `staticwebapp.config.json` gates
-  only `/`, `/*.html` and `/api/*`. Verified: `GET /.claude/settings.json` returned **200
-  with the file's contents, unauthenticated**, on both instances. Now ignored and
-  untracked, so the next deploy stops serving it. `*.pdf` ignored for the same reason
-- **Not fixed here:** every `.md` in the repo, `staticwebapp.config.json`,
-  `.github/workflows/*` and `tools/*` are reachable the same way. Closing that needs an
-  authenticated catch-all route -- a production auth change that should be made
-  deliberately, not folded into a bug-fix release
+- **Millions start at 950,000, not 1,000,000**, per the same feedback: a figure a
+  whisker under a million reading as `$950K` understates it to anyone scanning. 950k-999k
+  shows as `$1.00M`; 948k still shows as `$948K`
+- **Whitespace and headers.** Title `text-3xl` -> `text-xl`, logo 9x9 -> 7x7, subtitle off
+  its own row; KPI cards `min-h-100px` -> `72px` with tighter padding and type. **Chrome
+  above the list: 568px -> 488px, rows visible 5 -> 6** at 1440x900 (1 -> 6 across the
+  session)
+- **"Extra text" moved to a hover.** Each stage tab's explanatory sentence is now an info
+  icon beside the title -- still readable, no longer costing a line on every render
+- **Per-column filters become dropdowns** where the vocabulary is bounded: System Match,
+  Decision and Urgency join AM and Recruiter. This needed a `filterValue` hook, because
+  System Match *sorts* on a numeric severity and Urgency on a raw lowercase band -- a
+  dropdown built from those lists sort keys ("3", "critical") rather than the words in
+  the column
+- **GHR Vendor Performance hidden** on Per Diem (`SHOW_GHR_VENDOR_CHART = false`). Gated,
+  not deleted: it is 160 lines of working chart with a regression overlay mirroring the
+  recruiting team's tracker, and "or make it a column" suggests it may return
 
-### 2.21.4 - Per Diem crashed on open
-- `ReferenceError: sysAssignments is not defined` took the whole Per Diem view down as
-  soon as the tab was opened. The movement block referenced `sysAssignments`, which is
-  declared inside the earlier `groups.forEach` that builds `metrics` -- a different
-  callback that closes ~170 lines before the use. It is now declared in the
-  `activeGroups.forEach` scope that actually needs it, from that loop's own `gSys`/`gFac`
-- Only fires once there is enough data to reach the movement block, which is why it
-  survived the empty and light fixtures used in earlier checks
+Not in this release: the **Extensions workflow** item (reading Bullhorn notes for
+candidate RTO, an in-app extension process, syncing to VNDLY). That is a feature, not a
+tweak, and is waiting on the call notes.
 
-### 2.21.3 - Why a rate has no rank, instead of blaming the peer pool
-- **Benchmark cohorts verified, not changed.** Nursing, Allied and Non-Clinical are not
-  being blended: every rate-ladder rung keys on `profession`, which is finer than
-  service line, so an RN is only ranked against RNs. Measured over **182,810 rate rows
-  in 814 peer buckets -- zero mix service lines**, and every profession resolves to one
-- **The reason shown when there is no rank named the wrong cause.** Three causes were
-  collapsed into one message:
+### 2.35.0 - Row details open in a modal, with prev/next and an explicit save
+- **The inline row dropdown becomes a modal** on Extensions, Onboarding, Closed and Open
+  Jobs. The dropdown pushed every row below it down the page and squeezed the detail into
+  the width of a table already carrying twelve columns. The modal gets the viewport, the
+  list stays still underneath, and subtabs have somewhere to live
+- **Prev / Next step through the list**, with an "N of M" counter. The order is read from
+  the DOM rather than recomputed, so it follows the active sort, filters and grouping --
+  Next means "the next one you can actually see". Arrow keys work; Esc closes
+- **Save and Cancel are explicit.** Edits live in the inputs until saved, so closing a
+  dirty record asks before discarding rather than losing the work silently
+- **Autosave stands down while the modal is open.** This was a real conflict, not a
+  theoretical one: a delegated `change` listener saved on every edit, so changing Client
+  Decision wrote to the database *before* the user could press Cancel, and Cancel reverted
+  nothing. Verified by tracing dispatches -- two `SAVE_EXTENSION` calls became one. The
+  inline dropdown and production MSP still autosave, unchanged
+- **One write path, not two.** The modal reuses each view's own save, which reads the same
+  inputs wherever they are rendered, so the two presentations cannot drift
+- The detail bodies were split out of their `<tr>` wrappers (`extensionDetailBody`,
+  `onboardingDetailBody`) so the same markup serves both. `toggleStageRow` is untouched,
+  so the dropdown still works and is one line away
+- Closed and Open Jobs have no editable state, so their footer says the record is
+  read-only instead of offering a Save that would do nothing
+- Production MSP keeps its in-place expand: the switch is inside the `TOGGLE_ROW` handler,
+  after the `!impactUi()` early return, so it cannot reach that build
+
+### 2.34.0 - Trend and Financials come off the request path
+- **A payload cache in `impactmgr.endpoint_cache`, refreshed on a schedule**, following
+  the pattern the sibling `ghr-salespulse` app already uses for its placement and
+  contact-count caches. The request path becomes one `SELECT` instead of a 17-20s
+  aggregate
+- **Why those two.** Measured on the deployed non-MSP instance: `trend-data` 9.3s ->
+  16.8s once the scope widened, `financial-data` 9.2s -> 19.9s and intermittently
+  **HTTP 500** -- the "Couldn't load financial data" the divisions were seeing. Both are
+  four-week / monthly aggregates that don't move within a day
+- **The diagnosis came from salespulse's own notes**, which hit this wall first: *"with
+  ~974 corps in scope SQL Server stops seeking on the index and scans instead: measured
+  104 SECONDS cold. A per-page OUTER APPLY was not a fix either -- just a different bad
+  plan."* That is our shape exactly; the trend query carries two OUTER APPLYs evaluated
+  per placement row, and widening the scope pushed it over the same cliff
+- `POST /api/cache/refresh` rebuilds; `GET` reports what is cached and how old. Auth is
+  a signed-in user **or** `CACHE_REFRESH_API_KEY`, because a timer has no email domain
+  to check -- the same split salespulse uses
+- **Fail-open throughout.** A missing table, an unconfigured app DB or an unparseable
+  row all mean "compute live", which is exactly today's behaviour. A cache older than
+  26 hours is ignored, so a stopped scheduler degrades rather than serving stale numbers
+- **A partial build never overwrites a good cache** -- if one source errors, the previous
+  payload stands rather than a half-empty month being served as fact
+- Only the **default** 13-month window is cached: `fromMonth`/`toMonth` produce a
+  different answer, and a cache keyed on route alone would have handed the default range
+  to someone who asked for one quarter
+
+### 2.33.1 - Trend and Financials stop running their two sources one after the other
+- **The two source branches now run concurrently.** Bullhorn and Symplr hit different
+  databases on their own connections and share no state, so sequencing them only ever
+  cost wall-clock. Measured on the deployed non-MSP instance: `trend-data` **9.3s**,
+  `financial-data` **9.2s** or an intermittent **HTTP 500** -- the "Couldn't load
+  financial data" the divisions were seeing. The endpoint now costs the slower branch
+  rather than the sum
+- **The scope resolution behind the filter was dead work.** With the wide scope,
+  `build_scope_filter` ignores the client list, but every endpoint still ran a discovery
+  query *and opened a second connection to the app database* to build it. Skipped
+  entirely now; nine endpoints stop paying for it
+- **Verified the wide scope did not make the slow query slower** -- a fair concern, since
+  it replaced a selective `IN (~340 ids)` with `NOT IN (47)`. Timed against the real
+  query: 6.8s wide vs 7.8s narrow warm, so it is marginally *faster*
+- **Honest about what is left.** The main Bullhorn trend query is still ~2.5s warm and
+  far worse cold (17.8s on a cold plan, 6.5s warm, against a 4.2s connect baseline). It
+  carries four LEFT JOINs and two OUTER APPLYs evaluated per placement row. That cold
+  variance is what tips `financial-data` into a 500, and it is not fixed by this change
+
+### 2.33.0 - The non-MSP book is every client except GHR's own MSP accounts
+- **The book was scoped to clients with a placement running today.** Any account GHR is
+  actively recruiting for but hasn't yet placed anyone at was excluded entirely -- so the
+  app showed **1,336 of 6,298 open reqs** inside the same 45-day window it already applies
+- Divisions that sell searches rather than fill seats were worst hit, because they rarely
+  have an active placement to be discovered by. **Search showed 2 reqs out of 58**;
+  Locums 30 of 254; Allied 249 of 1,569; Nursing 991 of 4,268
+- **The 45-day cutoff was never the problem and stays.** 6,332 of the 6,350 reqs it lets
+  through were modified in the last 30 days -- live work, not stale postings. Of the reqs
+  over a year old, only 41 of 825 have been touched in a month, and those stay filtered
+- **Headcount is unaffected by construction.** A client with no active placement
+  contributes no heads, so Trend, Financials and headcount move **1,145 -> 1,157 (1.01x)**
+  while Open Jobs moves 4.8x. Clients go 333 -> 1,274, which widens the System and
+  Facility pickers
+- Rendered as `NOT IN (47 MSP ids)` rather than `IN (~10k ids)`: the honest expression of
+  the rule, and a far better query plan. One change in `build_scope_filter`, so all nine
+  non-MSP endpoints inherit it. `WIDE_NON_MSP_SCOPE = False` restores the old behaviour
+- Reconciled against analytics first: their 543 open Locums jobs / 1,048 openings is
+  `Accepting Candidates`, company-wide, no date limit. Measured here as 545 / 1,043
+
+### 2.32.7 - Per Diem crashed on open
+- Ported from main 2.21.4. `ReferenceError: sysAssignments is not defined` took the whole
+  Per Diem view down on open: the movement block read a variable declared inside the
+  earlier `groups.forEach`, a different callback that closes well before the use. Now
+  declared in the `activeGroups.forEach` scope that needs it
+
+### 2.32.6 - P1 compression: Open Jobs pipeline is a funnel, full width
+- **The funnel is now a funnel.** The Pipeline pane's bars were "GHR Share by Stage" --
+  always full width, showing the GHR/affiliate split and hiding the shape, which is the
+  one thing a funnel is for. Bar *length* is now reach against the widest stage, so it
+  narrows; the fill inside keeps the split the old bars carried. Verified against **236
+  real submissions** on the busiest open Bullhorn job: 236 → 1 → 1 → 0 → 0, narrowing
+  monotonically
+- **Full width, with candidate activity beneath it.** The pane was two half-width
+  columns, where the bars were too short to read a shape off and the activity list was a
+  narrow column
+- **Every candidate, in its own scroller.** The list was capped at 12 with a line saying
+  how many were withheld; it now renders all of them (236 in the check) in a 286px
+  scroller over 11,563px of content, so the funnel stays in view while the list is read
+- Horizontal overflow measured at 0px; no page errors
+
+### 2.32.5 - P1 compression: Extensions shows five records instead of one
+- Measured at 1440x900, the standard desktop the feedback's acceptance test names.
+  **Before: 681px of chrome and 126px rows, fitting one record. After: 568px and
+  65px rows, fitting five.** Every number below was measured, not estimated
+- **Extension Search was a bordered panel with a heading, a description and stacked
+  labels for three controls** -- 74px plus margins. Now one inline strip with the
+  labels beside the controls, and Clear Filters is always visible once a filter is
+  set, since a filtered table that looks empty is otherwise indistinguishable from
+  an empty one
+- **The aging legend wrapped to two lines** (94px for four chips) because it was
+  sized `flex-1` against the tab bar and its labels repeated "Days Left", which the
+  column header already says. Now `≤7 days / 8-14 days / ...` on one line, 38px
+- **Row height 126px → 65px.** Next Action was the only cell driving it, measured at
+  79px: the owner name wrapped and the sentence ran to three lines. Name truncates,
+  sentence clamps to one line with the full text on hover. System Match's note
+  clamps to two
+- **Short dates** (`9/21/26`, not `2026-09-21`), title and subtitle on one line, and
+  `py-2` → `py-1.5` on the row
+- **Assignment finally readable.** It carried `max-w-0`, which forced it to the
+  narrowest possible box, so every facility read "Lancaster G...". Widening it
+  naively pushed the table 310px past its container -- a horizontal scroll the
+  feedback explicitly rules out -- so the table now declares percentage widths and
+  uses the fixed-layout path `stageShell` already had. **Horizontal overflow is 0px
+  at both 1440 and 1680.** The column-filter row needed `min-w-0` in that mode: its
+  `min-w-[4.5rem]` alone put the scrollbar back
+- Onboarding and Closed are unaffected -- they stay auto-layout, verified at 0px
+  overflow with no page errors
+
+### 2.32.4 - Why a rate has no rank, in the row's own terms
+- **Benchmark cohorts verified, not changed.** The concern was that Nursing, Allied and
+  Non-Clinical were being blended. They are not: every ladder rung keys on `profession`,
+  which is finer than service line, so an RN is only ranked against RNs. Measured over
+  **182,810 rate rows in 814 peer buckets -- zero buckets mix service lines**, and every
+  profession resolves to one. The original note described the older facility+specialty
+  ladder
+- **The real gap was the reason text, and it named the wrong cause.** Three distinct
+  causes collapsed into one message:
   - `Number(r.bill_rate)` is NaN on an open job, whose rate is a display string on
     `billRate` -- so every open job claimed "No bill rate on this record" while showing
-    one. Now read through `Utils.rateNum`, as `rateRank` already did
-  - A job with no credential reaches no rung at all. Over 81,574 open Bullhorn jobs,
-    **26,109 (32%) carry no category** -- the biggest cause, reported until now as
-    "fewer than 3 comparable job orders", a claim about the peer pool rather than the job
-  - Genuinely too few peers, the only case the old text fitted
-- One shared reason used by the rank cell, the rate pane and both Closed panels, so the
-  four cannot word it differently. All 219 distinct credential values in the live book
-  normalise, so the mapping is complete and the unrankable jobs are missing source data
+    one. Now reads through `Utils.rateNum`, as `rateRank` itself already did
+  - A job with no credential can reach no ladder rung at all. Over 81,574 open Bullhorn
+    jobs, **26,109 (32%) carry no category** -- the single biggest cause, and it was
+    being reported as "fewer than 3 comparable job orders", a statement about the peer
+    pool rather than about the job
+  - Genuinely too few peers, the only case the old text actually fitted
+- All 219 distinct credential values in the live book normalise, so the mapping is
+  complete; the unrankable jobs are missing source data, and now say so
 
-### 2.21.2 - An expired session says so, instead of looking like a broken endpoint
-- `staticwebapp.config.json` turns any 401 into a 302 to the sign-in page. That is
-  right for a page navigation and wrong for a `fetch`: the browser follows it, the
-  call resolves **200** carrying the sign-in page's HTML, and `JSON.parse` then fails
-  with `Unexpected token '<'` -- which reads as a broken endpoint rather than an
-  expired session. That is what a tab left open overnight looks like, and almost
-  certainly what the "get-positions went red" report was
-- A single guard on `window.fetch` now detects an `/api/` call that was redirected to
-  `/.auth/` and raises a plain "your sign-in session has expired, reload to sign in"
-  instead. Done centrally rather than at the twenty-odd call sites, so a new endpoint
-  inherits it
-- Auth configuration is unchanged -- page navigations still redirect to sign-in as
-  before. Verified both ways: a simulated 302 raises the session error with no
-  JSON-parse errors, and the normal path still loads 80 positions and 6 KPI cards
-  with no page errors
+### 2.32.3 - An expired session says so, instead of looking like a broken endpoint
+- Ported from main 2.21.2. A guard on `window.fetch` catches an `/api/` call that SWA
+  redirected to the sign-in page and raises a session-expired error, instead of letting
+  `JSON.parse` fail on the sign-in HTML with `Unexpected token '<'`
 
-### 2.21.1 - MSP accounts the hand-kept list had missed
-- **Penn Lancaster General and 17 other MSP clients were showing on the non-MSP side**
-  -- 1,667 open jobs, reported by the divisions ("Penn LGH is showing up as an open
-  order"). The exclusion list only ever named parent accounts, so MSP facilities
-  sitting *under* a parent in Bullhorn were never caught
-- The added ids are **not name matches**. `dbo.BH_PLACEMENT_RAW_TO_B4HealthOrder` is
-  the warehouse's own link between a Bullhorn placement and a B4 order -- 8,189 links
-  over 4,387 placements naming 40 distinct Bullhorn clients. A client in there has had
-  a real placement tied to a real MSP order, so it is MSP by evidence rather than by
-  resemblance. 22 were already listed; these are the other 18
-- Applies to the whole non-MSP side, not just Open Jobs: all nine data endpoints
-  (Positions, Stats, Trend, YoY Trend, Closed, Extensions, Onboarding, Financials,
-  Hours) resolve scope through the same helper, which covers the trend/headcount leak
-  reported alongside it. Pending and Per Diem return empty on non-MSP already
-- **Two gaps left open deliberately**, both documented in the code: the crosswalk is
-  B4-only (there is no VNDLY-to-Bullhorn key of any kind), and it is placement-level,
-  so an MSP account whose jobs were never filled produces no link. Closing those needs
-  a decision on whether MSP is a property of the account or of the order -- account
-  level would exclude ~10,400 open jobs, order level ~1,600
+### 2.32.2 - MSP accounts the hand-kept list had missed
+- Ported from main 2.21.1. 18 Bullhorn clients added to `MSP_CLIENT_IDS`, taking
+  1,667 open jobs (Penn Lancaster General and the rest) off the non-MSP side
+- Derived from `dbo.BH_PLACEMENT_RAW_TO_B4HealthOrder`, the warehouse's own link
+  between a Bullhorn placement and a B4 order, rather than from client names
 
-### 2.21.0 - Tab row stays put, honest hero cards, Search split from Locums
-- **The tab row no longer moves between tabs.** The aging legend is `display:none`
-  on views with no bands, and with `justify-between` a lone child falls to the left --
-  so the tab bar sat 446px further left on those tabs. Measured before and after:
-  446px shift, now 0
-- **Pending Offers and Post-Offer Declines no longer read `0` when nothing was
-  recorded.** B4 carries no interview date and VNDLY populates one on 1.3% of rows,
-  so on non-MSP the app's own recorded stage is the only signal -- and `0` claims
-  "no offers are outstanding", which is a very different statement from "we don't
-  know". Both cards now say *Not recorded*, styled as absent rather than as a value,
-  with the reason in the tooltip
-- **Search is its own division again.** Matthew Kyle, 2026-09-22: "can we separate
-  out search and locums as divisions". The 2026-09-16 ask had been the opposite, so
-  the merged form is kept as a comment -- this has now moved in both directions.
-  United Anesthesia and Locum Tenens stay merged under Locums, the pairing that ask
-  itself named
-- Production MSP verified unchanged: tabs, body classes, KPI row and list all
-  identical to the 2.5.0 baseline. The hero-card change is in the reference-spec
-  row, which production MSP does not render; the division filter is non-MSP gated
+### 2.32.1 - Tab row stays put; hero cards stop claiming zero
+- Ported from main 2.21.0. The aging legend is `display:none` on views with no
+  bands, and with `justify-between` a lone child falls to the left -- the tab bar
+  sat 446px further left on those tabs. Measured before and after: 446px, now 0
+- Pending Offers and Post-Offer Declines say *Not recorded* instead of `0` where no
+  stage or offer date exists, with the reason in the tooltip. `0` claims "no offers
+  are outstanding", which is not the same statement as "we don't know"
 
-### 2.20.1 - The bottom bar really was still on production MSP
-- `View.revenueBar()` hid it with `el.hidden = true`. That relies on the UA
-  stylesheet's `[hidden]{display:none}`, and the element carries Tailwind's `flex`
-  class -- an author style, which beats the UA one. Nothing in the file re-asserts
-  `[hidden]`, so the attribute was set and the bar stayed laid out at its full 56px
-- Measured on production MSP: a blank white strip from y=844 to y=900 covering the
-  bottom **56px of the job list**, and the topmost element at that point, so it was
-  swallowing clicks on the row beneath it. `pb-16` had been removed, so nothing kept
-  content clear of it
-- It read as "reverted" only because the content below never renders on MSP -- it
-  didn't *look* like a revenue bar, so nobody questioned it
-- Now hidden with the `hidden` class (Tailwind emits `.hidden` after `.flex`, so it
-  wins) and hidden in the markup by default, which also removes the blank strip that
-  flashed on every load until the config arrived. Non-MSP is revealed explicitly
+### 2.31.0 - Closed Job Detail: three panels into two
+- **Section 1 (Financial & Comparative)** and **Section 2 (Market Position & Bids)**,
+  replacing three panels. The old Panel C repeated Panel A almost entirely -- Rate Rank,
+  Days to Close, Comparable Median and Revenue each appeared twice under different
+  sub-labels, which reads as two measures rather than one shown twice
+- **One revenue figure, labelled by its sign.** `revenue` is signed at the source, so a
+  record is captured *or* missed, never both. The three-panel layout could show
+  "Revenue Captured $0" above "Revenue Outcome -$48,000" -- the same number stated twice
+  and contradicting itself once
+- **Bid activity on the record**: total, GHR and competitive bids, plus the winning
+  supplier. Bid-to-fill has no source -- neither VMS records a first-bid timestamp, and
+  Days to Close measures a different span -- so it says "Data Not Available" with the
+  reason rather than reusing a number that would look right and be wrong
+- **Owner appears on the record**, not only in a column the reader has scrolled past by
+  the time the panel is open
+- GHR Market Rank moved to Section 2. It is a market measure, and sitting it beside Rate
+  Rank invited the two to be read as the same ranking
+- Panel C's code kept as a comment rather than deleted
+- Verified by rendering against live data -- real closed B4 orders with their real bid
+  counts at accounts carrying a live vendor panel, plus rows at accounts without one.
+  No label appears twice in the expanded record, across GHR Won / Affiliate Won / Missed
+  and both market-share branches
 
-### 2.20.0 - Saved decisions were never loaded back; extension fields you can set
-- **`workspaceState` was never fetched.** It was initialised to `{}`, written
-  locally after each POST, and read in eight places -- but the app never asked the
-  server for it. Every extension decision, onboarding review, interview stage and
-  GM override saved to the database and was gone on the next refresh. Caught before
-  anyone used it: the `impactmgr.workspace_state` table is still empty, so nothing
-  was lost and no old values will suddenly reappear
-- **Extensions can now record what the source can't hold**: New End Date, Requested
-  Time Off, an Is An Extension override, and a Reason for Declined / Backfill
-- Of 497 MSP seats ending in the next 45 days, only the 115 VNDLY ones have a
-  modification feed to write an extension to, and 57 carry one. B4's 382 have
-  nowhere at all, and the warehouse omits `customTextBlock9` so MSP can't even read
-  requested time off
+### 2.30.1 - Due chip stays in one piece
+- The derived due phrase broke across two lines in the narrow Next Action column
+  ("7d" above "overdue"), reading as two separate values. Kept whole
 
-### 2.19.0 - Non-MSP: MSP accounts removed, divisions merged to the core seven
+### 2.30.0 - Derived action due dates, and one aging ladder behind all of them
+- **Due dates are derived from Days Left, not entered.** A decision is due when the
+  seat would otherwise enter the critical band, so the owner keeps the last 7 days
+  to execute rather than to decide. Because the due date *is* Days Left offset, it
+  cannot drift from the Days Left or Urgency columns beside it
+- **Three aging ladders collapsed into one.** The legend bands and the API's urgency
+  agreed (critical <=7, high <=14, medium <=21, low beyond), but `extensionUrgencyLabel`
+  used <=14 High / <=30 Medium -- so a seat 25 days out was *low* on the server, in
+  the legend's green band, and *Medium* in its own Urgency column. All of it now
+  runs through `Utils.agingBand`
+- The extension panel's Urgency tile reads the same call as the Urgency column
+  instead of the raw server field, so a seat whose systems disagree no longer says
+  High in the column and Medium in the panel
+- **A compact task area on Extensions and Onboarding** -- decision, owner, due date
+  and next action on one line, in the row and repeated at the head of the detail
+  panel. No task needs a second panel opened to find out who owns it or when it is due
+- **Onboarding gained an owner, a next action and a due date**, which it never had.
+  Its deadline counts down to the start date rather than an end date, same offset and
+  same bands: the last week before a start is for onboarding, not for discovering it
+  slipped. The action comes from the API's own `next_action`, so the row and the panel
+  can't disagree; the recorded AM still shows even when the ball has moved to the
+  client or the recruiter
+- Both Next Action / Owner columns now sort by when the action is due rather than
+  alphabetically by owner. Records with no date to derive from sort last -- unknown,
+  not urgent
+- Verified in a browser against 70 live extension seats and 60 live upcoming starts
+  sampled across the full 45-day horizon, so all four bands are exercised: every row's
+  due phrase, Days Left and Urgency agree, and no row lost its AM
+
+### 2.29.0 - Under Review in the funnel, and stages say when they aren't recorded
+- **Under Review** added between Submitted and Interview. It's VNDLY's shortlist,
+  and on that book it's where the volume actually sits: **611 submissions
+  shortlisted, all dated**, against 20 of 1,356 with a recorded interview date.
+  Without it those candidates showed as merely Submitted and the interview step
+  looked near-empty -- reading as a broken pipeline rather than an unrecorded stage
+- **Stages now declare when the source doesn't record them.** The cumulative count
+  assumes stages are sequential -- hold an offer, so you must have interviewed. On
+  VNDLY that's false: 474 offers against 19 interview dates. Counting it that way
+  had the funnel assert 474 interviews from 19 records, which is a misleading zero
+  pointed the other way
+- Each stage now also counts *direct* evidence. Where a stage has none but a later
+  one has volume, the row is marked "not captured" with the inference explained.
+  Verified across four shapes: VNDLY flags Interview, Bullhorn flags Under Review
+  (no shortlist concept), a complete funnel flags nothing, and a genuinely empty
+  funnel isn't mislabelled as a gap
+- Decline reasons needed no work -- `Hospital_Decline_Reason`, `Offer_Decline_Reason`
+  and VNDLY's `Rejected`/`Withdrawal Reason` were already flowing into candidates
+
+### 2.28.1 - Don't spend a card saying a measure doesn't apply here
+- Bid Activity and Ended Early are now **omitted** on non-MSP rather than rendered
+  as a dash. Non-MSP is direct business -- GHR is the only agency on the req -- so
+  competitive bids don't exist there, and Bullhorn's order-level `reasonClosed`
+  can't determine an early end. A card whose content is "not applicable" is the
+  opposite of the stated principle of spending space on actionable numbers
+- The distinction: **inapplicable** → omit the card; **applicable but not captured**
+  → show it with a reason. "Never a misleading zero" governs the second, not the first
+- `renderKpiCards` drops falsy entries, so any card can opt out of a book
+- Result: MSP shows six cards, non-MSP four real ones, both on one row
+
+### 2.28.0 - Bid activity, from submissions tables nothing was reading
+- Dan's sixth Closed KPI is built. `dhc.B4Health_Contract_Submissions` and
+  `dbo.STAGING_VNDLY_SUBMISSIONS` carry one row per agency submission with the
+  vendor name, so total / GHR / competitive bids are all countable. Nothing in the
+  app was reading either table
+- Coverage: 2,534 of 2,764 closed B4 orders (92%) carry bids -- 7,737 of them, 4,280
+  GHR. VNDLY 100%, 1,713 bids
+- **Counted over distinct bid groups, never over rows.** A VNDLY job's bids repeat on
+  every one of its work orders -- 1,498 work orders sit across just 404 Job Ids, up
+  to 49 on one job -- so a row-wise sum inflated bids 7.5×, from 1,713 to 12,766.
+  B4 is 1:1 and unaffected either way, which is exactly how a row-wise sum would
+  have looked plausible. `bid_group` is emitted so the client can aggregate honestly
+- Non-MSP shows "not recorded on this book", not 0: Bullhorn is direct business and
+  GHR is the only agency on the req, so nought would read as "nobody bid"
+- The Closed KPI row is now the six he specified, still on one row
+
+### 2.27.1 - One variance in the Rate pane, and the facility strip keeps its job
+- The variance chip added in 2.21.0 is removed. Market Position now states variance
+  against 337 all-accounts peers; a second figure from five placed rates invited
+  reconciling numbers that answer different questions
+- The **strip stays**. It answers what nothing else does, and what the IT notes call
+  the most important use case: what seats at *this* facility actually filled at. A
+  $38 opening against ~$45 of recent fills explains why a job isn't filling; the
+  market ladder can't say that. Relabelled "What This Facility Actually Pays" so the
+  two sections read as different questions rather than rival answers
+
+### 2.27.0 - Market position, derived from rate data that was already there
+- **Market rate is live.** `BH_BILL_RATE_TRENDS_OUTLIERS_FACT` already carries the
+  population and `GetRateIntel` already ships it, so the Rate pane now reads
+  `Current $100 · Market $84 · +18.8% · #5 of 23` -- the exact form the feedback
+  asked for, with no new fetch. Dan had deferred Rate to P3 on the assumption the
+  market data wasn't ready; 476K rows of `Client_Bill_Rate_AVG` run to Sep 2026
+- Market is the tightest **all-accounts** rung with enough peers; the rank stays the
+  **account** ladder, matching his split of "Market" from "Internal Ranking".
+  Median not mean -- one outlier in a small bucket moves an average off every real job
+- **The rate ladder's top two rungs had never fired.** `GetRateIntel` emits peers
+  with an `account` key; `rateKeyOf` read `health_system || facility`, which peers
+  don't have, so every peer keyed to `''` on that field and both account rungs were
+  permanently empty. Every rank silently fell through to all-accounts -- correctly
+  labelled, so it read as right. **77% of jobs (4,637 of 6,000) now rank against
+  their own account; previously none did**
+- `rateRank` read only `bill_rate`, so it returned null for every open job (they
+  carry `billRate`, and as a display string). Now uses `Utils.rateNum` on both
+- `rate_category` is emitted by `GetPositions` for all four sources, so an open job
+  and a closed one rank on the same axis. 1,050 of 1,052 live Bullhorn open jobs
+  resolve one; the two that don't are Permanent and correctly carry no rank
+- `rate_category()` moved to `shared_code/rate_scope.py` -- two copies would drift,
+  and a rank meaning one thing on Closed and another on Open Jobs is worse than none
+
+### 2.26.2 - Closed KPIs back to one row; VNDLY client; Dan's feedback tracked
+- The Closed KPI row had seven cards in a six-column grid, so the seventh wrapped
+  and left a band of dead space above the records. Monthly and Annualized Revenue
+  Captured are parked as comments -- they are `weekly x 4.33` and `weekly x 52`,
+  carrying nothing the first card doesn't. Measured: 7 cards / 2 rows / 244px →
+  5 cards / 1 row / 106px
+- Dan's sixth card, Bid Activity, is not built: no bid field exists in `GetClosed`
+  or anywhere in the app. It needs the data before the card
+- `api/shared_code/vndly_api.py` — multi-tenant VNDLY client for writing requested
+  time off to the contractor's `RTO` custom field. Each MSP client is its own
+  tenant with its own host and token; the warehouse pools them, so writes resolve
+  the tenant from `[Health System]`. **`[Health System Id]` cannot be used** — it
+  is numbered per tenant and collides: Cooper and Inspira are both `3`
+- `DAN_UI_FEEDBACK.md` transcribes the September feedback with current status per
+  item. The PDF itself is gitignored -- the repo root is served by the Static Web
+  App, and a file there with no matching route would be publicly fetchable
+
+### 2.26.1 - Carry the bottom-bar hide fix onto this branch
+- `el.hidden = true` cannot hide an element carrying Tailwind's `flex` class, so on
+  main the bar stayed laid out at 56px across production MSP's job list. Inert here
+  (`impactUi()` is always true) but carried so merging can't reintroduce it
+- The bar is also hidden in the markup now and revealed by `View.revenueBar()`,
+  which removes the blank strip that flashed on every load. Verified the bar still
+  appears on both books on this branch
+
+### 2.26.0 - Extensions can be recorded here when the source can't hold them
+- **New End Date**, **Requested Time Off**, an **Is An Extension** override and a
+  **Reason** field (shown for Declined / Backfill Required), all saving through the
+  existing `workspace-state` path alongside decision, notes and the checkpoints
+- The source systems mostly cannot hold this. Of 497 MSP seats ending in the next
+  45 days, only the 115 VNDLY ones have a modification feed to write an extension
+  to, and 57 carry one; B4's 382 have nowhere at all. RTO is worse -- the warehouse
+  copy of the placement omits `customTextBlock9`, so MSP cannot even read it
+- Recorded values feed the UI rather than being write-only: typed RTO shows beside
+  the Gather RTO checkpoint as "Recorded here", and the extension override drives
+  "Previously Extended" with a "set here" marker
+- The RTO placeholder shows what the source already has, so nobody retypes it
+
+### 2.25.0 - Non-MSP: MSP accounts removed, divisions merged to the core seven
 Requested by the divisions taking the non-MSP instance live (Matthew Kyle, Daniel
 Matteson, 2026-09-16).
 - **MSP account data removed.** Auto-scope admitted any client whose *client-level*
@@ -436,69 +1623,184 @@ Matteson, 2026-09-16).
   across divisions. 29 of the 371 auto-scoped clients were MSP accounts carrying
   540 live heads, which is exactly why Allied showed MSP heads: Hospital of the
   University of Pennsylvania alone contributed 132, tagged
-  "Allied,Nursing,RevCycle Workforce". Now subtracted from the final scope
+  "Allied,Nursing,RevCycle Workforce". Now subtracted from the final scope, so a
+  manual allowlist entry cannot re-admit one
 - **Core divisions.** `RevCycle Workforce` → Rev Cycle; `Search` + `United`
-  (United Anesthesia) + `Locum Tenens` → Search and Locums
+  (United Anesthesia) + `Locum Tenens` → Search and Locums; `Human Services` →
+  Education was already in place. The filter now offers the core seven
 - `statsData` rows were never run through `normalizeDivision`, and they feed the
-  Division filter, so raw tokens showed beside their own merged names
+  Division filter, so the raw tokens showed up beside their own merged names
 - `Other` (untagged) and `GHR Internal` are still listed rather than hidden --
   599 of 4,379 open reqs carry no division, and dropping them silently is the
   failure this taxonomy exists to prevent
-- Production MSP unaffected: the division filter and the Bullhorn scope are
-  non-MSP surfaces, confirmed by the bleed check
 
-### 2.18.4 - Bill rate was a string everywhere it was used as a number
+### 2.24.4 - Bill rate was a string everywhere it was used as a number
 - `job.billRate` is a display string (`"$58/hr"`, `"$1,200"`) -- `cleanBillRate()`
-  formats it at ingest. Three places called `Number()` on it and got `NaN`
+  formats it at ingest. Four places called `Number()` on it and got `NaN`
 - The Rate pane showed **Bill Rate $0.00** and **GM / Hour —** on a job billing
   $58, and printed **"Rate Rank: no comparable rates"** directly above its own line
   reading "Against 92 placed rates at Orlando Health"
-- `placedPeers`' open-jobs fallback could never find a rate, so a facility with too
-  few placements ranked against nothing instead of against demand
+- Priority Jobs' **Avg Bill Rate** KPI read "—" always. `placedPeers`' open-jobs
+  fallback could never find a rate, so it never actually fell back
 - One `Utils.rateNum()` now parses it, the same way the column sorters already did
 - The rank strip counted only strictly-higher peers, so a tied rate ranked at the
-  top of its block rather than the middle. Now a mid-rank
-- Verified in a browser: Bill Rate $58.00, GM/Hour $14.50, Rate Rank #85 of 92
+  top of its block rather than the middle -- and disagreed with the variance chip
+  beside it: "#78 of 92" next to "#86 of 93" for one rate against one peer set.
+  Both now use one definition
+- Verified in a browser: Bill Rate $58.00, GM/Hour $14.50, #86 of 93, -9.4%
 
-### 2.18.3 - Financials could spin forever; Contracts could fail opaquely
+### 2.24.3 - Financials could spin forever; Contracts could fail opaquely
 - `financials()` treated an empty array as "still loading", and both failure paths
-  set `financialData = []` -- so a request that returned 500 or threw span
+  set `financialData = []` -- so a financials request that 500'd or threw span
   "Loading financial data from database..." for as long as the tab stayed open,
-  and a period with genuinely no rows looked identical. Verified: before the fix
-  an HTTP 500 and an empty payload both spin indefinitely
+  and a period with genuinely no rows looked identical. Verified against main: an
+  HTTP 500 and an empty result both spin indefinitely
 - Now three states: loading, failed (with the reason), and loaded-but-empty
 - `new Set(rBody.keys || [])` breaks if `/api/reviewed-contracts` ever answers with
   an array -- `rBody.keys` is then `Array.prototype.keys`, a *function*, which is
-  truthy, so `|| []` never fires and `new Set(fn)` throws
-- Adds `tools/msp-bleed-check.js`, which renders index.html AS production MSP at
-  two git refs and diffs what the page produces, so "did a feature bleed in" is a
-  check rather than a recollection
+  truthy, so `|| []` never fires and `new Set(fn)` throws. It surfaced as
+  "Couldn't load contracts comparison" with nothing useful in the console
 
-### 2.18.2 - Sorting and column filters never worked on the stage tables
+### 2.24.2 - A mechanical check for production-MSP bleed
+- `node tools/msp-bleed-check.js [refA] [refB]` renders index.html AS production
+  MSP at two git refs and diffs what the page actually produces: visible tabs and
+  their labels, body classes, the Open Jobs layout tree, KPI labels, whether the
+  legacy list is what's on screen, and console errors
+- The "don't change production MSP" rule has been enforced by memory and failed
+  twice -- the standing revenue bar reached production, and a gating wrapper broke
+  scrolling on the job list. Both were invisible in a diff and obvious in a browser
+- Serves the files locally and stubs `/api/*`, because the deployed sites require
+  an authenticated role on `/` and a headless browser just lands on the Entra ID
+  sign-in page
+- Exit code is the number of differences, so it can gate a push
+
+### 2.24.1 - Sorting and column filters were dead on every stage table
 - `label:${JSON.stringify('Assignment ID')}` emits `label:"Assignment ID"` inside a
   double-quoted HTML attribute, so the parser ended the attribute at that first
-  inner quote and the handler was cut mid-expression, throwing "Unexpected end of
-  input" on every click and keystroke
-- Sorting and per-column filtering were therefore dead on Closed, Extensions and
-  Onboarding (the non-MSP stage tables). The interview-stage dropdown in the job
-  detail passed a candidate name the same way and was broken too -- that one is
-  reachable on both instances
+  inner quote and the handler was cut mid-expression. Every click and keystroke
+  threw "Unexpected end of input"
+- Sorting and per-column filtering therefore never worked on Extensions,
+  Onboarding, Closed or Open Jobs. The interview-stage dropdown in the job detail
+  passed a candidate name the same way and was broken too
 - Fixed by escaping the interpolation, so the parser decodes the quotes back
-  inside the handler; apostrophes in a name or label are now safe as well
-- Verified in a browser against 60 real placements: sorting reorders all 60 rows
-  monotonically in both directions, and the text filters narrow correctly
+  inside the handler. Apostrophes in a name or label are now safe as well
+- Verified in a browser against 60 real placements: filtering narrows 60 rows to
+  1 with every visible row matching, and sorting reorders all 60 both ways
 
-### 2.18.1 - Hotfix: production MSP could not scroll the job list
-- `legacyListWrap`, the wrapper added in 2.17.0 to hide the legacy list when the
-  redesign is on, was given no classes. It sat between `listViewWrapper`
-  (`flex flex-col md:h-full md:overflow-hidden`) and the scroll container, so the
-  scroller's `flex-1` became inert, the scroller took its full content height,
-  `overflow-y-auto` had nothing to scroll, and the list was clipped at the bottom
-  of the viewport with no scrollbar
-- Desktop MSP only. On mobile the `md:` rules are off and the body scrolls; on
-  non-MSP the wrapper is hidden entirely -- which is why it went unnoticed
-- Restores the baseline flex chain with `flex-1 min-h-0 flex flex-col`. Verified
-  that every other view wrapper is byte-identical to the 2.5.0 baseline
+### 2.24.0 - Extensions filters AM and Recruiter by dropdown
+- Both columns were free-text filters. On the non-MSP book they are effectively
+  fully populated -- 661 of 661 seats carry an AM, 660 carry a recruiter -- across
+  71 and 78 distinct people, which is more names than anyone can spell from memory
+- Dropdown matching is exact, not substring: picking "Ann Lee" no longer also
+  returns "Ann Leeson". Typed filters elsewhere still match on substring
+- Options are built from the loaded rows before any column filter applies, so
+  choosing a name never empties the list you chose it from
+- A "— none —" option where a column has blanks, so "who has no recruiter
+  assigned" is askable
+- The column reads AM on non-MSP and stays PM on MSP, matching what each book
+  calls the role
+- `filter: 'select'` is generic; any stage column can opt in
+
+### 2.23.1 - Carry the scrolling hotfix onto this branch
+- `legacyListWrap` gets the same `flex-1 min-h-0 flex flex-col` shipped to main in
+  2.18.1. Inert here -- `impactUi()` is always true on this branch, so the wrapper
+  is never shown -- but without it, merging this branch would reintroduce the bug
+
+### 2.23.0 - Channel is a column on non-MSP, not just a badge
+- Who holds the program (direct, or in behind someone else's MSP, and which one)
+  was a badge you could read but not sort or filter by. It is now a real column
+  on Open Jobs, through the same stageApply the stage tabs use
+- Non-MSP only: on an MSP account the answer is always GHR, so the column would
+  be a stack of identical cells
+- The column's sort key and the rendered cell both call `View.channelOf`, so what
+  you sort on is exactly what you see. Unset systems show a dash rather than
+  asserting a channel nobody recorded
+- The facility column gives up the width, so the table still totals 100% and does
+  not reintroduce a horizontal scroll
+
+### 2.22.0 - Closed gets a drillable "Ended Early"
+- New KPI counting seats that ended before they were meant to, clickable to narrow
+  the table to exactly those rows, with a banner and a "Show all" so a filtered
+  table can't be mistaken for the full one
+- Two conditions, both required: the row must be one somebody actually filled, and
+  its reason must name a real early end. An unfilled order the hospital cancelled
+  is a lost order, not a seat that ended early
+- Reasons are matched on normalised text -- the same reason is typed several ways
+  ("Terminated - attendance" and "Terminated-attendance"). Checked against all 33
+  distinct reason values in the live data
+- Non-MSP shows "—", not 0. Bullhorn's `reasonClosed` is order-level (Filled, Lost
+  to Competition, Cancelled by Client), so "no early ends" would be a claim the
+  data can't support
+- KPI cards can now carry a click target and an active state
+
+### 2.21.0 - Rate says where it sits: "+7.8% · #3 of 8"
+- The Rate pane drew a rank strip but never stated the position in words. It now
+  gives variance against the peer median and an explicit rank
+- Variance is measured against the median, not the mean: these are small samples
+  at a single facility, where one outlier drags an average somewhere no real seat sits
+- Ties take a mid-rank, and this job's own rate is counted in the denominator when
+  it is not already one of the peers -- ranking against a single placed rate used
+  to produce "#2 of 1"
+
+### 2.20.0 - Pipeline gains an Accepted stage and a link back to the source
+- The funnel ran Submitted → Interview → Offer and stopped, so it said an offer
+  went out but never how many were taken. Accepted is now its own stage: it used
+  to share a rank with Offer Pending and Post-Offer Decline
+- Each record can link back to the system it came from. The URL templates come
+  from config (`SOURCE_URL_B4`, `SOURCE_URL_VNDLY`, `SOURCE_URL_BULLHORN`,
+  `SOURCE_URL_SYMPLR`), since the hosts are tenant-specific -- an unset source
+  renders no link rather than a broken one, and only http(s) is ever emitted
+- The unreferenced `bucket()` helper is commented out rather than removed; it is
+  still the right shape for a terminal-state breakdown
+
+### 2.19.0 - Placements defaults to the last 90 days
+- The Placements pane showed only seats live at that moment, so a facility that
+  turned over last month read as untouched. It now defaults to a 90-day window --
+  active seats plus anything that ended in the last 90 days -- with an
+  "Active only" toggle to get the old view back
+- Ended rows are chipped as such, carry their source status on hover, and sort
+  after the active ones, most recent first
+- `recentlyEnded` is a new key on `stats-data`, deliberately separate from
+  `onAssignment`: the Contracts tab and the headline counts read that one, and
+  widening it would have moved numbers across the app
+- Status lists had to be measured, not assumed. Ended seats carry Completed /
+  Termination / Cancellation on Bullhorn and Ended / Ended by Job Close on VNDLY,
+  none of which appear in the active-status lists, so a date-only change would
+  have returned almost nothing. Pipeline outcomes on seats nobody worked
+  (Rejected, Withdrawn, Offer Declined, Closed Not Awarded) are excluded
+
+### 2.18.3 - Rate & GM condensed into the record
+- Rate & GM was a full-width strip below the detail panels on Extensions and
+  Onboarding; it now sits inside the record itself, beside the decision it informs
+- Same numbers, same override field, same save path -- only the placement changed.
+  The old full-width block is kept in place, unused, if a wider one is wanted back
+- A seat with no bill rate on file now shows a dash instead of $0.00. Symplr
+  onboarding rows carry no bill rate at all, so every one of them was claiming
+  $0.00 bill and $0.00 GM/hour. A genuine zero still renders as $0.00
+
+### 2.18.2 - Extension checkpoints show what the source already knows
+- "Gather RTO" and "Send Extension" now display the recorded text from the source
+  system beside the checkbox, so the team confirms rather than re-gathers
+- The box is still ticked by a person. 68 of the 351 seats with recorded time off
+  say "None needed" or "N/A", and the field is free text, so presence cannot mean
+  the step is done -- auto-completing would advance the funnel on untouched seats
+- "None needed" is reported as such rather than quoted back as if it were a date
+- MSP shows nothing for RTO, and structurally cannot: the warehouse placement copy
+  omits customTextBlock9 and VNDLY has no time-off field at all. Written up with
+  the measurements in EXTENSION_MILESTONE_SOURCES.md
+
+### 2.18.1 - The extension note shown is the latest one
+- VNDLY's extension note and its author were picked with `MAX()` over text, which
+  is alphabetical rather than chronological. 91 of the 149 work orders carrying an
+  extension note have more than one, and 14 of them (9%) were showing a superseded
+  end date; one was credited to the wrong person
+- Extension milestones now carry what the source systems already know: Bullhorn's
+  own "Extension?" flag, and the clinician's recorded time off on the non-MSP side
+  (35% of live seats), so the team is not asked for either a second time
+- Client interest and client approval have no source anywhere -- Bullhorn's
+  "Upcoming Extension?" field is empty on every row -- and stay manual by necessity
+- Feature-branch only. `GetExtensions` backs a tab production MSP has had since
+  2.5.0, so this ships with the prototype merge rather than ahead of it
 
 ### 2.18.0 - Headcount moves explain themselves
 - Trend's category breakdown now says what caused each headcount move rather than
@@ -520,6 +1822,20 @@ Two things would have broken MSP outright. `rowUpdate` and `TOGGLE_ROW` had been
 
 The pre-commit check now asserts those two renderers still match their 2.5.0 baseline, so drift on that surface is caught mechanically.
 
+### 2.16.1 - One people picker, and assignees get a stable identity
+
+*(Renumbered from 2.13.0. Two sessions numbered in parallel and both reached 2.13.0 — this one shipped on the prototype branch, the other on main for Open Jobs. The content is unchanged.)*
+
+The lever/margin tag is *who the action is assigned to*, recorded separately from who performed it (`changes.user_name`, which is the Azure AD email and is 100% consistent across all 4,649 rows). The assignee was the inconsistent half: of 2,030 lever completions, **1,115 carried a display name and 915 an email**, so the same person appears twice and the records can't be grouped by assignee.
+
+Both code paths already had the email and dropped it. MSP rendered chips from a hardcoded team list and passed only `m.name`; the Graph dropdown showed `u.mail` but passed `displayName || mail`.
+
+That list had also drifted — five addresses on `@ghresources.com` rather than `@ghrhealthcare.com`, and one with the surname misspelt (`jdirekes`) — so it could not serve as an identity source. Rather than repair it, MSP now uses the same Graph search non-MSP already had: one code path, an authoritative source, and no second list to maintain.
+
+A selection now carries both — the display name in the visible field, the email on a data attribute — and `lever_update`, `margin_update` and the open-to-AVs lever all persist `userEmail` beside `user`. `change_data` is free-form JSON so no API change was needed. Rows written before this carry no email; the replay path defaults it to empty and still renders the name.
+
+The tradeoff: MSP loses one-click chips for type-to-search.
+
 ### 2.16.0 - Open Jobs fits its container
 
 Column widths as percentages so the table stops needing a horizontal scroll: an unsized column under `table-fixed` swallows every remaining pixel, which left a band of white space while ID and Category truncated. B4 writes many specialties doubled ("CT TECH - CT TECH") on 62 of its 91 open orders; the halves are collapsed where they match exactly.
@@ -539,23 +1855,6 @@ Every `dateBegin` edit from `EditHistoryPlacement` with its old value, new value
 Open Jobs rendered a div per job under a hand-built header with its own sort. It now renders through `stageShell` with the reference's ten columns, gaining sortable headers and column filters. `buildRowHtml` split into `jobRowCells` and `jobDetailHtml`; the `SORT` action and `s.sort` were removed as superseded — which 2.17.0 had to undo.
 
 ### 2.12.2 - Reviewed contracts were all attributed to one person
-
-`window.USER_EMAIL` is read once, when marking a contract row reviewed, and is **never assigned anywhere in the file**. So the `|| 'mjones@ghrhealthcare.com'` fallback fired every time, and `reviewed_by` would have recorded that one address no matter who clicked. Now uses `getCurrentUser()` — the Azure AD email that every other mutation already records.
-
-Caught before it mattered: `impactmgr.reviewed_contracts_rows` is still empty, so no rows carry the wrong name.
-
-### 2.12.1 - Category filter: "All Allied" was dropping 88% of allied
-
-Reported from the field: filtering the tracker to Allied gave figures far below the unfiltered totals, while the unfiltered totals looked right.
-
-`matchesTrendCategory` compared the selected value against the raw category by substring, but **"All Nursing" and "All Allied" are sentinels, not category names**, so the test could never match them properly. Against `All Allied` the only raw category that passed was the one literally called `Allied` — 105 of 852 allied rows. `Local Contract Allied Health` (322), `Allied Health` (245), `Travel Allied Health`, `Contract (Allied)` and `Per Diem (Allied)` were all dropped. `All Nursing` kept 719 of 1,641 (44%).
-
-This was introduced by an earlier fix. Trend used to fall back to a broad `/nurs/ ∨ /allied/` regex, which made a specific category like "Travel Nursing" return *all* nursing. Removing that fallback fixed the specific case and silently broke the sentinels, which had been relying on it. Trend now delegates sentinels to `Utils.checkCategoryMatch`, the way every other tab does.
-
-Two neighbouring bugs fell out of checking it against the real vocabulary — all 28 distinct programs across B4 and VNDLY:
-
-- **`Information Technology` counted as Allied.** The sentinels tested `ALLIED_KEYWORDS`, which contains `tech`. Those keyword lists are for free specialty text; a program is a short controlled vocabulary where `nurs` and `allied` classify all 28 correctly. This affected every tab, not just Trend.
-- **A specific category pulled in a broader one.** The substring test ran both directions, so selecting `Travel Nursing` also matched plain `Nursing`, and `Allied Health` swallowed `Allied` — a separate category with its own 105 rows. Only the raw-contains-selected direction is needed, since the dropdown offers normalized names while Trend holds the raw value.
 
 
 ### 2.11.1 - Sweep for things built but never wired

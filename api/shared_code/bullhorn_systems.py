@@ -128,6 +128,10 @@ def get_manual_allowlist_ids(app_conn):
         return {int(row[0]) for row in cursor.fetchall() if row[0] is not None}
     except Exception as e:
         # Non-fatal — hardcoded rollup + auto-active still keep the dashboard populated.
+        # Still swallows, deliberately, and unlike discover_active_client_ids
+        # above that is defensible: the allowlist is a handful of manual
+        # additions on top of a book of thousands, so losing it shrinks scope
+        # at the margin instead of gutting it. Logged so it is not invisible.
         print(f"get_manual_allowlist_ids: swallowed error, returning empty set: {e}")
         return set()
 
@@ -233,8 +237,19 @@ def discover_active_client_ids(bullhorn_cursor):
         """)
         return {int(row[0]) for row in bullhorn_cursor.fetchall() if row[0] is not None}
     except Exception as e:
-        print(f"discover_active_client_ids: swallowed error, returning empty set: {e}")
-        return set()
+        # Raise. This used to swallow and return an empty set, which is the
+        # worst available answer: resolve_scope_client_ids would fall back to
+        # the hardcoded rollup plus the manual allowlist, so the non-MSP book
+        # silently collapsed from ~2,280 clients to about 15 and every endpoint
+        # served a 200 full of drastically understated numbers. Nothing on the
+        # screen would look wrong.
+        #
+        # All nine call sites wrap this in `try: ... finally:` with no except,
+        # so the exception reaches each endpoint's own handler and surfaces as
+        # an error -- which is the honest outcome. A scope we cannot compute is
+        # not a small scope. (GH #93)
+        print(f"discover_active_client_ids failed: {e}")
+        raise
 
 
 # MSP accounts, excluded from the non-MSP book unconditionally.
@@ -312,6 +327,19 @@ def resolve_scope_client_ids(bullhorn_cursor, app_conn=None):
     resulting set into build_scope_filter(). Both DB connections should be
     from the caller's already-open connections so we don't churn extra logins.
     """
+    if WIDE_NON_MSP_SCOPE:
+        # build_scope_filter ignores this set while the wide scope is on, so
+        # resolving it is pure cost on every non-MSP endpoint call: a query
+        # against View_Placement, and a second DB connection to the app
+        # database for the manual allowlist. The discovery query itself is
+        # cheap (~40ms measured), but the extra connection is not, and nine
+        # endpoints pay for both.
+        #
+        # The hardcoded rollup is returned rather than an empty set so any
+        # future caller that reads this for something other than the scope
+        # filter still gets a sane, non-empty answer.
+        return set(CLIENT_ID_TO_SYSTEM.keys()) - MSP_CLIENT_IDS
+
     return (
         set(CLIENT_ID_TO_SYSTEM.keys())
         | get_manual_allowlist_ids(app_conn)
@@ -375,10 +403,45 @@ def build_system_case_expr(column_name='p.clientCorporationID', fallback_name_co
     return '\n'.join(parts)
 
 
+# Every client EXCEPT GHR's own MSP accounts, rather than only clients that
+# already have someone on assignment.
+#
+# The non-MSP book was scoped by discover_active_client_ids(): a client was in
+# only if it had a placement running TODAY. That silently excluded every
+# account GHR is actively recruiting for but has not yet placed anyone at.
+# Measured against Bullhorn on 2026-09-26, inside the same 45-day window the
+# list already applies:
+#
+#     open reqs visible today      1,336
+#     open reqs company-wide       6,350      (4.8x)
+#
+# and the divisions that sell searches rather than filling seats were the worst
+# hit, because they rarely have an active placement to be discovered by:
+#
+#     Search      2 of 58 visible      Locums    30 of 254
+#     Allied    249 of 1,569           Nursing  991 of 4,268
+#
+# Those reqs are live, not stale: 6,332 of the 6,350 were modified in the last
+# 30 days. The 45-day cutoff stays and still does its job -- of the reqs over a
+# year old, only 41 of 825 have been touched in a month.
+#
+# Headcount is unaffected BY CONSTRUCTION: a client with no active placement
+# contributes no heads, so this moves Open Jobs 4.8x while Trend, Financials
+# and headcount move 1,145 -> 1,157 (1.01x), and client count 333 -> 342.
+#
+# Rendered as NOT IN (47 MSP ids) rather than IN (~10k ids): it is the honest
+# expression of the rule ("everything except MSP") and a far better query plan
+# than an inlined ten-thousand-element IN list.
+WIDE_NON_MSP_SCOPE = True
+
+
 def build_scope_filter(column_name='p.clientCorporationID', client_ids=None):
     """
-    SQL fragment `{col} IN (...)` restricting placements to in-scope non-MSP
-    accounts.
+    SQL fragment restricting placements to the non-MSP book.
+
+    With WIDE_NON_MSP_SCOPE (the default), that is every client except GHR's
+    own MSP accounts. Set it False to restore the previous behaviour, where
+    the book was limited to clients carrying a live placement.
 
     Pass `client_ids` (a set/list) computed via resolve_scope_client_ids to
     get the full dynamic scope. Omit `client_ids` for legacy behavior
@@ -387,6 +450,10 @@ def build_scope_filter(column_name='p.clientCorporationID', client_ids=None):
     If the effective set is empty, returns '1 = 0' so the query returns
     zero rows rather than accidentally matching everything.
     """
+    if WIDE_NON_MSP_SCOPE:
+        excluded = ', '.join(str(i) for i in sorted(MSP_CLIENT_IDS))
+        return f'{column_name} NOT IN ({excluded})'
+
     if client_ids is None:
         client_ids = all_in_scope_client_ids()
     ids_list = sorted(set(int(i) for i in client_ids if i is not None))

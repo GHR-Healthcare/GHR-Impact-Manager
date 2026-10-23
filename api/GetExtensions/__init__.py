@@ -2,6 +2,10 @@ import azure.functions as func
 import pyodbc
 import os
 import json
+from concurrent.futures import ThreadPoolExecutor
+import time
+from shared_code.endpoint_cache import cache_key, read_cache, write_cache
+from shared_code.rate_scope import value_13wk
 from shared_code.auth import require_allowed_domain
 from shared_code.data_source import (
     is_non_msp, get_bullhorn_conn, get_symplr_conn, get_appdb_conn,
@@ -38,6 +42,98 @@ VNDLY_ACTIVE_STATUSES = ('Active',)
 
 EXTENSION_HORIZON_DAYS = 45
 
+# The extension designations, per the Extension Criteria spec. Order is the
+# pipeline order, which is also the order the tab groups them in.
+#
+# These are a SEPARATE axis from the GHR-internal decision lever ('Interested',
+# 'Approved to Offer', ...). The decision is GHR's own position on whether to
+# extend; the designation is where the request has actually got to with the
+# client and the vendor. A seat can be 'Approved to Offer' internally and still
+# sit at 'Pending Extension Review' externally, and conflating them would hide
+# exactly that gap.
+EXT_STAGE_REVIEW   = 'Pending Extension Review'
+EXT_STAGE_CLIENT   = 'Awaiting Client Approval'
+EXT_STAGE_VENDOR   = 'Awaiting Vendor Approval'
+EXT_STAGE_ACCEPTED = 'Extension Accepted'
+# Not in the spec's list, but present in the B4 report on 10 live seats. A
+# declined offer is a finished decision, not one still waiting to be made.
+EXT_STAGE_DECLINED = 'Extension Declined'
+
+# Donny Wright's Extension Request automation (Bullhorn), enabled 2026-10-09:
+# approved placements, Cooper only, Nursing division, journey starts 45 days
+# before the end date. The clinician's reply lands on the placement record as
+# customInt10 "Candidate Extension Response", free text in customTextBlock7
+# "Candidate Extension Comments".
+#
+# This is the clinician-interest signal the extension workflow's stage 2 asks
+# for and nothing in either VMS carries -- "Interested in extending? Yes with
+# RTO / Yes no RTO / No" maps onto it one for one.
+#
+# 0 is not one of the picker's values. It sits on 3,837 placements as an unset
+# default and is nulled at the query, so it never reads as an answer.
+EXT_RESPONSE_LABELS = {
+    1: 'Yes - with RTO',
+    2: 'Yes - no RTO',
+    3: 'No',
+    4: 'Possibly',
+}
+EXT_STAGES = (EXT_STAGE_REVIEW, EXT_STAGE_CLIENT, EXT_STAGE_VENDOR,
+              EXT_STAGE_ACCEPTED, EXT_STAGE_DECLINED)
+
+
+def _extension_stage(r):
+    """Where this seat's extension actually sits, derived from the VMS.
+
+    Spec: pull the ends 45 days out, then use the VNDLY pending-modification
+    report and the B4 'extension offer pending' assignments to move a seat to
+    Awaiting Vendor. 'Awaiting Client Approval' has no VMS signal -- it means
+    the PMO has put the extension in front of the client -- so it is set by
+    hand on the tab and applied client-side over whatever is derived here.
+
+    Returns (stage, why) so the tab can show its own reasoning rather than
+    asserting a status with no provenance.
+    """
+    # VNDLY: the latest Date Extension modification on the work order.
+    #
+    # The staging table carries exactly four Status values for 'Date Extension',
+    # measured 2026-10-07: None 417, Accepted 313, Cancelled 198, Submitted 62.
+    # Only 'accepted' and 'submitted' were mapped, so Cancelled fell through to
+    # the default: a withdrawn extension was presented as "Pending Extension
+    # Review", i.e. work still to do, on a seat where the modification had
+    # already been pulled. That 198 is every date-extension modification ever
+    # recorded; on seats actually inside the 45-day window it is 9 (against 41
+    # with no modification at all, 26 accepted and 22 submitted). Small, but
+    # wrong in the direction that wastes a PM's time.
+    #
+    # 'None' is left falling through deliberately. It means the modification
+    # exists but has not been submitted, and the extension workflow is explicit
+    # that a seat must not carry a client-facing VMS status until the PM has
+    # actually submitted it to the client. The default is the honest label there.
+    mod = (r.get('mod_status') or '').strip().lower()
+    if mod == 'accepted':
+        return EXT_STAGE_ACCEPTED, 'VNDLY date extension accepted'
+    if mod in ('submitted', 'pending'):
+        return EXT_STAGE_VENDOR, 'VNDLY date extension submitted, awaiting vendor'
+    if mod in ('cancelled', 'canceled'):
+        return EXT_STAGE_DECLINED, 'VNDLY date extension cancelled'
+
+    # B4: the Network Activity Report, when it has been loaded, states the
+    # assignment type outright -- so it outranks anything inferred below.
+    if r.get('b4_report_offer_pending'):
+        return EXT_STAGE_VENDOR, 'B4 report: extension offer pending'
+    if r.get('b4_report_extended'):
+        return EXT_STAGE_ACCEPTED, 'B4 report: future extension accepted'
+    if r.get('b4_report_declined'):
+        return EXT_STAGE_DECLINED, 'B4 report: extension offer declined'
+
+    # B4: a child contract hanging off this assignment is the extension itself.
+    if r.get('b4_ext_awarded'):
+        return EXT_STAGE_ACCEPTED, 'B4 extension awarded'
+    if r.get('b4_ext_offer_pending'):
+        return EXT_STAGE_VENDOR, 'B4 extension offer pending, awaiting vendor'
+
+    return EXT_STAGE_REVIEW, 'no approval activity recorded yet'
+
 # Non-MSP placement statuses that represent a seat still running, and so
 # capable of being extended. Everything else in the window is terminal
 # (Cancellation, Termination, Completed) or never started.
@@ -63,6 +159,120 @@ def _b4_rows(cursor, horizon, include_affiliate):
     """Extension candidates still being managed in B4Health."""
     status_list = ', '.join("'" + s.replace("'", "''") + "'" for s in B4_EXCLUDED_STATUSES)
     agency_filter = '' if include_affiliate else f'AND {B4_GHR_PREDICATE}'
+    # Resolve the Bullhorn crosswalk once instead of per row.
+    #
+    # The crosswalk carries one row per load run rather than per pair -- 8,015
+    # rows over 4,331 distinct (contract, placement) pairs -- so joining it raw
+    # fans every order out ~1.9x. 140 contracts legitimately map to more than
+    # one placement (a seat refilled or continued into a new record); the live
+    # one is the latest-ending, which is what ROW_NUMBER picks here.
+    #
+    # This was an OUTER APPLY, which SQL Server evaluated once per row: 13.1s
+    # for 444 rows against 2.7s pre-resolved, for identical output. The earlier
+    # timings that made the APPLY look cheap used SELECT COUNT(*), which lets
+    # the optimiser skip the SELECT list entirely -- the cost only appears when
+    # the columns are actually produced.
+    cursor.execute("""
+        SET NOCOUNT ON;
+        IF OBJECT_ID('tempdb..#b4_bh') IS NOT NULL DROP TABLE #b4_bh;
+        SELECT contract_id, match_id, match_start_date, match_end_date,
+               match_status, match_clinician, match_is_extension,
+               match_original_end, Recruiter, source_is_extension,
+               cand_ext_response, cand_ext_comments
+        INTO #b4_bh
+        FROM (
+            SELECT LTRIM(RTRIM(l.Contract_ID))                  AS contract_id,
+                   pd.Source_Placement_ID                       AS match_id,
+                   CAST(pd.DateBegin AS DATE)                   AS match_start_date,
+                   CAST(pd.DateEnd AS DATE)                     AS match_end_date,
+                   NULLIF(LTRIM(RTRIM(pd.Status)), '')          AS match_status,
+                   NULLIF(LTRIM(RTRIM(ISNULL(l.firstName, '') + ' '
+                                    + ISNULL(l.lastName, ''))), '') AS match_clinician,
+                   pd.IsExtension                               AS match_is_extension,
+                   CAST(pd.DateOriginalEnd AS DATE)             AS match_original_end,
+                   NULLIF(LTRIM(RTRIM(pd.Recruiter)), '')       AS Recruiter,
+                   NULLIF(bpr.customInt10, 0)                   AS cand_ext_response,
+                   NULLIF(LTRIM(RTRIM(CAST(bpr.customTextBlock7 AS NVARCHAR(MAX)))), '')
+                                                                AS cand_ext_comments,
+                   CASE WHEN pd.IsExtension = 1 THEN 'Yes'
+                        WHEN pd.IsExtension = 0 THEN 'No' END   AS source_is_extension,
+                   ROW_NUMBER() OVER (PARTITION BY LTRIM(RTRIM(l.Contract_ID))
+                                      ORDER BY pd.DateEnd DESC, l.RUN_ID DESC) AS rn
+            FROM dbo.BH_PLACEMENT_RAW_TO_B4HealthOrder l WITH (NOLOCK)
+            INNER JOIN dbo.PLACEMENT_DIM pd WITH (NOLOCK)
+                    ON pd.Source_Placement_ID = l.placementID
+            LEFT JOIN dbo.BH_PLACEMENT_RAW bpr WITH (NOLOCK)
+                   ON bpr.placementID = l.placementID
+        ) z WHERE rn = 1;
+        CREATE INDEX ix_b4bh ON #b4_bh (contract_id);
+
+        IF OBJECT_ID('tempdb..#b4_rto') IS NOT NULL DROP TABLE #b4_rto;
+        SELECT contract_id, rto INTO #b4_rto FROM (
+            SELECT LTRIM(RTRIM(cs.Contract_Assignment_ID))      AS contract_id,
+                   NULLIF(LTRIM(RTRIM(cs.RTO)), '')             AS rto,
+                   ROW_NUMBER() OVER (PARTITION BY LTRIM(RTRIM(cs.Contract_Assignment_ID))
+                                      ORDER BY cs.Date_Loaded DESC) AS rn
+            FROM dhc.B4Health_Contract_Submissions cs WITH (NOLOCK)
+            WHERE NULLIF(LTRIM(RTRIM(cs.RTO)), '') IS NOT NULL
+        ) z WHERE rn = 1;
+        CREATE INDEX ix_b4rto ON #b4_rto (contract_id);
+
+        IF OBJECT_ID('tempdb..#b4_ext') IS NOT NULL DROP TABLE #b4_ext;
+        -- The LATEST extension row per seat, not MAX() over every row it has
+        -- ever had. A seat can carry several, and independent MAX flags let an
+        -- old one outvote the current one: _extension_stage tests pending
+        -- before accepted, so any seat that was ever 'Extension Offer Pending'
+        -- read as awaiting vendor forever after it was accepted.
+        --
+        -- Measured 2026-10-21, both seats carrying two rows, and they show why
+        -- a precedence rule would be wrong in one direction or the other:
+        --
+        --   369683  pending  11/29->7/2  added 09-30
+        --           accepted 11/29->7/2  added 10-01   -> ACCEPTED (same
+        --           window; the offer was taken up). We showed pending.
+        --   370150  accepted 10/25->11/6 added 08-31
+        --           pending  11/11->5/8  added 10-20   -> AWAITING VENDOR (a
+        --           further extension is now on the table). We showed pending,
+        --           which was right by luck.
+        --
+        -- "Accepted beats pending" would fix the first and break the second.
+        -- Latest-wins settles both, and matches how the VNDLY modification is
+        -- already picked -- newest row, never a flag aggregated over history.
+        SELECT parent,
+               CASE WHEN atype = 'Extension Offer Pending'   THEN 1 ELSE 0 END AS rp,
+               CASE WHEN atype = 'Future Extension Accepted' THEN 1 ELSE 0 END AS re,
+               CASE WHEN atype = 'Extension Offer Declined'  THEN 1 ELSE 0 END AS rd
+        INTO #b4_ext
+        FROM (
+            SELECT LTRIM(RTRIM(c.Parent_Contract_ID)) AS parent,
+                   LTRIM(RTRIM(x.AssignmentType))     AS atype,
+                   ROW_NUMBER() OVER (PARTITION BY LTRIM(RTRIM(c.Parent_Contract_ID))
+                                      ORDER BY x.DateAdded DESC, x.StartDate DESC) AS rn
+            FROM dhc.B4HealthExtensionsOrder x WITH (NOLOCK)
+            JOIN dhc.B4HealthOrder c WITH (NOLOCK)
+              ON LTRIM(RTRIM(c.Contract_ID)) = LTRIM(RTRIM(x.AssignmentID))
+            WHERE x.Agency LIKE '%GHR%' AND c.Parent_Contract_ID IS NOT NULL
+        ) z WHERE rn = 1;
+        CREATE INDEX ix_b4ext ON #b4_ext (parent);
+
+        IF OBJECT_ID('tempdb..#b4_chain') IS NOT NULL DROP TABLE #b4_chain;
+        SELECT parent, MAX(aw) AS aw, MAX(op) AS op
+        INTO #b4_chain
+        FROM (
+            SELECT LTRIM(RTRIM(cs.Parent_Contract_Assignment_ID)) AS parent,
+                   CASE WHEN cs.Date_Awarded IS NOT NULL THEN 1 ELSE 0 END AS aw,
+                   CASE WHEN cs.Date_Awarded IS NULL AND cs.Offer_Date IS NOT NULL
+                         AND cs.Agency_Decline_Date IS NULL
+                         AND cs.Hospital_Decline_Date IS NULL
+                         AND cs.Agency_Retracted_Date IS NULL
+                        THEN 1 ELSE 0 END AS op
+            FROM dhc.B4Health_Contract_Submissions cs WITH (NOLOCK)
+            WHERE cs.Parent_Contract_Assignment_ID IS NOT NULL
+        ) z GROUP BY parent;
+        CREATE INDEX ix_b4chain ON #b4_chain (parent);
+    """)
+
+
     cursor.execute(f'''
         SELECT
             'B4'                                        AS source_system,
@@ -117,6 +327,8 @@ def _b4_rows(cursor, horizon, include_affiliate):
             bh.match_status                             AS match_status,
             bh.match_clinician                          AS match_clinician,
             bh.Recruiter                                AS recruiter,
+            bh.cand_ext_response                        AS cand_ext_response,
+            bh.cand_ext_comments                        AS cand_ext_comments,
             -- IsExtension does NOT mean "this seat has been extended" -- it
             -- means the placement IS an extension of a prior assignment.
             -- Verified against the chain rule (same clinician + same client,
@@ -126,9 +338,49 @@ def _b4_rows(cursor, horizon, include_affiliate):
             -- and the two agree on only 871 records, which is why both ship.
             bh.match_is_extension                       AS match_is_extension,
             bh.match_original_end                       AS match_original_end,
+            bh.source_is_extension                      AS source_is_extension,
+            /* RTO for MSP, at last. The Bullhorn path cannot supply it --
+             * BH_PLACEMENT_RAW holds Blocks 1-5 and 10 only, so customTextBlock9
+             * never reaches the warehouse, so the ATS copy is unavailable on
+             * this book. B4 records it on the contract submission itself, which is a
+             * better source anyway: it is the VMS's own field, not an ATS copy.
+             *
+             * 18 of the 314 GHR seats in the live window carry one; the tab
+             * showed 0 before this. Resolved once into #b4_rto for the same
+             * reason the crosswalk is: as a correlated subquery it ran per row.
+             */
+            rt.rto                                      AS recorded_rto,
             -- B4 carries no original end date; the parent-contract chain in
             -- parent_ref is the only extension evidence on this source.
-            CAST(NULL AS DATE)                          AS original_end_date
+            CAST(NULL AS DATE)                          AS original_end_date,
+            -- B4 has no modification concept -- extensions are their own
+            -- contract -- so the VNDLY status column is null on this source.
+            CAST(NULL AS NVARCHAR(50))                  AS mod_status,
+            CAST(NULL AS NVARCHAR(100))                 AS mod_reason,
+            /* The spec reaches these through the Network Activity Report:
+             * filter to the extensions tab, take assignment type "extension
+             * offer pending" for GHR divisions, then crosswalk names back to
+             * the forecast ends. The warehouse carries the same facts with a
+             * real key -- an extension in B4 IS a child contract whose
+             * Parent_Contract_Assignment_ID is this assignment -- so the match
+             * is exact rather than by name and nothing is exported by hand.
+             *
+             * Resolved once into #b4_ext / #b4_chain. As five correlated EXISTS
+             * they cost 10.0s for 444 rows; pre-aggregated and joined, 1.6s for
+             * the same answers.
+             *
+             * The report is registry-level and lists every vendor in the
+             * program, so it is scoped to GHR agencies -- an affiliate picking
+             * up a GHR seat's extension must never read as GHR extending it.
+             *
+             * Awarded is tested before pending in _extension_stage: once the
+             * extension is awarded the seat is no longer awaiting anyone.
+             */
+            ISNULL(ch.aw, 0)                            AS b4_ext_awarded,
+            ISNULL(ch.op, 0)                            AS b4_ext_offer_pending,
+            ISNULL(e.rp, 0)                             AS b4_report_offer_pending,
+            ISNULL(e.re, 0)                             AS b4_report_extended,
+            ISNULL(e.rd, 0)                             AS b4_report_declined
         FROM dhc.B4HealthOrder o WITH (NOLOCK)
         -- The crosswalk maps keys and nothing else. Its own status and date
         -- columns are a snapshot frozen at load time and must not be compared
@@ -144,26 +396,13 @@ def _b4_rows(cursor, horizon, include_affiliate):
         -- would fan every order out ~1.9x. 140 contracts legitimately map to
         -- more than one placement (a seat refilled or continued into a new
         -- record); the live one is the latest-ending.
-        OUTER APPLY (
-            SELECT TOP 1
-                pd.Source_Placement_ID                   AS match_id,
-                CAST(pd.DateBegin AS DATE)               AS match_start_date,
-                CAST(pd.DateEnd AS DATE)                 AS match_end_date,
-                NULLIF(LTRIM(RTRIM(pd.Status)), '')      AS match_status,
-                NULLIF(LTRIM(RTRIM(ISNULL(l.firstName, '') + ' '
-                                 + ISNULL(l.lastName, ''))), '') AS match_clinician,
-                pd.IsExtension                           AS match_is_extension,
-                CAST(pd.DateOriginalEnd AS DATE)         AS match_original_end,
-                -- Recruiter is not on the B4 order at all: it belongs to the
-                -- ATS record. Populated on 85% of PLACEMENT_DIM, which beats a
-                -- column of dashes.
-                NULLIF(LTRIM(RTRIM(pd.Recruiter)), '')   AS Recruiter
-            FROM dbo.BH_PLACEMENT_RAW_TO_B4HealthOrder l WITH (NOLOCK)
-            INNER JOIN dbo.PLACEMENT_DIM pd WITH (NOLOCK)
-                    ON pd.Source_Placement_ID = l.placementID
-            WHERE LTRIM(RTRIM(l.Contract_ID)) = LTRIM(RTRIM(o.Contract_ID))
-            ORDER BY pd.DateEnd DESC, l.RUN_ID DESC
-        ) bh
+        -- Materialised above into #b4_bh: as a correlated OUTER APPLY this
+        -- was re-evaluated per row and cost 13.1s for 444 rows. Pre-resolved
+        -- once and joined, the same 292 links take 2.7s.
+        LEFT JOIN #b4_bh  bh ON bh.contract_id = LTRIM(RTRIM(o.Contract_ID))
+        LEFT JOIN #b4_rto rt ON rt.contract_id = LTRIM(RTRIM(o.Contract_ID))
+        LEFT JOIN #b4_ext   e  ON e.parent  = LTRIM(RTRIM(o.Contract_ID))
+        LEFT JOIN #b4_chain ch ON ch.parent = LTRIM(RTRIM(o.Contract_ID))
         WHERE o.End_Date BETWEEN CAST(GETDATE() AS DATE)
                              AND DATEADD(DAY, ?, CAST(GETDATE() AS DATE))
             AND o.Contract_Status NOT IN ({status_list})
@@ -183,6 +422,66 @@ def _vndly_rows(cursor, horizon, include_affiliate):
     """
     status_list = ', '.join("'" + s.replace("'", "''") + "'" for s in VNDLY_ACTIVE_STATUSES)
     vendor_filter = '' if include_affiliate else f'AND {VNDLY_GHR_PREDICATE}'
+    # The VNDLY <-> Bullhorn link set, materialised.
+    #
+    # BH_PLACEMENT_RAW.customText56 holds the VNDLY work order as 'WO00270' and
+    # matches STAGING_VNDLY_WORKORDERS.[Work Order Id] exactly. It CANNOT be
+    # joined on its own: [Work Order Id] restarts per tenant, and of 973 ids,
+    # 376 are unique to one tenant while 370 appear in two and 227 in three --
+    # a bare join sends the majority of seats to the wrong health system.
+    #
+    # The WOSystemKey prefix names the tenant (CUH / IHN / RH / RUMC) and the B4
+    # crosswalk maps a Bullhorn client to those same health systems, so
+    # (work order id + that tenant's clients) is the real key. The two systems
+    # spell the names differently -- VNDLY's "Redeemer Health" and "RUMC"
+    # against the crosswalk's "Holy Redeemer Hospital" and "Richmond University
+    # Medical Center" -- so the mapping is explicit rather than a string match.
+    #
+    # A temp table, not a CTE: SQL Server inlines a CTE, so as one this was
+    # re-evaluated once per work order and the query took 103s. Built once into
+    # #bh_wo it is 3.4s for the same 106 links.
+    cursor.execute("""
+        SET NOCOUNT ON;
+        IF OBJECT_ID('tempdb..#bh_wo') IS NOT NULL DROP TABLE #bh_wo;
+        SELECT
+            CASE LTRIM(RTRIM(x.Health_System))
+                 WHEN 'Cooper University Healthcare'       THEN 'CUH'
+                 WHEN 'Inspira Medical Centers, Inc.'      THEN 'IHN'
+                 WHEN 'Richmond University Medical Center' THEN 'RUMC'
+                 WHEN 'Holy Redeemer Hospital'             THEN 'RH'
+            END                                            AS tenant,
+            LTRIM(RTRIM(bp.customText56))                  AS woid,
+            pd.Source_Placement_ID                         AS match_id,
+            CAST(pd.DateBegin AS DATE)                     AS match_start_date,
+            CAST(pd.DateEnd AS DATE)                       AS match_end_date,
+            NULLIF(LTRIM(RTRIM(pd.Status)), '')            AS match_status,
+            NULLIF(LTRIM(RTRIM(cd.CandidateName)), '')     AS match_clinician,
+            CAST(pd.DateOriginalEnd AS DATE)               AS match_original_end,
+            NULLIF(LTRIM(RTRIM(pd.Recruiter)), '')         AS bh_recruiter,
+            -- Donny's Extension Request automation writes the clinician's reply
+            -- straight onto the Bullhorn placement. 0 is NOT one of its values
+            -- (the picker is 1-4) and sits on 3,837 placements as an unset
+            -- default, so it is nulled here rather than read as a response.
+            NULLIF(bp.customInt10, 0)                      AS cand_ext_response,
+            NULLIF(LTRIM(RTRIM(CAST(bp.customTextBlock7 AS NVARCHAR(MAX)))), '')
+                                                           AS cand_ext_comments,
+            pd.DateEnd                                     AS order_end
+        INTO #bh_wo
+        FROM dbo.BH_PLACEMENT_RAW bp WITH (NOLOCK)
+        JOIN dbo.BH_PLACEMENT_RAW_TO_B4HealthOrder x WITH (NOLOCK)
+          ON x.clientCorporationID = bp.clientCorporationID
+         AND LTRIM(RTRIM(x.Health_System)) IN (
+               'Cooper University Healthcare', 'Inspira Medical Centers, Inc.',
+               'Richmond University Medical Center', 'Holy Redeemer Hospital')
+        JOIN dbo.PLACEMENT_DIM pd WITH (NOLOCK)
+          ON pd.Source_Placement_ID = bp.placementID
+        LEFT JOIN dbo.CANDIDATE_DIM cd WITH (NOLOCK)
+          ON cd.Source_Candidate_ID = bp.candidateID
+        WHERE NULLIF(LTRIM(RTRIM(bp.customText56)), '') IS NOT NULL;
+        CREATE INDEX ix_bhwo ON #bh_wo (tenant, woid);
+    """)
+
+
     cursor.execute(f'''
         WITH ext_mods AS (
             -- Extension activity is an EVENT in the modifications feed, not a
@@ -203,17 +502,71 @@ def _vndly_rows(cursor, horizon, include_affiliate):
                     ISNULL([Reason for Modification], ''), '|',
                     ISNULL([Other Reason], '')))                AS ext_events,
                 MAX([Last Modified])                            AS last_ext_at,
-                -- The free text is where the actual decision lives
-                -- ('Extension offered for Chemistry unit - new end date
-                -- 12/26/26'), so keep the most recent non-empty note.
-                MAX(CASE WHEN NULLIF(LTRIM(RTRIM([Other Reason])), '') IS NOT NULL
-                         THEN [Other Reason] END)               AS ext_note,
-                MAX([Last Modified By])                         AS ext_by,
                 MAX(CASE WHEN [Other Reason] LIKE '%offer%' THEN 1 ELSE 0 END) AS mentions_offer
             FROM dbo.STAGING_VNDLY_WORKODER_MODIFICATIONS WITH (NOLOCK)
             WHERE [Reason for Modification] = 'Date Extension'
                OR [Other Reason] LIKE '%exten%'
             GROUP BY WOSystemKey
+        ),
+        -- The free text is where the actual decision lives ('Extension offered
+        -- for Chemistry unit - new end date 12/26/26'), so it has to be the
+        -- note from the LATEST modification.
+        --
+        -- Replaced in 2.18.1. The note and its author used to come out of the
+        -- aggregate above as:
+        --
+        --     MAX(CASE WHEN NULLIF(LTRIM(RTRIM([Other Reason])), '') IS NOT NULL
+        --              THEN [Other Reason] END)               AS ext_note,
+        --     MAX([Last Modified By])                         AS ext_by,
+        --
+        -- but MAX() over text is alphabetical, not chronological. 91 of the 149
+        -- work orders carrying an extension note have more than one, and on 14
+        -- of them (9%) the alphabetical pick is not the newest note -- so those
+        -- records showed a superseded end date. MAX([Last Modified By]) was the
+        -- same mistake with a worse result: it credited the change to whichever
+        -- name sorted last rather than whoever actually made it.
+        ext_latest AS (
+            SELECT wo, ext_note, ext_by
+            FROM (
+                SELECT WOSystemKey                              AS wo,
+                       [Other Reason]                           AS ext_note,
+                       [Last Modified By]                       AS ext_by,
+                       ROW_NUMBER() OVER (PARTITION BY WOSystemKey
+                                          ORDER BY [Last Modified] DESC)  AS rn
+                FROM dbo.STAGING_VNDLY_WORKODER_MODIFICATIONS WITH (NOLOCK)
+                WHERE ([Reason for Modification] = 'Date Extension'
+                    OR [Other Reason] LIKE '%exten%')
+                  AND NULLIF(LTRIM(RTRIM([Other Reason])), '') IS NOT NULL
+            ) r
+            WHERE r.rn = 1
+        ),
+        -- The approval state of the latest date-extension modification. This is
+        -- the "Pending Modifications - Awaiting Vendor" report, read from the
+        -- staging table instead of exported by hand.
+        --
+        -- Deliberately NOT folded into ext_latest above: that CTE requires a
+        -- non-empty [Other Reason], because it exists to surface the free-text
+        -- note. Most extensions carry no note at all, so reusing it would have
+        -- silently limited the designation to the minority of work orders that
+        -- happen to have one.
+        --
+        -- [Is Latest Modification] is not unique per work order -- several rows
+        -- on one order can carry 'Yes' -- so the newest is taken by ordering on
+        -- [Last Modified] and the revision, never by trusting that flag.
+        ext_status AS (
+            SELECT wo, mod_status, mod_reason, mod_when
+            FROM (
+                SELECT WOSystemKey                              AS wo,
+                       LTRIM(RTRIM([Status]))                   AS mod_status,
+                       LTRIM(RTRIM([Reason for Modification]))  AS mod_reason,
+                       [Last Modified]                          AS mod_when,
+                       ROW_NUMBER() OVER (PARTITION BY WOSystemKey
+                                          ORDER BY [Last Modified] DESC,
+                                                   TRY_CAST([Revision Number] AS INT) DESC) AS rn
+                FROM dbo.STAGING_VNDLY_WORKODER_MODIFICATIONS WITH (NOLOCK)
+                WHERE LTRIM(RTRIM([Reason for Modification])) = 'Date Extension'
+            ) r
+            WHERE r.rn = 1
         )
         SELECT
             'VNDLY'                                     AS source_system,
@@ -245,8 +598,8 @@ def _vndly_rows(cursor, horizon, include_affiliate):
             -- See the B4 branch: margin is a configured rate, not a lookup.
             ISNULL(x.ext_events, 0)                      AS extension_events,
             CONVERT(VARCHAR(19), x.last_ext_at, 120)     AS last_extension_at,
-            x.ext_note                                   AS extension_note,
-            x.ext_by                                     AS extension_by,
+            xl.ext_note                                   AS extension_note,
+            xl.ext_by                                     AS extension_by,
             -- Decision state is only inferable from free text: ~50 of the 105
             -- work orders with extension activity say "offer". Anything else
             -- with an executed date change is treated as already extended.
@@ -258,28 +611,85 @@ def _vndly_rows(cursor, horizon, include_affiliate):
             -- No System Match on VNDLY: there is no identifier path from a
             -- VNDLY work order to a Bullhorn placement. PLACEMENT_DIM.VMSReqID
             -- looked like the bridge but is a B4 contract number -- 5,068 of
-            -- its 5,069 values resolve to B4HealthOrder and none to a work
-            -- order. STAGING_VNDLY_CONTRACTOR_XREF.[Client Contractor] looked
-            -- like a Bullhorn candidate ID and is the client's own contractor
-            -- number: zero of 283 match a Bullhorn candidate. Reported as
-            -- unlinked rather than compared against a guess.
-            NULL                                         AS match_system,
-            NULL                                         AS match_id,
-            NULL                                         AS match_start_date,
-            NULL                                         AS match_end_date,
-            NULL                                         AS match_status,
-            NULL                                         AS match_clinician,
-            -- Recruiter lives on the ATS record, which is only reachable
-            -- through the crosswalk B4 has and VNDLY does not.
-            NULL                                         AS recruiter,
+            /* VNDLY seats reach Bullhorn now, through #bh_wo above. The bridge
+             * is BH_PLACEMENT_RAW.customText56, a Bullhorn custom field holding
+             * the VNDLY work order.
+             *
+             * The earlier reasoning is kept because it was right about what it
+             * tested and wrong only in its conclusion: PLACEMENT_DIM.VMSReqID is
+             * a B4 contract number (5,068 of 5,069 resolve to B4HealthOrder,
+             * none to a work order) and STAGING_VNDLY_CONTRACTOR_XREF.
+             * [Client Contractor] is the client's own contractor number (zero of
+             * 283 match a Bullhorn candidate). Both still hold.
+             *
+             * What it never covered was a custom field on the BULLHORN side
+             * carrying a VNDLY id -- every attempt looked for a VNDLY-side key
+             * pointing at Bullhorn. When a link appears not to exist, check the
+             * other system's custom fields before concluding it.
+             */
+            CASE WHEN bh.match_id IS NOT NULL THEN 'Bullhorn' END AS match_system,
+            CAST(bh.match_id AS NVARCHAR(50))            AS match_id,
+            bh.match_start_date                          AS match_start_date,
+            bh.match_end_date                            AS match_end_date,
+            bh.match_status                              AS match_status,
+            bh.match_clinician                           AS match_clinician,
+            -- Reachable now that the work order resolves to a placement.
+            bh.bh_recruiter                              AS recruiter,
+            bh.cand_ext_response                        AS cand_ext_response,
+            bh.cand_ext_comments                        AS cand_ext_comments,
+            NULL                                         AS source_is_extension,
+            /* VNDLY keeps RTO on the contractor, reached through the work-order
+             * cross-reference. 58 of the 296 work orders ending in the window
+             * carry one. Text, not dates -- "Approved RTO: 6/1-6/5" -- matching
+             * how Bullhorn stores it, so it is shown as written rather than
+             * parsed into something it may not be.
+             */
+            (SELECT TOP 1 NULLIF(LTRIM(RTRIM(ct.[RTO])), '')
+               FROM dbo.STAGING_VNDLY_CONTRACTOR_XREF xr WITH (NOLOCK)
+               JOIN dbo.STAGING_VNDLY_CONTRACTORS ct WITH (NOLOCK)
+                 ON LTRIM(RTRIM(ct.[System ID])) = LTRIM(RTRIM(xr.[Contractor System Id]))
+              WHERE LTRIM(RTRIM(xr.WOSystemKey)) = LTRIM(RTRIM(w.WOSystemKey))
+                AND NULLIF(LTRIM(RTRIM(ct.[RTO])), '') IS NOT NULL
+            )                                            AS recorded_rto,
             NULL                                         AS match_is_extension,
-            CAST(NULL AS DATE)                           AS match_original_end,
+            bh.match_original_end                        AS match_original_end,
             -- VNDLY is the one MSP source that states the seat's original end
             -- date outright, so an in-place extension is a fact here rather
             -- than an inference.
-            TRY_CAST(w.[Original End Date] AS DATE)      AS original_end_date
+            TRY_CAST(w.[Original End Date] AS DATE)      AS original_end_date,
+            xs.mod_status                                AS mod_status,
+            xs.mod_reason                                AS mod_reason,
+            CAST(NULL AS INT)                            AS b4_ext_offer_pending,
+            CAST(NULL AS INT)                            AS b4_ext_awarded,
+            CAST(NULL AS INT)                            AS b4_report_offer_pending,
+            CAST(NULL AS INT)                            AS b4_report_extended,
+            CAST(NULL AS INT)                            AS b4_report_declined
         FROM dbo.STAGING_VNDLY_WORKORDERS w WITH (NOLOCK)
+        /* Of 298 work orders ending in the window, 106 reach a placement and
+         * 97 of those resolve to a single candidate -- the extra placements on
+         * the other 9 are a seat that changed hands. The name comparison picks
+         * the placement for the contractor VNDLY has; where even that
+         * disagrees the System Match panel reports the clinician mismatch
+         * rather than hiding it.
+         */
+        OUTER APPLY (
+            SELECT TOP 1
+                b.match_id, b.match_start_date, b.match_end_date,
+                b.match_status, b.match_clinician, b.match_original_end,
+                b.bh_recruiter, b.cand_ext_response, b.cand_ext_comments
+            FROM #bh_wo b
+            WHERE b.tenant = LEFT(w.WOSystemKey, CHARINDEX('-', w.WOSystemKey + '-') - 1)
+              AND b.woid   = LTRIM(RTRIM(w.[Work Order Id]))
+            ORDER BY
+                CASE WHEN b.match_clinician IS NOT NULL
+                       AND NULLIF(LTRIM(RTRIM(w.[Contractor Last Name])), '') IS NOT NULL
+                       AND b.match_clinician LIKE '%' + LTRIM(RTRIM(w.[Contractor Last Name])) + '%'
+                     THEN 0 ELSE 1 END,
+                b.order_end DESC
+        ) bh
         LEFT JOIN ext_mods x ON x.wo = w.WOSystemKey
+        LEFT JOIN ext_latest xl ON xl.wo = w.WOSystemKey
+        LEFT JOIN ext_status  xs ON xs.wo = w.WOSystemKey
         -- STAGING_VNDLY_JOBS holds 664 rows across only 387 distinct [Job Id],
         -- so joining it raw fans work orders out — measured at 112 rows where
         -- the truth is 60. Collapse to one row per job before joining.
@@ -378,20 +788,43 @@ def _bullhorn_ext_rows(cursor, app_conn, horizon):
             -- customText12 is Recruiter and customText11 Account Manager on
             -- View_Placement -- the mapping GetContractsComparison already
             -- runs on. ownerID above is the record owner, not the recruiter.
-            /* Bullhorn's own commission record, not customText12, which is
-             * a free-text name field. Measured 2026-10-12: the warehouse's
-             * PLACEMENT_DIM.Recruiter disagrees with the role='Recruiting'
-             * commission on 18 of 200 sampled placements (9%), and 30 of 284
-             * matched extension seats (11%). 39,935 placements carry exactly
-             * one Recruiting commission and none carry two, so joining on
-             * placementID is unambiguous and cannot fan the row set out. */
+            /* The placement's recruiter of record, from Bullhorn's own
+             * commission table rather than customText12, which is a free-text
+             * name field. Measured 2026-10-12 against 200 sampled placements:
+             * every one has exactly a single role='Recruiting' commission --
+             * 39,935 placements, zero splits, so there is no ambiguity about
+             * which name is "the" recruiter -- and the warehouse's
+             * PLACEMENT_DIM.Recruiter disagrees with it on 18 of 200 (9%). */
             NULLIF(LTRIM(RTRIM(ISNULL(pcu.firstName,'') + ' ' + ISNULL(pcu.lastName,''))), '')
                                                           AS recruiter,
+            NULLIF(p.customInt10, 0)                      AS cand_ext_response,
+            NULLIF(LTRIM(RTRIM(CAST(p.customTextBlock7 AS NVARCHAR(MAX)))), '')
+                                                          AS cand_ext_comments,
+            -- EXTENSION MILESTONES, as far as Bullhorn records them.
+            --
+            -- customText14 ("Extension?") is the book's own answer to whether
+            -- a placement IS an extension, populated on 2,417 of 2,453 live
+            -- seats (99%) and carrying the same agreement profile as the
+            -- warehouse flag: 7,411 of 8,777 "Yes" rows chain to a prior
+            -- assignment (84%) against 6% of "No" rows. Better than inferring.
+            --
+            -- customTextBlock9 ("Time Off") is the clinician's requested time
+            -- off, already written down on 35% of live seats -- free text like
+            -- "12/8/2023 - 12/22/2023" or "September 1-5", so it is shown
+            -- rather than parsed. The team should not be asked for it twice.
+            --
+            -- customText28 ("Upcoming Extension?") would have carried client
+            -- interest, and is empty on every row, so that milestone genuinely
+            -- has nowhere to come from and stays manual.
+            NULLIF(LTRIM(RTRIM(p.customText14)), '')      AS source_is_extension,
+            NULLIF(LTRIM(RTRIM(CAST(p.customTextBlock9 AS NVARCHAR(MAX)))), '') AS recorded_rto,
             NULL                                          AS match_is_extension,
             CAST(NULL AS DATE)                            AS match_original_end,
             CAST(NULL AS DATE)                            AS original_end_date,
             jo.state                                      AS region
         FROM dbo.View_Placement p WITH (NOLOCK)
+        -- One Recruiting commission per placement (verified: 39,935 placements,
+        -- none with more than one), so this cannot fan the row set out.
         LEFT JOIN dbo.PlacementCommission pc WITH (NOLOCK)
                ON pc.placementID = p.placementID
               AND pc.isDeleted = 0
@@ -528,6 +961,10 @@ def _symplr_ext_rows(cursor, app_conn, horizon):
             -- lt_order carries the booker (BookedByUserID, used above for the
             -- account manager) but no separate recruiter.
             NULL                                          AS recruiter,
+            CAST(NULL AS INT)                             AS cand_ext_response,
+            CAST(NULL AS NVARCHAR(MAX))                   AS cand_ext_comments,
+            NULL                                          AS source_is_extension,
+            NULL                                          AS recorded_rto,
             NULL                                          AS match_is_extension,
             CAST(NULL AS DATE)                            AS match_original_end,
             CAST(NULL AS DATE)                            AS original_end_date,
@@ -575,6 +1012,68 @@ def _non_msp_rows(horizon):
             if conn is not None:
                 conn.close()
     return rows, errors
+
+
+def _apply_commission_recruiters(rows):
+    """Overwrite the recruiter with Bullhorn's commission record.
+
+    MSP seats reach Bullhorn through the warehouse, whose PLACEMENT_DIM carries
+    its own Recruiter column -- and that column disagrees with Bullhorn's own
+    role='Recruiting' commission on 18 of 200 sampled placements (9%). The
+    commission table is the record of who actually recruited the seat, so it
+    wins. It lives on the Bullhorn mirror, not the warehouse, hence the second
+    connection.
+
+    Safe to join on placementID alone: 39,935 placements carry exactly one
+    Recruiting commission and none carry two, so there is no split to resolve
+    and no fan-out to guard against.
+
+    Best effort. A failure here leaves the warehouse name in place rather than
+    blanking the column -- a slightly stale recruiter beats an empty one.
+    """
+    ids = {int(r['match_id']) for r in rows
+           if r.get('match_id') not in (None, '') and str(r['match_id']).isdigit()}
+    if not ids:
+        return
+    conn = None
+    try:
+        conn = get_bullhorn_conn()
+        if conn is None:
+            return
+        cur = conn.cursor()
+        cur.execute('SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED')
+        out, ids = {}, sorted(ids)
+        for i in range(0, len(ids), 1000):
+            chunk = ids[i:i + 1000]
+            cur.execute(f"""
+                SELECT pc.placementID,
+                       NULLIF(LTRIM(RTRIM(ISNULL(cu.firstName,'') + ' '
+                                        + ISNULL(cu.lastName,''))), '')
+                FROM dbo.PlacementCommission pc WITH (NOLOCK)
+                LEFT JOIN dbo.CorporateUser cu WITH (NOLOCK)
+                       ON cu.corporateUserID = pc.userID
+                WHERE pc.isDeleted = 0
+                  AND LTRIM(RTRIM(pc.role)) = 'Recruiting'
+                  AND pc.placementID IN ({','.join(str(x) for x in chunk)})
+            """)
+            for pid, name in cur.fetchall():
+                if name:
+                    out[int(pid)] = name
+        hit = 0
+        for r in rows:
+            mid = r.get('match_id')
+            if mid in (None, '') or not str(mid).isdigit():
+                continue
+            name = out.get(int(mid))
+            if name and name != r.get('recruiter'):
+                r['recruiter'] = name
+                hit += 1
+        print(f"Extensions: commission recruiters applied to {hit} of {len(rows)} rows")
+    except Exception as e:
+        print(f"Extensions: commission recruiter lookup skipped: {e}")
+    finally:
+        if conn is not None:
+            conn.close()
 
 
 def _apply_credentials(rows):
@@ -700,8 +1199,17 @@ def _serialize(rows):
         rate, hrs = r.get('bill_rate'), r.get('hours_per_week')
         # 13-week forward value of the seat if it extends. Left null rather
         # than assuming a standard week when hours aren't known.
-        r['extension_value_13wk'] = round(rate * hrs * 13, 2) if rate and hrs else None
+        r['extension_value_13wk'] = value_13wk(rate, hrs, r.get('time_type'))
         r['urgency'] = _urgency(r.get('days_left'))
+        stage, why = _extension_stage(r)
+        r['extension_stage'] = stage
+        r['extension_stage_why'] = why
+        # The clinician's own answer, from the Bullhorn automation. Kept beside
+        # the designation rather than folded into it: the designation tracks
+        # where the request has got to with the CLIENT and VENDOR, this is
+        # whether the clinician wants it at all, and a seat can easily be
+        # "Awaiting Vendor Approval" with the clinician having said Possibly.
+        r['cand_ext_response_label'] = EXT_RESPONSE_LABELS.get(r.get('cand_ext_response'))
         r['match'] = _match_panel(r)
         # `is_extension` on the row is per-source evidence that this seat has
         # been extended before (a B4 parent chain, a VNDLY date past its
@@ -748,10 +1256,28 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                 json.dumps({'error': str(e)}),
                 mimetype='application/json', status_code=500)
 
+    # Served from the cache table when one is fresh. Measured warm at 21-23s,
+    # and the first request after a deploy took 43.6s -- past the 45s SWA
+    # gateway timeout, so the tab got a 500 rather than a slow answer.
+    #
+    # Only the DEFAULT window is cached. horizon and includeAffiliate both
+    # change the result, and a key on the route alone would hand a 45-day
+    # default to someone who asked for 90 -- the exact bug the financial-data
+    # cache shipped with and had to be fixed for.
+    cacheable = (horizon == EXTENSION_HORIZON_DAYS)
+    key = cache_key('extensions-data', 'msp',
+                    'aff1' if include_affiliate else 'aff0')
+    if cacheable:
+        cached = read_cache(key)
+        if cached is not None:
+            print(f"extensions-data: served from cache ({cached.get('cachedAt') if isinstance(cached, dict) else 'list'})")
+            return func.HttpResponse(json.dumps(cached, default=str),
+                                     mimetype='application/json', status_code=200)
     conn = None
     rows, errors = [], []
+    started = time.time()
     try:
-        conn = pyodbc.connect(
+        _CONN_STR = (
             f"DRIVER={{ODBC Driver 17 for SQL Server}};"
             f"SERVER={os.environ['DB_HOST']};"
             f"DATABASE={os.environ['POSITIONS_DB']};"
@@ -759,6 +1285,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             f"PWD={os.environ['DB_PASSWORD']};"
             f"TrustServerCertificate=yes"
         )
+        conn = pyodbc.connect(_CONN_STR)
         cursor = conn.cursor()
         cursor.execute('SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED')
 
@@ -766,21 +1293,56 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
         # they cover different workers, and once a system is fully cut over B4
         # simply stops producing rows for it. Same treatment GetFinancialData
         # applies for the transitioned systems (RUMC, Holy Redeemer, Cooper).
-        for label, fn in (('B4', _b4_rows), ('VNDLY', _vndly_rows)):
+        #
+        # Run concurrently, as GetTrendData and GetFinancialData already do.
+        # Measured warm before this change: 21-23s, with the first request
+        # after a deploy taking 43.6s and the SWA gateway giving up at 45 --
+        # the tab returned a 500. The two branches are independent reads, and
+        # neither depends on the other's rows.
+        #
+        # Each thread opens its own connection: a pyodbc connection is not
+        # safe to share across threads, and the two branches would otherwise
+        # serialise on the single cursor anyway, which is the thing being
+        # fixed.
+        def _run(label, fn):
+            own = None
             try:
-                rows.extend(fn(cursor, horizon, include_affiliate))
+                own = pyodbc.connect(_CONN_STR)
+                cur = own.cursor()
+                cur.execute('SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED')
+                return label, fn(cur, horizon, include_affiliate), None
             except Exception as e:
-                print(f"Extensions: {label} branch failed: {e}")
                 import traceback
                 traceback.print_exc()
-                errors.append(f'{label}: {e}')
+                return label, [], f'{label}: {e}'
+            finally:
+                if own:
+                    try:
+                        own.close()
+                    except Exception:
+                        pass
 
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            for label, got, err in pool.map(lambda a: _run(*a),
+                                            (('B4', _b4_rows), ('VNDLY', _vndly_rows))):
+                if err:
+                    print(f"Extensions: {label} branch failed: {err}")
+                    errors.append(err)
+                rows.extend(got)
+
+        _apply_commission_recruiters(rows)
         rows = _serialize(rows)
         rows.sort(key=lambda r: (r.get('days_left') if r.get('days_left') is not None else 9999))
         b4n = sum(1 for r in rows if r['source_system'] == 'B4')
         vnn = sum(1 for r in rows if r['source_system'] == 'VNDLY')
         print(f"Extensions: {len(rows)} rows (B4 {b4n}, VNDLY {vnn}; horizon {horizon}d, "
-              f"affiliate={include_affiliate}; errors: {errors or 'none'})")
+              f"affiliate={include_affiliate}; {int((time.time()-started)*1000)}ms; "
+              f"errors: {errors or 'none'})")
+        # Best-effort warm, never fails the response. Skipped when a branch
+        # errored so a half-empty book cannot be served for a day.
+        if cacheable and not errors:
+            write_cache(key, rows, build_ms=int((time.time() - started) * 1000),
+                        refreshed_by='live-request')
         return func.HttpResponse(
             json.dumps(rows, default=str),
             mimetype="application/json",

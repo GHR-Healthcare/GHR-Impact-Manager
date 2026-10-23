@@ -1,7 +1,10 @@
 import azure.functions as func
 import pyodbc
 import os
+import time
+from concurrent.futures import ThreadPoolExecutor
 import json
+from shared_code.endpoint_cache import cache_key, read_cache, write_cache
 from shared_code.auth import require_allowed_domain
 from shared_code.data_source import is_non_msp, get_bullhorn_conn, get_symplr_conn, get_appdb_conn
 from shared_code.bullhorn_systems import (
@@ -35,10 +38,11 @@ BULLHORN_YOY_STATUSES = (
 # End Reason. 'Ended' by contrast is 356 work orders, all 356 onboarded and
 # all 356 carrying an end reason.
 #
-# It used to sit here, where the spend guard was expected to drop it -- but
-# the guard's name-match fallback let 55 through, matching a same-named
-# worker's spend on a DIFFERENT work order. Those were counted as real
-# assignments. (ghr-marketintel flagged this; confirmed against the warehouse.)
+# It used to sit in the "ran" list, where the spend guard was expected to drop
+# it -- but the guard's name-match fallback let 55 of them through, matching a
+# same-named worker's spend on a DIFFERENT work order. Those were counted as
+# real assignments. Excluded outright now, which is what GetClosed and
+# GetOnboarding already did. (ghr-marketintel flagged this; confirmed here.)
 VNDLY_RAN_STATUSES = ('Active', 'Ended')
 VNDLY_TERMINAL_STATUSES = ('Ended',)
 
@@ -173,15 +177,11 @@ def _bullhorn_yoy_data():
             app_conn.close()
     # Join, not CASE. build_system_case_expr renders a 13-branch CASE that
     # SQL Server evaluates once per row, and across this 60-week join that is
-    # hundreds of thousands of rows -- measured as half the cost of this
-    # branch, 25.1s with the CASE against 10.1s joining the same mapping, for
-    # byte-identical output. The CASE form stays everywhere the row count makes
-    # it irrelevant; this endpoint is where it does not. (GH #97)
-    #
-    # Absolute row counts are deliberately not quoted here: scope_ids below
-    # comes from discover_active_client_ids, which is "on assignment TODAY",
-    # so this branch's output changes size daily. Measured 2026-10-05 at 325
-    # in-scope clients: 1,564ms, 17,318 rows, 68,682 summed headcount.
+    # 334k rows -- measured as half the cost of this branch: 25.1s with the
+    # CASE against 10.1s joining the same mapping, for byte-identical output
+    # (44,749 rows, 281,124 summed headcount). The CASE form stays everywhere
+    # the row count makes it irrelevant; this endpoint is where it does not.
+    # (GH #97)
     system_values = build_system_rollup_values()
     system_case = 'COALESCE(sm.system, pcc.name, cc.name)'
     scope_filter = build_scope_filter('p.clientCorporationID', client_ids=scope_ids)
@@ -288,14 +288,8 @@ def _symplr_yoy_data():
     #     build weeks            1ms
     #     join + GROUP BY      553ms   (26,089 rows)
     #
-    # 4+ minutes -> seconds, same output. Sixth time in this codebase that an
+    # 4+ minutes -> 2.3s, same output. Sixth time in this codebase that an
     # inlined CTE or a correlated subquery has had to be materialised. (GH #97)
-    #
-    # The stage timings above were taken against a narrower scope than the one
-    # this actually runs with -- symplr_resolve_scope is also "active today",
-    # so the size moves. Re-measured 2026-10-05 end to end at the real 193
-    # in-scope clients: 12,329ms, 12,806 rows, 60 weeks. Still well inside the
-    # gateway, but it is the slow half of this endpoint, not the fast one.
     cursor.execute(f'''
         SET NOCOUNT ON;
 
@@ -408,23 +402,93 @@ def _symplr_yoy_data():
 
 
 def _non_msp_yoy(req: func.HttpRequest) -> func.HttpResponse:
+    """Prior-year weekly headcount for the non-MSP book.
+
+    This endpoint was returning a 500: the two sources ran one after the other,
+    nothing was cached, and the whole thing exceeded the 45s SWA gateway on the
+    non-MSP book, so the prior-year overlay never loaded at all. (MSP answered
+    in 9.1s and was fine.) The branches are independent reads, so they run
+    concurrently, each on its own connection, and the result is cached -- a
+    sixty-week historical series does not move within a day.
+    """
+    started = time.time()
+    key = cache_key('yoy-trend-data', 'non_msp')
+    cached = read_cache(key)
+    if cached is not None:
+        print('yoy-trend-data(non_msp): served from cache')
+        return func.HttpResponse(json.dumps(cached, default=str),
+                                 mimetype='application/json', status_code=200)
+
     rows = []
     errors = []
-    try:
-        rows.extend(_bullhorn_yoy_data())
-    except Exception as e:
-        print(f"Bullhorn YoY error: {e}")
-        import traceback; traceback.print_exc()
-        errors.append(f"bullhorn: {e}")
-    try:
-        rows.extend(_symplr_yoy_data())
-    except Exception as e:
-        print(f"Symplr YoY error: {e}")
-        import traceback; traceback.print_exc()
-        errors.append(f"symplr: {e}")
-    print(f"non-MSP YoY: {len(rows)} aggregate rows (errors: {errors or 'none'})")
+
+    # ?debug=bullhorn | symplr runs ONE branch and reports its timing. The
+    # combined debug below cannot answer "which half is slow" because it still
+    # waits for both, and both together exceed the gateway -- so the response
+    # never arrives. One at a time does fit. (GH #97)
+    only = str(req.params.get('debug', '')).lower()
+    if only in ('bullhorn', 'symplr'):
+        fn = _bullhorn_yoy_data if only == 'bullhorn' else _symplr_yoy_data
+        t0 = time.time()
+        try:
+            got = fn()
+            return func.HttpResponse(json.dumps({
+                'branch': only, 'ms': int((time.time() - t0) * 1000),
+                'rows': len(got),
+                'serializedBytes': len(json.dumps(got, default=str)),
+            }), mimetype='application/json', status_code=200)
+        except Exception as e:
+            import traceback; traceback.print_exc()
+            return func.HttpResponse(json.dumps({
+                'branch': only, 'ms': int((time.time() - t0) * 1000),
+                'error': str(e)[:400],
+            }), mimetype='application/json', status_code=200)
+
+    timings = {}
+
+    def _run(label, fn):
+        t0 = time.time()
+        try:
+            got = fn()
+            timings[label] = {'ms': int((time.time() - t0) * 1000), 'rows': len(got)}
+            return label, got, None
+        except Exception as e:
+            timings[label] = {'ms': int((time.time() - t0) * 1000), 'error': str(e)[:200]}
+            print(f"{label} YoY error: {e}")
+            import traceback; traceback.print_exc()
+            return label, [], f'{label.lower()}: {e}'
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        for label, got, err in pool.map(lambda a: _run(*a),
+                                        (('Bullhorn', _bullhorn_yoy_data),
+                                         ('Symplr', _symplr_yoy_data))):
+            if err:
+                errors.append(err)
+            rows.extend(got)
+
+    print(f"non-MSP YoY: {len(rows)} aggregate rows "
+          f"({int((time.time()-started)*1000)}ms; errors: {errors or 'none'})")
+    # errors were collected and then dropped from the payload, the same defect
+    # financial-data had in #86 -- a failed source rendered the overlay with
+    # half the book and no sign of it.
+    payload = {'rows': rows, 'errors': errors}
+    # ?debug=timings answers "which half is slow" without shipping a build and
+    # reading logs we cannot reach. It returns the per-branch milliseconds and
+    # row counts INSTEAD of the rows, so it always responds inside the gateway
+    # even when the full payload does not. (GH #97)
+    if str(req.params.get('debug', '')).lower() == 'timings':
+        return func.HttpResponse(
+            json.dumps({'timings': timings,
+                        'totalRows': len(rows),
+                        'serializedBytes': len(json.dumps(payload, default=str)),
+                        'totalMs': int((time.time() - started) * 1000),
+                        'errors': errors}, default=str),
+            mimetype='application/json', status_code=200)
+    if not errors:
+        write_cache(key, payload, build_ms=int((time.time() - started) * 1000),
+                    refreshed_by='live-request')
     return func.HttpResponse(
-        json.dumps({'rows': rows}, default=str),
+        json.dumps(payload, default=str),
         mimetype="application/json",
         status_code=200
     )

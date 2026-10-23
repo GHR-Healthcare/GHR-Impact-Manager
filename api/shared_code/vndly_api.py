@@ -1,0 +1,289 @@
+"""
+Workday VNDLY Program Services API client. Multi-tenant.
+
+WHY THIS EXISTS
+
+Requested time off has nowhere the app can reliably read it. The warehouse
+copy of the Bullhorn placement omits customTextBlock9, so the B4 half of the
+MSP book has no RTO at all.
+
+CORRECTION (2026-09-30): an earlier version of this note said VNDLY's staging
+tables carry no time-off column. That was wrong.
+dbo.STAGING_VNDLY_CONTRACTORS has an [RTO] column and 146 of its 417 rows are
+populated. It was missed because the column scan that looked for it grepped
+for placement/jobOrder/candidate/ATS and never for the literal string "RTO" --
+the same mistake, twice.
+
+The staging copy is still not good enough to read from, for two measured
+reasons:
+
+    health system                  rows  RTO  newest row     days stale
+    Cooper University Healthcare    258  133  2026-08-12         49
+    RUMC                            134    3  2026-07-09         83
+    Redeemer Health                  25   10  2026-05-07        146
+    Inspira Medical Centers          --   --   ABSENT ENTIRELY
+
+Inspira has 155 contractors in the API and no rows here at all, and the rows
+that do exist are seven weeks to five months old. For a field coordinators
+actively maintain, showing a five-month-old value is worse than showing
+nothing, because it looks current. Reads should come from the API.
+
+VNDLY has it, as a CONTRACTOR custom field named "RTO", writable through the
+one contractor write endpoint:
+
+    PATCH /services/program/contractors/v2/contractors/{system_id}/
+    { "custom_fields": { "RTO": "7/1-7/5, 8/26" } }
+
+Contractor-level rather than work-order-level, which is semantically right --
+time off belongs to the person and follows them across seats. The consequence
+is that a clinician holding two concurrent seats has one RTO value: of 107
+VNDLY work orders ending in the next 45 days, all 107 carry a Contractor
+System Id, across 97 distinct contractors.
+
+ONE TENANT PER MSP CLIENT
+
+Each MSP client is a separate VNDLY tenant with its own host and its own API
+token; the docs note throttling is set per tenant and enforced per key. The
+warehouse loads all of them into one set of STAGING_VNDLY_* tables, so
+tenancy is invisible downstream -- which means a write has to resolve which
+tenant to call from the row itself.
+
+The only usable key is [Health System]. [Health System Id] CANNOT be used:
+it is numbered per tenant and collides once pooled -- measured 2026-09-21,
+Cooper University Healthcare and Inspira Medical Centers are BOTH id 3,
+Redeemer Health is 4, RUMC is 5. Keying on the id would send Inspira's
+writes to Cooper.
+
+Tenants as of 2026-09-21, by active work orders:
+
+    Cooper University Healthcare     148 active, 64 ending <=45d
+    Inspira Medical Centers, Inc.    111 active, 31 ending <=45d
+    RUMC                              61 active,  9 ending <=45d
+    Redeemer Health                   15 active,  3 ending <=45d
+
+THE FIELD IS ALREADY IN USE -- DO NOT BLIND-WRITE IT
+
+Verified against the live Cooper tenant (ghrmspcooper, 2026-09-30, read-only):
+312 contractors, and RTO was populated on 50 of the first 100. The values are
+human-curated free text following a loose convention:
+
+    "Approved RTO: 7/17- 20, 7/28, 7/30, 8/3, 8/5, 8/26-8/28 and 9/4 - 9/14"
+    "Approved break - 5/31-6/6"
+
+All four tenants verified read-only on 2026-09-30. RTO exists in every one,
+under that exact name -- but usage could hardly differ more:
+
+    tenant              contractors   RTO set   note
+    ghrmspcooper            312        50/100   "Approved RTO: 7/17-20, ..."
+    ghrmspinspira           155         2/100   no convention; one is "none"
+    ghrmspbundled           180         1/100   RUMC + Redeemer share this key
+    ghrmspuphs-test         364         0/100   sandbox; see below
+
+So write risk is a per-tenant question, not a global one: overwriting at
+Cooper destroys real coordinator work, at Inspira or bundled it mostly does
+not. Do not reason about "the RTO field" as though it behaves the same
+everywhere.
+
+Custom field NAMES also drift between tenants -- bundled calls one field
+"Primary Residence Zip Code" where Cooper and Inspira say "Primary Residence
+Zip". RTO happening to be consistent across all four is luck, not a guarantee,
+so a new tenant must be checked rather than assumed.
+
+CONTRACTOR system_ids COLLIDE ACROSS TENANTS TOO
+
+Measured 2026-09-30: C0000369 is "Flynn TestCandidate" in ghrmspuphs-test and
+"Niiamon Neequaye", a real clinician, in ghrmspcooper. The ids are numbered
+per tenant exactly as Health System Id is, so a write addressed by id alone
+will land on whichever tenant it is pointed at -- and the wrong one holds a
+real person.
+
+This is why every entry point here takes health_system and resolves the tenant
+from it. Never accept a contractor id without the row it came from.
+
+WRITE PATH VERIFIED 2026-09-30
+
+Proven against ghrmspuphs-test on C0000371, read -> PATCH -> read -> restore:
+the round-trip was exact, and the field was returned to its original null.
+PATCH {"custom_fields": {"RTO": null}} clears it, so "" and null are both
+settable and are distinguishable on read.
+
+THERE IS A SAFE PLACE TO TEST A WRITE
+
+ghrmspuphs-test has 364 contractors and zero RTO values. It is a real tenant
+with real structure and nothing a coordinator would miss, which makes it the
+place to prove the PATCH before any of it points at Cooper. The production
+host ghrmspuphs.vndly.com resolves and answers 401, so that tenant is
+provisioned and simply needs its own key when Penn goes live.
+
+Note also that an explicit "none" is DATA. It means the coordinator asked and
+the answer was no time off, which is not the same as nobody having asked.
+Treating blank and "none" alike throws that away.
+
+So this field is NOT an empty slot waiting for the app to fill it. PATCH
+replaces the whole value, which means a naive write destroys a coordinator's
+list. Anything that writes here must read the current value first and decide
+deliberately -- append, or refuse when the existing text is not something this
+app wrote. An empty field reads as null, not "".
+
+That also reframes the feature: the app currently cannot SEE any of this,
+because the warehouse staging tables carry no time-off column. Reading RTO
+back into the app is the larger and far safer win, and needs no write scope at
+all. Contractor system_ids look like "C0000001", not integers.
+
+CONFIGURATION
+
+One app setting, VNDLY_TENANTS, holding JSON keyed by the exact
+[Health System] string the staging table carries:
+
+    {
+      "Cooper University Healthcare":  {"base_url": "https://...", "token": "..."},
+      "Inspira Medical Centers, Inc.": {"base_url": "https://...", "token": "..."},
+      "RUMC":                          {"base_url": "https://...", "token": "..."},
+      "Redeemer Health":               {"base_url": "https://...", "token": "..."}
+    }
+
+One setting rather than eight so adding a tenant is a value edit, not a
+deploy. Tokens are read at call time, never logged, and never interpolated
+into an exception message.
+
+AUTH AND LIMITS (Program Services API docs, 2026-09)
+
+  Authorization: Token <api-token>      -- static API key, not OAuth
+  List GET 1,000/min | POST/PATCH/PUT 1,000/min | all GET 5,000/min
+  429 carries {"code": "throttled", ...} and is retried once here.
+"""
+import json
+import os
+import time
+import urllib.error
+import urllib.request
+
+_SENTINEL = 'REPLACE_ME'
+_TIMEOUT = 25          # SWA's gateway gives up at 45s; leave room to fail cleanly
+_RTO_FIELD = 'RTO'     # confirm against GET /custom_fields/ before relying on it
+
+
+def _tenants():
+    """Parsed VNDLY_TENANTS, or {} when unset/placeholder/malformed."""
+    raw = (os.environ.get('VNDLY_TENANTS') or '').strip()
+    if not raw or raw == _SENTINEL:
+        return {}
+    try:
+        parsed = json.loads(raw)
+    except ValueError as e:
+        # Deliberately does not echo `raw` -- it holds every tenant's token.
+        print(f'vndly_api: VNDLY_TENANTS is not valid JSON ({e}); treating as unset')
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def configured_tenants():
+    """Health-system names that currently have usable credentials."""
+    out = []
+    for name, cfg in _tenants().items():
+        if not isinstance(cfg, dict):
+            continue
+        base = (cfg.get('base_url') or '').strip()
+        token = (cfg.get('token') or '').strip()
+        if base and token and token != _SENTINEL:
+            out.append(name)
+    return sorted(out)
+
+
+def is_configured(health_system=None):
+    """True when that tenant has credentials, or any tenant does if None."""
+    names = configured_tenants()
+    return bool(names) if health_system is None else health_system in names
+
+
+def _config(health_system):
+    cfg = _tenants().get(health_system)
+    if not isinstance(cfg, dict):
+        return None, None
+    base = (cfg.get('base_url') or '').strip().rstrip('/')
+    token = (cfg.get('token') or '').strip()
+    if not base or not token or token == _SENTINEL:
+        return None, None
+    return base, token
+
+
+def _request(health_system, method, path, payload=None):
+    """
+    One authenticated call against a named tenant.
+
+    Returns (status, parsed_body_or_text). Transport and HTTP errors come back
+    as a status rather than raising, so a caller can degrade instead of 500ing.
+    Status 0 means the call never completed. The token never appears in any
+    message returned or raised.
+    """
+    base, token = _config(health_system)
+    if not base:
+        return 0, f'vndly_tenant_not_configured: {health_system}'
+
+    url = f"{base}/{path.lstrip('/')}"
+    body = json.dumps(payload).encode('utf-8') if payload is not None else None
+    for attempt in (1, 2):
+        req = urllib.request.Request(url, data=body, method=method)
+        req.add_header('Authorization', f'Token {token}')
+        req.add_header('Accept', 'application/json')
+        if body is not None:
+            req.add_header('Content-Type', 'application/json')
+        try:
+            with urllib.request.urlopen(req, timeout=_TIMEOUT) as resp:
+                raw = resp.read().decode('utf-8', 'replace')
+                try:
+                    return resp.status, json.loads(raw) if raw else None
+                except ValueError:
+                    return resp.status, raw
+        except urllib.error.HTTPError as e:
+            raw = e.read().decode('utf-8', 'replace') if e.fp else ''
+            if e.code == 429 and attempt == 1:   # documented throttle contract
+                time.sleep(2)
+                continue
+            try:
+                return e.code, json.loads(raw) if raw else None
+            except ValueError:
+                return e.code, raw
+        except Exception as e:
+            return 0, f'{type(e).__name__}: {e}'
+    return 0, 'unreachable'
+
+
+def list_custom_fields(health_system):
+    """
+    Confirm the exact RTO field key and type for a tenant before writing.
+    Payload samples in the docs are generated per tenant and can drift, and
+    with four tenants they need not agree with each other.
+    """
+    return _request(health_system, 'GET',
+                    '/services/program/custom_fields/v2/custom_fields/')
+
+
+def get_contractor(health_system, system_id):
+    """GET one contractor, including its custom_fields object."""
+    return _request(
+        health_system, 'GET',
+        f'/services/program/contractors/v2/contractors/{system_id}/')
+
+
+def get_contractor_rto(health_system, system_id):
+    """(status, rto_text_or_None) for one contractor."""
+    status, body = get_contractor(health_system, system_id)
+    if status != 200 or not isinstance(body, dict):
+        return status, None
+    return status, ((body.get('custom_fields') or {}).get(_RTO_FIELD))
+
+
+def set_contractor_rto(health_system, system_id, rto_text):
+    """
+    Write requested time off to the contractor's RTO custom field.
+
+    Sends only custom_fields.RTO -- PATCH is a partial update, so nothing else
+    on the contractor is touched. Passing '' clears the field, which is how
+    "no time off requested" should be recorded rather than the string "None".
+    """
+    return _request(
+        health_system, 'PATCH',
+        f'/services/program/contractors/v2/contractors/{system_id}/',
+        {'custom_fields': {_RTO_FIELD: rto_text if rto_text is not None else ''}},
+    )

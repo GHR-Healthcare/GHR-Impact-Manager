@@ -55,6 +55,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
     auth_error = require_allowed_domain(req)
     if auth_error:
         return auth_error
+    pos_conn = None
     try:
         # ===========================================================
         # B4 + VNDLY assignments from positions DB
@@ -70,6 +71,12 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
         pos_cursor = pos_conn.cursor()
 
         assignment_records = []
+        # Which VMS feeds failed. Both loads below swallow their exception so
+        # one bad source does not take the whole comparison down -- but an
+        # empty assignment list is indistinguishable from "every Bullhorn
+        # placement really is missing from the VMS", and the endpoint used to
+        # report exactly that, with a 200 and no way to tell. (GH #101)
+        source_errors = []
 
         # B4
         try:
@@ -98,6 +105,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                 })
         except Exception as e:
             print(f"Error loading B4 assignments: {e}")
+            source_errors.append(f'B4: {e}')
 
         # VNDLY
         try:
@@ -127,8 +135,15 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                 })
         except Exception as e:
             print(f"Error loading VNDLY assignments: {e}")
+            source_errors.append(f'VNDLY: {e}')
 
+        # Closed here on the happy path and again in the finally below; the
+        # second close is a no-op. It used to be the ONLY close, so any raise
+        # after the connection opened -- including one outside the inner
+        # try/except while building assignment_records, or the early return in
+        # the Bullhorn block -- leaked it. (GH #72)
         pos_conn.close()
+        pos_conn = None
 
         # ===========================================================
         # Bullhorn placements from mirror DB
@@ -285,8 +300,21 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             r.get('placementID') or 0,
         ))
 
+        # A failed source cannot produce a reconciliation. The buckets are
+        # withheld rather than emitted empty-or-everything, because a consumer
+        # reading `missing_in_b4vndly` has no way to know the list is an
+        # artefact of a dead query. (GH #101)
+        degraded = bool(source_errors)
+        if degraded:
+            print(f"ContractsComparison: withholding buckets, sources failed: {source_errors}")
+            date_mismatches = []
+            missing_in_bullhorn = []
+            missing_in_b4vndly = []
+
         return func.HttpResponse(
             json.dumps({
+                'errors': source_errors,
+                'degraded': degraded,
                 'date_mismatches': date_mismatches,
                 'missing_in_bullhorn': missing_in_bullhorn,
                 'missing_in_b4vndly': missing_in_b4vndly,
@@ -307,8 +335,16 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
         print(f"Error: {e}")
         import traceback
         traceback.print_exc()
+        # Generic to the caller; pyodbc text carries server and driver details.
+        # (GH #29)
         return func.HttpResponse(
-            json.dumps({'error': str(e)}),
+            json.dumps({'error': 'contracts_comparison_failed'}),
             mimetype="application/json",
             status_code=500
         )
+    finally:
+        if pos_conn is not None:
+            try:
+                pos_conn.close()
+            except Exception:
+                pass
