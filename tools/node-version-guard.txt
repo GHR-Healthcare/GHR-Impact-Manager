@@ -1,0 +1,76 @@
+CVE-2026-111497 (Node2Shell) -- applicability to GHR Impact Manager
+===================================================================
+
+Assessed 2026-10-23 against the advisory of 2026-10-21.
+
+THE DEPLOYED APPLICATION IS NOT AFFECTED. No Node runs in it:
+
+  - The API runtime is Python. staticwebapp.config.json pins
+    platform.apiRuntime = "python:3.9", and every function under api/ is
+    Python. Nothing in the request path is Node.
+  - There is no package.json, no lockfile, no .nvmrc for the app, and no
+    Dockerfile, so there is no Node application and no Node dependency tree
+    to patch.
+  - No workflow pins or installs Node. The only Node in CI lives inside
+    Microsoft's own Azure/static-web-apps-deploy action image, which is
+    theirs to patch and which does not process our untrusted input.
+  - The frontend is one index.html running in the browser. Browser Brotli is
+    the browser's, not Node's.
+  - app_location is "/", so tools/*.mjs and tools/*.js are uploaded as static
+    text. They are never executed by the platform, and the catch-all route in
+    staticwebapp.config.json requires an authenticated role to read them.
+
+WHAT IS AFFECTED: developer workstations only. These two scripts are run by
+hand, and deploy-cache-scheduler.mjs calls fetch() twice. Node's fetch
+advertises `br` and decodes Brotli responses, which is the vulnerable path --
+even though the only endpoints it talks to are the Azure management API and
+our own site. msp-bleed-check.js serves local files and drives Chromium,
+which does its own decompression.
+
+ACTION TAKEN: the guard below refuses to run either script on an affected
+runtime, .nvmrc pins 24.22.1, and this machine's nvm default moved from
+20.20.0 (end-of-life) to 24.22.1.
+
+--- the guard ---
+
+The Node version check inlined at the top of tools/*.mjs and tools/*.js.
+
+Kept here as the single readable copy. It is INLINED rather than imported
+because this repo has no package.json: deploy-cache-scheduler.mjs is ESM and
+msp-bleed-check.js is CommonJS, so a shared module would need two files and a
+resolution story for a ten-line check. If you change the version table, change
+it in both scripts and here.
+
+CVE-2026-111497 ("Node2Shell"), disclosed 2026-10-21: an out-of-bounds write in
+Node's bundled Brotli decoder, reachable wherever a vulnerable Node processes
+untrusted Brotli-compressed input. Node's fetch() advertises `br` and decodes
+Brotli responses, and deploy-cache-scheduler.mjs calls fetch() twice, so these
+scripts sit on the vulnerable path even though they only talk to Azure and our
+own site.
+
+Fixed releases per the advisory:
+
+    22.x   -> 22.23.4 or later
+    24.x   -> 24.22.1 or later
+    26.x   -> 26.12.1 or later
+    20.x, 21.x, 23.x, 25.x and earlier are end-of-life: no fix is coming,
+    migrate to a supported line.
+
+--- the check ---
+
+const FIXED = { 22: [22, 23, 4], 24: [24, 22, 1], 26: [26, 12, 1] };
+const v = process.versions.node.split('.').map(Number);
+const fix = FIXED[v[0]];
+const bad = !fix || v[1] < fix[1] || (v[1] === fix[1] && v[2] < fix[2]);
+if (bad && !process.env.ALLOW_VULNERABLE_NODE) {
+  console.error(
+    `\nRefusing to run on Node ${process.versions.node}.\n\n` +
+    `CVE-2026-111497 is an out-of-bounds write in Node's bundled Brotli\n` +
+    `decoder. This script uses fetch(), which decodes Brotli responses.\n\n` +
+    `Fixed: 22.23.4+, 24.22.1+, 26.12.1+. Lines 20/21/23/25 are end-of-life\n` +
+    `and will not be fixed.\n\n` +
+    `  nvm install 24.22.1 && nvm use 24.22.1\n\n` +
+    `Set ALLOW_VULNERABLE_NODE=1 to override, which is a decision to run a\n` +
+    `known-vulnerable runtime, not a workaround.\n`);
+  process.exit(1);
+}

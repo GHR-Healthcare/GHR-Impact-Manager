@@ -1,4 +1,33 @@
 #!/usr/bin/env node
+
+// --- CVE-2026-111497 (Node2Shell) runtime guard -------------------------
+// Out-of-bounds write in Node's bundled Brotli decoder, reachable wherever a
+// vulnerable Node decodes untrusted Brotli. fetch() advertises `br` and
+// decodes Brotli responses, so these scripts are on that path. Fixed in
+// 22.23.4 / 24.22.1 / 26.12.1; lines 20, 21, 23, 25 are end-of-life and will
+// not be fixed. Inlined rather than imported because this repo has no
+// package.json and the two scripts use different module systems -- see
+// tools/node-version-guard.txt, and change both if you change either.
+const FIXED = { 22: [22, 23, 4], 24: [24, 22, 1], 26: [26, 12, 1] };
+{
+  const v = process.versions.node.split('.').map(Number);
+  const fix = FIXED[v[0]];
+  const bad = !fix || v[1] < fix[1] || (v[1] === fix[1] && v[2] < fix[2]);
+  if (bad && !process.env.ALLOW_VULNERABLE_NODE) {
+    console.error(
+      `\nRefusing to run on Node ${process.versions.node}.\n\n` +
+      `CVE-2026-111497 is an out-of-bounds write in Node's bundled Brotli\n` +
+      `decoder. This script uses fetch(), which decodes Brotli responses.\n\n` +
+      `Fixed: 22.23.4+, 24.22.1+, 26.12.1+. Lines 20/21/23/25 are end-of-life\n` +
+      `and will not be fixed.\n\n` +
+      `  nvm install 24.22.1 && nvm use 24.22.1\n\n` +
+      `Set ALLOW_VULNERABLE_NODE=1 to override, which is a decision to run a\n` +
+      `known-vulnerable runtime, not a workaround.\n`);
+    process.exit(1);
+  }
+}
+// ------------------------------------------------------------------------
+
 //
 // Creates the nightly cache-refresh Logic App for the non-MSP instance.
 //
