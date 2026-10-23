@@ -2,8 +2,16 @@
 /*
  * Did a new feature bleed into production MSP?
  *
- * Production MSP must keep rendering what it rendered at the 2.5.0 baseline
- * (c846d34) until new MSP and new non-MSP launch together. That rule has been
+ * NOTE (3.0.0, 2026-10-23): new MSP and new non-MSP HAVE now launched
+ * together, so the rule below has been served. Against the 2.5.0 baseline this
+ * tool now reports five differences by design -- three new tabs, four renames,
+ * the redesigned job list, the standing bar's padding -- and exits 5. That is
+ * the intended 3.0.0 surface, not a bleed. Use it to enumerate what a change
+ * does to production MSP, and compare against 3.0.0 rather than c846d34 if you
+ * want a clean exit; the BASELINE constant below is the thing to change.
+ *
+ * Production MSP had to keep rendering what it rendered at the 2.5.0 baseline
+ * (c846d34) until new MSP and new non-MSP launched together. That rule has been
  * enforced by memory twice and failed twice: the standing revenue bar reached
  * production, and a wrapper added to gate the redesign broke scrolling on the
  * job list. Both were invisible in a diff and obvious in a browser.

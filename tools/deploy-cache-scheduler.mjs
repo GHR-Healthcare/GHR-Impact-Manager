@@ -35,9 +35,8 @@ import { execFileSync } from 'node:child_process';
 const RG = 'GHR_Azure_Resources';
 const LOCATION = 'eastus';
 
-// The caching code currently lives on feature/msp-impact-prototype, which
-// deploys to the prototype environment. Production non-MSP needs its own
-// workflow once this merges to main -- pass --target production then.
+// The caching code merged to main in 3.0.0, so production is the default
+// target. Pass --target prototype only to aim at a named review environment.
 const TARGETS = {
   prototype: {
     name: 'ghr-impactmgr-cache-refresh-prototype',
@@ -62,7 +61,12 @@ const RECURRENCE = {
 
 const dryRun = process.argv.includes('--dry-run');
 const tIdx = process.argv.indexOf('--target');
-const targetName = tIdx > -1 ? process.argv[tIdx + 1] : 'prototype';
+// Defaults to production since the 3.0.0 merge. It used to default to
+// 'prototype', which after the merge would wire the nightly refresh at the
+// staging slot instead of production non-MSP -- and because the Logic App is
+// idempotent by name, that would succeed silently while production never
+// warmed its cache at all.
+const targetName = tIdx > -1 ? process.argv[tIdx + 1] : 'production';
 const target = TARGETS[targetName];
 if (!target) {
   console.error(`Unknown --target ${targetName}. Use prototype or production.`);

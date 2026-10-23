@@ -1,3 +1,25 @@
+> **SUPERSEDED on 2026-10-23 by the 3.0.0 release. Kept for the measurements
+> and the reasoning, not as instruction — do not follow the recommendation.**
+>
+> What shipped did the opposite of what this document advises, deliberately and
+> after re-measuring. It merged the trees in one commit and set `impactUi()` to
+> `true`, because the prototypes had been signed off and production was meant
+> to BECOME the prototype — the premise this plan was written under ("production
+> MSP must not change") no longer held.
+>
+> Three specifics below are now wrong:
+> - **The `viewToggle` risk is gone.** The prototype has since replaced main's
+>   imperative hiding with a declarative `View.VIEWS` table carrying
+>   `mspOnly: true` on `perdiem` and `pending`, which also bounces off a hidden
+>   tab before render. Nothing was lost by taking the prototype's side.
+> - **The method counts (141/147) are stale.** At merge time it was 35 new and
+>   0 lost, measured again on the day.
+> - **There is no pre-commit gate**, and the `APP_VERSION` line below names
+>   2.18.0 and 2.23.0, both long dead. The equivalent check is
+>   `node tools/msp-bleed-check.js`, run by hand.
+>
+> See README.md's 3.0.0 entry for what actually happened.
+
 # Merging `feature/msp-impact-prototype` into `main`
 
 Measured 2026-09-11, `main` at `4d13943`, prototype at `4a4b6f9`.

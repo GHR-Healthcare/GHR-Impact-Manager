@@ -1487,6 +1487,7 @@
             if (!f) return 'n/a';
             return which === 'verdict' ? `${f.label} (${f.note})` : d10(f[which]) || f[which] || '';
         };
+        const ball = r => View.extensionBall(r) || {};
 
         const cols = [
             ['ID',                  r => r.id],
@@ -1517,6 +1518,13 @@
             ['Workflow Group',      r => View.extensionGroup(r)],
             ['GHR Decision',        r => View.extensionEdit(r).decision],
             ['Urgency',             r => View.extensionUrgencyLabel(r)],
+            // Who has the ball and what they owe. Dropped when this export was
+            // reconciled across the two branches, although extensionBallCell
+            // still renders the column on screen -- so the tab showed it and
+            // the file for validating the tab did not.
+            ['Next Action Owner',   r => ball(r).owner],
+            ['Next Action Who',     r => ball(r).who],
+            ['Next Action',         r => ball(r).action],
             ['Action Due In Days',  r => { const d = Utils.actionDueInDays(r.days_left);
                                            return d == null ? '' : d; }],
             ['Exceptions',          r => Utils.extensionExceptions(r).length],
@@ -3492,8 +3500,8 @@
        * were gated -- so every change on a SHARED surface (Open Jobs, the job
        * detail, Trend, the footer) reached production MSP, which was supposed
        * to stay exactly as it was while the redesign was in review. This is
-       * the single switch those surfaces ask. The prototype branch overrides
-       * it to true, which is its one deliberate divergence.
+       * the single switch those surfaces ask. Since 3.0.0 it answers true on
+       * both instances; see the body for why it is still a method.
        */
       impactUi() {
         /* Both instances now run the IMPACT UI.
@@ -5630,15 +5638,16 @@
             btn.className = (view === v.key ? activeClass : inactiveClass) + (hide ? ' hidden' : '');
           }
         });
-        // THE DELIBERATE DIVERGENCE FROM MAIN ON THIS BRANCH.
+        // WAS the deliberate divergence from main, until 3.0.0 merged.
         //
-        // main shows the IMPACT UI on non-MSP only, so MSP stays as it has
-        // been. This branch exists to show reviewers MSP *with* it, so the
-        // controls are shown on both instances. Merging to main is a matter
-        // of deciding this flag, not re-reading the diff.
+        // DO NOT "restore" this to isNonMsp. main used to show the IMPACT UI
+        // on non-MSP only, so MSP stayed as it was while the redesign was in
+        // review; the prototypes were signed off and merged, so the controls
+        // are shown on both. Flipping it back would strip the meeting
+        // controls from non-MSP too, which has had them all along.
         //
         // Tab visibility itself needs nothing here: View.VIEWS drives it, and
-        // closed / extensions / onboarding carry no mspOnly on this branch.
+        // closed / extensions / onboarding carry no mspOnly.
         const showImpactUi = true;
 
         // Header swap: the AI Impact Call Summary and Change History
@@ -11258,8 +11267,16 @@
                   ${r.outcome_reason ? `<div class="text-[10px] text-slate-400 mt-0.5">${View.esc(r.outcome_reason)}</div>` : ''}
                 </td>
                 <td class="px-3 py-2 font-medium text-slate-700">${View.esc(View.closedFilledBy(r))}</td>
-                ${closedExpandable ? `<td class="px-3 py-2 text-center font-semibold ${
-                  share == null ? 'text-slate-300' : 'text-blue-600'}">${share == null ? '—' : share + '%'}</td>` : ''}
+                <!-- Pairs with the Market Share COLUMN above, which is spread in on
+                     the same isNonMspClosedCols test. It used to read
+                     closedExpandable, which was the same flag until that became
+                     a constant true for the detail modal -- after which non-MSP
+                     emitted 10 cells under 9 headers and every column from Days
+                     To Close rightwards sat under the wrong heading, with Owner
+                     spilling into an unheaded tenth. closedMarketShare returns
+                     null on non-MSP, so the stray cell always read a dash. -->
+                ${isNonMspClosedCols ? '' : `<td class="px-3 py-2 text-center font-semibold ${
+                  share == null ? 'text-slate-300' : 'text-blue-600'}">${share == null ? '—' : share + '%'}</td>`}
                 <td class="px-3 py-2 text-center text-slate-700">${
                   r.days_to_close == null || !isFinite(Number(r.days_to_close))
                     ? '—' : Math.round(Number(r.days_to_close))}</td>
@@ -15447,7 +15464,12 @@
         const affDelta = (weekData[nextIdx]?.aff || 0) - (weekData[currentWeekIdx]?.aff || 0);
         View.renderKpiCards(isNonMspTrend
           ? [tile('Total Headcount', fmtDelta(hcDelta), 'users', 'blue'),
-             tile('Booked Starts', fmtDelta(bookedStartsDelta), 'check-circle', 'indigo'),
+             // Booked Starts is NOT in this list, per the note above: on
+             // non-MSP pendingTotal is always 0, so it is numerically
+             // identical to Total Headcount and would present one figure
+             // twice as if the second were independent. The note survived
+             // the merge; the suppression it describes did not, so it is
+             // restored rather than the note deleted to match the code.
              tile('Projected Revenue', fmtDeltaDollars(revenueDelta), 'dollar-sign', 'emerald')]
           : [tile('Total Headcount', fmtDelta(hcDelta), 'users', 'blue'),
              tile('GHR', fmtDelta(ghrDelta), 'user-check', 'blue'),

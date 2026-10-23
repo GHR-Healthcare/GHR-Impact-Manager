@@ -8,16 +8,18 @@
   instances now run the IMPACT UI.** `Utils.impactUi()` returns true: production
   MSP gets the redesigned tabs instead of the legacy renderer.
 - **Merged as trees, not as hunks.** The branches were kept in sync by
-  committing the same work twice, so a line-by-line merge conflicted in 13
+  committing the same work twice, so a line-by-line merge conflicted in 12
   files and risked resolving a production fix the wrong way. The merge commit
-  records both parents with the prototype's tree exactly — `git diff
-  feature/msp-impact-prototype` is empty — which also gives the branches a sane
-  merge base for the first time, so the double-commit workflow can stop.
+  records both parents with the prototype's tree exactly — `git diff 3558fa0
+  2712403` is empty — which also gives the branches a sane merge base for the
+  first time, so the double-commit workflow can stop.
 - Taking the prototype wholesale was **checked, not assumed**: no file and no
-  `View`/`Utils` method exists only on `main` (148 methods against 183, 35 new,
-  0 lost), and the high-stakes main-only fixes — the display-name allowlist
-  bypass (2.21.7) and the workspace null-state guard (2.21.14) — are already
-  present byte-for-byte.
+  `View`/`Utils` method exists only on `main` — **35 new, 0 lost** (the
+  absolute totals depend on how you scope the extraction, so only the deltas
+  are quoted). The high-stakes main-only fixes are already present
+  byte-for-byte: the display-name allowlist bypass (2.43.0 here, shipped on
+  pre-merge `main` as 2.21.7) and the workspace null-state guard (2.57.0 here,
+  2.21.14 there).
 - `MERGE_PLAN.md`'s biggest stated risk is **obsolete**. It warned that
   `viewToggle` carried 78 lines on `main` the prototype lacked, including the
   non-MSP hiding of Per Diem and Pending. The prototype has since replaced that
@@ -33,6 +35,12 @@
   - KPIs render identically
 - The legacy renderers are still in the tree and simply switched off. Retiring
   them is separate work.
+- **Pre-merge `main`'s version numbering was retired.** Every entry below is
+  the prototype's series, which is the one that survived. Nine commit subjects
+  in `git log` (2.21.10 – 2.21.18) therefore cite versions with no entry here,
+  and two more (2.24.0, 2.24.1) cite entries that now describe different work —
+  that work is 2.66.0 and 2.66.1. For the retired series, read
+  `git show 2326761:README.md`.
 
 ### 2.66.1 - An accepted extension kept reading as awaiting vendor
 - `#b4_ext` took `MAX()` of each assignment type over **every** extension row a
