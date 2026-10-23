@@ -267,6 +267,24 @@ def _b4_rows(cursor, horizon, include_affiliate):
                          AND cs.Agency_Retracted_Date IS NULL
                         THEN 1 ELSE 0 END AS op
             FROM dhc.B4Health_Contract_Submissions cs WITH (NOLOCK)
+            -- The extension offer has to belong to the agency that HOLDS the
+            -- seat. Without this join any agency's pending offer on the req
+            -- set the seat's designation, so a competitor bidding on a GHR
+            -- seat read as "GHR awaiting vendor" -- and the sibling path
+            -- through the Network Activity Report has always been GHR-scoped
+            -- (`x.Agency LIKE '%GHR%'`), so the same question was being asked
+            -- two different ways in one ladder.
+            --
+            -- Scoped to the seat rather than to GHR, because this tab is the
+            -- whole vendor panel: an affiliate seat with its OWN affiliate's
+            -- pending offer is genuinely awaiting that vendor, and should say
+            -- so. Measured 2026-10-23 over the live window, the two fields use
+            -- one vocabulary -- 142 submissions same-agency against 1 that
+            -- differs -- so this join drops almost nothing; it is a
+            -- correctness fix, not a cull.
+            JOIN dhc.B4HealthOrder po WITH (NOLOCK)
+              ON LTRIM(RTRIM(po.Contract_ID)) = LTRIM(RTRIM(cs.Parent_Contract_Assignment_ID))
+             AND LTRIM(RTRIM(po.Agency)) = LTRIM(RTRIM(cs.Agency_Name))
             WHERE cs.Parent_Contract_Assignment_ID IS NOT NULL
         ) z GROUP BY parent;
         CREATE INDEX ix_b4chain ON #b4_chain (parent);

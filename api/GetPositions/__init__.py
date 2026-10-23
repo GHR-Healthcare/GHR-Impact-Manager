@@ -715,16 +715,31 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             -- 2026-10-20 was that VNDLY is the definition and both this app and
             -- ghr-marketintel match it.
             --
-            -- Status values in the feed, measured the same day: Closed 837,
-            -- Hold 70, Active 47, Pending Approval 20, Rejected 1. The value is
-            -- 'Hold', not 'On Hold'. Pending Approval stays out -- it is not in
-            -- VNDLY's tile either, and the client has not approved the req yet.
+            -- The value is 'Hold', not 'On Hold'.
             --
-            -- This more than doubles the VNDLY open book (47 -> 117 rows), and
-            -- the added rows are older than the Active ones, so anything that
-            -- reads days-open as a performance signal has to exclude them.
-            -- Utils.isJobOnHold does that; see the aging KPIs in index.html.
-            WHERE LTRIM(RTRIM([Job Status])) IN ('Active', 'Hold')
+            -- 'Pending Approval' is in too, and that was NOT obvious. It was
+            -- left out first time round on the reasoning that the client has
+            -- not approved the req yet -- but the only dashboard available to
+            -- check against was Cooper's, which has no Pending Approval jobs
+            -- at all, so the rule was inferred from the one tenant that could
+            -- not test it. All 20 of them are RUMC's.
+            --
+            -- Settled 2026-10-23 against the bundled Redeemer + RUMC tenant's
+            -- dashboard, identified by two independent figures (On Hold 13 and
+            -- Work Orders 66, both exact). Its Jobs tile reads 43:
+            --
+            --   Active + Hold                     =  9 + 13 = 22
+            --   Active + Hold + Pending Approval  =  9 + 13 + 20 = 42
+            --
+            -- 42 against 43 is the one-job feed lag we already measured on
+            -- Cooper (73 against 74). 22 is not explicable by lag. So VNDLY's
+            -- tile counts Pending Approval and so do we.
+            --
+            -- These rows and the held ones are older than the Active ones and
+            -- neither is aging on GHR -- a req the client has not approved is
+            -- not one we are failing to fill. Utils.isJobParked covers both;
+            -- see the aging KPIs in index.html.
+            WHERE LTRIM(RTRIM([Job Status])) IN ('Active', 'Hold', 'Pending Approval')
             ORDER BY [Job Approval Date] DESC
         ''')
         

@@ -1009,7 +1009,7 @@
     const $ = (id) => document.getElementById(id);
 
     // App version - loaded from environment variable via API, with fallback
-    let APP_VERSION = '3.0.1';
+    let APP_VERSION = '3.1.0';
 
     const API_BASE_URL = '/api';
 
@@ -3402,18 +3402,22 @@
         return `${r} day${r === 1 ? '' : 's'}`;
       },
 
-      /* A job the client has paused. VNDLY's own dashboard counts these as
-       * open jobs, so they belong in the list and in every COUNT of the open
-       * book -- that is what makes our 74 agree with theirs. They do NOT
-       * belong in anything that reads days-open as a performance signal:
-       * nobody is failing to fill a req that is on hold, and the held ones are
-       * older than the active ones, so leaving them in would have doubled the
-       * open book and inflated Avg Days Open and Critical with it.
+      /* A job that is open but not workable yet: the client has paused it, or
+       * has not approved the requisition at all.
        *
-       * The VNDLY feed spells it 'Hold'; the UI and B4 say 'On Hold' in
+       * VNDLY's own dashboard counts both as open jobs, so they belong in the
+       * list and in every COUNT of the open book -- that is what makes our
+       * numbers agree with theirs. They do NOT belong in anything that reads
+       * days-open as a performance signal: nobody is failing to fill a req
+       * that is on hold or unapproved, and both are older than the Active
+       * ones, so leaving them in inflates Avg Days Open and Critical.
+       *
+       * Was isJobOnHold, covering 'Hold' alone, until the bundled Redeemer +
+       * RUMC dashboard showed Pending Approval is in VNDLY's Jobs tile too.
+       * The VNDLY feed spells the first 'Hold'; the UI and B4 say 'On Hold' in
        * places, hence the loose test. */
-      isJobOnHold(job) {
-        return /hold/i.test(String((job && job.status) || ''));
+      isJobParked(job) {
+        return /hold|pending\s*approval/i.test(String((job && job.status) || ''));
       },
 
       agingBand(days) {
@@ -3849,7 +3853,7 @@
 
             // A req the client paused is not aging on us and should not be
             // chased by this report.
-            if (Utils.isJobOnHold(job)) return false;
+            if (Utils.isJobParked(job)) return false;
 
             // Exclude Perm Placement only
             const program = String(job.program || '').toLowerCase();
@@ -5828,7 +5832,7 @@
           cells = cell('Open Jobs', open.length.toLocaleString(), 'text-slate-800',
                        `${openings.toLocaleString()} opening${openings === 1 ? '' : 's'}`)
                 + cell('Aged 16+ Days',
-                       open.filter(j => !Utils.isJobOnHold(j) && (Number(j.daysPast) || 0) >= 16)
+                       open.filter(j => !Utils.isJobParked(j) && (Number(j.daysPast) || 0) >= 16)
                            .length.toLocaleString(),
                        'text-red-600', 'of the open book')
                 + exposureCell;
@@ -5925,7 +5929,7 @@
         const expanded = s.expandedRows.has(job.id);
         const impact = Utils.calculateImpactPercent(job.levers);
         const isPerm = String(job.program).toLowerCase().includes('perm');
-        const onHold = Utils.isJobOnHold(job);
+        const onHold = Utils.isJobParked(job);
         /* A held req gets the neutral bubble Perm already uses instead of an
          * aging colour. Same reason in both cases: the number of days is a
          * fact, but the urgency colour is a claim, and neither a perm search
@@ -6286,7 +6290,7 @@
         {
           const openings = list.reduce((a, j) => a + (Number(j.numPositions) || 1), 0);
           const subs = list.reduce((a, j) => a + (Number(j.ghrSubs) || 0) + (Number(j.avSubs) || 0), 0);
-          const aging = list.filter(j => !Utils.isJobOnHold(j));
+          const aging = list.filter(j => !Utils.isJobParked(j));
           const avgAge = aging.length
             ? Math.round(aging.reduce((a, j) => a + (Number(j.daysPast) || 0), 0) / aging.length) : 0;
           const stale = aging.filter(j => (Number(j.daysPast) || 0) >= 16).length;
@@ -6983,7 +6987,7 @@
         const s = window.store.state;
         const impact = Utils.calculateImpactPercent(job.levers);
         const isPerm = String(job.program).toLowerCase().includes('perm');
-        const onHold = Utils.isJobOnHold(job);
+        const onHold = Utils.isJobParked(job);
         /* A held req gets the neutral bubble Perm already uses instead of an
          * aging colour. Same reason in both cases: the number of days is a
          * fact, but the urgency colour is a claim, and neither a perm search
@@ -11636,7 +11640,7 @@
         // Held reqs are excluded from the denominator -- they are open jobs by
         // VNDLY's count but not fillable demand, and counting them would read
         // as a drop in fill rate the moment a client pauses a req.
-        const openWorkable = list.filter(j => !Utils.isJobOnHold(j)).length;
+        const openWorkable = list.filter(j => !Utils.isJobParked(j)).length;
         const overallFillRate = (activeCount + openWorkable) > 0
           ? Math.round((activeCount / (activeCount + openWorkable)) * 100) : 0;
 
@@ -11652,24 +11656,34 @@
 
         // Held reqs count as open jobs (VNDLY's definition) but are not aging
         // on us, so every day-based figure below is measured on the workable
-        // book only. See Utils.isJobOnHold.
-        const workable = list.filter(j => !Utils.isJobOnHold(j));
+        // book only. See Utils.isJobParked.
+        const workable = list.filter(j => !Utils.isJobParked(j));
         const avgDays = workable.length
           ? Math.round(workable.reduce((a, b) => a + b.daysPast, 0) / workable.length) : 0;
+        const parkedHold = list.filter(j => /hold/i.test(String(j.status || ''))).length;
+        const parkedAppr = list.length - workable.length - parkedHold;
         // Spelled out under the count, because this number roughly doubled the
         // day held reqs started counting as open jobs and nothing else on the
         // screen would have explained why. Omitted entirely where there are no
         // held reqs, so the Bullhorn and Symplr books gain no empty line.
-        const heldCount = total - workable.length;
-        const heldSub = heldCount
-          ? `${workable.length} active &middot; ${heldCount} on hold` : null;
+        // Broken out rather than lumped as "parked": the two mean different
+        // things to whoever reads the number. On hold is the client pausing
+        // work we could otherwise do; pending approval is a req they have not
+        // signed off at all. Omitted entirely where there are none, so the
+        // Bullhorn and Symplr books gain no empty line.
+        const heldSub = (total - workable.length)
+          ? [`${workable.length} active`,
+             parkedHold ? `${parkedHold} on hold` : null,
+             parkedAppr ? `${parkedAppr} pending approval` : null,
+            ].filter(Boolean).join(' &middot; ')
+          : null;
         const avgMargin = (list.reduce((a, b) => a + parseFloat(b.margin || 0), 0) / total).toFixed(1);
 
         let pendingDaysSum = 0, pendingCount = 0, ghr = 0, av = 0, critical = 0;
         list.forEach(j => {
           ghr += j.ghrSubs; av += j.avSubs;
           const rules = CONSTANTS.AGING_RULES[j.system] || CONSTANTS.AGING_RULES.default;
-          if (!Utils.isJobOnHold(j) && j.daysPast >= rules.thresholds.red) critical++;
+          if (!Utils.isJobParked(j) && j.daysPast >= rules.thresholds.red) critical++;
           (j.candidates || []).forEach(c => { if (!Utils.isDeclinedNow(j.id, c) && c.date) { pendingDaysSum += Utils.calcDays(c.date); pendingCount++; } });
         });
 

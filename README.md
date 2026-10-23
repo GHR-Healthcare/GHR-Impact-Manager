@@ -2,6 +2,44 @@
 
 ## Version History
 
+### 3.1.0 - Pending Approval is an open job, and offers are scoped to the seat
+- **Pending Approval jobs now count as open positions.** They were excluded in
+  2.22.0 on the reasoning that the client has not approved the requisition —
+  but the only dashboard available to check against was Cooper's, which has no
+  Pending Approval jobs at all, so the rule was inferred from the one tenant
+  that could not test it. **All 20 of them are RUMC's.**
+- Settled against the bundled **Redeemer + RUMC** tenant's dashboard,
+  identified from our own data by two independent figures (On Hold 13 and Work
+  Orders 66, both exact). Its Jobs tile reads **43**:
+  - Active + Hold = 9 + 13 = **22**
+  - Active + Hold + Pending Approval = 9 + 13 + 20 = **42**
+
+  42 against 43 is the one-job feed lag already measured on Cooper (73 against
+  74). 22 is not explicable by lag, so VNDLY's tile counts them and now so do
+  we. **RUMC's open count goes 14 → 34; the whole VNDLY open book 104 → 124.**
+- `Utils.isJobOnHold` became **`Utils.isJobParked`** and covers both states.
+  Neither is aging on GHR — a req the client has paused, or has not approved at
+  all, is not one we are failing to fill — so both stay out of Avg Days Open,
+  Critical, Aged 16+, the fill-rate denominator and the Travel Aging Report,
+  while counting everywhere the open book is counted. The KPI sub-line breaks
+  out all three states rather than lumping them, because "on hold" and "pending
+  approval" mean different things to whoever reads the number.
+- **B4 extension offers are now scoped to the agency that holds the seat.** Any
+  agency's pending offer on a req used to set the seat's designation, so a
+  competitor bidding on a GHR seat read as "GHR awaiting vendor" — while the
+  sibling path through the Network Activity Report has always been GHR-scoped.
+  One question, two scopes, in one ladder.
+- Scoped to the *seat* rather than to GHR, because this tab is the whole vendor
+  panel: an affiliate seat with its own affiliate's pending offer is genuinely
+  awaiting that vendor. Measured same-day before and after over 433 B4 seats:
+  **exactly one seat changes** — an affiliate seat that read "Extension
+  Accepted" because a different agency's bid on its req was awarded. The two
+  agency fields share one vocabulary (142 submissions match, 1 differs), so the
+  join drops almost nothing.
+- **The prototype environment workflows are retired.** Both deployed
+  `feature/msp-impact-prototype` to named environments on the production apps,
+  inheriting their settings and secrets. Production *is* the prototype now.
+
 ### 3.0.1 - Non-MSP headcount counted the same person several times
 - The fix the MSP book got in 2.21.18, now on the **non-MSP** book. Bullhorn
   and Symplr rows split by facility, care type, service line, division and
