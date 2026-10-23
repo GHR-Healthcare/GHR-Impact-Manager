@@ -958,7 +958,14 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
     if non_msp:
         try:
             _payload = _non_msp_payload(lookback)
-            if _cacheable:
+            # Never cache a partial book -- it would be served for 26 hours,
+            # long outliving the transient fault that produced it. The MSP
+            # branch below guards the same way, as do GetTrendData,
+            # GetFinancialData, GetYoYTrendData and GetOnboarding; this one
+            # was the odd path out. _non_msp_payload returns 200 with an
+            # 'errors' list when Bullhorn or Symplr fails, so the status code
+            # cannot be used to tell a full book from half of one.
+            if _cacheable and not _payload.get('errors'):
                 write_cache(_key, _payload, build_ms=int((time.time() - _started) * 1000),
                             refreshed_by='live-request')
             return func.HttpResponse(

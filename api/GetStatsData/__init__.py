@@ -357,8 +357,12 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
         # is exactly how the extensions cache failed silently in 2.38.1.
         resp = _non_msp_stats(req)
         try:
-            if resp.status_code == 200:
-                write_cache(_key, json.loads(resp.get_body()),
+            # 200 is not proof of a full book: _non_msp_stats returns 200 with
+            # a populated 'errors' list when Bullhorn or Symplr fails, so the
+            # body has to be inspected rather than the status code.
+            _body = json.loads(resp.get_body()) if resp.status_code == 200 else None
+            if _body is not None and not _body.get('errors'):
+                write_cache(_key, _body,
                             build_ms=int((time.time() - _started) * 1000),
                             refreshed_by='live-request')
         except Exception as e:
@@ -612,8 +616,14 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             # untouched. (GH #79)
             'errors': msp_errors,
         }
-        write_cache(_key, _payload, build_ms=int((time.time() - _started) * 1000),
-                    refreshed_by='live-request')
+        # Never cache a partial book. Five handlers above swallow a source
+        # failure and append to msp_errors while still returning 200, so the
+        # status code cannot distinguish a full book from half of one -- and a
+        # cached half is served for 26 hours, long outliving the fault. Same
+        # guard GetTrendData, GetFinancialData and GetClosed already carry.
+        if not msp_errors:
+            write_cache(_key, _payload, build_ms=int((time.time() - _started) * 1000),
+                        refreshed_by='live-request')
         return func.HttpResponse(
             json.dumps(_payload, default=str),
             mimetype="application/json",

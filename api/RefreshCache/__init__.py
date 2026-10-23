@@ -10,10 +10,15 @@ waiting on, instead of inside the request that wants to render a chart.
     POST /api/cache/refresh              -- rebuild everything
     POST /api/cache/refresh?key=trend-data   -- rebuild one
 
-Auth is deliberately NOT require_allowed_domain: a timer has no signed-in user
-and no email domain to check. It accepts either a signed-in principal from the
-app or CACHE_REFRESH_API_KEY from the scheduler, which is the same split
-salespulse uses.
+Auth is a split, because a timer has no signed-in user and no email domain to
+check: CACHE_REFRESH_API_KEY from the scheduler, OR a signed-in principal that
+passes require_allowed_domain. The key path skips the domain check, which is
+the whole point of having it; the browser path does not get to.
+
+An earlier version accepted ANY signed-in principal on the reasoning that a
+timer cannot have one. That is not a gate: this route is anonymous at the SWA
+gateway so the scheduler can reach it at all, and SWA Free's Microsoft
+provider accepts any Microsoft account. See the comment in main().
 """
 import json
 import os
@@ -21,7 +26,7 @@ import time
 
 import azure.functions as func
 
-from shared_code.auth import current_user_email
+from shared_code.auth import current_user_email, require_allowed_domain
 from shared_code.data_source import is_non_msp
 from shared_code.endpoint_cache import cache_key, write_cache, cache_status
 
@@ -77,12 +82,33 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
     supplied = (req.headers.get('x-api-key')
                 or req.params.get('apiKey') or '')
     expected = os.environ.get('CACHE_REFRESH_API_KEY')
+    # The scheduler's key, OR a signed-in user FROM AN ALLOWED DOMAIN.
+    #
+    # It used to be `if not current_user_email(req)`, which is any signed-in
+    # user at all. That is not a gate here: the route is anonymous at the SWA
+    # gateway (see above), SWA Free's Microsoft provider accepts ANY Microsoft
+    # account, and current_user_email's own docstring says it is "only safe to
+    # use after require_allowed_domain() has passed" -- it reads an email out
+    # of the principal and never looks at ALLOWED_DOMAINS. So any personal
+    # Microsoft account could sign in and reach this endpoint: GET returns
+    # cache_status(), which names the staff who last ran each refresh, and POST
+    # rebuilds trend-data and financial-data against the warehouse on every
+    # call, with no throttle.
+    #
+    # Same class of hole as the display-name bypass closed in 2.21.7, through a
+    # different door: that one read the domain from the wrong claim, this one
+    # skipped the domain check entirely.
+    #
+    # The key is compared only when one is configured, so an unset setting
+    # cannot turn into an open endpoint.
+    if not (expected and supplied and supplied == expected):
+        auth_error = require_allowed_domain(req)
+        if auth_error:
+            return auth_error
+
+    # Attribution only, read after the gate above has allowed the request
+    # through. '' for the scheduler, which has no principal.
     user = current_user_email(req)
-    # A signed-in user OR the scheduler's key. The key is compared only when one
-    # is configured, so an unset setting cannot turn into an open endpoint.
-    if not user and not (expected and supplied and supplied == expected):
-        return func.HttpResponse(json.dumps({'error': 'unauthorized'}),
-                                 mimetype='application/json', status_code=401)
 
     if req.method == 'GET':
         return func.HttpResponse(
