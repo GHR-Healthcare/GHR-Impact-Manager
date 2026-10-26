@@ -2,6 +2,33 @@
 
 ## Version History
 
+### 3.2.0 - Agency filter on Extensions, and the top panel follows the table
+- **An "All agencies / GHR only / Affiliate only" filter on the Extensions
+  strip.** Requested for running extensions with the GHR delivery teams, where
+  the panel needs narrowing to GHR's own seats. This tab covers the whole
+  vendor panel by design, which is right for running the MSP and wrong for a
+  delivery stand-up: roughly two thirds of the window is GHR and one third
+  affiliate.
+- It is a **filter, not a redaction**. Affiliate rows come straight back on
+  "All agencies" — the data is still needed, just not in that meeting. The
+  separate **Redact Vendor Info** button is the complementary control: it masks
+  affiliate *names* wherever they appear, which is a different question from
+  whose rows are on screen.
+- Shares `View.stageAgencyLabel` with the row badge and the CSV column, so the
+  filter, the badge and the export can never disagree about whose seat a row
+  is. The KPI cards and the CSV both follow it, so exporting while filtered
+  gives exactly the drilled-down set.
+- **The top intel panel now counts the rows on screen.** It was passed the
+  whole 45-day window while the table below showed the filtered set, so with
+  any filter active one screen described two different row sets — the panel
+  reporting the window's designation counts while the list showed far fewer.
+  The KPI cards have always described the filtered rows; the panel now does
+  too, and the strip's "N of M match" line remains what signals a filter is
+  narrowing things.
+- Tested: 7 assertions covering GHR, affiliate and Planet Healthcare rows,
+  agency combining with the date range, a filter saved before this change with
+  no agency key, and a null filter.
+
 ### 3.1.0 - Pending Approval is an open job, and offers are scoped to the seat
 - **Pending Approval jobs now count as open positions.** They were excluded in
   2.22.0 on the reasoning that the client has not approved the requisition —

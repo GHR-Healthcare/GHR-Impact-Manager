@@ -1009,7 +1009,7 @@
     const $ = (id) => document.getElementById(id);
 
     // App version - loaded from environment variable via API, with fallback
-    let APP_VERSION = '3.1.0';
+    let APP_VERSION = '3.2.0';
 
     const API_BASE_URL = '/api';
 
@@ -8877,9 +8877,10 @@
       },
 
       extSearchBar(total, shown) {
-        const f = window.store.state.extFilter || { endFrom: '', endTo: '', status: 'All' };
+        const f = window.store.state.extFilter || { endFrom: '', endTo: '', status: 'All', agency: 'all' };
         const gb = window.store.state.extGroupBy || 'designation';
-        const active = !!(f.endFrom || f.endTo || (f.status && f.status !== 'All'));
+        const active = !!(f.endFrom || f.endTo || (f.status && f.status !== 'All')
+                          || (f.agency && f.agency !== 'all'));
         const field = 'w-full bg-white border border-slate-300 rounded-md px-2 py-1.5 text-xs focus:border-blue-500 outline-none shadow-sm';
         const lbl = 'block text-[9px] font-semibold uppercase tracking-wide text-slate-400 mb-0.5';
         // Explicit labels — naive title-casing turns RTO into "Rto".
@@ -8914,6 +8915,22 @@
                    onchange="store.dispatch('SET_EXT_FILTER')">
             <select id="extensionStatusFilter" class="${field} w-[150px]" title="Extension status"
                     onchange="store.dispatch('SET_EXT_FILTER')">${opts}</select>
+            <!-- Agency. Matt, 2026-10-26: going through extensions with the GHR
+                 delivery teams, he wants the panel narrowed to GHR's own seats
+                 -- "53 pending vendor but 40 are GHR, how do I view just those
+                 40". This tab is the whole vendor panel by design, which is
+                 right for running the MSP and wrong for a delivery stand-up.
+                 A filter, not a redaction: the affiliate rows are still there
+                 the moment it goes back to All, because his team needs them.
+                 Redact Vendor Info is the separate, complementary control --
+                 it masks affiliate NAMES wherever they show. -->
+            <select id="extensionAgencyFilter" class="${field} w-[130px]"
+                    title="Whose seats to show. Affiliate rows stay in the data; this only narrows the view."
+                    onchange="store.dispatch('SET_EXT_FILTER')">
+              <option value="all" ${f.agency === 'ghr' || f.agency === 'av' ? '' : 'selected'}>All agencies</option>
+              <option value="ghr" ${f.agency === 'ghr' ? 'selected' : ''}>GHR only</option>
+              <option value="av"  ${f.agency === 'av'  ? 'selected' : ''}>Affiliate only</option>
+            </select>
             <span class="text-[10px] font-bold uppercase tracking-wider text-slate-400">Group</span>
             <select id="extensionGroupBy" class="${field} w-[130px]"
                     title="Group by the VMS-derived designation, or by GHR's own workflow state"
@@ -8938,6 +8955,14 @@
       extSearchMatch(r) {
         const f = window.store.state.extFilter;
         if (!f) return true;
+        // Shares stageAgencyLabel with the row badge and the CSV column, so the
+        // filter, the badge and the export can never disagree about whose seat
+        // a row is.
+        if (f.agency && f.agency !== 'all') {
+          const ours = View.stageAgencyLabel(r) === 'GHR';
+          if (f.agency === 'ghr' && !ours) return false;
+          if (f.agency === 'av'  &&  ours) return false;
+        }
         const end = (r.end_date || '').slice(0, 10);
         if (f.endFrom && (!end || end < f.endFrom)) return false;
         if (f.endTo   && (!end || end > f.endTo))   return false;
@@ -10355,7 +10380,16 @@
         // bands above the table, which do the same split and are clickable,
         // and Decision Mix could only ever show one grey ring until decisions
         // are recorded. Extension Search takes this slot instead.
-        const intel = View.extMetricsPanel(all) + View.extSearchBar(all.length, rows.length);
+        /* The panel counts the rows ON SCREEN, not the whole window.
+         *
+         * It was passed `all`, so with any filter set it reported the 45-day
+         * window while the table below reported the filtered set: Matt hit
+         * exactly that on 2026-10-26 -- "on the top panel it shows 53 awaiting
+         * vendor but its not correlating below", with 5 in the list. The KPI
+         * cards have always described `rows`, so one screen was describing two
+         * different row sets. The count line in the strip is what says a
+         * filter is narrowing things ("40 of 53 match"). */
+        const intel = View.extMetricsPanel(rows) + View.extSearchBar(all.length, rows.length);
         if (el) el.innerHTML = View.stageShell('extensions', 'Extensions',
           'GHR contracts ending within 45 days. Day colors count down to contract end — '
           + 'deeper red means fewer days remain to secure a decision.',
@@ -16958,7 +16992,7 @@
         perDiemToMonth: null,
         perDiemGHROnly: true,
         // Extension Search bar (Extensions tab only).
-        extFilter: { endFrom: '', endTo: '', status: 'All' },
+        extFilter: { endFrom: '', endTo: '', status: 'All', agency: 'all' },
         filters: { systems: new Set(), facilities: new Set(), categories: new Set(), serviceLines: new Set(), specialties: new Set(), ageMin: null, ageMax: null, permOnly: false, legendBands: new Set(), searchId: '' },
         filterSelection: {
           systems: new Set(), facilities: new Set(), categories: new Set(), serviceLines: new Set(), specialties: new Set(),
@@ -17697,15 +17731,18 @@
                 endFrom: $('extensionEndFrom')?.value || '',
                 endTo:   $('extensionEndTo')?.value   || '',
                 status:  $('extensionStatusFilter')?.value || 'All',
+                agency:  $('extensionAgencyFilter')?.value || 'all',
               };
               View.main();
               break;
             }
 
             case 'CLEAR_EXT_FILTERS': {
-              s.extFilter = { endFrom: '', endTo: '', status: 'All' };
+              s.extFilter = { endFrom: '', endTo: '', status: 'All', agency: 'all' };
               const ef = $('extensionEndFrom'), et = $('extensionEndTo'), es = $('extensionStatusFilter');
+              const ea = $('extensionAgencyFilter');
               if (ef) ef.value = ''; if (et) et.value = ''; if (es) es.value = 'All';
+              if (ea) ea.value = 'all';
               View.main();
               break;
             }
