@@ -2,6 +2,23 @@
 
 ## Version History
 
+### 3.2.1 - Say on the row when a job is on hold
+- Held and unapproved reqs have counted as open jobs since 2.22.0 and 3.1.0,
+  because VNDLY's own Jobs tile counts them — but the only sign on the row was
+  a grey day-bubble instead of a coloured one, plus a tooltip. Someone reading
+  the list could not tell why jobs they knew were paused were sitting in it.
+- Measured 2026-10-26: **65 of the 129 open VNDLY jobs are On Hold**, and 19
+  more are Pending Approval. So two thirds of the list looked like workable
+  jobs and was not.
+- The row now carries a small **"On hold"** or **"Pending approval"** pill
+  under the facility, in neutral grey rather than a warning colour — it is a
+  state, not a problem. Its tooltip gives the VNDLY status and says plainly
+  that the job counts as open because VNDLY counts it, and is left out of Avg
+  Days Open, Critical and the aging report because nobody is failing to fill
+  it.
+- Nothing about the counting changed. This is the same rule, finally legible on
+  the row.
+
 ### 3.2.0 - Agency filter on Extensions, and the top panel follows the table
 - **An "All agencies / GHR only / Affiliate only" filter on the Extensions
   strip.** Requested for running extensions with the GHR delivery teams, where

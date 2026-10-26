@@ -1009,7 +1009,7 @@
     const $ = (id) => document.getElementById(id);
 
     // App version - loaded from environment variable via API, with fallback
-    let APP_VERSION = '3.2.0';
+    let APP_VERSION = '3.2.1';
 
     const API_BASE_URL = '/api';
 
@@ -7040,7 +7040,18 @@
           <td class="px-3 py-2 text-xs font-medium text-slate-700 truncate" title="${View.esc(job.program || '')}">${View.esc(job.program || '')}</td>
           <td class="px-3 py-2 max-w-0">${View.stageSystemCell(
             { health_system: job.healthSystem, facility: job.facility },
-            { eyebrow, spec: abbrSpecialty, extra: detailLine })}</td>
+            { eyebrow, spec: abbrSpecialty, extra: detailLine })}${
+            /* Say it on the row. These count as open jobs because VNDLY's own
+             * Jobs tile counts them, but until now the only sign a req was
+             * parked was a grey day-bubble instead of a coloured one, plus a
+             * tooltip. Measured 2026-10-26, 65 of the 129 open VNDLY jobs are
+             * On Hold and 19 more are Pending Approval -- so two thirds of the
+             * list looked like work that is not actually workable, which is
+             * exactly what got asked about. Neutral grey, not a warning
+             * colour: it is a state, not a problem. */
+            onHold ? `<div class="mt-1"><span class="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wide bg-slate-100 text-slate-600 border border-slate-200"
+                  title="${View.esc(job.status || '')} in VNDLY. It counts as an open job because VNDLY counts it, and it is left out of Avg Days Open, Critical and the aging report because nobody is failing to fill it.">${
+                  /pending/i.test(String(job.status || '')) ? 'Pending approval' : 'On hold'}</span></div>` : ''}</td>
           ${nonMsp ? (() => {
             const ch = View.channelOf(job);
             if (!ch) return '<td class="px-3 py-2 text-xs text-slate-300">&mdash;</td>';
