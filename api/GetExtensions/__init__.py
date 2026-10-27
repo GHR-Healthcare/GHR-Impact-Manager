@@ -33,6 +33,28 @@ VNDLY_GHR_PREDICATE = "(w.[Vendor Name] LIKE '%GHR%' OR w.[Vendor Name] LIKE '%P
 
 # Cancelled / never-awarded seats aren't extension candidates — there's no
 # seat to extend.
+# Health systems that have migrated off B4 onto VNDLY, whose B4 rows are
+# therefore stale and must not reach the extensions tab.
+#
+# The branches below are UNIONED, not deduped, on the reasoning that once a
+# system cuts over "B4 simply stops producing rows for it". It does not. B4
+# keeps future-dated open orders alive, so a migrated system shows the seat
+# twice -- once from each book -- and the B4 copy carries the pre-migration
+# end date, so the row that is wrong sits directly beneath the row that is
+# right.
+#
+# Measured 2026-10-27 over the live 45-day window:
+#
+#   Inspira   55 B4 seats against 32 in VNDLY, and 25 of the 55 are the same
+#             clinician as a VNDLY row -- the duplicates reported from the
+#             floor, e.g. one clinician appearing as both a B4 order and
+#             IHN-3-105, same date, same agency.
+#   Cooper     1 B4 seat, no duplicate.
+#
+# A list is the right shape rather than a blanket B4 exclusion: B4 is still
+# the system of record everywhere else, and each cutover adds one line here.
+B4_MIGRATED_TO_VNDLY = ('Cooper', 'Inspira')
+
 B4_EXCLUDED_STATUSES = ('Closed And Cancelled', 'Closed Not Awarded')
 
 # On VNDLY only a live seat can extend. Everything else is terminal
@@ -86,9 +108,14 @@ def _extension_stage(r):
 
     Spec: pull the ends 45 days out, then use the VNDLY pending-modification
     report and the B4 'extension offer pending' assignments to move a seat to
-    Awaiting Vendor. 'Awaiting Client Approval' has no VMS signal -- it means
-    the PMO has put the extension in front of the client -- so it is set by
-    hand on the tab and applied client-side over whatever is derived here.
+    Awaiting Vendor.
+
+    'Awaiting Client Approval' was described here as having no VMS signal, set
+    by hand because it meant the PMO had put the extension in front of the
+    client. That was wrong: VNDLY carries it as modification status 'Approval
+    Pending', which is exactly what its own Pending Modifications card counts
+    under Awaiting Client. It can still be set by hand, and a manual value
+    still wins client-side; it is no longer the only way to get there.
 
     Returns (stage, why) so the tab can show its own reasoning rather than
     asserting a status with no provenance.
@@ -112,6 +139,19 @@ def _extension_stage(r):
     mod = (r.get('mod_status') or '').strip().lower()
     if mod == 'accepted':
         return EXT_STAGE_ACCEPTED, 'VNDLY date extension accepted'
+    # 'Approval Pending' is VNDLY's AWAITING CLIENT state, and we were dropping
+    # it on the floor. It is a distinct string from 'pending', so it matched
+    # neither arm below and fell through to the default -- which is why
+    # Awaiting Client Approval read 0 on every measurement ever taken from this
+    # tab, and why the designation dropdown had nothing to offer for it.
+    #
+    # Checked against VNDLY's own Pending Modifications card for Inspira on
+    # 2026-10-27: 31 pending = 19 Awaiting Client + 12 Awaiting Vendor. The
+    # feed's latest-modification status for Inspira is Approval Pending 19 and
+    # Submitted 12. Exact on all three numbers. Across all systems it is
+    # Inspira 19 and RUMC 1.
+    if mod == 'approval pending':
+        return EXT_STAGE_CLIENT, 'VNDLY date extension awaiting client approval'
     if mod in ('submitted', 'pending'):
         return EXT_STAGE_VENDOR, 'VNDLY date extension submitted, awaiting vendor'
     if mod in ('cancelled', 'canceled'):
@@ -159,6 +199,11 @@ def _b4_rows(cursor, horizon, include_affiliate):
     """Extension candidates still being managed in B4Health."""
     status_list = ', '.join("'" + s.replace("'", "''") + "'" for s in B4_EXCLUDED_STATUSES)
     agency_filter = '' if include_affiliate else f'AND {B4_GHR_PREDICATE}'
+    # Matched on LIKE because B4 and VNDLY spell the systems differently --
+    # "Inspira Medical Centers, Inc." against "Inspira" -- and a cutover should
+    # not need an exact-name mapping table to take effect.
+    migrated_filter = ' OR '.join(
+        f"o.Health_System LIKE '%{m}%'" for m in B4_MIGRATED_TO_VNDLY)
     # Resolve the Bullhorn crosswalk once instead of per row.
     #
     # The crosswalk carries one row per load run rather than per pair -- 8,015
@@ -424,6 +469,7 @@ def _b4_rows(cursor, horizon, include_affiliate):
         WHERE o.End_Date BETWEEN CAST(GETDATE() AS DATE)
                              AND DATEADD(DAY, ?, CAST(GETDATE() AS DATE))
             AND o.Contract_Status NOT IN ({status_list})
+            AND NOT ({migrated_filter})
             {agency_filter}
     ''', horizon)
     return [dict(zip([c[0] for c in cursor.description], r)) for r in cursor.fetchall()]

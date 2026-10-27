@@ -2,6 +2,42 @@
 
 ## Version History
 
+### 3.3.0 - Stale B4 rows off the migrated systems, and Awaiting Client finally works
+- **Awaiting Client Approval has read 0 on this tab since it was built.** The
+  ladder mapped VNDLY modification statuses `submitted` and `pending` to
+  Awaiting Vendor, but VNDLY's actual awaiting-client value is
+  **`Approval Pending`** — a different string, matching neither arm, falling
+  through to "Pending Extension Review". The comment above the function
+  asserted the state had *no VMS signal at all* and had to be set by hand.
+  It does have one, and now drives the designation.
+- Checked against VNDLY's own Pending Modifications card for Inspira: **31
+  pending = 19 Awaiting Client + 12 Awaiting Vendor**, and the feed's latest
+  status per work order is Approval Pending 19, Submitted 12. Exact on all
+  three. Across all systems it is Inspira 19 and RUMC 1.
+- **B4 rows are now excluded for the systems that migrated to VNDLY**
+  (Cooper, Inspira). The two books were unioned on the reasoning that after a
+  cutover "B4 simply stops producing rows". It does not — B4 keeps
+  future-dated open orders alive, so a migrated seat appeared **twice**, and
+  the B4 copy carries the pre-migration end date, putting the wrong row
+  directly beneath the right one.
+- Measured over the live window: **Inspira 55 B4 seats against 32 in VNDLY,
+  with 25 of the 55 the same clinician as a VNDLY row**; Cooper 1. After the
+  change, B4 rows for both read 0 and tab-wide duplicate clinicians fall from
+  30 to 5 (the rest are RUMC and Redeemer, not yet declared migrated).
+  `B4_MIGRATED_TO_VNDLY` is a list, so each future cutover is one line — B4
+  stays the system of record everywhere else.
+- **Our tab will still not equal VNDLY's card, and that is the 45-day window,
+  not a mapping error.** Of Inspira's 19 Approval Pending, 18 end inside 45
+  days and 1 later; of the 12 Submitted, 7 are inside and 5 later. None had
+  already ended and none sat on an inactive work order. VNDLY's card counts
+  every pending modification; this tab counts seats ending within 45 days.
+  Widening the window, or adding a card for all pending modifications, is a
+  product decision and is not in this release.
+- No change needed for a **Declined** decision: `EXT_DECISIONS` has carried it
+  all along, alongside Interested, Approved to Offer, Approved and Backfill
+  Required. The Designation column's dropdown builds its options from the rows
+  on screen, so Awaiting Client Approval now appears in it automatically.
+
 ### 3.2.1 - Say on the row when a job is on hold
 - Held and unapproved reqs have counted as open jobs since 2.22.0 and 3.1.0,
   because VNDLY's own Jobs tile counts them — but the only sign on the row was
