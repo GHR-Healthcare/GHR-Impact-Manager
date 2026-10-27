@@ -53,7 +53,25 @@ VNDLY_GHR_PREDICATE = "(w.[Vendor Name] LIKE '%GHR%' OR w.[Vendor Name] LIKE '%P
 #
 # A list is the right shape rather than a blanket B4 exclusion: B4 is still
 # the system of record everywhere else, and each cutover adds one line here.
-B4_MIGRATED_TO_VNDLY = ('Cooper', 'Inspira')
+#
+# MATCHED AGAINST B4's SPELLING, not VNDLY's. B4 calls RUMC "Richmond
+# University Medical Center" and Redeemer "Holy Redeemer Hospital", so the
+# obvious entries 'RUMC' and 'Redeemer Health' would have matched nothing and
+# failed silently -- the exclusion would have looked applied and done nothing.
+# GetFinancialData keeps the same translation in B4_TO_VNDLY_SYSTEM_MAP.
+#
+# Measured 2026-10-27 over the live window, B4 seats / of those also live in
+# VNDLY under the same clinician:
+#
+#   Inspira   55 / 39      Richmond (RUMC)   11 / 5
+#   Cooper     1 / 0       Redeemer           0 / 0
+#
+# Redeemer has no open B4 orders in the window at all, so its entry changes
+# nothing today and exists so the next stale order cannot reintroduce the bug.
+# The seats that are B4-only still disappear from the tab: they are orders
+# left open in B4 after the cutover, and the fix for those is closing them in
+# B4, not showing them here.
+B4_MIGRATED_TO_VNDLY = ('Cooper', 'Inspira', 'Richmond', 'Redeemer')
 
 B4_EXCLUDED_STATUSES = ('Closed And Cancelled', 'Closed Not Awarded')
 

@@ -2,6 +2,29 @@
 
 ## Version History
 
+### 3.3.1 - RUMC and Redeemer join the B4 exclusion
+- 3.3.0 excluded stale B4 rows for Cooper and Inspira. RUMC and Redeemer are
+  on VNDLY too — they share the bundled tenant — so they get the same
+  treatment. **Duplicate clinicians across the tab now fall from 30 to 0.**
+- **The obvious entries would have failed silently.** B4 spells these systems
+  "Richmond University Medical Center" and "Holy Redeemer Hospital", not
+  "RUMC" and "Redeemer Health", so `'RUMC'` would have matched nothing and the
+  exclusion would have looked applied while doing nothing. The list now uses
+  B4's spelling; `GetFinancialData` keeps the same translation in
+  `B4_TO_VNDLY_SYSTEM_MAP`.
+- Measured over the live window — B4 seats, and how many are the same
+  clinician as a live VNDLY seat: Inspira 55/39, **Richmond 11/5**, Cooper
+  1/0, **Redeemer 0/0**. Redeemer has no open B4 orders at all, so its entry
+  changes nothing today and exists so the next stale order cannot bring the
+  bug back.
+- Every other system is untouched: Penn 260, Capital Health 40, Hunterdon 9,
+  St. Luke's 5, Jefferson 4, Sunrise 1 — all unchanged. B4 remains the system
+  of record everywhere it has not been replaced.
+- **Six RUMC orders disappear that are not duplicates.** They are open in B4
+  with no live VNDLY seat for that clinician — orders left behind at cutover.
+  The fix for those is closing them in B4, not rendering them here; the list
+  is in the release notes for this change.
+
 ### 3.3.0 - Stale B4 rows off the migrated systems, and Awaiting Client finally works
 - **Awaiting Client Approval has read 0 on this tab since it was built.** The
   ladder mapped VNDLY modification statuses `submitted` and `pending` to
