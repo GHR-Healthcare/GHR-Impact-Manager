@@ -2,6 +2,31 @@
 
 ## Version History
 
+### 3.3.2 - Hidden systems were still counted in two places
+- **Sunrise and St. Luke's are already flagged hidden** in Settings → Health
+  Systems (along with Jefferson), and hidden systems are meant to be excluded
+  from every tab and every filter dropdown. Nine surfaces already honoured the
+  flag — the job list, the stage tabs, Trend, Financials, Per Diem, Hours,
+  Pending and the filter builders. **Two did not.**
+- **The List tab's KPI row.** `kpis()` filtered the active-contract set by the
+  system picker but never by the hidden flag, so a hidden system still moved
+  **Active, GHR Fill Rate and the overall fill-rate denominator** — the rows
+  were filtered out of every list on screen while still being counted in the
+  KPI directly above them. St. Luke's has **7 live assignments** today, so
+  that is 7 placements counted on a book they are no longer part of.
+- **Contracts Comparison.** `sysOk()` honoured the system picker but not the
+  hidden flag, so hidden systems appeared in the comparison and in its CSV
+  export. Now dropped before the picker is consulted.
+- Verified against the real B4 spellings, which are not the canonical names:
+  `St. Luke's at Grand View Health` → `St. Luke's`, `Sunrise Senior Living
+  Management` → `Sunrise`, and the mislabelled `Sunrise Senior Living
+  Management (California)` variant resolves the same way. Cooper, Inspira,
+  UPHS, Capital and Hunterdon stay visible, and the non-MSP short-circuit is
+  unaffected — its clients are their own systems, so keyword matching against
+  the MSP taxonomy would false-positive.
+- No change to the mappings themselves: both systems were already hidden, and
+  hiding another one remains a Settings change rather than a release.
+
 ### 3.3.1 - RUMC and Redeemer join the B4 exclusion
 - 3.3.0 excluded stale B4 rows for Cooper and Inspira. RUMC and Redeemer are
   on VNDLY too — they share the bundled tenant — so they get the same

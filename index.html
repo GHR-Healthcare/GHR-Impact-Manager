@@ -1009,7 +1009,7 @@
     const $ = (id) => document.getElementById(id);
 
     // App version - loaded from environment variable via API, with fallback
-    let APP_VERSION = '3.3.1';
+    let APP_VERSION = '3.3.2';
 
     const API_BASE_URL = '/api';
 
@@ -11660,6 +11660,13 @@
 
         const now = new Date();
         const activeContractsFiltered = (s.statsData.onAssignment || []).filter(r => {
+          // Hidden systems are off the MSP book, so they must not count here
+          // either. This drives Active, GHR Fill Rate and the overall
+          // fill-rate denominator, and it was the one place a hidden system
+          // still moved a number -- the rows are filtered out of every list
+          // on screen while still being counted in the KPI above them.
+          if (Utils.isHiddenHealthSystem(
+                Utils.getHealthSystem(r.facility, r.healthSystem || r.health_system))) return false;
           const sysMatch = Utils.matchesSelectedSystems(r, s.filterSelection.systems);
           const facMatch = s.filterSelection.facilities.size === 0 || (r.facility && s.filterSelection.facilities.has(r.facility));
           const specMatch = s.filterSelection.specialties.size === 0 || (r.specialty && s.filterSelection.specialties.has(Utils.cleanFilterText(r.specialty)));
@@ -16761,8 +16768,15 @@
         // Apply global system filter
         const sysFilter = s.filterSelection.systems;
         const sysOk = (healthSystemOrClient) => {
-          if (sysFilter.size === 0) return true;
           const hs = Utils.getHealthSystem(null, healthSystemOrClient || '');
+          // A system marked hidden in Settings is off the MSP book entirely,
+          // so it is dropped here before the picker is consulted. This tab
+          // honoured the picker but not the hidden flag, which is why systems
+          // that had been hidden everywhere else still appeared in the
+          // comparison. Every other surface -- the job list, the stage tabs,
+          // Trend, Financials, Per Diem, Hours, Pending -- already does this.
+          if (Utils.isHiddenHealthSystem(hs)) return false;
+          if (sysFilter.size === 0) return true;
           return sysFilter.has(hs);
         };
 
