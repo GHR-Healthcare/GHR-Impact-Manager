@@ -1024,7 +1024,7 @@
     const $ = (id) => document.getElementById(id);
 
     // App version - loaded from environment variable via API, with fallback
-    let APP_VERSION = '3.4.0';
+    let APP_VERSION = '3.5.0';
 
     const API_BASE_URL = '/api';
 
@@ -1588,6 +1588,8 @@
             // --- anything the team has saved against the seat ---
             ['Saved New End',       r => d10(View.extensionEdit(r).newEnd)],
             ['Saved RTO',           r => View.extensionEdit(r).rto],
+            ['Pending Client RTO Approval', r => View.extensionEdit(r).rtoClient ? 'Yes' : ''],
+            ['Pending Candidate RTO',       r => View.extensionEdit(r).rtoCand   ? 'Yes' : ''],
             ['Saved Reason',        r => View.extensionEdit(r).reason],
             ['Saved Notes',         r => View.extensionEdit(r).notes],
             ['Steps Completed',     r => Object.entries(View.extensionEdit(r).steps || {})
@@ -8853,6 +8855,10 @@
            */
           newEnd: saved?.newEnd || '',
           rto: saved?.rto || '',
+          // Manual RTO sub-states -- see the designation panel for why these
+          // are flipped by hand rather than derived.
+          rtoClient: !!saved?.rtoClient,
+          rtoCand: !!saved?.rtoCand,
           isExt: saved?.isExt || '',
           reason: saved?.reason || '',
         };
@@ -9052,8 +9058,12 @@
        * has overridden -- without that, a stale manual value looks identical to
        * live data.
        */
+      /* The designation badge, plus any manual RTO sub-state beneath it.
+       * The VMS still says Awaiting Client or Awaiting Vendor; the sub-state
+       * says what it is waiting ON, which nothing in either feed records. */
       extensionStageCell(r) {
         const st = Utils.extensionStage(r);
+        const sub = View.extensionRtoSub(r);
         const tone = Utils.EXT_STAGE_TONE[st.stage] || Utils.EXT_STAGE_TONE[Utils.EXT_STAGES[0]];
         const short = st.stage.replace('Pending Extension Review', 'Pending Review')
                               .replace('Awaiting Client Approval', 'Awaiting Client')
@@ -9063,7 +9073,16 @@
         return `<span class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded border text-[10px] font-semibold ${tone}"
                       title="${View.esc(st.stage)} — ${View.esc(st.why)}">
                   ${st.manual ? '<span class="w-1 h-1 rounded-full bg-current opacity-70"></span>' : ''}${View.esc(short)}
-                </span>`;
+                </span>${sub ? `<div class="text-[9px] text-slate-500 mt-0.5 leading-tight">${View.esc(sub)}</div>` : ''}`;
+      },
+
+      /* '' when nothing is pending, so it is falsy at every call site. */
+      extensionRtoSub(r) {
+        const e = View.extensionEdit(r);
+        if (e.rtoClient && e.rtoCand) return 'Pending client + candidate RTO';
+        if (e.rtoClient) return 'Pending client RTO approval';
+        if (e.rtoCand) return 'Pending candidate RTO';
+        return '';
       },
 
       extensionGroup(r) {
@@ -9264,6 +9283,10 @@
           const r = View.rowDetailRecord('extensions', id);
           if (!r) return false;
           const e = View.extensionEdit(r);
+          const chkDirty = (sel, was) =>
+            !!document.querySelector(`${sel}[data-id="${id}"]`)?.checked !== !!was;
+          if (chkDirty('.ext-rto-client', e.rtoClient)) return true;
+          if (chkDirty('.ext-rto-cand', e.rtoCand)) return true;
           if (val('.ext-decision') !== (e.decision || '')) return true;
           if (val('.ext-notes') !== (e.notes || '')) return true;
           if (val('.ext-new-end') !== (e.newEnd || '')) return true;
@@ -10147,6 +10170,33 @@
                     st.manual
                       ? 'Set by hand. Choose Auto to follow the VMS again.'
                       : 'Derived from the systems above. Switch to Awaiting Client Approval once the PMO has it in front of the client.'}</p>`}
+
+                  <!-- RTO sub-states. Flipped by hand, on purpose: neither is
+                       derivable today. The candidate's extension response is
+                       populated on 3 of ~394 live seats, and B4's RTO is free
+                       text whose wording splits four ways -- "Approved RTO:",
+                       "RTO:", a bare date list, or "none" -- so reading
+                       approval out of it would rest on how someone typed a
+                       note. These refine the designation rather than replace
+                       it: the VMS still says Awaiting Client or Awaiting
+                       Vendor, and this says what it is waiting ON.
+
+                       Rendered unconditionally, like every other field in this
+                       modal. SAVE_EXTENSION reads the DOM, so a control that
+                       is not rendered saves as false and wipes a stored true. -->
+                  <div class="mt-3 pt-3 border-t border-slate-100">
+                    <div class="text-[9px] font-bold uppercase tracking-wide text-slate-400 mb-1.5">Waiting on</div>
+                    <label class="flex items-center gap-2 text-xs text-slate-700 mb-1 cursor-pointer">
+                      <input type="checkbox" class="ext-rto-client rounded border-slate-300"
+                             data-id="${r.id}" ${e.rtoClient ? 'checked' : ''}>
+                      Pending client RTO approval
+                    </label>
+                    <label class="flex items-center gap-2 text-xs text-slate-700 cursor-pointer">
+                      <input type="checkbox" class="ext-rto-cand rounded border-slate-300"
+                             data-id="${r.id}" ${e.rtoCand ? 'checked' : ''}>
+                      Pending candidate RTO
+                    </label>
+                  </div>
                 </div>
               `)}
 
@@ -10287,10 +10337,18 @@
           // alphabetically -- "Awaiting Client" before "Awaiting Vendor" is the
           // order the work moves in, which alphabetical happens to agree with
           // here but would not if a designation were ever renamed.
+          /* Sorts by ladder position so the pipeline order holds, but filters
+           * on the refined label, so "Awaiting Client" and "Awaiting Client ·
+           * Pending client RTO approval" are separately selectable -- which is
+           * what the sub-states were asked for. */
           { label: 'Designation',
             key: r => String(Utils.EXT_STAGES.indexOf(Utils.extensionStage(r).stage)),
             align: 'center', w: '9%',
-            filter: 'select', filterValue: r => Utils.extensionStage(r).stage },
+            filter: 'select',
+            filterValue: r => {
+              const sub = View.extensionRtoSub(r);
+              return Utils.extensionStage(r).stage + (sub ? ` · ${sub}` : '');
+            } },
           // Dropdowns rather than free text. Both are fully populated on the
           // non-MSP book -- 661 of 661 seats carry an AM and 660 carry a
           // recruiter -- across 71 and 78 distinct people respectively, which
@@ -17614,8 +17672,11 @@
               // means "no detail open", and this only runs from an open one.
               const val = sel => (document.querySelector(`${sel}[data-id="${id}"]`)?.value || '').trim();
               const stage = document.querySelector(`.ext-stage[data-id="${id}"]`)?.value || '';
+              const chk = sel => !!document.querySelector(`${sel}[data-id="${id}"]`)?.checked;
               const state = {
                 decision, stage, notes, steps,
+                rtoClient: chk('.ext-rto-client'),
+                rtoCand:   chk('.ext-rto-cand'),
                 newEnd: val('.ext-new-end'),
                 rto: val('.ext-rto'),
                 isExt: val('.ext-flag'),

@@ -55,3 +55,10 @@ VNDLY API Docs.pdf
 *.pptx
 *.zip
 *.csv
+
+# The working backlog. Kept local for the same reason as everything above:
+# to be useful it names clients, quotes placement volumes and lists the
+# contract ids that need closing out in B4, and this repository is PUBLIC.
+# The release notes in README.md describe the same items by mechanism, which
+# is the version that can be published.
+FOLLOWUPS.md

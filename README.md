@@ -2,6 +2,30 @@
 
 ## Version History
 
+### 3.5.0 - RTO sub-states on the designation
+- The last item from the MSP feedback. **Pending client RTO approval** and
+  **Pending candidate RTO** are now checkboxes in the extension modal, flipped
+  by hand.
+- Manual on purpose, which was checked before building anything. Neither is
+  derivable: the candidate's extension response is populated on under 1% of
+  live seats, and the RTO field is free text whose wording splits four ways —
+  an "Approved" prefix, a bare prefix, a plain date list, or "none" — so
+  reading approval out of it would rest on how someone typed a note.
+- They **refine** the designation rather than replace it. The VMS still says
+  Awaiting Client or Awaiting Vendor; the sub-state says what it is waiting
+  *on*, and shows under the badge. The Designation column filters on the
+  refined label, so the plain and refined forms are separately selectable. One
+  helper, `View.extensionRtoSub`, backs both the badge and the filter so they
+  cannot disagree.
+- Both flags round-trip through save, read-back, the unsaved-changes check and
+  the CSV export. The checkboxes render unconditionally like every other field
+  in that modal — `SAVE_EXTENSION` reads the DOM, so a control that is not
+  rendered saves as false and would wipe a stored true.
+- A working backlog now lives in `FOLLOWUPS.md`, **kept local and gitignored**:
+  to be useful it names clients, quotes volumes and lists record ids, and this
+  repository is public. Six items, Onboarding's equivalent drop-off rule among
+  them.
+
 ### 3.4.0 - Extensions is a work queue: MSP feedback pass
 - **Accepted extensions leave the tab.** It is where extensions get *actioned*,
   so a seat belongs there only while it still needs something. Once the
