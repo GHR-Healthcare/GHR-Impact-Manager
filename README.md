@@ -2,6 +2,37 @@
 
 ## Version History
 
+### 3.4.0 - Extensions is a work queue: MSP feedback pass
+- **Accepted extensions leave the tab.** It is where extensions get *actioned*,
+  so a seat belongs there only while it still needs something. Once the
+  designation is Extension Accepted the work is done and the seat is already
+  counted on Trends. **94 of 394 rows, 24% of the list, come off.** Declined
+  stays — it still needs a close or backfill decision, which is a different
+  step, not a finished one.
+- Nothing vanishes silently: the filter strip now says `… · 94 accepted, now on
+  Trends`. The panel's **Accepted tile is gone** rather than left reading 0
+  beside a table it no longer describes — the same trap fixed in 3.2.0.
+- **The two 30-day bar charts are gone** from the top of the tab. They were the
+  widest thing on a first screen that was fitting barely a row of data. Nothing
+  else read `extMetrics`, so the `/api/extension-metrics` call on every page
+  load went too; the endpoint remains if the charts are ever wanted back. The
+  note under them went with it — it claimed VNDLY reports a single status with
+  no client/vendor split, which stopped being true in 3.3.0.
+- **The PM column shows GHR programme managers.** It was showing
+  `account_manager` — the account manager as the *source system* records it,
+  i.e. client-side names — in a column headed PM. The Settings → PM Mappings
+  table already existed and only Trend was using it. `View.trend()`'s resolver
+  is lifted to **`Utils.pmFor`**: exact facility, then containment either way,
+  then the most common PM across mappings resolving to the same health system.
+  Measured over the live window: **79% exact, 20% by system, 99% resolved**.
+  The 1% unresolved are Jefferson and Sunrise, which carry no PM coverage by
+  design. Non-MSP keeps AM — it has no PM mapping.
+- **Focus mode.** A toggle in the filter strip drops the page header, the tab
+  row, the KPI cards and the designation panel, and gives the table the
+  viewport. Escape exits. Driven by a class on `<body>`, so nothing in the
+  table's markup has to know about it, and it is deliberately not persisted —
+  focus is for the meeting you are in, not a setting.
+
 ### 3.3.2 - Hidden systems were still counted in two places
 - **Sunrise and St. Luke's are already flagged hidden** in Settings → Health
   Systems (along with Jefferson), and hidden systems are meant to be excluded

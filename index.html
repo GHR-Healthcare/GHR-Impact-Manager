@@ -30,6 +30,21 @@
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 
   <style>
+    /* Focus mode on the Extensions tab: just the table and the filter strip.
+       Asked for as "full screen ... maybe some kind of focused mode" -- the
+       point is reading the list in a meeting, so the page chrome, the KPI row
+       and the designation counts all go, and the table takes the viewport.
+       Driven by a class on <body> rather than by re-rendering, so nothing in
+       the table's own markup has to know about it. */
+    body.ext-focus > header,
+    body.ext-focus #kpiContainer,
+    body.ext-focus #viewToggles,
+    body.ext-focus #extIntelPanel { display: none !important; }
+    body.ext-focus #extensionsViewWrapper {
+      position: fixed; inset: 0; z-index: 60; margin: 0; border-radius: 0;
+      max-height: 100vh; padding: 10px 12px; overflow: auto;
+    }
+    body.ext-focus { overflow: hidden; }
     body { font-family: 'Inter', sans-serif; }
     /* Row-density helper. Written out rather than using Tailwind's line-clamp
        so it does not depend on a plugin being present in the CDN build. Used
@@ -1009,7 +1024,7 @@
     const $ = (id) => document.getElementById(id);
 
     // App version - loaded from environment variable via API, with fallback
-    let APP_VERSION = '3.3.2';
+    let APP_VERSION = '3.4.0';
 
     const API_BASE_URL = '/api';
 
@@ -1031,6 +1046,15 @@
     // and ignored while focus is in a field so arrow keys still move a caret.
     document.addEventListener('keydown', (ev) => {
       const st = window.store?.state;
+      // Focus mode first: the guard below returns early when no row detail is
+      // open, which is exactly when someone is reading the focused table.
+      if (st && st.extFocus && ev.key === 'Escape' && !st.rowDetail) {
+        const tag = (ev.target && ev.target.tagName || '').toLowerCase();
+        if (tag === 'input' || tag === 'textarea' || tag === 'select') { ev.target.blur(); return; }
+        ev.preventDefault();
+        window.store.dispatch('TOGGLE_EXT_FOCUS');
+        return;
+      }
       if (!st || !st.rowDetail) return;
       const tag = (ev.target && ev.target.tagName || '').toLowerCase();
       if (tag === 'input' || tag === 'textarea' || tag === 'select') {
@@ -2178,10 +2202,9 @@
             /* Stage 5's daily series. Loaded alongside the stage feeds but kept
              * off `stageLoads` because it is not a row set -- the panel reads it
              * whole, and a failure here must not blank the Extensions list. */
-            fetch(`${API_BASE_URL}/extension-metrics?days=30`)
-              .then(r => r.ok ? r.json() : null)
-              .then(d => { if (d && !d.error) { window.store.state.extMetrics = d; window.store.dispatch('REFRESH_UI'); } })
-              .catch(e => console.warn('extension-metrics:', e));
+            // (the extension-metrics fetch lived here; removed with the bar
+            // charts it fed -- see View.extMetricsPanel)
+
             await Promise.all(stageLoads.map(async ({ key, route, pick, meta }) => {
               try {
                 const resp = await fetch(`${API_BASE_URL}/${route}`);
@@ -2844,6 +2867,64 @@
        * names that happen to contain MSP keywords (e.g. any client with
        * "jefferson" in the name), so we short-circuit here.
        */
+      /* The GHR Program Manager for a facility, from Settings -> PM Mappings.
+       *
+       * Lifted out of View.trend(), which had the only implementation. The
+       * Extensions tab showed `account_manager` in a column headed PM, and
+       * that field is the account manager as the SOURCE SYSTEM records it --
+       * client-side names, not GHR's programme managers. The mapping already
+       * existed and only Trend was using it.
+       *
+       * Three steps, in order: exact facility match, then a containment match
+       * either way (mapping names and feed names are phrased differently),
+       * then the most common PM across the mappings that resolve to the same
+       * health system. Measured over the live extensions window: 79% exact,
+       * 20% by system, 99% resolved to a named PM. The 1% that do not are
+       * Jefferson and Sunrise, which carry no PM coverage by design.
+       *
+       * Cached per mapping set, because the mappings load asynchronously and
+       * a cache keyed only on the lookup would go stale against an empty one.
+       */
+      pmFor(facility, healthSystem) {
+        const maps = (window.store && window.store.state.pmMappings) || [];
+        if (!Utils._pmCache || Utils._pmCache.src !== maps) {
+          const byFacility = {};
+          const entries = [];
+          maps.forEach(m => {
+            if (!m.facility) return;
+            const key = String(m.facility).toLowerCase().trim();
+            const pm = m.pm_name || 'Unassigned';
+            byFacility[key] = pm;
+            entries.push({ key, pm, system: Utils.getHealthSystem(m.facility, '') || '' });
+          });
+          Utils._pmCache = { src: maps, byFacility, entries, hits: new Map() };
+        }
+        const c = Utils._pmCache;
+        if (!facility && !healthSystem) return 'Unassigned';
+        const ck = `${facility || ''}||${healthSystem || ''}`;
+        if (c.hits.has(ck)) return c.hits.get(ck);
+
+        const fac = String(facility || '').toLowerCase().trim();
+        let result = 'Unassigned';
+        if (fac && c.byFacility[fac]) {
+          result = c.byFacility[fac];
+        } else if (fac) {
+          const m = c.entries.find(e => fac.includes(e.key) || e.key.includes(fac));
+          if (m) result = m.pm;
+        }
+        if (result === 'Unassigned') {
+          const sys = Utils.getHealthSystem(facility, healthSystem) || healthSystem;
+          if (sys) {
+            const counts = {};
+            c.entries.forEach(e => { if (e.system && e.system === sys) counts[e.pm] = (counts[e.pm] || 0) + 1; });
+            const top = Object.entries(counts).sort((a, b) => b[1] - a[1])[0];
+            if (top) result = top[0];
+          }
+        }
+        c.hits.set(ck, result);
+        return result;
+      },
+
       isHiddenHealthSystem(sys) {
         if (!sys) return false;
         if (typeof window !== 'undefined'
@@ -8805,39 +8886,27 @@
        * deduped modification events. One combined "accepted" number would merge
        * two different definitions.
        */
+      /* The designation counts above the table. The two 30-day bar charts that
+       * used to sit beside them are gone -- asked for directly, and they were
+       * the widest thing on a first screen that was fitting barely a row of
+       * data. The note under them went too: it claimed VNDLY reports a single
+       * status with no client/vendor split, which stopped being true in 3.3.0
+       * when Approval Pending turned out to be exactly that split.
+       *
+       * Nothing else read window.store.state.extMetrics, so the
+       * /api/extension-metrics call on every page load went with it. The
+       * endpoint still exists if the charts are ever wanted back. */
       extMetricsPanel(rows) {
-        const m = window.store.state.extMetrics;
         const n = stage => (rows || []).filter(r => Utils.extensionStage(r).stage === stage).length;
         const counts = [
           ['Awaiting Client',  n('Awaiting Client Approval'), 'bg-amber-50 border-amber-200 text-amber-800'],
           ['Awaiting Vendor',  n('Awaiting Vendor Approval'), 'bg-blue-50 border-blue-200 text-blue-800'],
-          ['Accepted',         n(Utils.EXT_STAGE_ACCEPTED),   'bg-emerald-50 border-emerald-200 text-emerald-800'],
+          // No Accepted tile: accepted seats leave this tab entirely, so it
+          // would read 0 for ever beside a table it no longer describes --
+          // the same panel-counts-a-different-set trap fixed in 3.2.0.
         ];
-        const bars = (series, keys, title) => {
-          if (!series || !series.length) return `<div class="text-[10px] text-slate-400 italic">${title}: no activity in the window</div>`;
-          const max = Math.max(1, ...series.map(d => Math.max(...keys.map(([k]) => Number(d[k]) || 0))));
-          return `
-            <div>
-              <div class="text-[9px] uppercase tracking-wide text-slate-400 font-semibold mb-1">${title}</div>
-              <div class="flex items-end gap-[3px] h-10">
-                ${series.slice(-30).map(d => `
-                  <div class="flex-1 flex flex-col justify-end gap-[1px]" title="${View.esc(d.day)} — ${
-                    keys.map(([k, lbl]) => `${lbl} ${Number(d[k]) || 0}`).join(', ')}">
-                    ${keys.map(([k, , cls]) => {
-                      const v = Number(d[k]) || 0;
-                      return v ? `<div class="${cls} rounded-sm" style="height:${Math.max(2, Math.round(v / max * 28))}px"></div>` : '';
-                    }).join('')}
-                  </div>`).join('')}
-              </div>
-              <div class="flex gap-3 mt-1">
-                ${keys.map(([k, lbl, cls]) => `<span class="text-[9px] text-slate-500 flex items-center gap-1">
-                  <span class="${cls} w-2 h-2 rounded-sm inline-block"></span>${lbl}
-                  <b class="text-slate-700">${series.reduce((a, d) => a + (Number(d[k]) || 0), 0)}</b></span>`).join('')}
-              </div>
-            </div>`;
-        };
         return `
-          <div class="bg-white border border-slate-200 rounded-xl p-3 mb-3 shadow-sm">
+          <div id="extIntelPanel" class="bg-white border border-slate-200 rounded-xl p-3 mb-3 shadow-sm">
             <div class="flex items-start gap-4 flex-wrap">
               <div class="flex gap-2 flex-wrap">
                 ${counts.map(([label, v, cls]) => `
@@ -8870,24 +8939,11 @@
                     </button>`;
                 })()}
               </div>
-              <div class="flex-1 min-w-[260px] grid grid-cols-1 sm:grid-cols-2 gap-4">
-                ${m ? bars(m.b4, [['approvals', 'Approvals', 'bg-blue-500'], ['accepted', 'Accepted', 'bg-emerald-500']],
-                           `B4 &middot; last ${m.days} days`) : '<div class="text-[10px] text-slate-400 italic">Loading daily activity…</div>'}
-                ${m ? bars(m.vndly, [['submitted', 'Submitted', 'bg-blue-500'], ['accepted', 'Accepted', 'bg-emerald-500'], ['cancelled', 'Cancelled', 'bg-rose-400']],
-                           `VNDLY &middot; last ${m.days} days`) : ''}
-              </div>
             </div>
-            ${m && m.errors && m.errors.length ? `
-              <div class="text-[10px] text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1 mt-2">
-                Partial: ${View.esc(m.errors.join('; '))}</div>` : ''}
-            <p class="text-[9px] text-slate-400 mt-2 leading-snug">
-              B4 dates are recorded events &mdash; approval is the client offer, accepted is conversion to a work order.
-              VNDLY reports a single status with no client/vendor split, so the two are shown separately rather than added.
-            </p>
           </div>`;
       },
 
-      extSearchBar(total, shown) {
+      extSearchBar(total, shown, acceptedCount) {
         const f = window.store.state.extFilter || { endFrom: '', endTo: '', status: 'All', agency: 'all' };
         const gb = window.store.state.extGroupBy || 'designation';
         const active = !!(f.endFrom || f.endTo || (f.status && f.status !== 'All')
@@ -8950,9 +9006,19 @@
               <option value="workflow"    ${gb === 'workflow' ? 'selected' : ''}>Workflow</option>
             </select>
             <span class="text-[11px] ml-auto ${active ? 'text-slate-600 font-semibold' : 'text-slate-400'}">${
-              active ? `${shown} of ${total} match` : `${total} in window`}</span>
+              active ? `${shown} of ${total} match` : `${total} in window`}${
+              acceptedCount ? `<span class="text-slate-400 font-normal"> &middot; ${acceptedCount} accepted, now on Trends</span>` : ''}</span>
             ${active ? `<button onclick="store.dispatch('CLEAR_EXT_FILTERS')"
                   class="text-[11px] font-semibold text-blue-600 hover:text-blue-800 underline">Clear filters</button>` : ''}
+            <button onclick="store.dispatch('TOGGLE_EXT_FOCUS')"
+                    title="Show just the table and these filters. Esc exits."
+                    class="text-[11px] font-semibold flex items-center gap-1 px-2 py-1 rounded border ${
+                      window.store.state.extFocus
+                        ? 'bg-slate-800 text-white border-slate-800'
+                        : 'bg-white text-slate-600 border-slate-300 hover:border-slate-400'}">
+              <i data-lucide="${window.store.state.extFocus ? 'minimize-2' : 'maximize-2'}" class="w-3 h-3"></i> ${
+                window.store.state.extFocus ? 'Exit focus' : 'Focus'}
+            </button>
             <button onclick="window.exportExtensionsCSV()" ${shown ? '' : 'disabled'}
                     title="Every field behind these rows, including each system-match comparison, for checking against B4, VNDLY and Bullhorn"
                     class="text-[11px] font-semibold flex items-center gap-1 px-2 py-1 rounded shadow-sm ${
@@ -10231,8 +10297,14 @@
           // is more names than anyone can spell from memory into a text box.
           // Options are built from the rows below, so each list holds exactly
           // the people who actually appear in the loaded window.
+          // MSP: the GHR programme manager from Settings, not the account
+          // manager the source system happens to record, which is a
+          // client-side name. Non-MSP has no PM mapping, so it keeps AM.
           { label: s.dataSource === 'non_msp' ? 'AM' : 'PM',
-            key: 'account_manager', filter: 'select', w: '7%' },
+            key: r => s.dataSource === 'non_msp'
+              ? (r.account_manager || '')
+              : Utils.pmFor(r.facility, r.health_system),
+            filter: 'select', w: '7%' },
           { label: 'Recruiter',       key: 'recruiter', filter: 'select', w: '7%' },
           // "Who has the ball" and "what next", from the IT notes. Sorted and
           // filtered on the owner, which is the question people scan for.
@@ -10249,7 +10321,23 @@
             filter: 'select', filterValue: r => View.extensionUrgencyLabel(r) },
           { label: '13-Wk',           key: 'extension_value_13wk', align: 'right', w: '7%' },
         ];
-        const all = (s.extensionsRows || []).filter(View.stageFilter);
+        /* Accepted extensions leave the queue.
+         *
+         * This tab is where extensions get ACTIONED, so a seat sits here only
+         * while it still needs something. Once the designation is Extension
+         * Accepted the work is done and the seat is already counted on Trends,
+         * which picks up everything -- leaving it here just costs space on the
+         * screen people work from.
+         *
+         * Declined stays. A declined extension still needs a close or a
+         * backfill decision, which is a different step, not a finished one.
+         *
+         * Counted rather than silently dropped: the strip says how many left
+         * and where they went, so a seat that vanishes has an explanation on
+         * the same screen rather than looking like a data error. */
+        const inWindow = (s.extensionsRows || []).filter(View.stageFilter);
+        const all = inWindow.filter(r => Utils.extensionStage(r).stage !== Utils.EXT_STAGE_ACCEPTED);
+        const acceptedCount = inWindow.length - all.length;
         // The exceptions card filters the list in place rather than opening a
         // separate view -- the point is to act on the seat, which means the
         // same row, same modal, same save path.
@@ -10400,7 +10488,7 @@
          * cards have always described `rows`, so one screen was describing two
          * different row sets. The count line in the strip is what says a
          * filter is narrowing things ("40 of 53 match"). */
-        const intel = View.extMetricsPanel(rows) + View.extSearchBar(all.length, rows.length);
+        const intel = View.extMetricsPanel(rows) + View.extSearchBar(all.length, rows.length, acceptedCount);
         if (el) el.innerHTML = View.stageShell('extensions', 'Extensions',
           'GHR contracts ending within 45 days. Day colors count down to contract end — '
           + 'deeper red means fewer days remain to secure a decision.',
@@ -17018,6 +17106,8 @@
         perDiemGHROnly: true,
         // Extension Search bar (Extensions tab only).
         extFilter: { endFrom: '', endTo: '', status: 'All', agency: 'all' },
+        // Not persisted: focus is for the meeting you are in, not a setting.
+        extFocus: false,
         filters: { systems: new Set(), facilities: new Set(), categories: new Set(), serviceLines: new Set(), specialties: new Set(), ageMin: null, ageMax: null, permOnly: false, legendBands: new Set(), searchId: '' },
         filterSelection: {
           systems: new Set(), facilities: new Set(), categories: new Set(), serviceLines: new Set(), specialties: new Set(),
@@ -17748,6 +17838,13 @@
 
             case 'VIEW_MEETING': {
               View.renderMeetingDetail(payload);
+              break;
+            }
+
+            case 'TOGGLE_EXT_FOCUS': {
+              s.extFocus = !s.extFocus;
+              document.body.classList.toggle('ext-focus', s.extFocus);
+              View.main();
               break;
             }
 
