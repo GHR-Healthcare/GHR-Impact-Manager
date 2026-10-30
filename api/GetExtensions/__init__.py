@@ -783,8 +783,32 @@ def _vndly_rows(cursor, horizon, include_affiliate):
             FROM dbo.STAGING_VNDLY_JOBS WITH (NOLOCK)
             GROUP BY [Job Id]
         ) j ON j.job_id = w.[Job Id]
-        WHERE TRY_CAST(w.[End Date] AS DATE) BETWEEN CAST(GETDATE() AS DATE)
-                                                 AND DATEADD(DAY, ?, CAST(GETDATE() AS DATE))
+        -- The window is "ends within the horizon" OR "has an extension still
+        -- waiting on somebody".
+        --
+        -- VNDLY applies the PROPOSED end date to the work order the moment an
+        -- extension is submitted, before anyone approves it. So the end-date
+        -- window alone drops a seat out of this tab at the exact moment it
+        -- starts needing attention: the PM sends the extension, the end date
+        -- jumps months out, and the row disappears. That is what was reported
+        -- from the floor -- "we sent out a bunch of extensions and none of
+        -- them are pulling over".
+        --
+        -- Measured 2026-10-30 over Cooper's 37 work orders with a date
+        -- extension modified since the 28th: 29 had already moved beyond the
+        -- 45-day horizon, and 21 of those were still Submitted or Approval
+        -- Pending -- unresolved work, invisible. One example, CUH-3-620:
+        -- original end 2026-10-24, now reads 2026-12-26, status still
+        -- Submitted.
+        --
+        -- Only the unresolved statuses are let back in. Accepted is finished
+        -- (and leaves the tab anyway) and Cancelled is resolved, so neither
+        -- should reappear just because its date moved.
+        WHERE (
+                TRY_CAST(w.[End Date] AS DATE) BETWEEN CAST(GETDATE() AS DATE)
+                                                   AND DATEADD(DAY, ?, CAST(GETDATE() AS DATE))
+             OR LTRIM(RTRIM(ISNULL(xs.mod_status, ''))) IN ('Submitted', 'Approval Pending')
+            )
             AND w.[Current Status] IN ({status_list})
             {vendor_filter}
     ''', horizon)

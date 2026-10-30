@@ -2,6 +2,32 @@
 
 ## Version History
 
+### 3.6.0 - Submitting an extension made the seat disappear
+- Reported from the floor: a batch of extensions sent one morning, and none of
+  them "pulling over" to the tab the next day. The feed was current — the data
+  had arrived. **The seats had fallen out of the window.**
+- **VNDLY applies the proposed end date to the work order the moment an
+  extension is submitted, before anyone approves it.** The tab windowed on end
+  date alone, so a seat dropped off at the exact moment it started needing
+  attention: send the extension, the end date jumps months out, the row
+  vanishes. One example — original end 24 Oct, now reads 26 Dec, status still
+  `Submitted`.
+- Measured over the 37 work orders with a date extension modified in the
+  previous two days: **29 had already moved beyond the 45-day horizon, and 21
+  of those were still `Submitted` or `Approval Pending`** — unresolved work,
+  invisible to the people who had to chase it.
+- The window is now *ends within the horizon* **OR** *has an extension still
+  waiting on somebody*. Only the unresolved statuses are let back in: Accepted
+  is finished and leaves the tab anyway, Cancelled is resolved, and neither
+  should reappear merely because its date moved.
+- **31 seats return** — 23 Awaiting Vendor, 8 Awaiting Client, nothing Accepted
+  or Cancelled.
+- **It also closes the gap against VNDLY's own Pending Modifications card**,
+  which 3.3.0 could only explain. Measured the same day: Inspira's feed carries
+  23 Approval Pending + 14 Submitted = 37, and the tab now reads Awaiting
+  Client 23 + Awaiting Vendor 14 = 37. Exact, and it stays exact, because the
+  two now count the same population rather than two different ones.
+
 ### 3.5.0 - RTO sub-states on the designation
 - The last item from the MSP feedback. **Pending client RTO approval** and
   **Pending candidate RTO** are now checkboxes in the extension modal, flipped
