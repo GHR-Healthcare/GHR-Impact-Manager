@@ -30,6 +30,7 @@ _B4_DEDUP_CTE = """
                     SELECT DISTINCT
                         CASE
                             WHEN [Health System] LIKE '%Cooper%'   THEN 'cooper'
+                            WHEN [Health System] LIKE '%Inspira%'  THEN 'inspira'
                             WHEN [Health System] LIKE '%RUMC%'
                               OR [Health System] LIKE '%Richmond%' THEN 'rumc'
                             WHEN [Health System] LIKE '%Redeemer%' THEN 'redeemer'
@@ -44,6 +45,7 @@ _B4_DEDUP_CTE = """
                     WHERE [Billing Cycle Start Date] >= {date_from}
                         AND [Billing Cycle Start Date] < {date_to}
                         AND ([Health System] LIKE '%Cooper%'
+                          OR [Health System] LIKE '%Inspira%'
                           OR [Health System] LIKE '%RUMC%'
                           OR [Health System] LIKE '%Richmond%'
                           OR [Health System] LIKE '%Redeemer%')
@@ -61,6 +63,7 @@ _B4_DEDUP_CTE = """
                         [Hours],
                         CASE
                             WHEN [Health System] LIKE '%Cooper%'   THEN 'cooper'
+                            WHEN [Health System] LIKE '%Inspira%'  THEN 'inspira'
                             WHEN [Health System] LIKE '%RUMC%'
                               OR [Health System] LIKE '%Richmond%' THEN 'rumc'
                             WHEN [Health System] LIKE '%Redeemer%' THEN 'redeemer'

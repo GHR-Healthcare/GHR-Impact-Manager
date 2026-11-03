@@ -11,6 +11,7 @@ from shared_code.credentials import (
     service_line as credential_service_line,
 )
 from shared_code.data_source import is_non_msp, get_bullhorn_conn, get_symplr_conn, get_appdb_conn
+from shared_code.data_source import b4_migrated_filter
 from shared_code.bullhorn_systems import (
     build_system_case_expr,
     build_scope_filter,
@@ -34,6 +35,16 @@ from shared_code.symplr_systems import (
 # -- onAssignment keeps its exact meaning, because the Contracts tab and the
 # headline counts read it and must not move.
 RECENT_END_DAYS = 90
+
+# B4 rows for a system that has moved to VNDLY are history, not work. B4 keeps
+# a seat 'Closed And Awarded' with an open end date long after the contract
+# left it, so without this every migrated system's old roster keeps arriving as
+# live headcount -- months past that system's last real shift in B4.
+#
+# Only the ACTIVE and UPCOMING queries use it. 'Recently ended' below is the
+# 90-day history pane and keeps its own, older exclusion -- history is exactly
+# what B4 is still good for once a system has cut over.
+B4_NOT_MIGRATED = f"AND NOT ({b4_migrated_filter('Health_System')})"
 
 # What a seat's status reads once it has ended, per book. Measured 2026-09-11
 # over the trailing 90 days; the active-status lists match none of these, so a
@@ -389,7 +400,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
         # B4Health - Active Assignments
         # ============================================================
         try:
-            cursor.execute('''
+            cursor.execute(f'''
                 SELECT
                     'B4' AS source_system,
                     Contract_ID AS position_id,
@@ -407,8 +418,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                     AND Start_Date IS NOT NULL
                     AND Start_Date <= GETDATE()
                     AND (End_Date IS NULL OR End_Date >= GETDATE())
-                    AND Health_System NOT LIKE '%Richmond University%'
-                    AND Health_System NOT LIKE '%Redeemer%'
+                    {B4_NOT_MIGRATED}
                     AND Health_System <> 'Sunrise Senior Living Management (California)'
             ''')
 
@@ -429,7 +439,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
         # B4Health - Upcoming Starts
         # ============================================================
         try:
-            cursor.execute('''
+            cursor.execute(f'''
                 SELECT
                     'B4' AS source_system,
                     Contract_ID AS position_id,
@@ -447,8 +457,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                     AND Start_Date IS NOT NULL
                     AND Start_Date > GETDATE()
                     AND Start_Date <= DATEADD(day, 30, GETDATE())
-                    AND Health_System NOT LIKE '%Richmond University%'
-                    AND Health_System NOT LIKE '%Redeemer%'
+                    {B4_NOT_MIGRATED}
                     AND Health_System <> 'Sunrise Senior Living Management (California)'
             ''')
             

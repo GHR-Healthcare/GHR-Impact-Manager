@@ -9,6 +9,7 @@ from shared_code.rate_scope import value_13wk
 from shared_code.auth import require_allowed_domain
 from shared_code.data_source import (
     is_non_msp, get_bullhorn_conn, get_symplr_conn, get_appdb_conn,
+    b4_migrated_filter, b4_has_clinician, B4_TERMINAL_STATUSES,
 )
 from shared_code.bullhorn_systems import (
     build_system_case_expr, build_scope_filter, resolve_scope_client_ids,
@@ -58,6 +59,10 @@ def _b4_rows(cursor, lookback, lookahead, include_affiliate):
     Bullhorn-sourced table.
     """
     agency_filter = '' if include_affiliate else f'AND {B4_GHR_PREDICATE}'
+    migrated_filter = b4_migrated_filter('o.Health_System')
+    has_clinician = b4_has_clinician('o')
+    terminal_list = ', '.join(
+        "'" + x.replace("'", "''") + "'" for x in B4_TERMINAL_STATUSES)
     cursor.execute(f'''
         WITH hist AS (
             SELECT LTRIM(RTRIM(Contract_ID))  AS cid,
@@ -147,6 +152,20 @@ def _b4_rows(cursor, lookback, lookahead, include_affiliate):
         ) bh
         WHERE o.Start_Date BETWEEN DATEADD(DAY, ?, CAST(GETDATE() AS DATE))
                                AND DATEADD(DAY, ?, CAST(GETDATE() AS DATE))
+            -- Onboarding is a work queue: a seat here is someone to chase.
+            -- Once a system is on VNDLY its B4 seats are a frozen copy that
+            -- nobody is working, so they would be chased forever. The VNDLY
+            -- rows below carry the real onboarding for these systems.
+            AND NOT ({migrated_filter})
+            -- Same rule as the extensions tab: an order with nobody awarded
+            -- to it is a requisition out to the market, not somebody to
+            -- onboard. These are invisible in GHR-only mode (an unawarded
+            -- order has no agency either) and a third of the queue without it.
+            AND {has_clinician}
+            -- Onboarding is a work queue: a seat leaves it when that step is
+            -- done, and a cancelled or never-awarded order is done. Without
+            -- this the queue kept listing people who are not starting.
+            AND o.Contract_Status NOT IN ({terminal_list})
             {agency_filter}
     ''', -abs(lookback), lookahead)
     return [dict(zip([c[0] for c in cursor.description], r)) for r in cursor.fetchall()]

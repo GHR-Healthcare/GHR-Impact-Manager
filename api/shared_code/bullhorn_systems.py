@@ -309,11 +309,24 @@ def discover_active_client_ids(bullhorn_cursor):
 # exclude ~10,400 open jobs, order-level ~1,600. Until that is settled this
 # list stays evidence-based, because over-excluding hides real direct
 # business from the divisions -- the opposite failure to the one being fixed.
+# REMOVED 2026-10-30 -- three systems that had left the MSP program.
+#
+# Each is flagged `hidden` in impactmgr.system_mappings, but that flag is
+# MSP-only: it takes them off the MSP tabs and nothing else. Listing them here
+# as well subtracted them from the non-MSP scope too, so they were invisible
+# on BOTH sides -- live placements and open jobs belonging to no book at all.
+# A system leaving the MSP program becomes ordinary direct business; it does
+# not stop existing.
+#
+# Some of the ids removed with them were never MSP in the first place: a name
+# match had swept in same-named hospitals in other states, unrelated
+# organisations to the regional network the entry was written for. Prefer the
+# crosswalk evidence described above over a name when adding an id here.
 MSP_CLIENT_IDS = {
-    247, 737, 1128, 3223, 4179, 4185, 4186, 4206, 4207, 4211, 4212, 4311,
-    4312, 4417, 5091, 5392, 5395, 5397, 5410, 5440, 5470, 5624, 6169, 6292,
-    6354, 6452, 6760, 7598, 8342, 8967, 9072, 9083, 14360, 23625, 25118,
-    48539, 73407, 74020, 76078, 85286, 169234, 180695, 353106, 353167,
+    247, 1128, 4179, 4185, 4186, 4206, 4207, 4211, 4212, 4311,
+    4312, 5091, 5392, 5395, 5397, 5440, 6292,
+    6354, 6452, 6760, 8342, 8967, 14360, 23625, 25118,
+    48539, 76078, 169234, 180695, 353106,
     353987, 377103, 377267,
 }
 
@@ -429,7 +442,7 @@ def build_system_case_expr(column_name='p.clientCorporationID', fallback_name_co
 # contributes no heads, so this moves Open Jobs 4.8x while Trend, Financials
 # and headcount move 1,145 -> 1,157 (1.01x), and client count 333 -> 342.
 #
-# Rendered as NOT IN (47 MSP ids) rather than IN (~10k ids): it is the honest
+# Rendered as NOT IN (the MSP ids) rather than IN (~10k ids): it is the honest
 # expression of the rule ("everything except MSP") and a far better query plan
 # than an inlined ten-thousand-element IN list.
 WIDE_NON_MSP_SCOPE = True

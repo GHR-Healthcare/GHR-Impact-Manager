@@ -2,6 +2,64 @@
 
 ## Version History
 
+### 3.7.0 - After a cutover, B4 is history and nothing else
+
+- A system that moves from B4 to VNDLY does not go quiet in B4. Its seats stay
+  `Closed And Awarded` with open end dates, so the old roster keeps arriving as
+  live work — months after that system's last real shift in B4.
+- The rule is now explicit: after a cutover B4 still supplies **history**
+  (revenue, order counts, closed work, the 90-day ended pane) and no longer
+  supplies anything **actionable** (live assignments, upcoming starts, seats to
+  onboard, extensions to chase).
+- Applied to the surfaces that were missing it. Stats' active and upcoming
+  queries carried a hand-written exclusion listing only two of the four
+  migrated systems; Onboarding had none at all. Every row the change removes
+  belongs to a migrated system — nothing else moves.
+- The list lives in one place now (`shared_code.data_source`) instead of being
+  retyped per endpoint, which is how two of them came to disagree. The
+  extensions query renders byte-identical SQL across the refactor.
+- One migrated system was also missing from both dedup lists — the frontend's
+  `TRANSITIONED_SYSTEMS` and the billings CTE. Measured: **no double-count
+  today**, because that cutover happened to be clean (B4 spend stops before
+  VNDLY starts, no worker in both). Added anyway, because a system that cuts
+  over mid-cycle would overlap.
+
+**Three systems belonged to no book at all.** They are flagged `hidden` in the
+system mappings, which takes them off the MSP tabs — but they were *also*
+listed as MSP client ids, which subtracted them from the non-MSP scope. Hidden
+on one side, excluded from the other, so their live placements and open jobs
+were invisible everywhere. A system that leaves the MSP program becomes
+ordinary direct business; it does not stop existing. Those ids are off the MSP
+list and the clients now appear on non-MSP.
+
+Some of the ids removed were never MSP to begin with: a name match had swept in
+same-named hospitals in other states that are unrelated organisations to the
+regional network the rule was written for. Prefer the placement crosswalk over
+a name when adding an id.
+
+**Orders with nobody in them were being worked.** Reported from the floor:
+extensions showing against contracts the source system reports as closed and
+not awarded. They are empty requisitions — raised, sent to the market, never
+awarded — carrying a facility, a health system and an end date but no
+clinician and no agency. One of them gave its own reason: *assignment
+completed, extension offered*. The seat had ended and nobody took it.
+
+- Roughly **one row in nine** on the extensions tab had no one in the seat,
+  and close to **a third** of the onboarding queue.
+- Invisible in GHR-only mode, because an unawarded order has no agency either
+  — they appear only with the all-vendor toggle on, which is why this survived
+  the earlier passes over the same tab.
+- Tested on **the presence of a clinician, not on status**, because the two do
+  not line up: every `Closed And Awarded` order has a person, but
+  `With Requests` splits both ways — mostly empty orders, plus a handful of
+  genuinely filled seats whose extension request is still out. A status list
+  would have dropped those real seats.
+- Cancelled and never-awarded seats now leave the onboarding queue too. It
+  had no status exclusion at all, so people who were awarded and then
+  cancelled stayed on a list of people to chase. Same work-queue rule the
+  other tabs follow: a row leaves when that step is done.
+- The stats surfaces were already clean by construction and are unchanged.
+
 ### 3.6.0 - Submitting an extension made the seat disappear
 - Reported from the floor: a batch of extensions sent one morning, and none of
   them "pulling over" to the tab the next day. The feed was current — the data

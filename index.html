@@ -1024,7 +1024,7 @@
     const $ = (id) => document.getElementById(id);
 
     // App version - loaded from environment variable via API, with fallback
-    let APP_VERSION = '3.6.0';
+    let APP_VERSION = '3.7.0';
 
     const API_BASE_URL = '/api';
 
@@ -1322,7 +1322,12 @@
       // once transitioned). Previously duplicated inline in three render
       // paths (View.trend, View.stats, View.list) — moved here to keep the
       // three paths in sync when a new system transitions.
-      TRANSITIONED_SYSTEMS: new Set(['RUMC', 'Holy Redeemer', 'Cooper']),
+      // Keep in step with B4_MIGRATED_TO_VNDLY in api/shared_code/data_source.py.
+      // These are the rollup names from HEALTH_SYSTEM_MAPPINGS, not B4's raw
+      // spelling. Inspira cut over 2026-08 and was missed here until
+      // 2026-10-30; its spend happened not to overlap, so nothing was
+      // double-counted, but the next system to cut over mid-cycle would be.
+      TRANSITIONED_SYSTEMS: new Set(['RUMC', 'Holy Redeemer', 'Cooper', 'Inspira']),
       
 
       // Key fix: Reordered subDate to top to prevent "Candidate" key from stealing "Candidate Submission" column

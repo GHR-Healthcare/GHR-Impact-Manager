@@ -8,6 +8,7 @@ from shared_code.endpoint_cache import cache_key, read_cache, write_cache
 from shared_code.rate_scope import value_13wk
 from shared_code.auth import require_allowed_domain
 from shared_code.data_source import (
+    b4_migrated_filter, b4_has_clinician, B4_TERMINAL_STATUSES,
     is_non_msp, get_bullhorn_conn, get_symplr_conn, get_appdb_conn,
 )
 from shared_code.bullhorn_systems import (
@@ -32,48 +33,8 @@ B4_GHR_PREDICATE = "(o.Agency LIKE '%GHR%' OR o.Agency LIKE '%Planet Healthcare%
 VNDLY_GHR_PREDICATE = "(w.[Vendor Name] LIKE '%GHR%' OR w.[Vendor Name] LIKE '%Planet Healthcare%')"
 
 # Cancelled / never-awarded seats aren't extension candidates — there's no
-# seat to extend.
-# Health systems that have migrated off B4 onto VNDLY, whose B4 rows are
-# therefore stale and must not reach the extensions tab.
-#
-# The branches below are UNIONED, not deduped, on the reasoning that once a
-# system cuts over "B4 simply stops producing rows for it". It does not. B4
-# keeps future-dated open orders alive, so a migrated system shows the seat
-# twice -- once from each book -- and the B4 copy carries the pre-migration
-# end date, so the row that is wrong sits directly beneath the row that is
-# right.
-#
-# Measured 2026-10-27 over the live 45-day window:
-#
-#   Inspira   55 B4 seats against 32 in VNDLY, and 25 of the 55 are the same
-#             clinician as a VNDLY row -- the duplicates reported from the
-#             floor, e.g. one clinician appearing as both a B4 order and
-#             IHN-3-105, same date, same agency.
-#   Cooper     1 B4 seat, no duplicate.
-#
-# A list is the right shape rather than a blanket B4 exclusion: B4 is still
-# the system of record everywhere else, and each cutover adds one line here.
-#
-# MATCHED AGAINST B4's SPELLING, not VNDLY's. B4 calls RUMC "Richmond
-# University Medical Center" and Redeemer "Holy Redeemer Hospital", so the
-# obvious entries 'RUMC' and 'Redeemer Health' would have matched nothing and
-# failed silently -- the exclusion would have looked applied and done nothing.
-# GetFinancialData keeps the same translation in B4_TO_VNDLY_SYSTEM_MAP.
-#
-# Measured 2026-10-27 over the live window, B4 seats / of those also live in
-# VNDLY under the same clinician:
-#
-#   Inspira   55 / 39      Richmond (RUMC)   11 / 5
-#   Cooper     1 / 0       Redeemer           0 / 0
-#
-# Redeemer has no open B4 orders in the window at all, so its entry changes
-# nothing today and exists so the next stale order cannot reintroduce the bug.
-# The seats that are B4-only still disappear from the tab: they are orders
-# left open in B4 after the cutover, and the fix for those is closing them in
-# B4, not showing them here.
-B4_MIGRATED_TO_VNDLY = ('Cooper', 'Inspira', 'Richmond', 'Redeemer')
-
-B4_EXCLUDED_STATUSES = ('Closed And Cancelled', 'Closed Not Awarded')
+# seat to extend. Shared with Onboarding, which needs the same rule.
+B4_EXCLUDED_STATUSES = B4_TERMINAL_STATUSES
 
 # On VNDLY only a live seat can extend. Everything else is terminal
 # ('Ended', 'Ended by Job Close', 'Rejected', 'Withdrawn', 'Offer Declined')
@@ -220,8 +181,8 @@ def _b4_rows(cursor, horizon, include_affiliate):
     # Matched on LIKE because B4 and VNDLY spell the systems differently --
     # "Inspira Medical Centers, Inc." against "Inspira" -- and a cutover should
     # not need an exact-name mapping table to take effect.
-    migrated_filter = ' OR '.join(
-        f"o.Health_System LIKE '%{m}%'" for m in B4_MIGRATED_TO_VNDLY)
+    migrated_filter = b4_migrated_filter('o.Health_System')
+    has_clinician = b4_has_clinician('o')
     # Resolve the Bullhorn crosswalk once instead of per row.
     #
     # The crosswalk carries one row per load run rather than per pair -- 8,015
@@ -487,6 +448,9 @@ def _b4_rows(cursor, horizon, include_affiliate):
         WHERE o.End_Date BETWEEN CAST(GETDATE() AS DATE)
                              AND DATEADD(DAY, ?, CAST(GETDATE() AS DATE))
             AND o.Contract_Status NOT IN ({status_list})
+            -- An order nobody has been awarded is a requisition, not a seat.
+            -- See b4_has_clinician: tested on the name, not the status.
+            AND {has_clinician}
             AND NOT ({migrated_filter})
             {agency_filter}
     ''', horizon)
