@@ -27,6 +27,9 @@
 - Left out on purpose: the routes that build in 1-15s. They rebuild inside a
   request without trouble, and each one listed is another thing a scheduled
   run can fail on.
+- The nightly scheduler gained an MSP target. The cache is per-book and an
+  instance only knows its own, so each app needs its own run; the MSP app
+  builds the slowest payload either book has.
 
 ### 3.7.0 - After a cutover, B4 is history and nothing else
 

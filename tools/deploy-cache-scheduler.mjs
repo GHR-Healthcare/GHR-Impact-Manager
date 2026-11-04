@@ -29,21 +29,28 @@ const FIXED = { 22: [22, 23, 4], 24: [24, 22, 1], 26: [26, 12, 1] };
 // ------------------------------------------------------------------------
 
 //
-// Creates the nightly cache-refresh Logic App for the non-MSP instance.
+// Creates the nightly cache-refresh Logic App for one app instance.
 //
 // WHY THIS EXISTS
 // ---------------
-// /api/cache/refresh rebuilds impactmgr.endpoint_cache for trend-data and
-// financial-data. Without a caller, the cache only ever warms from whoever
-// loads the page first -- and that person waits 14s, which is the problem the
-// cache exists to remove.
+// /api/cache/refresh rebuilds impactmgr.endpoint_cache for whichever routes
+// that book lists in REFRESHABLE_BY_BOOK. Without a caller, the cache only
+// ever warms from whoever loads the page first -- and on the slowest payloads
+// that person waits past the 45s gateway timeout and gets an error, while the
+// function keeps running and leaves the cache warm for the NEXT person. That
+// is the problem the cache exists to remove, reappearing as a worse one.
+//
+// Each app instance needs its OWN run: the cache is per-book and an instance
+// only knows its own. --target msp aims at the MSP app, which refreshes the
+// extensions and onboarding payloads; the non-MSP targets refresh trend,
+// financial and stats.
 //
 // Modelled on ghr-salespulse/scripts/deploy-snapshot-scheduler.mjs, which
 // solves the same shape for its placement and snapshot caches.
 //
 // USAGE
-//   az staticwebapp appsettings list --name ghr-nonmsp-impactmgr -o json \
-//     | node tools/deploy-cache-scheduler.mjs [--target prototype|production]
+//   az staticwebapp appsettings list --name <the app for your target> -o json \
+//     | node tools/deploy-cache-scheduler.mjs [--target prototype|production|msp]
 //
 // Add --dry-run to print the definition (key redacted) without writing.
 //
@@ -70,10 +77,23 @@ const TARGETS = {
   prototype: {
     name: 'ghr-impactmgr-cache-refresh-prototype',
     uri: 'https://witty-stone-0bf78240f-prototype.eastus2.7.azurestaticapps.net/api/cache/refresh',
+    app: 'ghr-nonmsp-impactmgr',
   },
   production: {
     name: 'ghr-impactmgr-cache-refresh',
     uri: 'https://witty-stone-0bf78240f.7.azurestaticapps.net/api/cache/refresh',
+    app: 'ghr-nonmsp-impactmgr',
+  },
+  // MSP. Added 2026-11-04, when extensions-data and onboarding-data became
+  // refreshable. extensions-data:msp:aff1 is the slowest payload either book
+  // builds (~52s measured), so this is the target that most needs a schedule.
+  // Pipe the MSP app's settings in, not the non-MSP app's:
+  //   az staticwebapp appsettings list --name ghr-impact-manager -o json \
+  //     | node tools/deploy-cache-scheduler.mjs --target msp
+  msp: {
+    name: 'ghr-impactmgr-cache-refresh-msp',
+    uri: 'https://lively-plant-057be0a0f.6.azurestaticapps.net/api/cache/refresh',
+    app: 'ghr-impact-manager',
   },
 };
 
@@ -98,7 +118,7 @@ const tIdx = process.argv.indexOf('--target');
 const targetName = tIdx > -1 ? process.argv[tIdx + 1] : 'production';
 const target = TARGETS[targetName];
 if (!target) {
-  console.error(`Unknown --target ${targetName}. Use prototype or production.`);
+  console.error(`Unknown --target ${targetName}. Use prototype, production or msp.`);
   process.exit(1);
 }
 
@@ -109,7 +129,7 @@ const stdin = await new Promise((resolve) => {
 });
 if (!stdin.trim()) {
   console.error('Nothing on stdin. Pipe the app settings in:\n' +
-    '  az staticwebapp appsettings list --name ghr-nonmsp-impactmgr -o json | node ' + process.argv[1]);
+    `  az staticwebapp appsettings list --name ${target.app} -o json | node ` + process.argv[1]);
   process.exit(1);
 }
 
@@ -120,7 +140,7 @@ if (brace < 0) { console.error('No JSON object found on stdin.'); process.exit(1
 const settings = (JSON.parse(stdin.slice(brace)).properties) || JSON.parse(stdin.slice(brace));
 const key = settings.CACHE_REFRESH_API_KEY;
 if (!key) {
-  console.error('CACHE_REFRESH_API_KEY is not set on ghr-nonmsp-impactmgr. Set it first,\n' +
+  console.error(`CACHE_REFRESH_API_KEY is not set on ${target.app}. Set it first,\n` +
     'or the endpoint will reject every run with 401.');
   process.exit(1);
 }
