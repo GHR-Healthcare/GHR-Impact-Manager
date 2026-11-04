@@ -1292,57 +1292,17 @@ def _serialize(rows):
     return out
 
 
-def main(req: func.HttpRequest) -> func.HttpResponse:
-    auth_error = require_allowed_domain(req)
-    if auth_error:
-        return auth_error
+def build_msp_rows(horizon, include_affiliate):
+    """Build the MSP extensions payload. Shared by main() and RefreshCache.
 
-    try:
-        horizon = int(req.params.get('days') or EXTENSION_HORIZON_DAYS)
-    except (TypeError, ValueError):
-        horizon = EXTENSION_HORIZON_DAYS
-    include_affiliate = str(req.params.get('includeAffiliate', '')).lower() in ('1', 'true', 'yes')
+    Lifted out of main() on 2026-11-04 so this cache has an OFF-REQUEST build
+    path. The payload takes ~55s to build and the SWA gateway gives up at 45,
+    so whoever opened the tab after a deploy wore a timeout and only got an
+    answer on the retry that read what their own failed request had written.
 
-    if is_non_msp():
-        # No affiliate concept on this side: non-MSP is GHR's direct book, so
-        # includeAffiliate is meaningless rather than merely unset.
-        try:
-            rows, errors = _non_msp_rows(horizon)
-            rows = _serialize(_apply_credentials(rows))
-            rows.sort(key=lambda r: (r.get('days_left') if r.get('days_left') is not None else 9999))
-            bhn = sum(1 for r in rows if r['source_system'] == 'Bullhorn')
-            syn = sum(1 for r in rows if r['source_system'] == 'Symplr')
-            ext = sum(1 for r in rows if r.get('extension_events'))
-            print(f"Extensions(non_msp): {len(rows)} rows (Bullhorn {bhn}, Symplr {syn}; "
-                  f"{ext} previously extended; horizon {horizon}d; errors: {errors or 'none'})")
-            return func.HttpResponse(
-                json.dumps(rows, default=str),
-                mimetype='application/json', status_code=200)
-        except Exception as e:
-            print(f'Extensions(non_msp) error: {e}')
-            import traceback
-            traceback.print_exc()
-            return func.HttpResponse(
-                json.dumps({'error': str(e)}),
-                mimetype='application/json', status_code=500)
-
-    # Served from the cache table when one is fresh. Measured warm at 21-23s,
-    # and the first request after a deploy took 43.6s -- past the 45s SWA
-    # gateway timeout, so the tab got a 500 rather than a slow answer.
-    #
-    # Only the DEFAULT window is cached. horizon and includeAffiliate both
-    # change the result, and a key on the route alone would hand a 45-day
-    # default to someone who asked for 90 -- the exact bug the financial-data
-    # cache shipped with and had to be fixed for.
-    cacheable = (horizon == EXTENSION_HORIZON_DAYS)
-    key = cache_key('extensions-data', 'msp',
-                    'aff1' if include_affiliate else 'aff0')
-    if cacheable:
-        cached = read_cache(key)
-        if cached is not None:
-            print(f"extensions-data: served from cache ({cached.get('cachedAt') if isinstance(cached, dict) else 'list'})")
-            return func.HttpResponse(json.dumps(cached, default=str),
-                                     mimetype='application/json', status_code=200)
+    Returns (rows, errors, build_ms). The caller decides whether to cache:
+    a build with errors must never overwrite a good entry.
+    """
     conn = None
     rows, errors = [], []
     started = time.time()
@@ -1408,10 +1368,69 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
         print(f"Extensions: {len(rows)} rows (B4 {b4n}, VNDLY {vnn}; horizon {horizon}d, "
               f"affiliate={include_affiliate}; {int((time.time()-started)*1000)}ms; "
               f"errors: {errors or 'none'})")
+        return rows, errors, int((time.time() - started) * 1000)
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def main(req: func.HttpRequest) -> func.HttpResponse:
+    auth_error = require_allowed_domain(req)
+    if auth_error:
+        return auth_error
+
+    try:
+        horizon = int(req.params.get('days') or EXTENSION_HORIZON_DAYS)
+    except (TypeError, ValueError):
+        horizon = EXTENSION_HORIZON_DAYS
+    include_affiliate = str(req.params.get('includeAffiliate', '')).lower() in ('1', 'true', 'yes')
+
+    if is_non_msp():
+        # No affiliate concept on this side: non-MSP is GHR's direct book, so
+        # includeAffiliate is meaningless rather than merely unset.
+        try:
+            rows, errors = _non_msp_rows(horizon)
+            rows = _serialize(_apply_credentials(rows))
+            rows.sort(key=lambda r: (r.get('days_left') if r.get('days_left') is not None else 9999))
+            bhn = sum(1 for r in rows if r['source_system'] == 'Bullhorn')
+            syn = sum(1 for r in rows if r['source_system'] == 'Symplr')
+            ext = sum(1 for r in rows if r.get('extension_events'))
+            print(f"Extensions(non_msp): {len(rows)} rows (Bullhorn {bhn}, Symplr {syn}; "
+                  f"{ext} previously extended; horizon {horizon}d; errors: {errors or 'none'})")
+            return func.HttpResponse(
+                json.dumps(rows, default=str),
+                mimetype='application/json', status_code=200)
+        except Exception as e:
+            print(f'Extensions(non_msp) error: {e}')
+            import traceback
+            traceback.print_exc()
+            return func.HttpResponse(
+                json.dumps({'error': str(e)}),
+                mimetype='application/json', status_code=500)
+
+    # Served from the cache table when one is fresh. Measured warm at 21-23s,
+    # and the first request after a deploy took 43.6s -- past the 45s SWA
+    # gateway timeout, so the tab got a 500 rather than a slow answer.
+    #
+    # Only the DEFAULT window is cached. horizon and includeAffiliate both
+    # change the result, and a key on the route alone would hand a 45-day
+    # default to someone who asked for 90 -- the exact bug the financial-data
+    # cache shipped with and had to be fixed for.
+    cacheable = (horizon == EXTENSION_HORIZON_DAYS)
+    key = cache_key('extensions-data', 'msp',
+                    'aff1' if include_affiliate else 'aff0')
+    if cacheable:
+        cached = read_cache(key)
+        if cached is not None:
+            print(f"extensions-data: served from cache ({cached.get('cachedAt') if isinstance(cached, dict) else 'list'})")
+            return func.HttpResponse(json.dumps(cached, default=str),
+                                     mimetype='application/json', status_code=200)
+    try:
+        rows, errors, build_ms = build_msp_rows(horizon, include_affiliate)
         # Best-effort warm, never fails the response. Skipped when a branch
         # errored so a half-empty book cannot be served for a day.
         if cacheable and not errors:
-            write_cache(key, rows, build_ms=int((time.time() - started) * 1000),
+            write_cache(key, rows, build_ms=build_ms,
                         refreshed_by='live-request')
         return func.HttpResponse(
             json.dumps(rows, default=str),
@@ -1427,6 +1446,3 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             mimetype="application/json",
             status_code=500,
         )
-    finally:
-        if conn is not None:
-            conn.close()

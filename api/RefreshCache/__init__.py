@@ -31,10 +31,35 @@ from shared_code.data_source import is_non_msp
 from shared_code.endpoint_cache import cache_key, write_cache, cache_status
 
 
-# What can be rebuilt. Each entry names the builder to call and the book it
-# belongs to; the builders are imported lazily so one broken endpoint cannot
-# stop the others from refreshing.
-REFRESHABLE = ('trend-data', 'financial-data')
+# What can be rebuilt, per book. The builders are imported lazily so one
+# broken endpoint cannot stop the others from refreshing.
+#
+# A route earns a place here by being slow enough that rebuilding it inside a
+# request is a problem. The SWA gateway gives up at 45s; the function keeps
+# running and still writes the cache, so a slow payload "works" only in the
+# sense that whoever opened the tab ate a timeout and the NEXT person got
+# their result. Measured builds as of 2026-11-04:
+#
+#     extensions-data  msp      55.0s   <- aff1, the variant the tab actually asks for
+#     financial-data   non_msp  50.1s
+#     stats-data       non_msp  49.2s
+#     trend-data       non_msp  46.8s
+#     onboarding-data  msp      27.5s
+#
+# Deliberately absent: stats-data on MSP (0.8s), trend-data and closed-data on
+# MSP (1-3s), rate-intel (10-15s, and no request-path cache miss has ever been
+# reported). They rebuild inside a request without trouble, and every route
+# listed here is one more thing a scheduled run can fail on.
+REFRESHABLE_BY_BOOK = {
+    'msp': ('extensions-data', 'onboarding-data'),
+    'non_msp': ('trend-data', 'financial-data', 'stats-data'),
+}
+
+# Routes whose payload differs by the includeAffiliate toggle. MSP asks for
+# aff1 and the default-only cache was never read -- the bug cache_key's
+# `variant` argument exists to fix -- so BOTH variants get built or the tab
+# keeps rebuilding the one it wants.
+AFFILIATE_VARIANTS = ('extensions-data', 'onboarding-data')
 
 
 def _build(route):
@@ -70,7 +95,34 @@ def _build(route):
                 errors.append(f'{label}: {e}')
         return {'monthlyData': monthly}, errors
 
+    if route == 'stats-data':
+        from GetStatsData import build_non_msp_payload
+        return build_non_msp_payload()
+
     raise ValueError(f'unknown cache key: {route}')
+
+
+def _build_variant(route, include_affiliate):
+    """Build one affiliate variant of an MSP route.
+
+    Separate from _build because these take a parameter and return a build_ms
+    the builder measured itself -- the request path's own timing, so a cached
+    entry reports what it actually cost rather than what the refresh loop saw.
+    """
+    if route == 'extensions-data':
+        from GetExtensions import build_msp_rows, EXTENSION_HORIZON_DAYS
+        rows, errors, ms = build_msp_rows(EXTENSION_HORIZON_DAYS, include_affiliate)
+        return rows, errors, ms
+
+    if route == 'onboarding-data':
+        from GetOnboarding import (build_msp_rows, ONBOARDING_LOOKBACK_DAYS,
+                                   ONBOARDING_LOOKAHEAD_DAYS)
+        rows, errors, ms = build_msp_rows(ONBOARDING_LOOKBACK_DAYS,
+                                          ONBOARDING_LOOKAHEAD_DAYS,
+                                          include_affiliate)
+        return rows, errors, ms
+
+    raise ValueError(f'unknown variant route: {route}')
 
 
 def main(req: func.HttpRequest) -> func.HttpResponse:
@@ -113,7 +165,9 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
     if req.method == 'GET':
         return func.HttpResponse(
             json.dumps({'entries': cache_status(),
-                        'refreshable': list(REFRESHABLE)}, default=str),
+                        'book': 'non_msp' if is_non_msp() else 'msp',
+                        'refreshable': list(REFRESHABLE_BY_BOOK.get(
+                            'non_msp' if is_non_msp() else 'msp', ()))}, default=str),
             mimetype='application/json', status_code=200)
 
     # This cache is per-book, and an instance only knows its own book, so a
@@ -126,18 +180,48 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             from GetFinancialData import MSP_CACHE_BOOK, NON_MSP_CACHE_BOOK
             return NON_MSP_CACHE_BOOK if book == 'non_msp' else MSP_CACHE_BOOK
         return book
-    if book != 'non_msp':
-        return func.HttpResponse(
-            json.dumps({'skipped': 'caching is currently wired for the non-MSP book only',
-                        'book': book}),
-            mimetype='application/json', status_code=200)
+    refreshable = REFRESHABLE_BY_BOOK.get(book, ())
 
     only = (req.params.get('key') or '').strip()
-    routes = [only] if only else list(REFRESHABLE)
+    if only and only not in refreshable:
+        # Naming a route this book cannot build is a caller error, not a
+        # silent no-op: the scheduler would otherwise report success having
+        # rebuilt nothing.
+        return func.HttpResponse(
+            json.dumps({'error': 'route not refreshable on this book',
+                        'book': book, 'route': only,
+                        'refreshable': list(refreshable)}),
+            mimetype='application/json', status_code=400)
+    routes = [only] if only else list(refreshable)
     results = []
     for route in routes:
         started = time.time()
         try:
+            if route in AFFILIATE_VARIANTS:
+                # Both variants, because the key encodes the toggle and the
+                # tab asks for aff1. Each is written separately so one failing
+                # does not discard the other.
+                for aff in (False, True):
+                    v_started = time.time()
+                    variant = 'aff1' if aff else 'aff0'
+                    try:
+                        rows, v_errors, v_ms = _build_variant(route, aff)
+                        if v_errors:
+                            results.append({'key': route, 'variant': variant, 'ok': False,
+                                            'ms': v_ms, 'errors': v_errors,
+                                            'note': 'kept the previous cache'})
+                            continue
+                        wrote = write_cache(cache_key(route, book, variant), rows,
+                                            build_ms=v_ms,
+                                            refreshed_by=user or 'scheduler')
+                        results.append({'key': route, 'variant': variant,
+                                        'ok': bool(wrote), 'ms': v_ms})
+                    except Exception as e:
+                        results.append({'key': route, 'variant': variant, 'ok': False,
+                                        'ms': int((time.time() - v_started) * 1000),
+                                        'errors': [str(e)]})
+                continue
+
             payload, errors = _build(route)
             ms = int((time.time() - started) * 1000)
             if errors:

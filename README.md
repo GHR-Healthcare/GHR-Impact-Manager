@@ -2,6 +2,32 @@
 
 ## Version History
 
+### 3.8.0 - The slow tabs can be built off the request path
+
+- The payload cache had no way to rebuild the three slowest tabs except inside
+  a user's request. The gateway gives up at 45s; the function keeps running and
+  still writes the cache, so those tabs "worked" only in the sense that whoever
+  opened one after a deploy wore a timeout and the *next* person got their
+  result. Clearing the cache to publish a fix therefore cost somebody a failed
+  page load.
+- `RefreshCache` now covers them. It was wired for the non-MSP book only and
+  for two routes; it is now per-book, and the MSP book can refresh the
+  extensions and onboarding payloads while non-MSP adds stats to trend and
+  financial.
+- Both affiliate variants are built, not just the default. The key encodes the
+  `includeAffiliate` toggle and the MSP tabs ask for the non-default one, so
+  refreshing only the default would fill an entry nothing reads — the same
+  failure the `variant` argument was added to fix.
+- The build logic moved out of each endpoint's `main()` into a function the
+  request path and the refresh path both call, so the two cannot drift into
+  building different payloads. Each returns its errors to the caller, and a
+  build that reports any is never written over a good entry.
+- Asking a book for a route it cannot build is now a 400 rather than a silent
+  success, so a scheduled run cannot report that it rebuilt nothing.
+- Left out on purpose: the routes that build in 1-15s. They rebuild inside a
+  request without trouble, and each one listed is another thing a scheduled
+  run can fail on.
+
 ### 3.7.0 - After a cutover, B4 is history and nothing else
 
 - A system that moves from B4 to VNDLY does not go quiet in B4. Its seats stay

@@ -738,6 +738,55 @@ def _finalize(rows):
     return out
 
 
+def build_msp_rows(lookback, lookahead, include_affiliate):
+    """Build the MSP onboarding payload. Shared by main() and RefreshCache.
+
+    Lifted out of main() on 2026-11-04 to give the cache an off-request build
+    path, the same reason as the extensions tab. Returns (rows, errors,
+    build_ms); the caller decides whether to cache, because a build with
+    errors must never overwrite a good entry.
+    """
+    started = time.time()
+    conn = None
+    rows, errors = [], []
+    try:
+        conn = pyodbc.connect(
+            f"DRIVER={{ODBC Driver 17 for SQL Server}};"
+            f"SERVER={os.environ['DB_HOST']};"
+            f"DATABASE={os.environ['POSITIONS_DB']};"
+            f"UID={os.environ['DB_USER']};"
+            f"PWD={os.environ['DB_PASSWORD']};"
+            f"TrustServerCertificate=yes"
+        )
+        cursor = conn.cursor()
+        cursor.execute('SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED')
+
+        # Unioned, not deduped — during the B4→VNDLY transition the two cover
+        # different workers, and once a system is cut over B4 stops producing
+        # rows for it. Same treatment GetFinancialData applies for RUMC, Holy
+        # Redeemer and Cooper.
+        for label, fn in (('B4', _b4_rows), ('VNDLY', _vndly_rows)):
+            try:
+                rows.extend(fn(cursor, lookback, lookahead, include_affiliate))
+            except Exception as e:
+                print(f"Onboarding: {label} branch failed: {e}")
+                import traceback
+                traceback.print_exc()
+                errors.append(f'{label}: {e}')
+
+        rows = _finalize(rows)
+        rows.sort(key=lambda r: (-(r.get('move_count') or 0), r.get('current_start') or ''))
+        b4n = sum(1 for r in rows if r['source_system'] == 'B4')
+        vnn = sum(1 for r in rows if r['source_system'] == 'VNDLY')
+        print(f"Onboarding: {len(rows)} rows (B4 {b4n}, VNDLY {vnn}; -{lookback}d/+{lookahead}d, "
+              f"affiliate={include_affiliate}; {int((time.time()-started)*1000)}ms; "
+              f"errors: {errors or 'none'})")
+        return rows, errors, int((time.time() - started) * 1000)
+    finally:
+        if conn is not None:
+            conn.close()
+
+
 def main(req: func.HttpRequest) -> func.HttpResponse:
     auth_error = require_allowed_domain(req)
     if auth_error:
@@ -794,42 +843,10 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                 json.dumps({'error': str(e)}),
                 mimetype='application/json', status_code=500)
 
-    conn = None
-    rows, errors = [], []
     try:
-        conn = pyodbc.connect(
-            f"DRIVER={{ODBC Driver 17 for SQL Server}};"
-            f"SERVER={os.environ['DB_HOST']};"
-            f"DATABASE={os.environ['POSITIONS_DB']};"
-            f"UID={os.environ['DB_USER']};"
-            f"PWD={os.environ['DB_PASSWORD']};"
-            f"TrustServerCertificate=yes"
-        )
-        cursor = conn.cursor()
-        cursor.execute('SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED')
-
-        # Unioned, not deduped — during the B4→VNDLY transition the two cover
-        # different workers, and once a system is cut over B4 stops producing
-        # rows for it. Same treatment GetFinancialData applies for RUMC, Holy
-        # Redeemer and Cooper.
-        for label, fn in (('B4', _b4_rows), ('VNDLY', _vndly_rows)):
-            try:
-                rows.extend(fn(cursor, lookback, lookahead, include_affiliate))
-            except Exception as e:
-                print(f"Onboarding: {label} branch failed: {e}")
-                import traceback
-                traceback.print_exc()
-                errors.append(f'{label}: {e}')
-
-        rows = _finalize(rows)
-        rows.sort(key=lambda r: (-(r.get('move_count') or 0), r.get('current_start') or ''))
-        b4n = sum(1 for r in rows if r['source_system'] == 'B4')
-        vnn = sum(1 for r in rows if r['source_system'] == 'VNDLY')
-        print(f"Onboarding: {len(rows)} rows (B4 {b4n}, VNDLY {vnn}; -{lookback}d/+{lookahead}d, "
-              f"affiliate={include_affiliate}; {int((time.time()-_started)*1000)}ms; "
-              f"errors: {errors or 'none'})")
+        rows, errors, build_ms = build_msp_rows(lookback, lookahead, include_affiliate)
         if _cacheable and not errors:
-            write_cache(_key, rows, build_ms=int((time.time() - _started) * 1000),
+            write_cache(_key, rows, build_ms=build_ms,
                         refreshed_by='live-request')
         return func.HttpResponse(
             json.dumps(rows, default=str),
@@ -845,6 +862,3 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             mimetype="application/json",
             status_code=500,
         )
-    finally:
-        if conn is not None:
-            conn.close()

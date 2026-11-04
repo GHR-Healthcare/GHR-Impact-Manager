@@ -304,8 +304,15 @@ def _symplr_stats_data():
     return on_assignment, upcoming, recently_ended
 
 
-def _non_msp_stats(req: func.HttpRequest) -> func.HttpResponse:
-    """Run Bullhorn + Symplr stats queries independently, union the results."""
+def build_non_msp_payload():
+    """Run Bullhorn + Symplr stats queries independently, union the results.
+
+    Returns (payload, errors). Split out of _non_msp_stats on 2026-11-04 so
+    RefreshCache can build this off the request path: it is the slowest
+    payload on the non-MSP book and rebuilding it inside a request runs past
+    the 45s SWA gateway timeout. _non_msp_stats is now the HTTP wrapper and
+    `req` was never read by the body anyway.
+    """
     on_assignment = []
     upcoming = []
     recently_ended = []
@@ -326,13 +333,19 @@ def _non_msp_stats(req: func.HttpRequest) -> func.HttpResponse:
         errors.append(f"symplr: {e}")
     print(f"non-MSP stats: {len(on_assignment)} active, {len(upcoming)} upcoming, "
           f"{len(recently_ended)} recently ended (errors: {errors or 'none'})")
+    # `errors` is carried in the payload, not dropped: a failed Bullhorn or
+    # Symplr branch otherwise served a 200 of half the book with nothing to
+    # distinguish it from a genuinely small one. Same defect GH #86 fixed in
+    # GetFinancialData and GH #102 in the YoY branch. (GH #79)
+    return ({'onAssignment': on_assignment, 'upcoming': upcoming,
+             'recentlyEnded': recently_ended, 'errors': errors}, errors)
+
+
+def _non_msp_stats(req: func.HttpRequest) -> func.HttpResponse:
+    """HTTP wrapper around build_non_msp_payload."""
+    payload, _errors = build_non_msp_payload()
     return func.HttpResponse(
-        # `errors` was collected above and then dropped here, so a failed
-        # Bullhorn or Symplr branch served a 200 of half the book with nothing
-        # to distinguish it from a genuinely small one. Same defect GH #86
-        # fixed in GetFinancialData and GH #102 in the YoY branch. (GH #79)
-        json.dumps({'onAssignment': on_assignment, 'upcoming': upcoming,
-                    'recentlyEnded': recently_ended, 'errors': errors}, default=str),
+        json.dumps(payload, default=str),
         mimetype="application/json",
         status_code=200,
     )
