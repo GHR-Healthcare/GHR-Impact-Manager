@@ -247,4 +247,4 @@ if (!res.ok) {
   console.error(`Failed (${res.status}): ${redact(text).slice(0, 600)}`);
   process.exit(1);
 }
-console.log(`Created ${target.name} — nightly 4am ET -> ${target.uri}`);
+console.log(`${existing.status === 200 ? 'Updated' : 'Created'} ${target.name} — nightly 4am ET -> ${target.uri}`);
