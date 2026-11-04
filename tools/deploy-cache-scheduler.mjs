@@ -52,6 +52,10 @@ const FIXED = { 22: [22, 23, 4], 24: [24, 22, 1], 26: [26, 12, 1] };
 //   az staticwebapp appsettings list --name <the app for your target> -o json \
 //     | node tools/deploy-cache-scheduler.mjs [--target prototype|production|msp]
 //
+// Create-only by default: an existing workflow is reported and left alone.
+// Pass --update to overwrite one, which is how a change to the definition
+// below (the schedule, the URI, the retry policy) actually gets rolled out.
+//
 // Add --dry-run to print the definition (key redacted) without writing.
 //
 // CACHE_REFRESH_API_KEY is piped in on stdin and only ever held in memory: it
@@ -109,6 +113,10 @@ const RECURRENCE = {
 };
 
 const dryRun = process.argv.includes('--dry-run');
+// Overwrite a workflow that already exists. Off by default so a schedule
+// someone tuned in the portal is not silently reverted by a routine re-run;
+// required to roll out a change to the definition in this file.
+const update = process.argv.includes('--update');
 const tIdx = process.argv.indexOf('--target');
 // Defaults to production since the 3.0.0 merge. It used to default to
 // 'prototype', which after the merge would wire the nightly refresh at the
@@ -201,15 +209,31 @@ const body = {
 };
 
 if (dryRun) {
-  console.log(`DRY RUN — would PUT ${target.name} into ${RG}:`);
+  console.log(`DRY RUN — would PUT ${target.name} into ${RG}${update ? ' (overwriting)' : ''}:`);
   console.log(redact(JSON.stringify(body, null, 2)));
   process.exit(0);
 }
 
 const existing = await fetch(url, { headers: { Authorization: 'Bearer ' + token } });
-if (existing.status === 200) {
+if (existing.status === 200 && !update) {
   const cur = JSON.parse(await existing.text());
+  const live = cur.properties?.definition?.actions?.HTTP?.inputs || {};
+  const drift = [];
+  if (live.uri !== target.uri) drift.push(`uri: ${live.uri} -> ${target.uri}`);
+  if ((live.retryPolicy?.type || 'unset') !== 'none') {
+    drift.push(`retryPolicy: ${live.retryPolicy?.type || 'unset (4 exponential retries)'} -> none`);
+  }
   console.log(`${target.name} already exists (state: ${cur.properties?.state}). Not modifying it.`);
+  if (drift.length) {
+    // Create-only protects a hand-edited schedule, but it also meant a fix to
+    // this file could never reach a workflow that already existed -- the
+    // retryPolicy added 2026-11-04 silently did not apply to the MSP schedule
+    // created an hour earlier, and the run output read like success. Say what
+    // differs and how to apply it.
+    console.log('\nIts definition differs from this script:');
+    for (const d of drift) console.log(`  - ${d}`);
+    console.log(`\nRe-run with --update to overwrite it, or edit it in the portal.`);
+  }
   process.exit(0);
 }
 

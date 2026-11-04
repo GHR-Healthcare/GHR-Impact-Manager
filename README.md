@@ -40,6 +40,12 @@
   rebuilds a night against an endpoint that always 500s and always finishes.
   The run is reported FAILED while having done its job, so
   `impactmgr.endpoint_cache.refreshed_at` is the signal, not the run history.
+- The scheduler is create-only, which quietly meant a change to its definition
+  could never reach a workflow that already existed — the retry fix above did
+  not apply to a schedule created an hour earlier, and the run read like
+  success. It now reports exactly what differs and how to apply it, and
+  `--update` overwrites. Still not the default, so a schedule someone tuned in
+  the portal is not reverted by a routine re-run.
 
 ### 3.7.0 - After a cutover, B4 is history and nothing else
 
