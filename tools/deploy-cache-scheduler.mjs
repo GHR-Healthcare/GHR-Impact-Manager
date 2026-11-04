@@ -169,7 +169,30 @@ const body = {
         HTTP: {
           type: 'Http',
           runAfter: {},
-          inputs: { method: 'POST', uri: target.uri, headers: { 'x-api-key': key } },
+          inputs: {
+            method: 'POST',
+            uri: target.uri,
+            headers: { 'x-api-key': key },
+            // NO RETRIES, deliberately. /api/cache/refresh is fire-and-forget
+            // by necessity: it is an HTTP-triggered function behind the same
+            // 45s SWA gateway as everything else, and the MSP book's four
+            // payloads take about two minutes to build. The gateway returns
+            // 500 at 45s while the function keeps running and writes every
+            // entry -- measured 2026-11-04, all four written 2m07s after a
+            // request the caller saw fail.
+            //
+            // Logic Apps' default is 4 exponential retries on 5xx. Against an
+            // endpoint that always 500s and always succeeds anyway, that is
+            // five overlapping full rebuilds a night, hammering the warehouse
+            // to redo work that was already done. Observed once before this
+            // was set: one variant got built twice by two concurrent runs.
+            //
+            // So the run will be marked FAILED in Logic Apps while having
+            // done its job. Check impactmgr.endpoint_cache.refreshed_at to
+            // see whether a night's refresh actually landed; the run history
+            // is not the signal.
+            retryPolicy: { type: 'none' },
+          },
         },
       },
       outputs: {},

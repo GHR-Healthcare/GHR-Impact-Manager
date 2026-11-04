@@ -30,6 +30,16 @@
 - The nightly scheduler gained an MSP target. The cache is per-book and an
   instance only knows its own, so each app needs its own run; the MSP app
   builds the slowest payload either book has.
+- **The refresh is fire-and-forget, and that is not a bug to fix later.**
+  `/api/cache/refresh` is itself an HTTP-triggered function behind the same
+  45s gateway, and the MSP book's four payloads take about two minutes. The
+  gateway returns 500 at 45s while the function keeps running and writes every
+  entry — measured, all four written 2m07s after a request the caller saw
+  fail. Retries are therefore disabled on the scheduled run: the Logic App
+  default of four exponential retries on a 5xx would mean five overlapping
+  rebuilds a night against an endpoint that always 500s and always finishes.
+  The run is reported FAILED while having done its job, so
+  `impactmgr.endpoint_cache.refreshed_at` is the signal, not the run history.
 
 ### 3.7.0 - After a cutover, B4 is history and nothing else
 
