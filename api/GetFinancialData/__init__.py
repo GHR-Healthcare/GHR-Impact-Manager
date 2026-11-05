@@ -167,6 +167,38 @@ BULLHORN_SERVICE_LINE_CASE = """
 """
 
 
+# VNDLY [Labor Type] -> the GHR service-line vocabulary (Nursing / Allied /
+# Locums / Non-Clinical / Other), as one expression instead of the three
+# copies this used to have: the billings SELECT, its GROUP BY, and the
+# worker-identity query beside it. They have to agree exactly or the grouped
+# rows stop matching the headcount printed next to them.
+#
+# TENANT SPELLING, 2026-11-05. VNDLY tenants do not share a vocabulary: some
+# say 'Allied', others say 'Allied Health', and only the first was listed, so
+# every allied dollar from those tenants fell through to 'Other'. On one
+# system's first full VNDLY month that was most of its non-nursing GHR billing
+# sitting in the Other row while Allied showed blank. The totals were never
+# wrong; the service-line split was. Same failure as matching B4 health
+# systems on 'RUMC' when B4 writes 'Richmond University Medical Center': a
+# literal the source system does not use, matching nothing, silently.
+#
+# Check the live set before adding a label here -- `SELECT DISTINCT [Labor
+# Type] FROM dbo.STAGING_VNDLY_SPEND` is the list that matters, not this one.
+#
+# Still unmapped and deliberately left in Other, pending a call on where they
+# belong: 'Information Technology' and 'Advanced Practices' (NP/PA, arguably
+# Locums).
+# Add them here when that is settled; nothing else needs to change.
+def _vndly_service_line(column: str) -> str:
+    return f"""CASE
+                        WHEN {column} IN ('Nursing', 'Per Diem Nursing') THEN 'Nursing'
+                        WHEN {column} IN ('Allied', 'Per Diem Allied', 'Allied Health') THEN 'Allied'
+                        WHEN {column} = 'Physicians' THEN 'Locums'
+                        WHEN {column} = 'Non-Clinical' THEN 'Non-Clinical'
+                        ELSE 'Other'
+                    END"""
+
+
 def _bullhorn_financial_data(date_from_sql: str, date_to_sql: str):
     """
     Returns the Bullhorn monthlyData rows. Raises on error.
@@ -654,13 +686,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                     [Health System] AS health_system,
                     facility,
                     category,
-                    CASE
-                        WHEN category IN ('Nursing', 'Per Diem Nursing') THEN 'Nursing'
-                        WHEN category IN ('Allied', 'Per Diem Allied') THEN 'Allied'
-                        WHEN category = 'Physicians' THEN 'Locums'
-                        WHEN category = 'Non-Clinical' THEN 'Non-Clinical'
-                        ELSE 'Other'
-                    END AS service_line,
+                    {_vndly_service_line('category')} AS service_line,
                     CASE
                         WHEN [Vendor Company Name] LIKE '%GHR%' OR [Vendor Company Name] LIKE '%Planet Healthcare%'
                         THEN 'GHR' ELSE 'Affiliate'
@@ -674,13 +700,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                     [Health System],
                     facility,
                     category,
-                    CASE
-                        WHEN category IN ('Nursing', 'Per Diem Nursing') THEN 'Nursing'
-                        WHEN category IN ('Allied', 'Per Diem Allied') THEN 'Allied'
-                        WHEN category = 'Physicians' THEN 'Locums'
-                        WHEN category = 'Non-Clinical' THEN 'Non-Clinical'
-                        ELSE 'Other'
-                    END,
+                    {_vndly_service_line('category')},
                     CASE
                         WHEN [Vendor Company Name] LIKE '%GHR%' OR [Vendor Company Name] LIKE '%Planet Healthcare%'
                         THEN 'GHR' ELSE 'Affiliate'
@@ -847,13 +867,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                 [Health System] AS health_system,
                 [Work Site Name] AS facility,
                 [Labor Type] AS category,
-                CASE
-                    WHEN [Labor Type] IN ('Nursing', 'Per Diem Nursing') THEN 'Nursing'
-                    WHEN [Labor Type] IN ('Allied', 'Per Diem Allied') THEN 'Allied'
-                    WHEN [Labor Type] = 'Physicians' THEN 'Locums'
-                    WHEN [Labor Type] = 'Non-Clinical' THEN 'Non-Clinical'
-                    ELSE 'Other'
-                END AS service_line,
+                {_vndly_service_line('[Labor Type]')} AS service_line,
                 CASE
                     WHEN [Vendor Company Name] LIKE '%GHR%' OR [Vendor Company Name] LIKE '%Planet Healthcare%'
                     THEN 'GHR' ELSE 'Affiliate'

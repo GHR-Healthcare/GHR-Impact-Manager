@@ -2,6 +2,27 @@
 
 ## Version History
 
+### 3.8.1 - Allied billings were filed under Other
+
+- Raised from the floor: a system's first full month on VNDLY showed a blank
+  Allied row and a jump in Other. The money was right and the total was right —
+  the service-line split was not.
+- **VNDLY tenants do not share a vocabulary.** Some label the work `Allied`,
+  others `Allied Health`, and only the first was mapped, so every allied dollar
+  from those tenants fell through to `Other`.
+- The same failure as matching a B4 health system on `RUMC` when B4 writes
+  `Richmond University Medical Center`: a literal the source system does not
+  use, matching nothing, silently. The live `SELECT DISTINCT [Labor Type]` is
+  the list that matters, not the one in the code.
+- Totals do not move, and that was the check: the month that prompted this
+  reconciles to the same figure before and after, with Other emptied into
+  Allied.
+- The mapping had three copies — the billings `SELECT`, its `GROUP BY`, and the
+  worker-identity query beside it, which have to render identically or grouped
+  rows stop matching the headcount printed next to them. One expression now.
+- Two labels stay in Other on purpose, pending a decision on where they belong:
+  `Information Technology` and `Advanced Practices`.
+
 ### 3.8.0 - The slow tabs can be built off the request path
 
 - The payload cache had no way to rebuild the three slowest tabs except inside
