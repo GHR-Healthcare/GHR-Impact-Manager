@@ -20,6 +20,7 @@ from shared_code.symplr_systems import (
     resolve_scope_master_ids as symplr_resolve_scope,
 )
 from shared_code.credentials import (
+    apply_stage_service_line,
     normalize as normalize_credential,
     service_line as credential_service_line,
 )
@@ -1361,6 +1362,9 @@ def build_msp_rows(horizon, include_affiliate):
                 rows.extend(got)
 
         _apply_commission_recruiters(rows)
+        # Derive the service line from the job title. Without it the shared
+        # filter bar's Category control had nothing to match on for these rows.
+        apply_stage_service_line(rows)
         rows = _serialize(rows)
         rows.sort(key=lambda r: (r.get('days_left') if r.get('days_left') is not None else 9999))
         b4n = sum(1 for r in rows if r['source_system'] == 'B4')

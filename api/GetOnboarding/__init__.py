@@ -20,6 +20,7 @@ from shared_code.symplr_systems import (
     resolve_scope_master_ids as symplr_resolve_scope,
 )
 from shared_code.credentials import (
+    apply_stage_service_line,
     normalize as normalize_credential,
     service_line as credential_service_line,
 )
@@ -775,6 +776,10 @@ def build_msp_rows(lookback, lookahead, include_affiliate):
                 errors.append(f'{label}: {e}')
 
         rows = _finalize(rows)
+        # Same as the extensions tab: the job title is the only category
+        # signal these feeds carry, and VNDLY rows carry no booking category
+        # at all. Without it the Category filter could not apply here.
+        apply_stage_service_line(rows)
         rows.sort(key=lambda r: (-(r.get('move_count') or 0), r.get('current_start') or ''))
         b4n = sum(1 for r in rows if r['source_system'] == 'B4')
         vnn = sum(1 for r in rows if r['source_system'] == 'VNDLY')

@@ -156,6 +156,35 @@ def service_line(raw):
     return _LINE_OF.get(normalize(raw), 'Other')
 
 
+def apply_stage_service_line(rows, role_key='role'):
+    """Give MSP stage rows (Extensions / Onboarding / Closed) a service line.
+
+    These feeds carry no credential field -- B4 and VNDLY both book by job
+    title -- so the TITLE is the signal, which is what GetClosed already does. The
+    non-MSP branches of the same endpoints run the credential pass instead and
+    are untouched by this.
+
+    Added 2026-11-05 because the shared filter bar's Category control did
+    nothing on these tabs. System and Facility were the only dimensions the
+    stage rows could answer, and the reason given was that the feeds lack the
+    fields -- true of `category` and `service_line` as they were SENT, not of
+    the data behind them. The job title is populated on every row of all three
+    feeds, including VNDLY, which carries no booking category at all.
+
+    Leaves `category` alone: on MSP that is the VMS booking category (B4's
+    Program, VNDLY's branch), which is a real and different question from the
+    service line, and each feed's exact values are what the filter dropdown is
+    built from.
+    """
+    for r in rows:
+        title = r.get(role_key) or ''
+        if not r.get('profession'):
+            r['profession'] = normalize(title)
+        if not r.get('service_line'):
+            r['service_line'] = service_line(title)
+    return rows
+
+
 # ── US states ────────────────────────────────────────────────────────────────
 # Bullhorn writes full names ("Ohio", "Texas"), Symplr two-letter codes
 # ("PA", "NJ"). Same problem as credentials: a State filter built from both

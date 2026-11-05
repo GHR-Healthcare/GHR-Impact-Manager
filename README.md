@@ -2,6 +2,36 @@
 
 ## Version History
 
+### 3.9.0 - The filter bar now reaches every tab
+
+- Reported from the floor: Category does nothing on Extensions, and more
+  broadly that the filters do not work on the newer tabs. Both were true.
+- **Extensions, Onboarding and Closed honoured System and Facility only.** The
+  code said so, with a reason: the rest of the bar "keys off fields these feeds
+  don't have". That was true of the fields as *sent* and not of the data behind
+  them — the job title is on every row of all three feeds, VNDLY included, and
+  the server simply never derived a service line for the MSP side. It does now,
+  through the same helper the Closed tab already used.
+- **Pending honoured System alone**, while carrying facility, programme and
+  care type the whole time. It now applies Facility, Category and Specialty.
+- Category matches **two** fields, because the two MSP feeds book differently
+  and neither vocabulary covers the other: B4 writes an engagement type
+  (`Travel Nursing`), VNDLY writes a GHR branch and carries no booking category
+  at all. An exact pick matches whichever feed uses that value; the
+  `All Nursing` / `All Allied` headers match the derived service line, which
+  both feeds now have. Matching the programme alone would have hidden every
+  VNDLY row the moment anyone touched the control — the failure the original
+  comment was right to fear and wrong to accept as permanent.
+- The matching logic is one shared pair of helpers rather than a copy per tab.
+  The copies had already drifted into four different answers, three of which
+  were "ignore the control".
+- Verified against the live payloads: an empty selection still returns every
+  row on both tabs, the headers select the right service line across both
+  feeds, and an exact pick returns only the feed that uses that vocabulary.
+- Still unreachable, and a data limit rather than an oversight: Specialty on
+  Revenue and Per Diem. Those payloads are monthly aggregates with no specialty
+  dimension to match on.
+
 ### 3.8.1 - Allied billings were filed under Other
 
 - Raised from the floor: a system's first full month on VNDLY showed a blank

@@ -1024,7 +1024,7 @@
     const $ = (id) => document.getElementById(id);
 
     // App version - loaded from environment variable via API, with fallback
-    let APP_VERSION = '3.8.1';
+    let APP_VERSION = '3.9.0';
 
     const API_BASE_URL = '/api';
 
@@ -3767,6 +3767,46 @@
         if (f.includes('trinity') || f.includes('mercy') || f.includes('st. mary') || f.includes('nazareth') || f.includes('st. francis')) return 'Trinity Health';
         
         return 'Other';
+      },
+
+      /* Does a row pass the shared bar's CATEGORY selection?
+       *
+       * One implementation for every tab, because the per-tab copies had
+       * already drifted into four different answers and three of them were
+       * "ignore the control entirely".
+       *
+       * Two fields, because MSP's two feeds book differently and neither
+       * vocabulary covers the other: B4 writes an engagement type in Program
+       * ("Travel Nursing"), VNDLY writes a GHR branch ("Buffalo Nursing MSP")
+       * and carries no booking category at all. An exact pick therefore
+       * matches whichever feed uses that value, and the "All Nursing" /
+       * "All Allied" headers match the derived service line, which both feeds
+       * now have. Matching Program alone would hide every VNDLY row the
+       * moment anyone touched Category.
+       *
+       * `vals` is { category, program, serviceLine } -- callers pass whatever
+       * their own row shape calls these.
+       */
+      categoryAllows(sel, vals) {
+        if (!sel || sel.size === 0) return true;
+        const line = String(vals.serviceLine || '').toLowerCase();
+        const book = vals.category || vals.program;
+        return Array.from(sel).some(cv => {
+          const f = String(cv || '').toLowerCase();
+          if (f === 'all nursing') return line === 'nursing';
+          if (f === 'all allied') return line === 'allied';
+          return Utils.checkCategoryMatch(book, cv) || line === f;
+        });
+      },
+
+      /* SPECIALTY against the shared bar. B4 records one under Care_Type;
+       * VNDLY does not, so the job title stands in rather than dropping every
+       * VNDLY row whenever the control is touched. */
+      specialtyAllows(sel, vals) {
+        if (!sel || sel.size === 0) return true;
+        const v = Utils.cleanFilterText(
+          vals.careType || vals.specialty || vals.role || '');
+        return sel.has(v);
       },
 
       checkCategoryMatch(program, filterVal) {
@@ -8145,17 +8185,44 @@
           </div>`;
       },
 
-      // Filters a stage row against the shared filter bar. Stage rows carry
-      // health_system / facility, so System and Facility apply; the rest of the
-      // bar keys off fields these feeds don't have and is left alone rather
-      // than silently dropping every row.
+      /* Filters a stage row (Closed / Extensions / Onboarding) against the
+       * shared filter bar.
+       *
+       * This used to apply System and Facility only, on the reasoning that
+       * "the rest of the bar keys off fields these feeds don't have". That was
+       * true of the fields as SENT and not of the data behind them, so picking
+       * a Category changed every other tab and left these three unchanged --
+       * reported 2026-11-05 as the filters not working on the new pages.
+       *
+       * CATEGORY is matched on two fields because the two feeds book
+       * differently and neither vocabulary covers the other:
+       *   - B4 writes an engagement type in Program ("Travel Nursing",
+       *     "Local Contract Allied Health"), which is what the dropdown is
+       *     built from and what checkCategoryMatch expects.
+       *   - VNDLY writes a GHR branch there instead ("Buffalo Nursing MSP")
+       *     and carries no booking category at all.
+       * So an exact pick matches whichever feed uses that value, and the
+       * "All Nursing" / "All Allied" headers match the service line, which the
+       * server now derives from the job title for both feeds (see
+       * apply_stage_service_line). Matching Program alone would have hidden
+       * every VNDLY row the moment anyone touched Category -- the failure the
+       * original comment was right to avoid and wrong to accept.
+       */
       stageFilter(r) {
         const s = window.store.state;
+        const sel = s.filterSelection;
         if (!View.legendMatch(r)) return false;
         const sys = Utils.getHealthSystem(r.facility, r.health_system);
         if (Utils.isHiddenHealthSystem(sys)) return false;
-        if (s.filterSelection.systems.size > 0 && !s.filterSelection.systems.has(sys)) return false;
-        if (s.filterSelection.facilities.size > 0 && r.facility && !s.filterSelection.facilities.has(r.facility)) return false;
+        if (sel.systems.size > 0 && !sel.systems.has(sys)) return false;
+        if (sel.facilities.size > 0 && r.facility && !sel.facilities.has(r.facility)) return false;
+
+        if (!Utils.categoryAllows(sel.categories, {
+              category: r.category, program: r.program, serviceLine: r.service_line
+            })) return false;
+        if (!Utils.specialtyAllows(sel.specialties, {
+              careType: r.care_type, specialty: r.specialty, role: r.role
+            })) return false;
         return true;
       },
 
@@ -16311,8 +16378,21 @@
           if (!statusBucket(r.status)) return false;
           const lm = latestMilestoneMs(r);
           if (lm !== null && (nowMs - lm) / 86400000 > STALE_DAYS) return false;
-          const sysMatch = s.filterSelection.systems.size === 0 || s.filterSelection.systems.has(r.healthSystem);
+          const sel = s.filterSelection;
+          const sysMatch = sel.systems.size === 0 || sel.systems.has(r.healthSystem);
           if (!sysMatch) return false;
+          // Facility / Category / Specialty applied here from 2026-11-05. This
+          // tab honoured System alone, so narrowing to a facility or a service
+          // line changed every other tab and left Pending showing the whole
+          // book. The rows carry Facility, Program_Name and Care_Type, so all
+          // three were answerable the whole time.
+          if (sel.facilities.size > 0 && r.facility && !sel.facilities.has(r.facility)) return false;
+          if (!Utils.categoryAllows(sel.categories, {
+                category: r.category, program: r.program, serviceLine: r.service_line
+              })) return false;
+          if (!Utils.specialtyAllows(sel.specialties, {
+                careType: r.care_type, specialty: r.specialty, role: r.position_type
+              })) return false;
           if (drill && drill.system && r.healthSystem !== drill.system) return false;
           if (drill && drill.agency && (drill.agency === 'GHR') !== !!r.is_ghr) return false;
           if (!drillCatMatch(r)) return false;
