@@ -1024,7 +1024,7 @@
     const $ = (id) => document.getElementById(id);
 
     // App version - loaded from environment variable via API, with fallback
-    let APP_VERSION = '3.9.0';
+    let APP_VERSION = '3.9.1';
 
     const API_BASE_URL = '/api';
 
@@ -3797,6 +3797,21 @@
           if (f === 'all allied') return line === 'allied';
           return Utils.checkCategoryMatch(book, cv) || line === f;
         });
+      },
+
+      /* SEARCH ID against the shared bar. A substring, like Open Jobs, so a
+       * partial contract or job number finds the row. Lives here so the tabs
+       * that are not job lists can answer it too -- it reached only
+       * getFilteredJobs before, which is why typing an id blanked Open Jobs
+       * and did nothing at all on the stage tabs.
+       *
+       * `ids` is whatever identifiers the caller's row shape carries; a row
+       * matches if any of them contains the query.
+       */
+      idAllows(query, ids) {
+        const q = String(query || '').trim().toLowerCase();
+        if (!q) return true;
+        return (ids || []).some(v => String(v == null ? '' : v).toLowerCase().includes(q));
       },
 
       /* SPECIALTY against the shared bar. B4 records one under Care_Type;
@@ -8223,6 +8238,10 @@
         if (!Utils.specialtyAllows(sel.specialties, {
               careType: r.care_type, specialty: r.specialty, role: r.role
             })) return false;
+        // Days Age is deliberately NOT applied: it measures how long a JOB has
+        // been open, and a stage row is a filled seat. The nearest equivalent
+        // is days-to-end, which the Extensions tab already exposes itself.
+        if (!Utils.idAllows(s.searchQuery, [r.id, r.parent_ref, r.match_id])) return false;
         return true;
       },
 
@@ -16393,6 +16412,7 @@
           if (!Utils.specialtyAllows(sel.specialties, {
                 careType: r.care_type, specialty: r.specialty, role: r.position_type
               })) return false;
+          if (!Utils.idAllows(s.searchQuery, [r.submission_id, r.job_id, r.candidate_id])) return false;
           if (drill && drill.system && r.healthSystem !== drill.system) return false;
           if (drill && drill.agency && (drill.agency === 'GHR') !== !!r.is_ghr) return false;
           if (!drillCatMatch(r)) return false;

@@ -28,6 +28,14 @@
 - Verified against the live payloads: an empty selection still returns every
   row on both tabs, the headers select the right service line across both
   feeds, and an exact pick returns only the feed that uses that vocabulary.
+- **Search ID** now reaches the stage tabs and Pending too. It lived inside the
+  Open Jobs filter, so typing an id narrowed that tab and did nothing anywhere
+  else. It is a substring match, as it already was, against whichever
+  identifiers each row carries.
+- **Days Age is deliberately left on the job lists.** It measures how long a
+  *job* has been open, and a stage row is a filled seat; the nearest equivalent
+  is days-to-end, which Extensions already exposes as its own column. Applying
+  it would have meant inventing a number rather than matching one.
 - Still unreachable, and a data limit rather than an oversight: Specialty on
   Revenue and Per Diem. Those payloads are monthly aggregates with no specialty
   dimension to match on.
