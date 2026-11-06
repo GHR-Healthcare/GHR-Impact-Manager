@@ -2,6 +2,44 @@
 
 ## Version History
 
+### 3.9.2 - Unit on Extensions and Priority Jobs
+
+- Asked for from the floor: the PMs could not tell *where* a contractor is
+  working from either tab. Fair — neither showed the unit.
+- The data was never missing. Unit is populated on **every row of all four MSP
+  feeds**, and it already reached the CSV export and the expanded row detail.
+  It just never made it onto a row, so finding a ward meant opening seats one
+  at a time.
+- Extensions: the facility cell has always had a fourth line for exactly this
+  and was being called without it. It now carries unit and cost centre.
+- Priority Jobs: that cell has been commented `Shift & Unit` since it was
+  written and rendered only the cost centre — a number PMs do not read as a
+  place. The unit leads now, with the cost centre after it.
+- The unit is suppressed where it only repeats the specialty (`ICU` under a
+  specialty of `ICU`), which on Priority Jobs is the heading directly above
+  the row.
+- The cost centre is suppressed where the unit already ends with it. B4 names
+  most units that way, so without this nearly every row read
+  `Access Center Administration-902004 • 902004`.
+- The shared builder escapes what it emits. The line is injected as markup, and
+  nine live unit names contain an ampersand (`Labor & Delivery`), which would
+  otherwise have gone into the DOM bare — a latent problem on Open Jobs, which
+  already rendered this line and now goes through the same helper.
+
+### 3.9.1 - Search ID reaches the stage tabs and Pending
+
+- **Search ID** now reaches the stage tabs and Pending too. It lived inside the
+  Open Jobs filter, so typing an id narrowed that tab and did nothing anywhere
+  else. It is a substring match, as it already was, against whichever
+  identifiers each row carries.
+- **Days Age is deliberately left on the job lists.** It measures how long a
+  *job* has been open, and a stage row is a filled seat; the nearest equivalent
+  is days-to-end, which Extensions already exposes as its own column. Applying
+  it would have meant inventing a number rather than matching one.
+- Still unreachable, and a data limit rather than an oversight: Specialty on
+  Revenue and Per Diem. Those payloads are monthly aggregates with no specialty
+  dimension to match on.
+
 ### 3.9.0 - The filter bar now reaches every tab
 
 - Reported from the floor: Category does nothing on Extensions, and more
@@ -28,17 +66,6 @@
 - Verified against the live payloads: an empty selection still returns every
   row on both tabs, the headers select the right service line across both
   feeds, and an exact pick returns only the feed that uses that vocabulary.
-- **Search ID** now reaches the stage tabs and Pending too. It lived inside the
-  Open Jobs filter, so typing an id narrowed that tab and did nothing anywhere
-  else. It is a substring match, as it already was, against whichever
-  identifiers each row carries.
-- **Days Age is deliberately left on the job lists.** It measures how long a
-  *job* has been open, and a stage row is a filled seat; the nearest equivalent
-  is days-to-end, which Extensions already exposes as its own column. Applying
-  it would have meant inventing a number rather than matching one.
-- Still unreachable, and a data limit rather than an oversight: Specialty on
-  Revenue and Per Diem. Those payloads are monthly aggregates with no specialty
-  dimension to match on.
 
 ### 3.8.1 - Allied billings were filed under Other
 
