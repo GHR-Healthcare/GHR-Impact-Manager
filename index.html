@@ -1024,7 +1024,7 @@
     const $ = (id) => document.getElementById(id);
 
     // App version - loaded from environment variable via API, with fallback
-    let APP_VERSION = '3.9.1';
+    let APP_VERSION = '3.9.2';
 
     const API_BASE_URL = '/api';
 
@@ -3767,6 +3767,57 @@
         if (f.includes('trinity') || f.includes('mercy') || f.includes('st. mary') || f.includes('nazareth') || f.includes('st. francis')) return 'Trinity Health';
         
         return 'Other';
+      },
+
+      /* The muted line under a facility: unit, cost centre, shift.
+       *
+       * Asked for 2026-11-06 -- the PMs could not tell where a contractor
+       * actually works from Extensions or Priority Jobs. The unit was in the
+       * payload all along (100% populated on all four MSP feeds) and reached
+       * only the CSV export and the expanded row, so it had to be opened one
+       * seat at a time.
+       *
+       * RETURNS ESCAPED HTML, not text, because the caller injects it as
+       * markup -- the parts are joined with a bullet entity. Nine live unit
+       * names contain an ampersand ("Labor & Delivery", "Women & Babies
+       * Hospital"), so passing raw text here would put a bare & into the DOM.
+       */
+      detailLine(parts) {
+        const norm = v => String(v).replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+        const kept = [];
+        (parts || [])
+          .map(v => (v == null ? '' : String(v).trim()))
+          .filter(Boolean)
+          .forEach(v => {
+            // Skip a part already spelled out by an earlier one. B4 ends most
+            // unit names with the cost centre ("Access Center
+            // Administration-902004"), so printing both gave
+            // "...-902004 \u2022 902004" on nearly every row. Three characters
+            // minimum, or a one-digit cost centre would vanish into any unit
+            // name containing that digit.
+            const n = norm(v);
+            if (n.length >= 3 && kept.some(k => norm(k).includes(n))) return;
+            kept.push(v);
+          });
+        return kept
+          .map(v => v.replace(/&/g, '&amp;').replace(/</g, '&lt;')
+                     .replace(/>/g, '&gt;').replace(/"/g, '&quot;'))
+          .join(' &bull; ');
+      },
+
+      /* The unit, unless it only repeats what the specialty already says.
+       *
+       * "ICU" under a specialty of "ICU" is a wasted line, and on Priority
+       * Jobs the specialty is the card heading the row sits under, so the
+       * repeat is directly above it. Compared on alphanumerics only, because
+       * the two fields punctuate differently ("Med/Surg" vs "Med Surg").
+       */
+      unitUnlessSpec(unit, spec) {
+        const c = v => String(v || '').replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+        const u = c(unit), p = c(spec);
+        if (!u) return null;
+        if (p && (u === p || u.includes(p) || p.includes(u))) return null;
+        return unit;
       },
 
       /* Does a row pass the shared bar's CATEGORY selection?
@@ -6590,7 +6641,16 @@
                                      <div class="font-medium text-slate-700 truncate flex items-center gap-1.5" title="${job.shift || ''}">
                                          ${icon} ${job.shiftTime || ''}${job.startTime && job.endTime ? ` ${job.startTime}-${job.endTime}` : ''}
                                      </div>
-                                     <div class="truncate text-slate-500">${job.costCenter || ''}</div>
+                                     <div class="truncate text-slate-500" title="${View.esc([job.unit, job.costCenter].filter(Boolean).join(' \u2022 '))}">${
+                                       /* The cell has said "Shift & Unit" since it was written but
+                                          only ever rendered the cost centre, which is a number the
+                                          PMs do not read as a place. The unit leads now; the cost
+                                          centre still follows it. */
+                                       Utils.detailLine([
+                                         Utils.unitUnlessSpec(job.unit, spec),
+                                         job.costCenter,
+                                       ]) || '&mdash;'
+                                     }</div>
                                 </div>
 
                                 <!-- Key Metrics (Age, Subs, Decs, Impact) -->
@@ -7156,10 +7216,6 @@
             ? parts[0].trim() : t;
         };
         const abbrSpecialty = Utils.abbreviate(dedupe(job.specialty));
-        const cleanSpec = abbrSpecialty.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
-        const cleanUnit = (job.unit || '').replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
-        const showUnit = job.unit && cleanUnit !== cleanSpec
-                      && !cleanUnit.includes(cleanSpec) && !cleanSpec.includes(cleanUnit);
         const isHot = job.levers && job.levers.hotJob && job.levers.hotJob.done;
         const totalDeclines = job.ghrDeclines + job.avDeclines;
         const srcKey = job.sourceSystem || '';
@@ -7169,12 +7225,12 @@
         // The specialty leads on the blue line, as on the other three tabs;
         // unit, cost centre and shift drop to the muted line beneath instead of
         // being bulleted into one slate string the way the old list view did.
-        const detailLine = [
-          showUnit ? job.unit : null,
-          job.costCenter || null,
+        const detailLine = Utils.detailLine([
+          Utils.unitUnlessSpec(job.unit, abbrSpecialty),
+          job.costCenter,
           job.startTime && job.endTime ? `${job.startTime}-${job.endTime}`
             : (job.shift && job.shift !== 'N/A' ? job.shift : null),
-        ].filter(Boolean).join(' &bull; ');
+        ]);
 
         return `
           <td class="px-3 py-2">${View.stageIdCell(
@@ -10593,7 +10649,16 @@
                      every facility read "Lancaster G...". It is the column people
                      scan, and the table is now fixed-layout, so the declared
                      13% governs the width instead of a pixel cap. -->
-                <td class="px-3 py-1.5">${View.stageSystemCell(r, { spec: r.role || r.care_type || '' })}</td>
+                <td class="px-3 py-1.5">${View.stageSystemCell(r, {
+                  spec: r.role || r.care_type || '',
+                  // Where the contractor actually works. stageSystemCell has
+                  // always had this line; Extensions just never filled it.
+                  extra: Utils.detailLine([
+                    Utils.unitUnlessSpec(r.unit, r.role || r.care_type || ''),
+                    r.cost_center,
+                  ]),
+                  extraTitle: [r.unit, r.cost_center].filter(Boolean).join(' \u2022 '),
+                })}</td>
                 <td class="px-3 py-1.5">
                   <div class="font-medium text-slate-700 truncate">${View.stageWorker(r)}</div>
                   <div class="text-[10px] mt-0.5">${View.stageAgency(r)}</div>
